@@ -18,7 +18,7 @@ As of **2026-10-18** the phone boots to the **iOS home screen**. You can unlock 
 | Storage | Own UFS host driver; the iOS root is a journaled HFS+ volume in `userdata`, read/write |
 | iOS userland | Real iPhone X 16.7.16 root filesystem and shared cache; launchd and the system daemons run |
 | Display | Kernel IOSurface + IOMobileFramebuffer (`AppleCLCD`) services; CoreAnimation renders in software; frames are copied into the bootloader's framebuffer. Presented to iOS as an iPhone X panel (1125×2436) |
-| GUI | backboardd, SpringBoard, lock screen, home screen, Control Center, notification center, Settings |
+| GUI | backboardd, SpringBoard, lock screen, home screen, Control Center, notification center, Settings; home swipe and app switcher |
 | Touch | Goodix GT9896 over I²C (GENI), rail enabled through RPMh, delivered as HID digitizer events |
 | Buttons | Power, volume up/down (PMIC through SPMI) as HID consumer keys; lock/wake works |
 | Battery | IOPMPowerSource service (static 100 %, charging icon; real fuel-gauge readout prepared) |
@@ -27,7 +27,6 @@ As of **2026-10-18** the phone boots to the **iOS home screen**. You can unlock 
 
 ## What does not work (yet)
 
-- **Navigation:** you cannot leave an app (the home gesture and AssistiveTouch Home do nothing yet).
 - **No Wi-Fi, Bluetooth, cellular, audio, camera, sensors, GPS or SEP / Face ID.** Daemons for them start and fail or keep relaunching.
 - **No GPU.** Everything is drawn by the CPU at roughly 20–30 fps. The two Cortex-A76 cores are not used yet.
 - **Few apps.** The image has only what is on the system volume. There is no App Store, no Apple ID, and some Settings pages are empty.

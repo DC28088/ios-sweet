@@ -4,6 +4,24 @@
 
 ### >>> UPDATE 2026-10-18 (read first, then the 10-17 handoff below) <<<
 
+### >>> UPDATE 2026-10-19 (Codex audit) <<<
+
+- **Gesture navigation is fixed and hardware-verified.** Patch 0070 restores
+  `pid_hibernate` (SpringBoard had been killed by syscall 435/SIGSYS) and 0071
+  marks contacts beginning within 48 panel pixels of an edge with
+  `kIOHIDDigitizerEventFromEdgeTip`. `logs/boot-0071s.txt` records the test:
+  the bottom swipe returns home and app switcher works. README was updated to
+  reflect this.
+- **GPU work is not yet an implementation.** `docs/GPU_BRINGUP.md` records
+  the Adreno 618 SM7150 windows and a gated sequence beginning with a read-only
+  probe. The missing Apple IOGPU/IOAccelerator interfaces and the separate
+  Adreno firmware/GMU/SMMU stack mean a real Metal driver cannot safely be
+  claimed before that sequence is completed.
+- **This checkout has no usable GitHub CLI credential and no fastboot device
+  attached** (2026-10-19). A local kernel build needs the macOS CI workflow;
+  re-authenticate `gh` before dispatching it. A phone boot still requires the
+  user's unlocked Redmi Note 10 Pro in fastboot and the existing root image.
+
 **STATE at end of 2026-10-18 (evening):**
 - On the phone: userdata = **image v15** (`/run/media/dipa/android/ios-sweet-ipsw/ios16-root-20H392-v15.img/.simg`; = v14 + `/private/var/preferences/SystemConfiguration/preferences.plist` with one network service "USB Ethernet": Interface DeviceName ue0 Type Ethernet, IPv4 Manual 192.168.7.2/24 router 192.168.7.1, DNS 1.1.1.1 8.8.8.8, set "Automatic" as CurrentSet). Fallback image v14 (v12/v13 deleted).
 - Kernels: **0078** = all 8 cores (`cpus=8`, cpu6/7 = A76, homogeneous SMP; mkadt now emits 8 CPU nodes; ADT `shim/out/sweet-0078hi.adt`); **0079** = display off/on via IOMFB selector 12 kern_RequestPowerChange(state) (fade over 6 vsyncs, then black; verified: power button gives "SWEET FB: display off/on"); **0080** = `SWEET NET: <proc> route add/delete/change ...` and `... add/delete address ...` trace (built, `shim/out/shim-boot-0080s.img`, NOT booted yet).
