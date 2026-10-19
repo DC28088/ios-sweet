@@ -162,3 +162,12 @@ CX/clock transition using the matching `qcom,gpucc-sdmmagpie` definitions;
 record before/after status and keep GX clamped/reset until its prerequisites
 are satisfied. GMU/SMMU, firmware execution, command submission and the iOS
 rendering interface are still unimplemented.
+
+## ARC follow-up correction (0084)
+
+The 0083 table-only image booted successfully; the log confirms all three
+resource tables. Its fixed LOW_SVS write API was unsafe for inherited shared
+CX/MX votes and has been removed by 0084. `sweetgpu=2` now performs deferred
+RPMh resource READ transactions, with no ARC vote or GPUCC write. See the
+current correction in GPU_PROGRESS.md. Hardware readback semantics must be
+established before implementing a floor that preserves existing votes.

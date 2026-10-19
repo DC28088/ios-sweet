@@ -5,6 +5,49 @@ This document is the resumable record of the Adreno 618 work on `sweet`
 **implemented but unverified code** and from **plans**. Read it with
 `NOTES.md` and `docs/GPU_BRINGUP.md`.
 
+## Current correction: patch 0084
+
+The latest recovered boot log, `logs/gpu-opencode-0083.txt`, confirms the
+0083 **read-only** probe ran successfully. GPUCC still reports CX/GX collapsed;
+backboardd finds zero IOAcceleratorES providers. This build has no rendering
+acceleration, so reaching the home screen does not predict a speed increase.
+
+Observed ARC consumer-level tables (index order):
+
+| Resource | Address | Levels |
+| --- | --- | --- |
+| mx.lvl | 0x30010 | 1, 17, 193, 321, 385 |
+| cx.lvl | 0x30000 | 1, 17, 65, 129, 193, 257, 385 |
+| gfx.lvl | 0x30050 | 1, 17, 65, 129, 193, 257, 321, 385, 417 |
+
+**The old fixed-level write path is removed by 0084.** A DT minimum or
+initial Linux regulator setting does not prove the bootloader's retained
+APPS vote. Writing selector 2 could lower an existing higher vote on shared
+CX/MX. Refusing selector zero does not address that problem.
+
+With 0084, `sweetgpu=1` remains metadata/GPUCC inspection; **`sweetgpu=2`
+now sends ARC READ commands**, not votes. The worker starts after 60 seconds
+and requires successful touch-power setup. It uses the existing RPMh lock,
+empty ACTIVE TCS selection, masked per-slot IRQ, bounded completion and
+quarantine behavior. It reads raw CMD_RESP_DATA before releasing its slot.
+A timeout stops the experiment; it does not reset or retry the controller.
+The ARC parser also checks alignment, aux version and all padding, and uses
+32-bit consumer levels to represent 65536 without overflow.
+
+Protocol reference:
+[Qualcomm's matching RPMh mailbox implementation](https://android.googlesource.com/kernel/msm/+/2055939b3577edbf42657871ad6bc147af037a82/drivers/mailbox/qcom-rpmh-mailbox.c)
+defines MSGID WRITE at bit 16 and response data at offset 0x40;
+[its RPMh API](https://android.googlesource.com/kernel/msm/+/2055939b3577edbf42657871ad6bc147af037a82/drivers/soc/qcom/rpmh.c)
+uses one ACTIVE command for reads. These establish the transport, not the
+meaning of ARC reply fields or proof of a retained APPS vote on this board.
+Keep resource writes disabled until that meaning is established.
+
+The older stage-3 instructions below describe 0083 history and must not be
+used as the current procedure. Next hardware gate: boot 0084 with
+`sweetgpu=2`, let iOS run at least two minutes, return to OrangeFox, and pull
+the log. Require fresh completed reads and inspect every raw reply.
+This remains a power-driver prerequisite, not GPU acceleration.
+
 ## Current truth
 
 | Question | Answer |
@@ -65,8 +108,9 @@ The live DT routes GPU power through three ARC level regulators:
 - `cx.lvl` (`pm6150l_s2_level`, MX-parented) - CX rail
 - `gfx.lvl` (`pm6150_s2_level`) - GPU GX rail
 
-The live DT initializes all three at consumer level 17 (retention), so the
-LOW_SVS (65) vote is a deliberate raise, not a readback of the boot state.
+The DT includes consumer-level constraints starting at 17 (retention).
+These constraints do not establish the bootloader vote or prove that a
+LOW_SVS request would raise it.
 `mx.lvl` also has an always-on (`_ao`) sibling; this stage votes only the
 active resource.
 
@@ -142,8 +186,8 @@ a service named `AGXAccelerator` without those user clients is not enough.
 The practical conclusion is to separate two goals:
 
 - **Composition acceleration** (GPU copies/scales IOSurfaces into the panel
-  buffer) can be verified without any Metal ABI. It targets the measured
-  bottleneck: a full 10 MB frame copy on the CPU.
+  buffer) can be verified without any Metal ABI. It targets the full-frame CPU copy, whose share of frame time still needs
+  measurement.
 - **Metal/CoreAnimation acceleration** requires the guest ABI and shader
   strategy. It comes later and only after composition proves the command
   path.
@@ -176,7 +220,7 @@ default. A stage is complete only when its gate passes **on the phone**.
   before any vote.
 - Fail: missing table, malformed aux, non-monotonic levels, or a crash.
 
-### Stage 3 - ARC rail votes (implemented, hardware test pending)
+### Historical stage 3 - fixed ARC votes (removed by 0084)
 
 - Code: patch 0083, `sweetgpu=2`.
 - Behavior: after the read-only probe, vote `mx.lvl`, then `cx.lvl`, then
@@ -186,7 +230,7 @@ default. A stage is complete only when its gate passes **on the phone**.
 - Pass: three `ACTIVE vote complete` lines, `ARC target vlvl=65 votes
   complete`, iOS keeps running, display still swaps.
 - Important limit: RPMH completion proves the request was accepted, not that
-  a rail reached a specific voltage. There is no RPMH readback. Do not
+  a rail reached a specific voltage. 0083 implemented no RPMH readback. Do not
   describe this as measured GPU power.
 - Fail: timeout, missing completion, poisoned TCS, display regression, or
   any crash. Stop and recover the log; do not proceed to GPUCC writes.
@@ -263,7 +307,8 @@ SWEET GPU: ARC tables read-only complete
 SWEET GPU: read-only audit complete; use sweetgpu=2 to vote ARC rails
 ```
 
-Then repeat with `sweetgpu=2` and require the three vote-complete lines.
+Do not repeat with the 0083 `sweetgpu=2` fixed-vote image. Use the 0084
+readback procedure above.
 If either run regresses the display or crashes, keep the previous image and
 the log; do not add GPUCC writes.
 
