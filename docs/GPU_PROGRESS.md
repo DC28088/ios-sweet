@@ -102,15 +102,26 @@ order.
    iPhone X GPU bundle `AGXMetalA11.bundle/AGXMetalA11`, plus
    `AGXCompilerCore`/`AGXCompilerConnection`.
 5. The cache is split into 40+ files (about 7.8 GB total, plus a 592 MB
-   `.symbols` file). It has **not** been disassembled. The exact
-   `IOAccelerator`/`IOGPU` user-client selectors and the AGX command-buffer
-   ABI are therefore still unknown.
+   `.symbols` file). The symbol file was scanned read-only in place, without
+   extracting the cache. It confirms the user-space chain and names the
+   entry points:
+   - `Metal.framework` -> `_MTLIOAccelDevice initWithAcceleratorPort:`
+   - `IOGPU.framework` -> `_IOGPUDeviceCreateWithAPIProperty`,
+     `_IOGPUCommandQueueCreateWithQoS`, `_IOGPUResourceGetTypeID`,
+     `_IOGPUNotificationQueueCreate`
+   - `IOGPUMetalDevice initWithAcceleratorPort:options:`
+   - `IOGPUDevice`, `IOGPUCommandQueue` and `IOGPUResource` class/ID symbols
+   - `AGXA11Family...`, `AGXMetalA11`, `AGXCompilerCore`,
+     `AGXCompilerConnection-S2A8`
+   The numeric `IOConnect` selectors and the AGX command-buffer layout are
+   not in the symbol names; they require disassembly of the dylibs. The cache
+   has **not** been disassembled, so those ABI details remain unknown.
 
-Consequence: publishing any IOKit service named `AGXAccelerator` is not
-enough. iOS user space expects Apple's private `IOAccelerator` family ABI,
-and `backboardd` will only use it after a successful open and handshake.
-That ABI must be recovered from the cache or reproduced from a compatible
-Apple userspace before a Metal path can work.
+Consequence: Metal does not talk to a hardware driver directly. It opens an
+accelerator port from an IOKit family service (`IOGPUDevice`/`IOGPUCommandQueue`
+/`IOGPUResource`), and the user-space AGX bundle builds AGX command buffers.
+A kernel provider must implement that port and resource/queue ABI; publishing
+a service named `AGXAccelerator` without those user clients is not enough.
 
 ## Architecture options (verified direction, not assumed)
 
@@ -277,8 +288,8 @@ the log; do not add GPUCC writes.
 ## Open blockers
 
 1. Stage 2/3 require an approved temporary boot and a recovered log.
-2. The dyld cache has not been disassembled, so the guest `IOGPU` /
-   `IOAccelerator` ABI is unknown.
+2. The dyld cache has not been disassembled; `IOGPU`/`IOAccelerator` symbol
+   names are recovered, but numeric selectors and structures are unknown.
 3. The shader strategy for Metal-on-Adreno is unresolved; no translation
    layer in this repository claims to solve it.
 4. Full cache extraction is blocked by local disk space; only targeted
