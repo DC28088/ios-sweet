@@ -15,10 +15,11 @@
   `backboardd` still logged `IOAcceleratorES -> 0 found`; no GPU command,
   firmware load or rendering occurred.
 - **120 Hz presentation result:** patch 0085 ran the software timer at
-  120 Hz (1200 callbacks/10 s), but active windows showed only 45-86
-  `present_calls`/10 s and up to 287 missed deadlines. Physical panel mode
-  is inherited from ABL and unchanged. This does not establish 120 fps or
-  GPU acceleration; `sweetfb_hz=30` remains the lower-rate fallback.
+  120 Hz (1200 callbacks/10 s), but the eight active windows showed only
+  4-86 `present_calls`/10 s (45-86 after the first partial window) and up
+  to 374 missed deadlines. Physical panel mode is inherited from ABL and
+  unchanged. This does not establish 120 fps or GPU acceleration;
+  `sweetfb_hz=30` remains the lower-rate fallback.
 
 - **Latest continuation / 0084:** the OpenCode/DeepSeek 0083 build booted
   but remained slow; phone was returned to OrangeFox.
