@@ -23,9 +23,8 @@
 - Extracted the D22AP DeviceTree from the iPhone10,3 iOS 16.7.16 IPSW into
   `research/ipsw-x/d22ap.adt`; generated `shim/out/sweet.adt` with its `/product`
   node. The raw Apple artifact remains under ignored `research/`.
-- Next: install the AArch64 cross-toolchain, then build the shim and payload
-  with `sweetgpu=1`. `mkbootimg`, host `gcc`, and `cpio` are present. No boot
-  image has been built or fastboot-booted yet.
+- The AArch64 cross-toolchain is installed; the `sweetgpu=1` shim image is now
+  built. See the later 2026-10-19 update for its checksum and device result.
   Preserve Android partitions; use `fastboot boot`, never flash boot.
 
 **STATE at end of 2026-10-18 (evening):**
@@ -455,3 +454,16 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
      cpu_init, before arm_vm_init.
   5. panic hook at top of panic_trap_to_debugger: va_copy + _doprnt(fmt, &copy, sweet_early_putc, 16).
   Verify with tools/xnu-cc.py (compile+symbols) and patch-order simulation before the single CI run.
+
+### >>> UPDATE 2026-10-19 (GPU probe boot image packaged) <<<
+
+- Cross tools are installed and the shim has been built around the Actions kernel
+  from XNU patch 0081. Payload `shim/out/payload-0081-gpucc.bin` embeds
+  `sweetgpu=1`; image `shim/out/shim-boot-0081-gpucc.img` is Android boot header
+  v2 and contains the captured base DTB. SHA-256:
+  `2115e09372cdaeaeaec8cfd6a97b54bc15e0ae37a0f313a0217ad0724139d010`.
+- User reports this image booted and touch/button input responds. Its boot args
+  select `rd=ufsroot0`, so it is using the iOS root already on `userdata`
+  (last recorded as root image v15); a new root image is not needed to test
+  this kernel probe. The GPUCC log lines have not yet been captured. Pull them
+  later from OrangeFox with `tools/sweet-log-pull.sh`.
