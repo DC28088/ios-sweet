@@ -58,9 +58,9 @@ This measures timer callbacks and calls into the CPU copy path, not rendered
 frames or panel scanout. The physical panel mode remains whatever ABL
 selected; 120 fps is not established.
 
-## 0086 candidate: raise-only `gfx.lvl` (built, CI-passed, not booted)
+## 0086 hardware result: raise-only `gfx.lvl` passed
 
-Patch `0086-sweet-adreno-gfx-raise.patch` (commit `065acbd`) implements the
+Patch `0086-sweet-adreno-gfx-raise.patch` (commit `065acbd`) implemented the
 next write gate. `sweetgpu=3` waits 60 s, re-reads `mx.lvl` and `cx.lvl`
 without writing them, then calls `sweet_rpmh_arc_raise("gfx.lvl", 65)`.
 That helper reads the current selector first and:
@@ -86,14 +86,28 @@ CI run `39277061501` built and linked the kernel; the marker checks include
 `f7f95c9f4ff87a0856e2b5149577cd974c1a292b2220ab524fed99503a31aa95`)
 contains the new markers and no 0083 `SWEET RPMH: ARC vote` string.
 
-Packaged temporary image (same 0083 shim kernel/DTB, new XNU payload):
+The temporary image
 `shim/out/shim-boot-0086-gfx-raise-120hz.img` (17,149,952 bytes, SHA-256
 `536da97e93168dfb361b4ceb9bf1c576fe2066a2a99035174734c188f735d8bc`),
-cmdline `... sweetfb_noconsole=1 sweetfb_hz=120 sweetgpu=3`. The boot and
-the `gfx.lvl` write require explicit user approval and have not been run.
-Passing this gate means only that the APPS ARC level vote was stored and
-read back; it does not prove the rail voltage changed, does not enable
-GPUCC, and does not produce GPU acceleration.
+cmdline `... sweetfb_noconsole=1 sweetfb_hz=120 sweetgpu=3`, was booted on
+2026-10-19 ~21:35 local. The read-only log pull is
+`logs/gpu-gfx-raise.txt` (flush #27). The write gate passed:
+
+| Step | Log value |
+| --- | --- |
+| `gfx.lvl` before | raw `0x0` (selector 0, consumer level 1) |
+| write | selector 2, consumer level 65 |
+| `gfx.lvl` after | raw `0x2` |
+| verification | `ARC gfx.lvl raise verified selector=2 vlvl=65` |
+| `mx.lvl` | raw `0x3` (level 321), unchanged |
+| `cx.lvl` | raw `0x5` (level 257), unchanged |
+
+There was no panic; SpringBoard and touch continued after the write, and
+GPUCC still reported both domains collapsed. This proves the APPS ARC level
+vote is stored and read back on this board. It does not prove the rail
+voltage changed, does not enable GPUCC, and does not produce GPU
+acceleration. The next gate is 0087: GPUCC CX/GX power and clock/reset
+release, then an `RBBM_IDENTIFIER` read without GMU or command submission.
 
 ## Current correction: patch 0084
 
@@ -134,11 +148,10 @@ Keep resource writes disabled until that meaning is established.
 
 The older stage-3 instructions below describe 0083 history and must not be
 used as the current procedure. The 0084/0085 `sweetgpu=2` readback gate
-passed on 2026-10-19 (above). Patch 0086 (commit `065acbd`) implements the
-raise-only `gfx.lvl` vote with a post-write read, and CI run `39277061501`
-built it; the temporary image is packaged but **not booted**. After it
-passes, the next gate is GPUCC CX/GX power and an `RBBM_IDENTIFIER` read.
-This remains a power-driver prerequisite, not GPU acceleration.
+passed on 2026-10-19, and the 0086 raise-only `gfx.lvl` vote with post-write
+read also passed on 2026-10-19 (above). The next gate is 0087: GPUCC CX/GX
+power and clock/reset release, then an `RBBM_IDENTIFIER` read. This remains a
+power-driver prerequisite, not GPU acceleration.
 
 ## Current truth
 
@@ -404,7 +417,10 @@ default. A stage is complete only when its gate passes **on the phone**.
   IOSurface; compare against the software frame.
 - Only after gate C should CoreAnimation switch renderers.
 
-## Test procedure for the current milestone (0086; 0084/0085 below)
+## Test procedure for the current milestone (0086 executed; 0087 next)
+
+The 0086 procedure below is retained for reruns; the gate already passed on
+2026-10-19 (see above). The next procedure will be added with 0087.
 
 Build and boot through CI as usual; do not flash a partition. The 0086 image
 bundles the 0084 READ path, the 0085 120 Hz scheduler and the raise-only
@@ -463,9 +479,10 @@ SWEET FB: timing ... target=120 Hz
 ```
 
 Do not boot the 0083 `sweetgpu=2` fixed-vote image. The 0086 raise-only
-`gfx.lvl` vote is now implemented and CI-built; do not run it without
-explicit approval. If a run regresses the display or crashes, keep the
-previous image and the log; do not add GPUCC writes.
+`gfx.lvl` vote has been run and passed; do not re-run it without a reason,
+and do not proceed to GPUCC writes without explicit approval. If a run
+regresses the display or crashes, keep the previous image and the log; do
+not add GPUCC writes.
 
 ## Safety and recovery
 

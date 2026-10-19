@@ -2,24 +2,24 @@
 
 ## Current local device state (2026-10-19, read first)
 
-- **0086 build ready, boot approval pending (2026-10-19 ~21:35 local):**
-  patch `0086-sweet-adreno-gfx-raise.patch` adds `sweetgpu=3`, a raise-only
-  `gfx.lvl` ARC vote with an immediate readback. Commit `065acbd`; CI run
-  `39277061501` succeeded and its kernel marker check passed. Kernel
-  `xnu/out-0086/kernel.development.sweet` (17,223,288 bytes, SHA-256
-  `f7f95c9f4ff87a0856e2b5149577cd974c1a292b2220ab524fed99503a31aa95`)
-  contains the new markers and none of the 0083 fixed-vote strings. The
-  temporary image
-  `shim/out/shim-boot-0086-gfx-raise-120hz.img` (17,149,952 bytes, SHA-256
-  `536da97e93168dfb361b4ceb9bf1c576fe2066a2a99035174734c188f735d8bc`,
-  cmdline `... sweetfb_noconsole=1 sweetfb_hz=120 sweetgpu=3`) reuses the
-  0083 shim kernel/DTB and the 0084/0085 code. At 60 s it reads `mx.lvl` and
-  `cx.lvl` read-only, reads `gfx.lvl`, and writes selector 2 (consumer
-  level 65) only if the current level is below 65; it then re-reads and
-  requires the reply to match. No `mx.lvl`/`cx.lvl`, GPUCC, GMU or partition
-  write. **The boot and the on-device `gfx.lvl` write are NOT approved yet;
-  the image is packaged but unbooted.**
-- **0085 hardware result (2026-10-19 20:12, read first):** booted
+- **0086 hardware result: raise-only `gfx.lvl` passed (2026-10-19 ~21:35
+  local, read first):** the 0086 image booted on the phone; iOS reached
+  SpringBoard and stayed usable (lag remains, as expected with no GPU). At
+  60 s the kernel re-read `mx.lvl` (`0x3`, level 321) and `cx.lvl` (`0x5`,
+  level 257) read-only, then read `gfx.lvl` (`0x0`, level 1), wrote selector
+  2 (consumer level 65, LOW_SVS), and read back `0x2`; the log records
+  `ARC gfx.lvl raise verified selector=2 vlvl=65`. No panic; touch and
+  SpringBoard continued after the write; GPUCC stayed collapsed and no
+  rendering changed. Read-only pull: `logs/gpu-gfx-raise.txt` (flush #27).
+  This proves the APPS ARC level vote is stored/readable on this board; it
+  does not prove the rail voltage moved. Patch `0086-sweet-adreno-gfx-raise`
+  commit `065acbd`, CI run `39277061501` succeeded. Kernel SHA-256
+  `f7f95c9f4ff87a0856e2b5149577cd974c1a292b2220ab524fed99503a31aa95`;
+  image `shim/out/shim-boot-0086-gfx-raise-120hz.img` SHA-256
+  `536da97e93168dfb361b4ceb9bf1c576fe2066a2a99035174734c188f735d8bc`.
+  **Next gate: 0087 GPUCC CX/GX power and clock/reset release plus an
+  `RBBM_IDENTIFIER` read; the write/boot needs explicit approval.**
+- **0085 hardware result (2026-10-19 20:12):** booted
   `shim/out/shim-boot-0085-arc-readback-120hz.img` with
   `sweetfb_hz=120 sweetgpu=2`. Read-only pull:
   `logs/gpu-arc-probe-agent.txt` (486,461 bytes, flush #432); the user's own
@@ -828,5 +828,8 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   readback, reached SpringBoard, and kept touch/display working. The 30 Hz
   comparison image was not booted. The raw replies and 120 Hz timing
   limits are recorded at the top of this file and in
-  `docs/GPU_PROGRESS.md`. Next: decide whether to approve a raise-only
-  `gfx.lvl` vote with readback; no GPUCC/core/GMU write yet.
+  `docs/GPU_PROGRESS.md`. The raise-only `gfx.lvl` vote (0086) was then
+  approved and passed on 2026-10-19 (see the top section). Next: implement
+  and test 0087 GPUCC CX/GX power and clock/reset release plus the
+  `RBBM_IDENTIFIER` read; that boot/write needs explicit approval. No
+  GPUCC/core/GMU write has been performed yet.
