@@ -765,3 +765,10 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   `39245587501` builds patches through 0085 and requires both ARC-readback
   and scheduler-v2 markers. It supersedes the readback-only run 39244904492.
   No phone reboot or partition write performed in this continuation yet.
+
+- Live-FDT panel capability checked read-only: Xiaomi K6 38/0c/0a node has
+  supported-dfps-list [120, 60], timing@0 1080x2400 at 120. This does not
+  prove the active ABL scanout rate. Recovery DRM modes file was empty.
+- Image packaging will reuse the exact shim kernel/DTB unpacked from the
+  successful 0083 boot image, replacing only the XNU payload. Prepared local
+  research/gpu/package-0085.py for 120 Hz and 30 Hz comparison images.
