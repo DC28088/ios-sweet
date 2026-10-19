@@ -389,7 +389,7 @@ default. A stage is complete only when its gate passes **on the phone**.
 - Fail: readback mismatch, timeout, display regression, or crash. Do not
   proceed to stage 4; recover the log.
 
-### Stage 4 - GPUCC CX/GX power and gated aperture read (built and packaged; first attempt inconclusive)
+### Stage 4 - GPUCC CX power (passed on hardware 2026-10-19)
 
 - Prerequisite: stage 3 passes (done) and the inherited/shared ARC votes are
   understood.
@@ -416,14 +416,25 @@ default. A stage is complete only when its gate passes **on the phone**.
   `RBBM_STATUS3` SMMU-stalled clear and `CP_HW_FAULT` zero.
 - Fail: GDSC poll timeout, `0xFFFFFFFF` aperture reads, SMMU-stalled bit,
   bus hang, panel loss or panic. Stop; do not add clock-tree writes.
-- Approval: stage 4 was approved and attempted once (2026-10-19 ~23:07).
-  The image booted and reached SpringBoard, but the 45 s SweetTouch probe
-  read an all-zero Goodix info page and stopped (`no unique supported IC`);
-  the 60 s `GPUCC CX power v1 starting` marker is absent, so the CX write
-  never ran. The result is inconclusive, not a pass: the touch code is
-  unchanged from 0086, and the phone was force-rebooted before the GPU
-  timer. Log: `logs/gpu-cx-power.txt` (ignored). Stage 5 is not approved and
-  remains blocked until the CX gate passes.
+- **Result 2026-10-19: CX pass.** Patch 0088 replaced the 0087 CX path with
+  `research/gpu/0088-work/bsd/dev/sweet_adreno.{c,h}` and disabled the
+  incomplete GX sequence and core-aperture reads. Image
+  `shim/out/shim-boot-0088-a618-cx-120hz.img` (`sweetgpu=4`, 120 Hz,
+  `sweetfb_noconsole=1`) booted on the phone; touch worked (GT9896,
+  pid 0x39383936) and iOS reached SpringBoard. At 60 s the core logged
+  `SWEET ADRENO: CX result errno=0 control=0xf8228000 status=0x80001fe0
+  waited_us=1` (status bit 31 set); no panic, display and touch survived.
+  Log `logs/gpu-0088-a618-cx.txt` (flush #25, SHA-256
+  `d2d9582d458b68a118db580a31e085f06acf17be7fa4826d47ed3e9c33e77946`).
+  `backboardd` still reports `IOAcceleratorES -> 0 found`. This proves the
+  CX GDSC can be powered from XNU; it does not prove GPU clocks, GX, GMU,
+  SMMU, command submission or rendering.
+- History: the 0087 `sweetgpu=4` attempt (2026-10-19 ~23:07) was
+  inconclusive - the 45 s touch probe read an all-zero Goodix page and
+  stopped, and the phone was rebooted before the 60 s write, so the CX gate
+  was not exercised (`logs/gpu-cx-power.txt`, ignored). The 0088 boot
+  repeated the test with working touch and passed. `sweetgpu=5` (GX) is not
+  approved and remains disabled in 0088.
 
 ### Stage 5 - GMU firmware boot
 
@@ -463,27 +474,40 @@ default. A stage is complete only when its gate passes **on the phone**.
   IOSurface; compare against the software frame.
 - Only after gate C should CoreAnimation switch renderers.
 
-## Test procedure for the current milestone (0087; 0086 below as history)
+## Test procedure for the current milestone (0088; 0087 history below)
 
-Build and boot through CI as usual; do not flash a partition. Patch 0087 is
-already built: CI run `39289968547` is green on `f6f8624`, kernel SHA-256
-`84e2df9780567378af72a955de421c05abb124df3c8d42c07ed02a860f7e8ae7`. Both
-probe images are packaged (stage-4 SHA-256
-`e492aada0c1c495fca92ca599b09c24427a3a3c04d6a38b40435fac2cbbcee59`,
-stage-5 SHA-256 `691a95865b237cff388b340097d2c08a1cfb38da9dbfcfc40b976f5b6244f728`).
-The 0087 image runs `sweetgpu=4` first (CX only): at 60 s it powers the CX
-domain, re-reads the AHB CBCR, and reads the GPU aperture only if that
-branch reports a running clock:
+Build and boot through CI as usual; do not flash a partition. Patch 0088 is
+built and verified: CI run `39299055941` is green on `7321f15`, kernel
+SHA-256 `0d1750b798bb569ed6d7071b764c84782092052c2df77579f47d59fed8066439`.
+The stage-4 image is `shim/out/shim-boot-0088-a618-cx-120hz.img`, SHA-256
+`9d495db439da798f2013cbc79b0d4da7a354aebf27b3f0b5735b0d2251fdedce`.
+`sweetgpu=4` powers CX through the portable A618 core; it never reads the
+GPU aperture, and `sweetgpu=5` (GX) is refused:
 
 ```sh
-fastboot boot shim/out/shim-boot-0087-cx-power-120hz.img
+fastboot boot shim/out/shim-boot-0088-a618-cx-120hz.img
 
 # after iOS runs >= 60 s, recover the persistent log via OrangeFox
-bash tools/sweet-log-pull.sh logs/gpu-cx-power.txt
-rg 'SWEET GPU:|SWEET RPMH:.*ARC|SWEET FB: timing' logs/gpu-cx-power.txt
+bash tools/sweet-log-pull.sh logs/gpu-0088-a618-cx.txt
+rg 'SWEET ADRENO:|SWEET GPU:|SWEET RPMH:.*ARC|SWEET FB: timing' logs/gpu-0088-a618-cx.txt
 ```
 
 Expected markers for `sweetgpu=4`:
+
+```
+SWEET GPU: GPUCC audit v2 at 0x5090000; stage=4, no GMU access
+SWEET GPU: ARC tables read-only complete
+SWEET ADRENO: CX controller v2 scheduled in 60 s; fresh rail checks required
+SWEET ADRENO: CX controller v2 starting; no GPU core access
+SWEET ADRENO: CX result errno=0 control=0xf8228000 status=0x80001fe0 waited_us=1
+SWEET ADRENO: CX controller finished errno=0; rendering unavailable
+```
+
+A non-zero `errno` logs `CX preconditions failed ...; no GPUCC write`. The
+result above is the observed 2026-10-19 pass (`status` bit 31 set, no panic,
+touch and display survived, `IOAcceleratorES -> 0 found` unchanged).
+
+Historical 0087 markers (CX power v1, superseded by the 0088 core):
 
 ```
 SWEET GPU: GPUCC CX power v1 scheduled in 60 s; GX untouched
