@@ -4,23 +4,27 @@
 
 ### >>> UPDATE 2026-10-18 (read first, then the 10-17 handoff below) <<<
 
-### >>> UPDATE 2026-10-19 (Codex audit) <<<
+### >>> UPDATE 2026-10-19 (GPU probe and device-tree capture) <<<
 
-- **Gesture navigation is fixed and hardware-verified.** Patch 0070 restores
-  `pid_hibernate` (SpringBoard had been killed by syscall 435/SIGSYS) and 0071
-  marks contacts beginning within 48 panel pixels of an edge with
-  `kIOHIDDigitizerEventFromEdgeTip`. `logs/boot-0071s.txt` records the test:
-  the bottom swipe returns home and app switcher works. README was updated to
-  reflect this.
-- **GPU work is not yet an implementation.** `docs/GPU_BRINGUP.md` records
-  the Adreno 618 SM7150 windows and a gated sequence beginning with a read-only
-  probe. The missing Apple IOGPU/IOAccelerator interfaces and the separate
-  Adreno firmware/GMU/SMMU stack mean a real Metal driver cannot safely be
-  claimed before that sequence is completed.
-- **This checkout has no usable GitHub CLI credential and no fastboot device
-  attached** (2026-10-19). A local kernel build needs the macOS CI workflow;
-  re-authenticate `gh` before dispatching it. A phone boot still requires the
-  user's unlocked Redmi Note 10 Pro in fastboot and the existing root image.
+- Gesture navigation remains hardware-verified by patches 0070/0071.
+- The Adreno 618 work is still diagnostic phase 1, not a rendering driver.
+  XNU patch 0081 adds an opt-in, read-only GPUCC probe (`sweetgpu=1`); the
+  GitHub Actions `xnu #2` run on commit `8cfc234` succeeded. The downloaded
+  arm64 kernel is in `xnu/out/kernel.development.sweet`, SHA-256
+  `e2be0a0c4151207a82a1d77441c3e793acc0c2261deb1416480bca22be8dd580`.
+  The older kernel was preserved at `/tmp/kernel.development.sweet.pre-0081`.
+- OrangeFox read-only dumps are in ignored `backup/`: `boot.img` (128 MiB),
+  `dtbo.img` (32 MiB), and `live-fdt.dtb` (555,248 bytes). The boot image's
+  base DTB is `dtb/boot_unpacked/dtb`; extracted overlay is
+  `dtb/boot_unpacked/overlay-0.dtb`. The live FDT identifies GPUCC as
+  `qcom,gpucc-sdmmagpie` at `0x05090000`/`0x9000`, Adreno chip ID
+  `0x06010800`, GPU regs at `0x05000000`, GMU at `0x0506a000`, and KGSL SMMU
+  at `0x05040000`. The five probe offsets match Qualcomm's SDM Magpie source.
+- Next: install the AArch64 cross-toolchain and obtain the D22AP ADT from the
+  iPhone10,3 iOS 16.7.16 IPSW; then build the SWEET ADT, payload with
+  `sweetgpu=1`, and temporary shim boot image. `mkbootimg`, host `gcc`, and
+  `cpio` are present. No boot image has been built or fastboot-booted yet.
+  Preserve Android partitions; use `fastboot boot`, never flash boot.
 
 **STATE at end of 2026-10-18 (evening):**
 - On the phone: userdata = **image v15** (`/run/media/dipa/android/ios-sweet-ipsw/ios16-root-20H392-v15.img/.simg`; = v14 + `/private/var/preferences/SystemConfiguration/preferences.plist` with one network service "USB Ethernet": Interface DeviceName ue0 Type Ethernet, IPv4 Manual 192.168.7.2/24 router 192.168.7.1, DNS 1.1.1.1 8.8.8.8, set "Automatic" as CurrentSet). Fallback image v14 (v12/v13 deleted).
