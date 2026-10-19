@@ -47,9 +47,23 @@ firmware, or submit commands. It is disabled by default; pass `sweetgpu=1` to
 opt in. The output is intended to establish the ABL-inherited clock state
 before touching GPU registers.
 
-This is diagnostic bring-up code, not a rendering driver. The probe has not
-been built or run on hardware yet. Do not treat clock-controller values as
-proof that command submission is safe.
+The original CI run on `8cfc234` reported success but silently skipped patch
+0081 because its contexts predated the RPMh/SPMI and USB changes. The packaged
+kernel contained no `SWEET GPU:` strings; the user's saved eight-core boot log
+also contains no probe output. Patch 0081 now applies after patches 0001–0080.
+The workflow fails if any project patch is rejected and checks the GPU version
+marker in the final SWEET kernel.
+
+Patch `0082-sweet-adreno-power-audit.patch` extends `sweetgpu=1` with the
+`GPUCC audit v2` marker, CX/GX GDSCR values, CX hardware power status, GX domain
+clamp/reset bits, block reset, and ten clock-branch snapshots. It only reads
+within the existing GPUCC mapping. CX power status comes from `0x05091540`,
+referenced by the live DT's `hw-ctrl-addr`; GX status is reported raw with bit31
+labeled explicitly, because the DT also contains `qcom,poll-cfg-gdscr`. Neither
+these bits nor the clock-enable bits authorize core/GMU access.
+
+The audit still needs a hardware boot and a recovered persistent log. It does
+not initialize power, submit GPU work, accelerate animations, or enable blur.
 
 ## Required evidence before powering or accessing the Adreno core
 
@@ -60,7 +74,35 @@ proof that command submission is safe.
 - The firmware redistribution status and a recoverable test procedure using
   `fastboot boot`; no boot partition is flashed.
 
-The next implementation change should use those readings to identify the GX
-power state, then add a separately gated read-only Adreno/GMU register probe.
-Keep `sweetgpu` disabled by default until the power-state reads are validated
-against the exact firmware on the phone.
+## Next hardware step
+
+Temporary-boot the audit image with `sweetgpu=1`, let iOS run for at least
+30 seconds, then return to OrangeFox and collect the persistent log:
+
+```sh
+cd ~/ios-sweet
+bash tools/sweet-log-pull.sh logs/gpu-audit-v2.txt
+rg 'SWEET GPU:' logs/gpu-audit-v2.txt
+```
+
+Use those readings to establish the inherited CX/GX state before adding a
+separately gated core/GMU probe or a bounded power transition. Keep `sweetgpu`
+disabled by default. The existing iOS userdata image can be reused.
+
+## Hardware references
+
+The captured live FDT identifies chip ID `0x06010800`, GPUCC at
+`0x05090000`/`0x9000`, GMU at `0x0506a000`/`0x31000`, and KGSL SMMU at
+`0x05040000`/`0x10000`. It confirms CX GDSCR `0x0509106c`, GX GDSCR
+`0x0509100c`, GX block reset `0x05091008`, GX domain `0x05091508`, and
+CX hardware status `0x05091540`.
+
+Primary references, with revisions pinned for reproducibility:
+
+- [Qualcomm GPUCC register definitions](https://android.googlesource.com/kernel/msm/+/2055939b3577edbf42657871ad6bc147af037a82/drivers/clk/qcom/gpucc-sdmmagpie.c)
+- [SM6150 GDSC definitions](https://github.com/LineageOS/android_kernel_xiaomi_sm6150/blob/e03e5ba22586be70673afb5d3c3f70510524e658/arch/arm64/boot/dts/qcom/sm6150-gdsc.dtsi)
+- [Downstream GDSC status interpretation](https://github.com/LineageOS/android_kernel_xiaomi_sm6150/blob/e03e5ba22586be70673afb5d3c3f70510524e658/drivers/clk/qcom/gdsc-regulator.c)
+- [Adreno 618 firmware selection](https://github.com/LineageOS/android_kernel_xiaomi_sm6150/blob/e03e5ba22586be70673afb5d3c3f70510524e658/drivers/gpu/msm/adreno-gpulist.h):
+  `a630_sqe.fw`, `a618_gmu.bin`, and `a615_zap`. Obtain matching firmware
+  from this device before implementing uploads; filenames alone are not
+  proof of a compatible firmware version.
