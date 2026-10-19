@@ -5,6 +5,25 @@ This document is the resumable record of the Adreno 618 work on `sweet`
 **implemented but unverified code** and from **plans**. Read it with
 `NOTES.md` and `docs/GPU_BRINGUP.md`.
 
+## 120 Hz presentation experiment (patch 0085)
+
+The user requested 120 Hz framebuffer presentation. `sweetfb_hz=120` now
+selects a 120 Hz software timer and attempts presentation on every callback;
+the earlier implementation treated every value >=60 as 60 Hz. Lower rates
+remain selectable, with fractional pacing for values that do not divide 60.
+Absolute deadlines exclude copy time from the nominal period; late callbacks
+skip expired slots rather than creating a catch-up burst.
+
+Every ten seconds the log reports `window_ms`, `callbacks`, `present_calls`
+and `missed_deadlines`. `present_calls * 1000 / window_ms` measures calls to
+the software presentation path, not distinct rendered frames or physical
+scanout. Compare animation windows with the same workload at 30 and 120 Hz.
+
+The captured live DT's Xiaomi K6 panel node lists dynamic modes 120 and
+60 Hz, with a 120 Hz timing entry. This is panel capability/configuration
+metadata, not a measurement of ABL's active scanout. This patch does not send
+DSI mode commands, change GPU clocks, or supply Metal acceleration.
+
 ## Current correction: patch 0084
 
 The latest recovered boot log, `logs/gpu-opencode-0083.txt`, confirms the
