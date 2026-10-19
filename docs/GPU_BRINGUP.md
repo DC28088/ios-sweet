@@ -77,18 +77,24 @@ not initialize power, submit GPU work, accelerate animations, or enable blur.
 
 ## Next hardware step
 
-Temporary-boot the audit image with `sweetgpu=1`, let iOS run for at least
+Patch `0083-sweet-adreno-arc-vote.patch` implements the next two stages:
+read-only ARC level tables with `sweetgpu=1`, then LOW_SVS votes for
+`mx.lvl`/`cx.lvl`/`gfx.lvl` with `sweetgpu=2`. Both are still opt-in and
+perform no GPUCC writes. The detailed pass/fail gates and the later stages
+are in `docs/GPU_PROGRESS.md`.
+
+Temporary-boot the stage-2 image with `sweetgpu=1`, let iOS run for at least
 30 seconds, then return to OrangeFox and collect the persistent log:
 
 ```sh
 cd ~/ios-sweet
-bash tools/sweet-log-pull.sh logs/gpu-audit-v2.txt
-rg 'SWEET GPU:' logs/gpu-audit-v2.txt
+bash tools/sweet-log-pull.sh logs/gpu-arc-probe.txt
+rg 'SWEET GPU:|SWEET RPMH:.*ARC' logs/gpu-arc-probe.txt
 ```
 
-Use those readings to establish the inherited CX/GX state before adding a
-separately gated core/GMU probe or a bounded power transition. Keep `sweetgpu`
-disabled by default. The existing iOS userdata image can be reused.
+Require all three ARC tables and `SWEET GPU: ARC tables read-only complete`
+before testing `sweetgpu=2`. Keep `sweetgpu` disabled by default. The
+existing iOS userdata image can be reused.
 
 ## Hardware references
 

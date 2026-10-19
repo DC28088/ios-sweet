@@ -95,6 +95,7 @@ jobs:
           grep -F 'sweet_gpu_probe();' dxb/xnu/bsd/dev/sweet_ufs.c
           CONFIG=$(printf '%s' "$KERNEL_CONFIG" | tr '[:upper:]' '[:lower:]')
           grep -aFq 'SWEET GPU: GPUCC audit v2' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
+          grep -aFq 'SWEET GPU: ARC tables read-only complete' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
 
       - name: Package build tree for local compiles
         if: always()
