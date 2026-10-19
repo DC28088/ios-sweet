@@ -51,11 +51,12 @@ GPUCC still reported both domains collapsed and every sampled CBCR off.
 `backboardd` still logged `IOAcceleratorES -> 0 found`. No GPU command,
 firmware load or rendered pixel was produced.
 
-The 120 Hz timer itself ran: about 1200 callbacks per 10 s. In active
-windows the software path made only 45-86 `present_calls` per 10 s and
-missed up to 287 deadlines. This measures timer callbacks and calls into the
-CPU copy path, not rendered frames or panel scanout. The physical panel mode
-remains whatever ABL selected; 120 fps is not established.
+The 120 Hz timer itself ran: about 1200 callbacks per 10 s. Across the
+eight active windows, the software path made only 4-86 `present_calls` per
+10 s (45-86 after the first partial window) and missed up to 374 deadlines.
+This measures timer callbacks and calls into the CPU copy path, not rendered
+frames or panel scanout. The physical panel mode remains whatever ABL
+selected; 120 fps is not established.
 
 ## Current correction: patch 0084
 
