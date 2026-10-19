@@ -2,12 +2,32 @@
 
 ## Current local device state (2026-10-19, read first)
 
+- **Latest continuation / 0084:** user reports the OpenCode/DeepSeek build
+  boots but remains slow; phone is back in OrangeFox. Pulled
+  `logs/gpu-opencode-0083.txt` (220,473 bytes, flush 9) read-only. It confirms
+  `stage=1`, three ARC tables, CX/GX still collapsed, and no IOAcceleratorES.
+  The 0083 read-only hardware gate passed; no ARC write was exercised.
+- **Power-code correction:** 0083's fixed LOW_SVS votes could replace a
+  higher inherited APPS vote. DT regulator minimum/init constraints do not
+  establish ABL's current vote. Patch 0084 removes that write API and makes
+  `sweetgpu=2` deferred ARC READ transactions (MSGID WRITE clear, response
+  register 0x40), using the same lock/TCS ownership as touch. It waits 60 s
+  and requires successful L11C setup before issuing the first read. Timeout
+  quarantines the controller without retry. Replies are raw evidence, not
+  yet established local-vote indices. No GPUCC/core/GMU writes are added.
+- ARC aux parsing now requires even alignment and observed version 0x1000,
+  checks all trailing padding, and keeps consumer levels in u32 (65535+1
+  must not wrap). CI must contain the `ARC readback v1 starting` marker.
+  0084 is prepared locally; build/device results pending. Full acceleration,
+  firmware execution, command submission, Metal compatibility and an
+  iPhone 8 performance comparison remain unimplemented/unmeasured.
+
 - **Latest GPU hardware result:** audit source d37d1ca boots to iOS (user
   confirmed). `logs/gpu-audit-v2.txt` contains the complete v2 audit:
   CX_GDSCR=0x222001, CX_HW_CTRL=0x5ff4, GX_GDSCR=0x222001,
   GX_DOMAIN=1, GX_BCR=0; every sampled CBCR has CLK_OFF set. Both domains
   collapsed; GX clamped. No GPU/core/GMU writes or acceleration implemented.
-- **New ARC milestone (implemented, not yet CI-built or device-tested):**
+- **Historical 0083 milestone (superseded by 0084 below):**
   `xnu/patches/0083-sweet-adreno-arc-vote.patch` adds read-only ARC level
   tables for `mx.lvl`/`cx.lvl`/`gfx.lvl` with `sweetgpu=1`, and LOW_SVS (65)
   votes in order mx, cx, gfx with `sweetgpu=2`. It refuses selector 0 (off),
@@ -29,7 +49,7 @@
   Commit `d37d1ca` pushed to myfork; CI run `39228692751` succeeded,
   including the GPU marker check. Local ARM64 and real XNU compiles passed.
   Packaged `shim/out/shim-boot-0082-gpu-audit.img` and temporarily booted it
-  successfully via host fastboot. iOS/hardware audit outcome is pending.
+  successfully via host fastboot. iOS boot and hardware audit were confirmed.
 - User clarifies lag: quick taps, animations below 20 fps, blur absent.
   Do not rebuild/reflash the iOS root for this GPU diagnostic.
 - This user now reports iOS userland boots using
