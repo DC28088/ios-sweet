@@ -512,3 +512,19 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   is detached and no completed outputs exist), then rebuilds. Run
   `bash tools/build-apfs-reader.sh` first. Shell syntax checks pass; actual
   decompression and full rebuild remain unverified. No phone writes occurred.
+- Current reader built successfully; its compressed-file check passed. The
+  13:29 host build copied OS, SystemOS, and AppOS and created the cryptex links.
+  Root now uses about 12 GiB within a 16 GiB image. It stopped at the final
+  read-only fsck, before running `sweet-root-tweaks.py` or generating `.simg`.
+- Investigated fsck locally on the detached image: `fsck.hfsplus -f -y` and
+  `-d -f -y` both finish with exit 0, volume OK. `-d -f -n` reports only
+  primary-header result 35 (Linux EDEADLK), VIStat 0x8000; catalog/extents/
+  bitmap statuses are zero. The upstream checker cache returns EDEADLK for
+  conflicting active buffers. Logs: `research/ipsw-x/fsck-*.log`.
+- Removed the failing `-n` pass from `mkiosroot.sh` and stopped swallowing
+  the repair pass's exit status. Host wrapper now supports `--resume-root`:
+  unmount leftover `/tmp/tmp.osCkEDttNv/{appos,sysos,os}`, confirm the image is
+  detached, run full write-enabled fsck, apply tweaks, verify contents, unmount,
+  check again, generate sparse image and checksums. Next host command:
+  `bash research/ipsw-x/build-root.sh --resume-root`. Keep the completed copy;
+  do not restart from scratch. Both modified scripts pass `bash -n`.
