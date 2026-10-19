@@ -493,3 +493,22 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   deleted download chunks after the check. Added `sync -f "$work"` immediately
   after downloads and before measuring space. Current space passes the 26 GiB
   guard; rerun the same build command. No root image has been created yet.
+- Next host attempt failed during the OS rsync with thousands of source EIOs;
+  user interrupted it. Installed Fedora reader is
+  `apfs-fuse-0-30.20200928gitee71aa5.fc43`, predating upstream LZBITMAP support.
+  The incomplete `research/ipsw-x/ios16-root-20H392.img` is 16 GiB logical /
+  about 2.7 GiB allocated. Old APFS mounts remain at
+  `/tmp/tmp.4YfH05ONll/{os,sysos,appos}`; HFS output is no longer attached.
+- Fetched upstream APFS source with submodule into ignored
+  `research/apfs-fuse-current`, pinned at
+  `66b86bd525e8cb90f9012543be89b1f092b75cf3` (includes LZBITMAP decoder).
+  New `tools/build-apfs-reader.sh` builds it locally with current CMake/GCC
+  compatibility flags. User was asked to install cmake, gcc-c++, fuse3-devel,
+  zlib-ng-compat-devel, bzip2-devel; compilation is pending those dependencies.
+- `tools/mkiosroot.sh` now accepts APFS_FUSE and verifies a known compressed
+  plist before output creation. Local host wrapper selects the new binary;
+  `bash research/ipsw-x/build-root.sh --restart-partial` unmounts the old
+  session mounts and removes only the incomplete HFS+ image (after checking it
+  is detached and no completed outputs exist), then rebuilds. Run
+  `bash tools/build-apfs-reader.sh` first. Shell syntax checks pass; actual
+  decompression and full rebuild remain unverified. No phone writes occurred.

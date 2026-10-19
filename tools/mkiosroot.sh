@@ -21,6 +21,9 @@ set -euo pipefail
 [[ $# -ge 4 ]] || { sed -n '2,12p' "$0"; exit 2; }
 os=$(realpath "$1") sysos=$(realpath "$2") appos=$(realpath "$3") out=$4 size=${5:-16G}
 [[ ! -e $out ]] || { echo "refusing to overwrite $out" >&2; exit 1; }
+apfs_reader=$(command -v "${APFS_FUSE:-apfs-fuse}") || {
+	echo "APFS reader not found: ${APFS_FUSE:-apfs-fuse}" >&2; exit 1;
+}
 
 work=$(mktemp -d)
 mounts=()
@@ -49,12 +52,28 @@ apfs_mount() {
 	ln -s "$1" "$work/$2.dmg"
 	mkdir "$work/$2"
 	# As root: a user's FUSE mount is unreadable to the root rsync below.
-	sudo "$(command -v apfs-fuse)" "$work/$2.dmg" "$work/$2"
+	sudo "$apfs_reader" "$work/$2.dmg" "$work/$2"
 	mounts+=("$work/$2")
 }
 apfs_mount "$os" os
 apfs_mount "$sysos" sysos
 apfs_mount "$appos" appos
+
+# Older packaged readers mount these volumes but cannot decode LZBITMAP files.
+# Check a known compressed plist before creating or copying into the output.
+sudo python3 - "$work/os/root" <<'PY'
+import os, plistlib, sys
+root = sys.argv[1]
+for rel in ('System/Library/CoreServices/SystemVersion.plist',
+            'System/Library/LinguisticData/RequiredAssets_sv.bundle/Info.plist'):
+    try:
+        with open(os.path.join(root, rel), 'rb') as f:
+            plistlib.load(f)
+    except OSError as e:
+        sys.exit(f'APFS read failed for {rel}: {e}. '
+                 'Use an apfs-fuse build with LZBITMAP support via APFS_FUSE.')
+print('APFS compressed-file read check passed.')
+PY
 
 truncate -s "$size" "$out"
 mkfs.hfsplus -s -J -v iOSRoot "$out"
