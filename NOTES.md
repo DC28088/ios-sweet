@@ -688,3 +688,15 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   kernel copy was used for the successful boot. Original gh download session
   39357 may still be fetching the same artifact into its separate ignored
   output directory; do not confuse it with the verified xnu/out-0082-range.
+
+- **2026-10-19 ARC milestone build:** commit 9b446e6 (kernel/patches/docs)
+  pushed to myfork/codex/adreno-power-audit. GitHub Actions `xnu` run
+  **39239651278** succeeded, including both marker checks (`GPUCC audit v2`
+  and `ARC tables read-only complete`). Docs follow-up f189a5d adds the
+  guest IOGPU/AGXMetalA11 symbol evidence; it does not change the kernel.
+  The kernel artifact is downloading to `xnu/out-0083` (full artifact was
+  slow on 2026-10-19; use ZIP-range retrieval if needed). No device boot yet.
+  Next: package `sweetgpu=1` stage-2 image (read-only ARC tables) from this
+  kernel, ask the user for approval, boot it temporarily, and recover the
+  log before any `sweetgpu=2` vote. Exact gate criteria and expected markers
+  are in `docs/GPU_PROGRESS.md`.
