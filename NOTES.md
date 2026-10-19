@@ -2,6 +2,14 @@
 
 ## Current local device state (2026-10-19, read first)
 
+- **User requested 120 Hz presentation:** patch 0085 makes sweetfb_hz=120
+  select a 120 Hz software timer and present every callback (0083 and older
+  silently capped it at 60 Hz). Uses absolute deadlines, skips missed slots,
+  and logs callback/present-call counts every ten seconds. The experimental
+  image will set sweetfb_hz=120 with sweetgpu=2 ARC readback. Physical panel
+  mode is inherited from ABL and unchanged; 120 fps/GPU acceleration is not
+  established. Lower-rate fallback remains available via sweetfb_hz=30.
+
 - **Latest continuation / 0084:** user reports the OpenCode/DeepSeek build
   boots but remains slow; phone is back in OrangeFox. Pulled
   `logs/gpu-opencode-0083.txt` (220,473 bytes, flush 9) read-only. It confirms
@@ -733,3 +741,22 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   Boot v2 unpack, embedded payload match and ARC marker all verified. Phone
   is in fastboot; sandbox fastboot has no USB access, so the user must run
   the temporary boot from the host.
+
+### 2026-10-19 continuation after external-agent build
+
+- Read-only pull from OrangeFox saved `logs/gpu-opencode-0083.txt`. The
+  source 9b446e6 image ran stage 1, printed all ARC tables, and kept touch and
+  iOS working. No ARC vote, GPU power-on or GPU rendering occurred.
+- Committed/pushed 0084 correction as `352601e`; CI `39244904492` is running
+  on that exact source. Only 0084 `sweetgpu=2` is suitable for the next
+  readback experiment; do not use 0083 mode 2, which writes fixed votes.
+- The prepared image still uses `sweetfb_hz=30`. The framebuffer timer also
+  rearms after presentation work, so actual presentation can be slower than
+  that cap. No current frame-time benchmark establishes the cost breakdown.
+  Do not promise iPhone 8 performance from GPU power or a framebuffer copy.
+- Qualcomm's 2025-11-21 rpmh_read discussion says resource reads return the
+  current setting, without separate active/sleep/wake values. This does not
+  yet establish this board's ARC response encoding/local vote semantics.
+  Reference: https://lists.openwall.net/linux-kernel/2025/11/21/534
+  Hardware raw response is the next prerequisite; readback was not claimed
+  to be an inherited vote in the new code.
