@@ -2,9 +2,23 @@
 
 ## Current local device state (2026-10-19, read first)
 
+- **0087 stage-4 attempt inconclusive (2026-10-19 ~23:07 local, read first):**
+  `fastboot boot shim/out/shim-boot-0087-cx-power-120hz.img` booted and
+  reached SpringBoard, but the 45 s SweetTouch probe read an all-zero Goodix
+  info page (`0x4022` zeros, `pid=00000000`) and logged
+  `SWEET TOUCH: no unique supported IC (goodix=0 fts=0 dead=0); stopping`;
+  touch was dead. The 60 s marker `GPUCC CX power v1 starting` is absent
+  from the log, so the CX GDSC write never executed: this is **not** a CX
+  gate result, and the touch code is unchanged from 0086 (whose probe
+  selected GT9896). No panic. The phone was force-rebooted before 60 s and
+  is now in OrangeFox. Read-only log: `logs/gpu-cx-power.txt` (167,754
+  bytes, flush #5, SHA-256
+  `daa90d47582dcd4f8decb37ea8792e667bb596c758853ee70d812ca972ee1876`).
+  Next: cold-boot and retry stage 4, or fall back to the 0086 image; stage 5
+  remains blocked.
 - **0086 hardware result: raise-only `gfx.lvl` passed (2026-10-19 ~21:35
-  local, read first):** the 0086 image booted on the phone; iOS reached
-  SpringBoard and stayed usable (lag remains, as expected with no GPU). At
+  local):** the 0086 image booted on the phone; iOS reached SpringBoard and
+  stayed usable (lag remains, as expected with no GPU). At
   60 s the kernel re-read `mx.lvl` (`0x3`, level 321) and `cx.lvl` (`0x5`,
   level 257) read-only, then read `gfx.lvl` (`0x0`, level 1), wrote selector
   2 (consumer level 65, LOW_SVS), and read back `0x2`; the log records
@@ -17,7 +31,7 @@
   `f7f95c9f4ff87a0856e2b5149577cd974c1a292b2220ab524fed99503a31aa95`;
   image `shim/out/shim-boot-0086-gfx-raise-120hz.img` SHA-256
   `536da97e93168dfb361b4ceb9bf1c576fe2066a2a99035174734c188f735d8bc`.
-- **0087 built and packaged, boot pending (2026-10-19 ~23:05 local):** patch
+- **0087 built and packaged; stage-4 attempt made (2026-10-19 ~23:05 local):** patch
   `0087-sweet-adreno-gpucc-power.patch` adds `sweetgpu=4` (CX GDSC power,
   then a GPU-aperture register read only if the AHB CBCR reports a running
   clock) and `sweetgpu=5` (raise-only `gfx.lvl`, then CX, then GX BCR pulse,
@@ -38,10 +52,9 @@
   `e492aada0c1c495fca92ca599b09c24427a3a3c04d6a38b40435fac2cbbcee59`) and
   `shim/out/shim-boot-0087-cx-gx-power-120hz.img` (stage 5, SHA-256
   `691a95865b237cff388b340097d2c08a1cfb38da9dbfcfc40b976f5b6244f728`).
-  **No 0087 boot is approved yet; `sweetgpu=4` must pass before
-  `sweetgpu=5`.** Next action: with explicit user approval, `fastboot boot`
-  the stage-4 image, pull `logs/gpu-cx-power.txt` via OrangeFox after >=60 s,
-  then ask before booting stage 5.
+  **Stage 4 was approved and attempted once (see the top bullet); the
+  result is inconclusive because the CX write never ran. Stage 5 is not
+  approved and remains blocked until the CX gate passes.**
 - **0085 hardware result (2026-10-19 20:12):** booted
   `shim/out/shim-boot-0085-arc-readback-120hz.img` with
   `sweetfb_hz=120 sweetgpu=2`. Read-only pull:
