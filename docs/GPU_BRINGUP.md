@@ -62,7 +62,8 @@ referenced by the live DT's `hw-ctrl-addr`; GX status is reported raw with bit31
 labeled explicitly, because the DT also contains `qcom,poll-cfg-gdscr`. Neither
 these bits nor the clock-enable bits authorize core/GMU access.
 
-The audit still needs a hardware boot and a recovered persistent log. It does
+CI run `39228692751` built the audit kernel, and the user reports it reaches
+the iOS home screen. The recovered log confirms the audit completed. It does
 not initialize power, submit GPU work, accelerate animations, or enable blur.
 
 ## Required evidence before powering or accessing the Adreno core
@@ -121,3 +122,37 @@ The vendor properties report `V14.0.8.0.TKFMIXM`, build ID
 vendor fingerprint includes an Android version value of `15`; this property
 alone does not establish the original stock Android release or that the vendor
 partition is unmodified.
+
+## First hardware audit result (2026-10-19)
+
+Temporary boot of source `d37d1ca` reached iOS. The persistent log was recovered
+into ignored `logs/gpu-audit-v2.txt`; the probe's completion marker is present.
+
+| GPUCC register | Captured value |
+| --- | --- |
+| CX GDSCR | `0x00222001` |
+| CX hardware control | `0x00005ff4` |
+| GX GDSCR | `0x00222001` |
+| GX domain clamp/reset | `0x00000001` |
+| GX block reset | `0x00000000` |
+
+Both GDSCRs have software-collapse set, CX hardware status has power-on clear,
+and GX is clamped. All ten sampled CBCRs have CLK_OFF set. AHB/CXO/GX_CXO
+have enable set despite reporting CLK_OFF, so enable alone cannot establish a
+running clock. Do not access the core or GMU in this state.
+
+### Next implementation boundary
+
+The live DT routes GPU supplies through **ARC level regulators**: `cx.lvl`,
+`mx.lvl`, and `gfx.lvl`. CX also has an MX parent supply. These are encoded
+performance levels, not millivolt VRM commands. The existing
+`sweet_rpmh_vreg_enable()` only implements PM6150L L11C VRM requests for touch;
+it cannot be reused unchanged for GPU power.
+
+Before enabling GDSCs or clock roots, implement serialized ARC voting with
+command-DB level-table validation, account for inherited/shared CX/MX votes,
+and give every transaction a bounded completion path. Then implement a gated
+CX/clock transition using the matching `qcom,gpucc-sdmmagpie` definitions;
+record before/after status and keep GX clamped/reset until its prerequisites
+are satisfied. GMU/SMMU, firmware execution, command submission and the iOS
+rendering interface are still unimplemented.
