@@ -14,7 +14,8 @@
   Workflow now rejects skipped project patches and requires marker in kernel.
   Commit `d37d1ca` pushed to myfork; CI run `39228692751` succeeded,
   including the GPU marker check. Local ARM64 and real XNU compiles passed.
-  Artifact download/boot packaging and hardware audit are pending.
+  Packaged `shim/out/shim-boot-0082-gpu-audit.img` and temporarily booted it
+  successfully via host fastboot. iOS/hardware audit outcome is pending.
 - User clarifies lag: quick taps, animations below 20 fps, blur absent.
   Do not rebuild/reflash the iOS root for this GPU diagnostic.
 - This user now reports iOS userland boots using
@@ -622,3 +623,20 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
 - CI 39228692751 completed successfully on source d37d1ca. Both the full
   kernel compile and the required GPU marker check passed. Downloading the
   xnu-kernel artifact to xnu/out-0082-gpu-audit; no new boot yet.
+
+- GPU audit kernel downloaded with ZIP ranges (the full artifact download was
+  slow). Local path xnu/out-0082-range/kernel.development.sweet, SHA-256
+  3eaf43cb6839bcf16cf3bf629e3e998c22f54c38b7e0f32a036b3096821c7e8a.
+  ZIP CRC and artifact SHA256SUMS match; GPUCC audit v2 marker is present.
+- Packaged shim/out/shim-boot-0082-gpu-audit.img (17,149,952 bytes), SHA-256
+  545174a46ed0d83716691cd2978d91ad2eac62cdd3b9a454de66065513c33205.
+  Embedded ramdisk matches intended payload; boot v2 header verified. ADT
+  and boot args match tested eight-core image, including sweetgpu=1 and
+  sweetfb_hz=30; no sweetusb. Original known-good images preserved.
+- Rebooted OrangeFox to fastboot. Sandboxed fastboot timed out because it
+  could not access the device; host escalation succeeded: Sending boot.img
+  OKAY (0.522 s), Booting OKAY (0.130 s). Temporary RAM boot only, no flash.
+  User said "it flashed"; clarified temporary boot and asked for home screen
+  result, then Power+VolDown back to FASTBOOT after 30 seconds. Next: host
+  fastboot boot recovery/recovery.img, then read persistent log into
+  logs/gpu-audit-v2.txt. Need actual SWEET GPU lines before any power writes.
