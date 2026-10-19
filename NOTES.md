@@ -7,8 +7,15 @@
   CX_GDSCR=0x222001, CX_HW_CTRL=0x5ff4, GX_GDSCR=0x222001,
   GX_DOMAIN=1, GX_BCR=0; every sampled CBCR has CLK_OFF set. Both domains
   collapsed; GX clamped. No GPU/core/GMU writes or acceleration implemented.
-  Next phase is ARC cx.lvl/mx.lvl/gfx.lvl voting and the matching GPUCC power
-  sequence; existing L11C VRM helper cannot drive ARC levels unchanged.
+- **New ARC milestone (implemented, not yet CI-built or device-tested):**
+  `xnu/patches/0083-sweet-adreno-arc-vote.patch` adds read-only ARC level
+  tables for `mx.lvl`/`cx.lvl`/`gfx.lvl` with `sweetgpu=1`, and LOW_SVS (65)
+  votes in order mx, cx, gfx with `sweetgpu=2`. It refuses selector 0 (off),
+  validates aux length/alignment/monotonic levels, and bounds each RPMH
+  transaction at 200 ms. It performs no GPUCC power/clock/reset writes and no
+  GPU/GMU access. Design, evidence and pass/fail gates are in
+  `docs/GPU_PROGRESS.md`. Next: commit/push, CI, then ask approval to
+  temporarily boot `sweetgpu=1` (tables only) before `sweetgpu=2` (votes).
 - GPU work now on branch `codex/adreno-power-audit`. The 0081 artifact was
   incorrectly labeled as containing the GPU probe: CI run 39205190400 skipped
   patch 0081 (bsd/conf/files and sweet_ufs.c context failures). Its kernel and
