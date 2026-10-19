@@ -772,3 +772,27 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
 - Image packaging will reuse the exact shim kernel/DTB unpacked from the
   successful 0083 boot image, replacing only the XNU payload. Prepared local
   research/gpu/package-0085.py for 120 Hz and 30 Hz comparison images.
+
+- **0085 artifact pulled and both images built (2026-10-19 ~18:15 local).**
+  `gh run download 39245587501 -R DC28088/ios-sweet -n xnu-kernel` into
+  `xnu/out-0085`; source `c056996`. Kernel `kernel.development.sweet`
+  (17,223,168 bytes, SHA-256
+  `c5111aaefb5d37c1c783f4c5f4d5e7913587db73be4aed77e562af216f26406f`)
+  matches the artifact SHA256SUMS and contains both required markers
+  (`SWEET GPU: ARC readback v1 starting`, `SWEET FB: scheduler v2
+  requested=`). `research/gpu/package-0085.py` then built the comparison
+  pair from the 0083 boot image's unpacked shim kernel/DTB and
+  `shim/out/sweet.adt`:
+  - `shim/out/shim-boot-0085-arc-readback-120hz.img` (17,149,952 bytes,
+    SHA-256 `65ce7fcfba318657577b0aaaac7579b445117c935d7c43cf6dcecade95366dda`),
+    cmdline keeps everything from 0083 plus `sweetfb_hz=120 sweetgpu=2`.
+  - `shim/out/shim-boot-0085-arc-readback-30hz.img` (17,149,952 bytes,
+    SHA-256 `e111d6469bf195912f5fa0fc464ca482ced37c1d88f30fbd1952d37f4b3e53ae`),
+    same cmdline with `sweetfb_hz=30`.
+  Both v2 unpacks verified: shim kernel and DTB byte-identical to
+  `shim/out/check-0083-readback-base`, embedded payload equal to a fresh
+  deterministic `mkpayload.py` run. Manifest with full cmdlines:
+  `research/gpu/0085-boot-manifest.json`. **Not booted; phone state
+  unchanged.** Next: temporary host `fastboot boot` of the 120 Hz image,
+  run iOS at least two minutes, recover via OrangeFox and compare the
+  `SWEET FB: scheduler v2` window stats against the 30 Hz image.
