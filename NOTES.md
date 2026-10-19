@@ -2,19 +2,30 @@
 
 ## Current local device state (2026-10-19, read first)
 
-- **User requested 120 Hz presentation:** patch 0085 makes sweetfb_hz=120
-  select a 120 Hz software timer and present every callback (0083 and older
-  silently capped it at 60 Hz). Uses absolute deadlines, skips missed slots,
-  and logs callback/present-call counts every ten seconds. The experimental
-  image will set sweetfb_hz=120 with sweetgpu=2 ARC readback. Physical panel
-  mode is inherited from ABL and unchanged; 120 fps/GPU acceleration is not
-  established. Lower-rate fallback remains available via sweetfb_hz=30.
+- **0085 hardware result (2026-10-19 20:12, read first):** booted
+  `shim/out/shim-boot-0085-arc-readback-120hz.img` with
+  `sweetfb_hz=120 sweetgpu=2`. Read-only pull:
+  `logs/gpu-arc-probe-agent.txt` (486,461 bytes, flush #432); the user's own
+  `logs/gpu-arc-probe.txt` may be a duplicate. iOS reached SpringBoard with
+  eight CPUs, touch and framebuffer updates; no panic. The 0084 ARC READ
+  path completed for all three rails: `mx.lvl` raw 0x3 (index 3 -> 321),
+  `cx.lvl` raw 0x5 (index 5 -> 257), `gfx.lvl` raw 0 (index 0 -> 1). The
+  reply encoding is not proven; raw 0 is consistent with the off selector or
+  no APPS vote. GPUCC remained collapsed, every GPU CBCR was off, and
+  `backboardd` still logged `IOAcceleratorES -> 0 found`; no GPU command,
+  firmware load or rendering occurred.
+- **120 Hz presentation result:** patch 0085 ran the software timer at
+  120 Hz (1200 callbacks/10 s), but active windows showed only 45-86
+  `present_calls`/10 s and up to 287 missed deadlines. Physical panel mode
+  is inherited from ABL and unchanged. This does not establish 120 fps or
+  GPU acceleration; `sweetfb_hz=30` remains the lower-rate fallback.
 
-- **Latest continuation / 0084:** user reports the OpenCode/DeepSeek build
-  boots but remains slow; phone is back in OrangeFox. Pulled
-  `logs/gpu-opencode-0083.txt` (220,473 bytes, flush 9) read-only. It confirms
-  `stage=1`, three ARC tables, CX/GX still collapsed, and no IOAcceleratorES.
-  The 0083 read-only hardware gate passed; no ARC write was exercised.
+- **Latest continuation / 0084:** the OpenCode/DeepSeek 0083 build booted
+  but remained slow; phone was returned to OrangeFox.
+  `logs/gpu-opencode-0083.txt` (220,473 bytes, flush 9) confirms `stage=1`,
+  three ARC tables,
+  CX/GX still collapsed, and no IOAcceleratorES. The read-only table gate
+  passed; no ARC write was exercised.
 - **Power-code correction:** 0083's fixed LOW_SVS votes could replace a
   higher inherited APPS vote. DT regulator minimum/init constraints do not
   establish ABL's current vote. Patch 0084 removes that write API and makes
@@ -26,12 +37,12 @@
 - ARC aux parsing now requires even alignment and observed version 0x1000,
   checks all trailing padding, and keeps consumer levels in u32 (65535+1
   must not wrap). CI must contain the `ARC readback v1 starting` marker.
-  0084 is prepared locally; build/device results pending. Full acceleration,
-  firmware execution, command submission, Metal compatibility and an
-  iPhone 8 performance comparison remain unimplemented/unmeasured.
+  0084/0085's hardware readback passed (above). Full acceleration, firmware
+  execution, command submission, Metal compatibility and an iPhone 8
+  performance comparison remain unimplemented/unmeasured.
 
-- **Latest GPU hardware result:** audit source d37d1ca boots to iOS (user
-  confirmed). `logs/gpu-audit-v2.txt` contains the complete v2 audit:
+- **Prior GPU hardware result (0082):** audit source d37d1ca boots to iOS
+  (user confirmed). `logs/gpu-audit-v2.txt` contains the complete v2 audit:
   CX_GDSCR=0x222001, CX_HW_CTRL=0x5ff4, GX_GDSCR=0x222001,
   GX_DOMAIN=1, GX_BCR=0; every sampled CBCR has CLK_OFF set. Both domains
   collapsed; GX clamped. No GPU/core/GMU writes or acceleration implemented.
@@ -42,8 +53,9 @@
   validates aux length/alignment/monotonic levels, and bounds each RPMH
   transaction at 200 ms. It performs no GPUCC power/clock/reset writes and no
   GPU/GMU access. Design, evidence and pass/fail gates are in
-  `docs/GPU_PROGRESS.md`. Next: commit/push, CI, then ask approval to
-  temporarily boot `sweetgpu=1` (tables only) before `sweetgpu=2` (votes).
+  `docs/GPU_PROGRESS.md`. The read-only tables and the 0084 READ path were
+  booted on hardware; the 0083 fixed-vote mode remains unapproved and
+  unbooted.
 - GPU work now on branch `codex/adreno-power-audit`. The 0081 artifact was
   incorrectly labeled as containing the GPU probe: CI run 39205190400 skipped
   patch 0081 (bsd/conf/files and sweet_ufs.c context failures). Its kernel and
@@ -792,7 +804,11 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   Both v2 unpacks verified: shim kernel and DTB byte-identical to
   `shim/out/check-0083-readback-base`, embedded payload equal to a fresh
   deterministic `mkpayload.py` run. Manifest with full cmdlines:
-  `research/gpu/0085-boot-manifest.json`. **Not booted; phone state
-  unchanged.** Next: temporary host `fastboot boot` of the 120 Hz image,
-  run iOS at least two minutes, recover via OrangeFox and compare the
-  `SWEET FB: scheduler v2` window stats against the 30 Hz image.
+  `research/gpu/0085-boot-manifest.json`. **The 120 Hz image was
+  temporarily booted (2026-10-19 20:12) and the persistent log was pulled
+  read-only to `logs/gpu-arc-probe-agent.txt`.** It passed the 60 s ARC
+  readback, reached SpringBoard, and kept touch/display working. The 30 Hz
+  comparison image was not booted. The raw replies and 120 Hz timing
+  limits are recorded at the top of this file and in
+  `docs/GPU_PROGRESS.md`. Next: decide whether to approve a raise-only
+  `gfx.lvl` vote with readback; no GPUCC/core/GMU write yet.

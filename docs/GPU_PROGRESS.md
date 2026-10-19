@@ -24,6 +24,39 @@ The captured live DT's Xiaomi K6 panel node lists dynamic modes 120 and
 metadata, not a measurement of ABL's active scanout. This patch does not send
 DSI mode commands, change GPU clocks, or supply Metal acceleration.
 
+## 0085 hardware result: 120 Hz timer and ARC READ (2026-10-19)
+
+The 120 Hz image was temporarily booted with
+`shim/out/shim-boot-0085-arc-readback-120hz.img` and
+`sweetfb_hz=120 sweetgpu=2`; the read-only pull is
+`logs/gpu-arc-probe-agent.txt` (486,461 bytes, flush #432). iOS reached
+SpringBoard with eight CPUs, touch and framebuffer updates; there was no
+panic or display regression.
+
+The 0084 READ path completed all three resources after its 60 s delay:
+
+| Resource | Raw reply | Table index | Consumer level | Reading |
+| --- | --- | --- | --- | --- |
+| `mx.lvl` | `0x3` | 3 | 321 | high (NOM_L1 if selector) |
+| `cx.lvl` | `0x5` | 5 | 257 | high (NOM if selector) |
+| `gfx.lvl` | `0x0` | 0 | 1 | off/minimum or no vote |
+
+The values are raw RPMH responses. Qualcomm's `rpmh_read()` documentation
+says a read returns the current resource setting, and the values are within
+the table bounds, but this board's reply encoding is not independently
+proven. In particular, `gfx.lvl = 0` may be the ARC off selector or "no APPS
+vote"; both mean the GPU rail is not at a usable level.
+
+GPUCC still reported both domains collapsed and every sampled CBCR off.
+`backboardd` still logged `IOAcceleratorES -> 0 found`. No GPU command,
+firmware load or rendered pixel was produced.
+
+The 120 Hz timer itself ran: about 1200 callbacks per 10 s. In active
+windows the software path made only 45-86 `present_calls` per 10 s and
+missed up to 287 deadlines. This measures timer callbacks and calls into the
+CPU copy path, not rendered frames or panel scanout. The physical panel mode
+remains whatever ABL selected; 120 fps is not established.
+
 ## Current correction: patch 0084
 
 The latest recovered boot log, `logs/gpu-opencode-0083.txt`, confirms the
@@ -62,10 +95,11 @@ meaning of ARC reply fields or proof of a retained APPS vote on this board.
 Keep resource writes disabled until that meaning is established.
 
 The older stage-3 instructions below describe 0083 history and must not be
-used as the current procedure. Next hardware gate: boot 0084 with
-`sweetgpu=2`, let iOS run at least two minutes, return to OrangeFox, and pull
-the log. Require fresh completed reads and inspect every raw reply.
-This remains a power-driver prerequisite, not GPU acceleration.
+used as the current procedure. The 0084/0085 `sweetgpu=2` readback gate
+passed on 2026-10-19 (above). The next proposed gate is a raise-only
+`gfx.lvl` vote with a post-write read, then GPUCC CX/GX power and an
+`RBBM_IDENTIFIER` read; the vote requires explicit approval and has not been
+run. This remains a power-driver prerequisite, not GPU acceleration.
 
 ## Current truth
 
@@ -228,7 +262,7 @@ default. A stage is complete only when its gate passes **on the phone**.
   log, no crash or display regression.
 - Evidence: `logs/gpu-audit-v2.txt`.
 
-### Stage 2 - ARC table probe (implemented, hardware test pending)
+### Stage 2 - ARC table probe (complete)
 
 - Code: patch 0083, `sweetgpu=1`.
 - Behavior: read `mx.lvl`, `cx.lvl`, `gfx.lvl` from the RPMH command DB;
@@ -237,7 +271,19 @@ default. A stage is complete only when its gate passes **on the phone**.
 - Pass: all three tables print, `SWEET GPU: ARC tables read-only complete`,
   iOS keeps running. If a table is missing or malformed, the stage stops
   before any vote.
+- Evidence: `logs/gpu-opencode-0083.txt`.
 - Fail: missing table, malformed aux, non-monotonic levels, or a crash.
+
+### Stage 2b - ARC readback (complete)
+
+- Code: patch 0084, `sweetgpu=2`.
+- Behavior: after 60 s, issue one ACTIVE READ per rail and log the raw
+  response and the table-index interpretation. No resource vote is written.
+- Pass: three completed reads, raw replies logged, touch/display intact.
+- Evidence: `logs/gpu-arc-probe-agent.txt` (0085 image, 2026-10-19):
+  `mx.lvl=0x3`, `cx.lvl=0x5`, `gfx.lvl=0x0`.
+- Limit: the reply encoding is not proven; do not treat `0x0` as measured
+  voltage or as proof that the bootloader vote was lost.
 
 ### Historical stage 3 - fixed ARC votes (removed by 0084)
 
@@ -253,6 +299,22 @@ default. A stage is complete only when its gate passes **on the phone**.
   describe this as measured GPU power.
 - Fail: timeout, missing completion, poisoned TCS, display regression, or
   any crash. Stop and recover the log; do not proceed to GPUCC writes.
+
+### Stage 3 - raise-only gfx vote with readback (proposed, not approved)
+
+- Why: `gfx.lvl` read back `0x0` (off/minimum or no vote), while `mx.lvl`
+  and `cx.lvl` were already high. Do not rewrite the shared rails.
+- Behavior: read `gfx.lvl`; if its current level is already `>= 65`, log and
+  do nothing. Otherwise vote only the first selector with level `>= 65`
+  (LOW_SVS), then issue a second READ and require the raw reply to match the
+  written selector. A mismatch, timeout or poison condition ends the
+  experiment with no retry and no GPUCC access.
+- Pass: `gfx.lvl` readback changes to the expected selector, `mx.lvl` and
+  `cx.lvl` are untouched, iOS keeps running and the display still swaps.
+- Fail: readback mismatch, timeout, display regression, or crash. Do not
+  proceed to stage 4; recover the log.
+- Approval: **not yet approved.** The 0083 fixed-vote image must not be
+  booted. This stage needs a new build and explicit user approval.
 
 ### Stage 4 - GPUCC CX power, clocks, GX release, identity read
 
@@ -303,33 +365,34 @@ default. A stage is complete only when its gate passes **on the phone**.
   IOSurface; compare against the software frame.
 - Only after gate C should CoreAnimation switch renderers.
 
-## Test procedure for the current milestone (stage 2/3)
+## Test procedure for the current milestone (0084/0085)
 
-Build and boot through CI as usual; do not flash a partition. Then:
+Build and boot through CI as usual; do not flash a partition. The 0085 image
+bundles the 0084 READ path and the 120 Hz scheduler:
 
 ```sh
-# stage 2: read-only ARC tables, no votes
-fastboot boot shim/out/shim-boot-0083-arc-probe.img
+fastboot boot shim/out/shim-boot-0085-arc-readback-120hz.img
 
-# after iOS runs >= 30 s, recover the persistent log via OrangeFox
+# after iOS runs >= 60 s, recover the persistent log via OrangeFox
 bash tools/sweet-log-pull.sh logs/gpu-arc-probe.txt
-rg 'SWEET GPU:|SWEET RPMH:.*ARC' logs/gpu-arc-probe.txt
+rg 'SWEET GPU:|SWEET RPMH:.*ARC|SWEET FB: timing' logs/gpu-arc-probe.txt
 ```
 
-Expected markers for `sweetgpu=1`:
+Expected markers for `sweetgpu=2`:
 
 ```
-SWEET RPMH: ARC mx.lvl read-only table: ...
-SWEET RPMH: ARC cx.lvl read-only table: ...
-SWEET RPMH: ARC gfx.lvl read-only table: ...
 SWEET GPU: ARC tables read-only complete
-SWEET GPU: read-only audit complete; use sweetgpu=2 to vote ARC rails
+SWEET GPU: ARC readback v1 scheduled in 60 s; no resource votes
+SWEET GPU: ARC readback v1 starting; no resource votes
+SWEET RPMH: ... ACTIVE read complete raw=...
+SWEET GPU: ARC readback v1 complete; power/clock writes remain disabled
+SWEET FB: timing ... target=120 Hz
 ```
 
-Do not repeat with the 0083 `sweetgpu=2` fixed-vote image. Use the 0084
-readback procedure above.
-If either run regresses the display or crashes, keep the previous image and
-the log; do not add GPUCC writes.
+Do not boot the 0083 `sweetgpu=2` fixed-vote image. The next write is the
+proposed raise-only `gfx.lvl` vote; do not run it without explicit approval.
+If a run regresses the display or crashes, keep the previous image and the
+log; do not add GPUCC writes.
 
 ## Safety and recovery
 
@@ -346,9 +409,11 @@ the log; do not add GPUCC writes.
 
 - Authoritative audit log: `logs/gpu-audit-v2.txt` (ignored locally).
 - Baseline log: `logs/gpu-baseline.txt`.
+- ARC table log: `logs/gpu-opencode-0083.txt`.
+- ARC readback / 120 Hz log: `logs/gpu-arc-probe-agent.txt` (2026-10-19).
 - Live DT extract: `research/gpu/live-gpu-tree.json`, `research/gpu/*.c`.
 - Patch series: `xnu/patches/0081` (probe), `0082` (audit v2), `0083`
-  (ARC probe/vote).
+  (ARC table probe), `0084` (ARC readback), `0085` (120 Hz scheduler).
 - Kernel call site: `bsd/dev/sweet_ufs.c` calls `sweet_gpu_probe()`.
 - RPMH client: `bsd/dev/sweet_rpmh.c`; GPUCC probe: `bsd/dev/sweet_gpu.c`.
 - CI: `.github/workflows/xnu.yml` rejects skipped project patches and
@@ -356,7 +421,8 @@ the log; do not add GPUCC writes.
 
 ## Open blockers
 
-1. Stage 2/3 require an approved temporary boot and a recovered log.
+1. Stages 2 and 2b are complete. Stage 3 (raise-only `gfx.lvl` vote) needs
+   explicit approval; stage 4+ adds GPUCC power and identity.
 2. The dyld cache has not been disassembled; `IOGPU`/`IOAccelerator` symbol
    names are recovered, but numeric selectors and structures are unknown.
 3. The shader strategy for Metal-on-Adreno is unresolved; no translation
