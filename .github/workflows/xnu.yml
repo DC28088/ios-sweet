@@ -98,9 +98,8 @@ jobs:
           grep -aFq 'SWEET GPU: ARC tables read-only complete' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
           grep -aFq 'SWEET GPU: ARC readback v1 starting' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
           grep -aFq 'SWEET GPU: ARC gfx raise v1 starting' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
-          grep -aFq 'SWEET GPU: GPUCC CX power v1 starting' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
-          grep -aFq 'SWEET GPU: GPUCC CX+GX power v1 starting' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
-          grep -aFq 'SWEET GPU: GPU aperture reads complete' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
+          grep -aFq 'SWEET ADRENO: CX controller v2 starting' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
+          grep -aFq 'SWEET ADRENO: GX unavailable:' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
           grep -aFq 'SWEET FB: scheduler v2 requested=' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
 
       - name: Package build tree for local compiles
