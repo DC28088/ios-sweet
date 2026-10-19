@@ -106,3 +106,18 @@ Primary references, with revisions pinned for reproducibility:
   `a630_sqe.fw`, `a618_gmu.bin`, and `a615_zap`. Obtain matching firmware
   from this device before implementing uploads; filenames alone are not
   proof of a compatible firmware version.
+
+## Device firmware captured
+
+The connected phone's vendor partition was mounted as EROFS read-only in
+OrangeFox, the files above and all five `a615_zap` container/split components
+were copied, then the temporary mount was removed. They are local only under
+ignored `research/gpu/device-firmware/`, with sizes and SHA-256 hashes in
+`manifest.json`. No firmware upload or GPU execution has been attempted.
+
+The vendor properties report `V14.0.8.0.TKFMIXM`, build ID
+`RKQ1.210614.002`, device `sweet`, model `M2101K6G`. The recovery reports
+`sweetin`; retain this distinction when comparing board configurations. The
+vendor fingerprint includes an Android version value of `15`; this property
+alone does not establish the original stock Android release or that the vendor
+partition is unmodified.
