@@ -17,8 +17,21 @@
   `f7f95c9f4ff87a0856e2b5149577cd974c1a292b2220ab524fed99503a31aa95`;
   image `shim/out/shim-boot-0086-gfx-raise-120hz.img` SHA-256
   `536da97e93168dfb361b4ceb9bf1c576fe2066a2a99035174734c188f735d8bc`.
-  **Next gate: 0087 GPUCC CX/GX power and clock/reset release plus an
-  `RBBM_IDENTIFIER` read; the write/boot needs explicit approval.**
+- **0087 written, CI pending (2026-10-19 ~22:05 local):** patch
+  `0087-sweet-adreno-gpucc-power.patch` adds `sweetgpu=4` (CX GDSC power,
+  then a GPU-aperture register read only if the AHB CBCR reports a running
+  clock) and `sweetgpu=5` (raise-only `gfx.lvl`, then CX, then GX BCR pulse,
+  clamp release and GDSC poll). It mirrors the downstream `qcom,gdsc`
+  enables; there are no parent-rail, PLL, RCG, branch-clock, GMU or SMMU
+  writes. Editable sources: `research/gpu/0087-work/bsd/dev/sweet_gpu.c`.
+  The patch chain (0086 then 0087) was verified with `git apply` against
+  the pre-0086 sources. The old `RBBM_IDENTIFIER` name was wrong: the public
+  A6XX register database has no chip-ID register, so the aperture read logs
+  `RBBM_*`, `CP_RB_*`, `CP_HW_FAULT` and `VBIF_VERSION` and the live-DT
+  chip ID `0x06010800` stays the identity reference. **No 0087 boot is
+  approved yet; `sweetgpu=4` must pass before `sweetgpu=5`.** Next action:
+  push this branch and run CI, then package
+  `shim/out/shim-boot-0087-cx-power-120hz.img` and ask for boot approval.
 - **0085 hardware result (2026-10-19 20:12):** booted
   `shim/out/shim-boot-0085-arc-readback-120hz.img` with
   `sweetfb_hz=120 sweetgpu=2`. Read-only pull:
@@ -829,7 +842,7 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   comparison image was not booted. The raw replies and 120 Hz timing
   limits are recorded at the top of this file and in
   `docs/GPU_PROGRESS.md`. The raise-only `gfx.lvl` vote (0086) was then
-  approved and passed on 2026-10-19 (see the top section). Next: implement
-  and test 0087 GPUCC CX/GX power and clock/reset release plus the
-  `RBBM_IDENTIFIER` read; that boot/write needs explicit approval. No
-  GPUCC/core/GMU write has been performed yet.
+  approved and passed on 2026-10-19 (see the top section). Patch 0087 is
+  written (CX power = `sweetgpu=4`, CX+GX power = `sweetgpu=5`) but not
+  booted; both boots need explicit approval, 4 before 5. No GPUCC/core/GMU
+  write has been performed on hardware yet.

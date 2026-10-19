@@ -106,8 +106,18 @@ There was no panic; SpringBoard and touch continued after the write, and
 GPUCC still reported both domains collapsed. This proves the APPS ARC level
 vote is stored and read back on this board. It does not prove the rail
 voltage changed, does not enable GPUCC, and does not produce GPU
-acceleration. The next gate is 0087: GPUCC CX/GX power and clock/reset
-release, then an `RBBM_IDENTIFIER` read without GMU or command submission.
+acceleration.
+
+The next gate is 0087 (written, CI pending): power the GPUCC CX domain with
+the downstream GDSC sequence, poll its status, and - only if the GPU AHB
+branch reports a running clock - read a small table of RBBM/CP/VBIF
+registers from the GPU aperture. `sweetgpu=5` adds the `gfx.lvl` raise and
+the GX domain bring-up (BCR pulse, clamp release, GDSC poll). The earlier
+plan called this read `RBBM_IDENTIFIER`; that register does not exist in the
+public A6XX database (checked against the kernel's `a6xx.xml`), so the
+identity reference stays the live-DT chip ID (`0x06010800`, Adreno 618) and
+the aperture read is a liveness/version read (`RBBM_STATUS*`,
+`VBIF_VERSION`). No GMU, SMMU or command submission in this gate.
 
 ## Current correction: patch 0084
 
@@ -149,9 +159,11 @@ Keep resource writes disabled until that meaning is established.
 The older stage-3 instructions below describe 0083 history and must not be
 used as the current procedure. The 0084/0085 `sweetgpu=2` readback gate
 passed on 2026-10-19, and the 0086 raise-only `gfx.lvl` vote with post-write
-read also passed on 2026-10-19 (above). The next gate is 0087: GPUCC CX/GX
-power and clock/reset release, then an `RBBM_IDENTIFIER` read. This remains a
-power-driver prerequisite, not GPU acceleration.
+read also passed on 2026-10-19 (above). The next gate is 0087: CX power,
+then (with `sweetgpu=5`) the `gfx.lvl` raise and GX power, then a gated GPU
+aperture register read. This remains a power-driver prerequisite, not GPU
+acceleration; no clock-tree writes, GMU firmware, SMMU context or command
+submission are part of it.
 
 ## Current truth
 
@@ -352,7 +364,7 @@ default. A stage is complete only when its gate passes **on the phone**.
 - Fail: timeout, missing completion, poisoned TCS, display regression, or
   any crash. Stop and recover the log; do not proceed to GPUCC writes.
 
-### Stage 3 - raise-only gfx vote with readback (proposed, not approved)
+### Stage 3 - raise-only gfx vote with readback (complete, hardware-verified)
 
 - Why: `gfx.lvl` read back `0x0` (off/minimum or no vote), while `mx.lvl`
   and `cx.lvl` were already high. Do not rewrite the shared rails.
@@ -363,21 +375,41 @@ default. A stage is complete only when its gate passes **on the phone**.
   experiment with no retry and no GPUCC access.
 - Pass: `gfx.lvl` readback changes to the expected selector, `mx.lvl` and
   `cx.lvl` are untouched, iOS keeps running and the display still swaps.
+- Result (2026-10-19): passed. `gfx.lvl` went `0x0` -> `0x2` (level 65),
+  `mx.lvl=0x3` and `cx.lvl=0x5` unchanged, no panic
+  (`logs/gpu-gfx-raise.txt`).
 - Fail: readback mismatch, timeout, display regression, or crash. Do not
   proceed to stage 4; recover the log.
-- Approval: **not yet approved.** The 0083 fixed-vote image must not be
-  booted. This stage needs a new build and explicit user approval.
 
-### Stage 4 - GPUCC CX power, clocks, GX release, identity read
+### Stage 4 - GPUCC CX/GX power and gated aperture read (implemented, not run)
 
-- Prerequisite: stage 3 passes and the inherited/shared ARC votes are
+- Prerequisite: stage 3 passes (done) and the inherited/shared ARC votes are
   understood.
-- Implement in a new patch: CX GDSC enable/poll, GPUCC branch clocks needed
-  for register access, GX GDSC enable, clamp/reset release, then read
-  `RBBM_IDENTIFIER`/revision from the GPU aperture **without** GMU boot or
-  command submission.
-- Pass: identity matches Adreno 618, no GPU fault, no display regression.
-- Fail: GDSC poll timeout, bus hang, SMMU fault, panel loss.
+- Patch 0087, `sweetgpu=4`: mirror the downstream `qcom,gdsc` enable for
+  `gpu_cx_gdsc` (refuse HW-controlled GDSCR, clear `SW_COLLAPSE`, poll
+  `GPU_CC_CX_HW_CTRL` bit 31 for 500 us). No parent-rail, PLL, RCG or branch
+  clock write.
+- Patch 0087, `sweetgpu=5`: first re-issue the raise-only `gfx.lvl` vote
+  (LOW_SVS), then mirror `gdsc_enable` for `gpu_gx_gdsc`: pulse
+  `GX_BCR` block reset for 1 us, clear the `GX_DOMAIN` clamp, clear
+  `SW_COLLAPSE`, poll `GX_GDSCR` bit 31 for 500 us.
+- After power, re-read the `AHB` CBCR. **Only if its clock-off bit has
+  cleared** (the branch reports a running clock) the code reads ten A6XX
+  registers from `0x05000000`: `RBBM_GPR0_CNTL`, `RBBM_INT_0_STATUS`,
+  `RBBM_STATUS`/`1`/`2`/`3`, `CP_RB_BASE`, `CP_RB_CNTL`, `CP_HW_FAULT` and
+  `VBIF_VERSION`. If the clock is still gated, the reads are skipped and
+  logged; there is no blind access to a halted bus.
+- The old name `RBBM_IDENTIFIER` was wrong: the public A6XX register
+  database has no chip-ID register. The live-DT chip ID `0x06010800`
+  (Adreno 618) remains the identity reference; this stage proves the
+  domain powers and (when the AHB clock runs) the aperture responds.
+- Pass: CX (and for `sweetgpu=5`, GX) status bit 31 sets, no panic, display
+  and touch survive, and any aperture values are stable/plausible with
+  `RBBM_STATUS3` SMMU-stalled clear and `CP_HW_FAULT` zero.
+- Fail: GDSC poll timeout, `0xFFFFFFFF` aperture reads, SMMU-stalled bit,
+  bus hang, panel loss or panic. Stop; do not add clock-tree writes.
+- Approval: **not yet approved.** Build and CI only; the boot needs explicit
+  user approval, `sweetgpu=4` before `sweetgpu=5`.
 
 ### Stage 5 - GMU firmware boot
 
@@ -417,10 +449,58 @@ default. A stage is complete only when its gate passes **on the phone**.
   IOSurface; compare against the software frame.
 - Only after gate C should CoreAnimation switch renderers.
 
-## Test procedure for the current milestone (0086 executed; 0087 next)
+## Test procedure for the current milestone (0087; 0086 below as history)
 
-The 0086 procedure below is retained for reruns; the gate already passed on
-2026-10-19 (see above). The next procedure will be added with 0087.
+Build and boot through CI as usual; do not flash a partition. The 0087 image
+runs `sweetgpu=4` first (CX only): at 60 s it powers the CX domain, re-reads
+the AHB CBCR, and reads the GPU aperture only if that branch reports a
+running clock:
+
+```sh
+fastboot boot shim/out/shim-boot-0087-cx-power-120hz.img
+
+# after iOS runs >= 60 s, recover the persistent log via OrangeFox
+bash tools/sweet-log-pull.sh logs/gpu-cx-power.txt
+rg 'SWEET GPU:|SWEET RPMH:.*ARC|SWEET FB: timing' logs/gpu-cx-power.txt
+```
+
+Expected markers for `sweetgpu=4`:
+
+```
+SWEET GPU: GPUCC CX power v1 scheduled in 60 s; GX untouched
+SWEET GPU: GPUCC CX power v1 starting; GX untouched
+SWEET GPU: CX power before GDSCR=0x222001 hw_ctrl=0x5ff4 clk_dis_wait=2
+SWEET GPU: CX power on after ... us; GDSCR=... HW_CTRL=0x...
+SWEET GPU: CBCR AHB after power @0x1078=... enable=1 clk_off=...
+SWEET GPU: GPU aperture reads complete        (only if clk_off cleared)
+SWEET GPU: GPUCC CX power v1 complete; CX left on, GX untouched
+SWEET FB: timing ... target=120 Hz
+```
+
+If `clk_off` for AHB stays set, the log contains
+`SWEET GPU: AHB clock still off; GPU aperture reads skipped`. That is not a
+failure of the GDSC sequence; it tells the next patch to enable the GCC GPU
+GPLL0 parent and the GPUCC AHB/CXO branches before any aperture read.
+
+After `sweetgpu=4` passes, the same kernel boots as `sweetgpu=5` (raise
+`gfx.lvl`, then CX and GX). Expected GX markers:
+
+```
+SWEET GPU: GPUCC CX+GX power v1 scheduled in 60 s; gfx.lvl then CX then GX
+SWEET GPU: GPUCC CX+GX power v1 starting; gfx.lvl first
+SWEET RPMH: ARC gfx.lvl raise verified selector=2 vlvl=65
+SWEET GPU: GX power before GDSCR=0x222001 DOMAIN=0x1 BCR=0x0
+SWEET GPU: GX power on after ... us; GDSCR=0x... DOMAIN=0x... BCR=0x...
+SWEET GPU: GPUCC GX power v1 complete; domains left on, no GMU/SMMU access
+```
+
+Stop conditions: `CX power timeout`, `GX power timeout`, `... stopped
+errno=...`, `0xFFFFFFFF` aperture values, or the SMMU-stalled bit set. Keep
+the log, do not proceed to clock-tree writes, and do not re-run blindly.
+
+### 0086 procedure (history; the gate passed on 2026-10-19)
+
+The 0086 procedure below is retained for reruns.
 
 Build and boot through CI as usual; do not flash a partition. The 0086 image
 bundles the 0084 READ path, the 0085 120 Hz scheduler and the raise-only
@@ -479,10 +559,12 @@ SWEET FB: timing ... target=120 Hz
 ```
 
 Do not boot the 0083 `sweetgpu=2` fixed-vote image. The 0086 raise-only
-`gfx.lvl` vote has been run and passed; do not re-run it without a reason,
-and do not proceed to GPUCC writes without explicit approval. If a run
-regresses the display or crashes, keep the previous image and the log; do
-not add GPUCC writes.
+`gfx.lvl` vote has been run and passed; do not re-run it without a reason.
+The 0087 CX/GX power patch is implemented (CI run pending); the
+`sweetgpu=4` and `sweetgpu=5` boots each need explicit approval, and 4 comes
+before 5. If a
+run regresses the display or crashes, keep the previous image and the log;
+do not add clock-tree or GMU writes.
 
 ## Safety and recovery
 
@@ -492,7 +574,9 @@ not add GPUCC writes.
 - One uncertain RPMH transaction poisons the TCS for the rest of the boot;
   the code never retries or resets it.
 - Never take an ARC rail to selector `0`; the code refuses it.
-- Do not access the GPU core or GMU until stage 3 passes.
+- Do not access the GPU core or GMU until its gate is approved and run
+  (`sweetgpu=4`/`5` are the only GPU-aperture stages, and they read only
+  when the AHB branch reports a running clock).
 - Preserve the Android installation and the existing partition backups.
 
 ## Artifacts and references
@@ -503,7 +587,8 @@ not add GPUCC writes.
 - ARC readback / 120 Hz log: `logs/gpu-arc-probe-agent.txt` (2026-10-19).
 - Live DT extract: `research/gpu/live-gpu-tree.json`, `research/gpu/*.c`.
 - Patch series: `xnu/patches/0081` (probe), `0082` (audit v2), `0083`
-  (ARC table probe), `0084` (ARC readback), `0085` (120 Hz scheduler).
+  (ARC table probe), `0084` (ARC readback), `0085` (120 Hz scheduler),
+  `0086` (raise-only `gfx.lvl`), `0087` (CX/GX power).
 - Kernel call site: `bsd/dev/sweet_ufs.c` calls `sweet_gpu_probe()`.
 - RPMH client: `bsd/dev/sweet_rpmh.c`; GPUCC probe: `bsd/dev/sweet_gpu.c`.
 - CI: `.github/workflows/xnu.yml` rejects skipped project patches and
@@ -511,12 +596,15 @@ not add GPUCC writes.
 
 ## Open blockers
 
-1. Stages 2 and 2b are complete. Stage 3 (raise-only `gfx.lvl` vote) needs
-   explicit approval; stage 4+ adds GPUCC power and identity.
+1. Stages 2, 2b and 3 are complete on hardware. Stage 4 (patch 0087) is
+   written and CI-pending; its `sweetgpu=4` and `sweetgpu=5` boots need
+   explicit approval, 4 before 5.
 2. The dyld cache has not been disassembled; `IOGPU`/`IOAccelerator` symbol
    names are recovered, but numeric selectors and structures are unknown.
 3. The shader strategy for Metal-on-Adreno is unresolved; no translation
    layer in this repository claims to solve it.
 4. Full cache extraction is blocked by local disk space; only targeted
    extraction or an external workspace should be used.
-5. GMU/SMMU/firmware/command submission are unimplemented.
+5. GMU/SMMU/firmware/command submission are unimplemented. If the AHB clock
+   stays gated after CX power, a follow-up patch must enable the GCC GPU
+   GPLL0 parent and the GPUCC AHB/CXO branches before any aperture read.
