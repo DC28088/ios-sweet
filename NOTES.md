@@ -1,5 +1,19 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## Current local device state (2026-10-19, read first)
+
+- This user's phone has booted `shim/out/shim-boot-0081-gpucc.img` and responds
+  to touch/buttons; iOS userland has NOT been booted or verified on it yet.
+  The historical v15/on-phone reports below belong to the original project.
+- The new iOS root is built and checked at
+  `research/ipsw-x/ios16-root-20H392.img` and `.simg`. Sparse size is
+  12,145,090,872 bytes; SHA-256
+  `42f6ac7c362651144bf138f3175604c2074aa76f633fe9a45dbecb377649e4f0`.
+- Next: obtain explicit confirmation of backup completion and permission to
+  overwrite `userdata` (destroys Android user data), then install the sparse
+  root and use temporary `fastboot boot` for the existing 0081 shim image.
+  No userdata flash has occurred in this session. Do not rerun the root build.
+
 ## Agent handoff / active work (2026-10-15, latest)
 
 ### >>> UPDATE 2026-10-18 (read first, then the 10-17 handoff below) <<<
@@ -528,3 +542,25 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   check again, generate sparse image and checksums. Next host command:
   `bash research/ipsw-x/build-root.sh --resume-root`. Keep the completed copy;
   do not restart from scratch. Both modified scripts pass `bash -n`.
+- Host resume applied all root tweaks, then stopped at my incorrect assertion
+  that some individual dyld cache file must exceed 1 GiB. No copy was missing.
+  Read the SystemOS DMG directory with the current APFS library: 44 components,
+  3,330,359,296 bytes total, largest file 592,101,376 bytes; main cache is only
+  393,216 bytes. Expected layout is in `research/ipsw-x/dyld-source-layout.txt`.
+  The host wrapper now checks every component size against that layout and
+  checks the main cache's arm64 magic instead of using the size threshold.
+- Verified the unmounted HFS+ image directly with ignored diagnostic
+  `research/ipsw-x/hfs-read.py` (including hardlink resolution): all 44 cache
+  sizes match, main magic is `dyld_v1   arm64`, launchd/dyld are executable
+  Mach-O, system build is 20H392, Setup/Watchdog/Migration preferences are
+  applied, CommCenter jobs removed, keybag present, MediaToolbox recorder
+  flags off. `fsck.hfsplus -f -y` then passed. No host rerun needed.
+- Packaging completed locally: raw 17,179,869,184 bytes, SHA-256
+  `a94f5295fd88d0fa337fb25d05fab2ffd8b5edb1f10366630aa1186d6f4b5fb5`;
+  sparse 12,145,090,872 bytes, SHA-256
+  `42f6ac7c362651144bf138f3175604c2074aa76f633fe9a45dbecb377649e4f0`.
+  Checksums: `research/ipsw-x/root-image.sha256`. Sparse structure checked:
+  27,812 valid chunks, expands to the raw image's exact length. Existing
+  shim boot image SHA-256 remains `2115e09372cdaeaeaec8cfd6a97b54bc15e0ae37a0f313a0217ad0724139d010`.
+  `fastboot devices` currently returned no devices. Next action needs the
+  user's destructive-write confirmation and phone in bootloader fastboot.
