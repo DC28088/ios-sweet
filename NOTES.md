@@ -2,17 +2,22 @@
 
 ## Current local device state (2026-10-19, read first)
 
-- This user's phone has booted `shim/out/shim-boot-0081-gpucc.img` and responds
-  to touch/buttons; iOS userland has NOT been booted or verified on it yet.
-  The historical v15/on-phone reports below belong to the original project.
+- This user now reports iOS userland boots using
+  `shim/out/shim-boot-0081-gpucc.img` and the new root image, but is extremely
+  laggy. No boot log or timing measurements have been captured yet. The
+  historical v15/on-phone reports below belong to the original project.
 - The new iOS root is built and checked at
   `research/ipsw-x/ios16-root-20H392.img` and `.simg`. Sparse size is
   12,145,090,872 bytes; SHA-256
   `42f6ac7c362651144bf138f3175604c2074aa76f633fe9a45dbecb377649e4f0`.
-- Next: obtain explicit confirmation of backup completion and permission to
-  overwrite `userdata` (destroys Android user data), then install the sparse
-  root and use temporary `fastboot boot` for the existing 0081 shim image.
-  No userdata flash has occurred in this session. Do not rerun the root build.
+- User authorized the userdata write ("write, phone is in fastboot mode") and
+  performed installation from their host terminal after sandbox USB access
+  failed. Their subsequent iOS boot report confirms progress; the exact flash
+  transcript is not available. Do not reflash or rebuild the root for lag.
+- Next performance comparison: temporary boot of
+  `shim/out/shim-boot-0081-gpucc-8cpu.img`. It changes only `cpus=6` to `cpus=8`
+  (enables the A76 pair supported by patch 0078); no hardware result yet.
+  Rendering is still software. Keep the six-core image as fallback.
 
 ## Agent handoff / active work (2026-10-15, latest)
 
@@ -564,3 +569,13 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   shim boot image SHA-256 remains `2115e09372cdaeaeaec8cfd6a97b54bc15e0ae37a0f313a0217ad0724139d010`.
   `fastboot devices` currently returned no devices. Next action needs the
   user's destructive-write confirmation and phone in bootloader fastboot.
+- New milestone: user reports iOS boots, with severe lag. Existing image uses
+  six A55 CPUs and software rendering; GPU patch 0081 is only a read-only
+  GPUCC probe. Prepared eight-core comparison image (17,149,952 bytes),
+  SHA-256 `cee57cd5b80fb77741b2d7571f13d5b1f4857a76de4d2d355e92da8db5970732`.
+  Verified eight CPU nodes in the original embedded ADT, identical shim code,
+  Android boot header v2, and exactly one changed byte in the embedded payload
+  (`cpus=6` -> `cpus=8`). `sweetfb_hz=30` and all other args are unchanged.
+  User was asked whether lag is choppy animation, delayed input, or settles
+  after a few minutes; response pending. Actual CPU count and crash loops
+  still need a device log. Eight-core image is packaged but NOT boot-tested.
