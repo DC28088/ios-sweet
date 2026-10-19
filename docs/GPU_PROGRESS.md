@@ -108,7 +108,7 @@ vote is stored and read back on this board. It does not prove the rail
 voltage changed, does not enable GPUCC, and does not produce GPU
 acceleration.
 
-The next gate is 0087 (written, CI pending): power the GPUCC CX domain with
+The next gate is 0087 (built and packaged; boot pending): power the GPUCC CX domain with
 the downstream GDSC sequence, poll its status, and - only if the GPU AHB
 branch reports a running clock - read a small table of RBBM/CP/VBIF
 registers from the GPU aperture. `sweetgpu=5` adds the `gfx.lvl` raise and
@@ -381,7 +381,7 @@ default. A stage is complete only when its gate passes **on the phone**.
 - Fail: readback mismatch, timeout, display regression, or crash. Do not
   proceed to stage 4; recover the log.
 
-### Stage 4 - GPUCC CX/GX power and gated aperture read (implemented, not run)
+### Stage 4 - GPUCC CX/GX power and gated aperture read (built and packaged, not run)
 
 - Prerequisite: stage 3 passes (done) and the inherited/shared ARC votes are
   understood.
@@ -451,10 +451,15 @@ default. A stage is complete only when its gate passes **on the phone**.
 
 ## Test procedure for the current milestone (0087; 0086 below as history)
 
-Build and boot through CI as usual; do not flash a partition. The 0087 image
-runs `sweetgpu=4` first (CX only): at 60 s it powers the CX domain, re-reads
-the AHB CBCR, and reads the GPU aperture only if that branch reports a
-running clock:
+Build and boot through CI as usual; do not flash a partition. Patch 0087 is
+already built: CI run `39289968547` is green on `f6f8624`, kernel SHA-256
+`84e2df9780567378af72a955de421c05abb124df3c8d42c07ed02a860f7e8ae7`. Both
+probe images are packaged (stage-4 SHA-256
+`e492aada0c1c495fca92ca599b09c24427a3a3c04d6a38b40435fac2cbbcee59`,
+stage-5 SHA-256 `691a95865b237cff388b340097d2c08a1cfb38da9dbfcfc40b976f5b6244f728`).
+The 0087 image runs `sweetgpu=4` first (CX only): at 60 s it powers the CX
+domain, re-reads the AHB CBCR, and reads the GPU aperture only if that
+branch reports a running clock:
 
 ```sh
 fastboot boot shim/out/shim-boot-0087-cx-power-120hz.img
@@ -560,9 +565,9 @@ SWEET FB: timing ... target=120 Hz
 
 Do not boot the 0083 `sweetgpu=2` fixed-vote image. The 0086 raise-only
 `gfx.lvl` vote has been run and passed; do not re-run it without a reason.
-The 0087 CX/GX power patch is implemented (CI run pending); the
-`sweetgpu=4` and `sweetgpu=5` boots each need explicit approval, and 4 comes
-before 5. If a
+The 0087 CX/GX power patch is implemented (CI run `39289968547` green on
+`f6f8624`; both images packaged); the `sweetgpu=4` and `sweetgpu=5` boots
+each need explicit approval, and 4 comes before 5. If a
 run regresses the display or crashes, keep the previous image and the log;
 do not add clock-tree or GMU writes.
 

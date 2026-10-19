@@ -17,7 +17,7 @@
   `f7f95c9f4ff87a0856e2b5149577cd974c1a292b2220ab524fed99503a31aa95`;
   image `shim/out/shim-boot-0086-gfx-raise-120hz.img` SHA-256
   `536da97e93168dfb361b4ceb9bf1c576fe2066a2a99035174734c188f735d8bc`.
-- **0087 written, CI pending (2026-10-19 ~22:05 local):** patch
+- **0087 built and packaged, boot pending (2026-10-19 ~23:05 local):** patch
   `0087-sweet-adreno-gpucc-power.patch` adds `sweetgpu=4` (CX GDSC power,
   then a GPU-aperture register read only if the AHB CBCR reports a running
   clock) and `sweetgpu=5` (raise-only `gfx.lvl`, then CX, then GX BCR pulse,
@@ -28,10 +28,20 @@
   the pre-0086 sources. The old `RBBM_IDENTIFIER` name was wrong: the public
   A6XX register database has no chip-ID register, so the aperture read logs
   `RBBM_*`, `CP_RB_*`, `CP_HW_FAULT` and `VBIF_VERSION` and the live-DT
-  chip ID `0x06010800` stays the identity reference. **No 0087 boot is
-  approved yet; `sweetgpu=4` must pass before `sweetgpu=5`.** Next action:
-  push this branch and run CI, then package
-  `shim/out/shim-boot-0087-cx-power-120hz.img` and ask for boot approval.
+  chip ID `0x06010800` stays the identity reference. CI run `39289968547`
+  is green on commit `f6f8624` (an earlier run `39286495743` compiled but
+  failed only because the CI stage-5 marker string was wrong; fixed in
+  `f6f8624`). Kernel `xnu/out-0087/kernel.development.sweet` is 17,239,704
+  bytes, SHA-256
+  `84e2df9780567378af72a955de421c05abb124df3c8d42c07ed02a860f7e8ae7`.
+  Images: `shim/out/shim-boot-0087-cx-power-120hz.img` (stage 4, SHA-256
+  `e492aada0c1c495fca92ca599b09c24427a3a3c04d6a38b40435fac2cbbcee59`) and
+  `shim/out/shim-boot-0087-cx-gx-power-120hz.img` (stage 5, SHA-256
+  `691a95865b237cff388b340097d2c08a1cfb38da9dbfcfc40b976f5b6244f728`).
+  **No 0087 boot is approved yet; `sweetgpu=4` must pass before
+  `sweetgpu=5`.** Next action: with explicit user approval, `fastboot boot`
+  the stage-4 image, pull `logs/gpu-cx-power.txt` via OrangeFox after >=60 s,
+  then ask before booting stage 5.
 - **0085 hardware result (2026-10-19 20:12):** booted
   `shim/out/shim-boot-0085-arc-readback-120hz.img` with
   `sweetfb_hz=120 sweetgpu=2`. Read-only pull:
@@ -843,6 +853,7 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   limits are recorded at the top of this file and in
   `docs/GPU_PROGRESS.md`. The raise-only `gfx.lvl` vote (0086) was then
   approved and passed on 2026-10-19 (see the top section). Patch 0087 is
-  written (CX power = `sweetgpu=4`, CX+GX power = `sweetgpu=5`) but not
-  booted; both boots need explicit approval, 4 before 5. No GPUCC/core/GMU
-  write has been performed on hardware yet.
+  built (CI `39289968547` green) and both images are packaged (CX power =
+  `sweetgpu=4`, CX+GX power = `sweetgpu=5`) but not booted; both boots need
+  explicit approval, 4 before 5. No GPUCC/core/GMU write has been performed
+  on hardware yet.
