@@ -487,3 +487,9 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   runs fsck, and creates `.simg` plus SHA-256 checksums under
   `research/ipsw-x/`. Script passed `bash -n`; build has NOT run yet.
   Log: `research/ipsw-x/build-root.log`. It performs no phone writes.
+- User ran the host script: all three DMGs completed and passed ZIP CRC-32.
+  The space guard stopped the build before image creation (23.7 GiB reported).
+  Later inspection shows 27.7 GiB free, consistent with Btrfs reclaiming the
+  deleted download chunks after the check. Added `sync -f "$work"` immediately
+  after downloads and before measuring space. Current space passes the 26 GiB
+  guard; rerun the same build command. No root image has been created yet.
