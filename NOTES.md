@@ -475,3 +475,15 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   missing, and sudo cannot elevate in this sandbox (`no new privileges`), so
   mounting/build steps will need the user's host terminal. No userdata flash
   has been authorized or performed on this user's phone in this session.
+- Root-image host handoff: user installed `apfs-fuse`. Ignored helper
+  `research/ipsw-x/download-root-components.py` uses six parallel 8 MiB ranges,
+  checks Content-Range and ZIP CRC-32, and preserves completed ranges to resume.
+  AppOS is complete/CRC verified; SystemOS reached at least 448/1046 MiB
+  compressed. Download process stopped for the host-terminal handoff; cached
+  ranges remain in `research/ipsw-x/firmware/.chunks/`.
+- Run `bash research/ipsw-x/build-root.sh` in the host terminal. This resumes
+  downloads, builds a 16 GiB HFS+ root using `tools/mkiosroot.sh`, applies
+  `tools/sweet-root-tweaks.py`, checks expected launchd/dyld/cache/build,
+  runs fsck, and creates `.simg` plus SHA-256 checksums under
+  `research/ipsw-x/`. Script passed `bash -n`; build has NOT run yet.
+  Log: `research/ipsw-x/build-root.log`. It performs no phone writes.
