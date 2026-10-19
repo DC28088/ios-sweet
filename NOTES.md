@@ -640,3 +640,10 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   result, then Power+VolDown back to FASTBOOT after 30 seconds. Next: host
   fastboot boot recovery/recovery.img, then read persistent log into
   logs/gpu-audit-v2.txt. Need actual SWEET GPU lines before any power writes.
+
+- User says the audit image is still booting and requested at least five
+  minutes before judging. Waiting for the result. No local recovery/recovery.img
+  exists on this host (historical notes refer to another machine). If needed,
+  user can enter installed OrangeFox with the hardware recovery key sequence;
+  once ADB returns, first pull the current recovery partition read-only for
+  future temporary boots. Do not substitute stock boot.img or flash recovery.
