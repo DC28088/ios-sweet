@@ -2,6 +2,23 @@
 
 ## Current local device state (2026-10-19, read first)
 
+- **0088 new core / fresh audit (2026-10-19):** user requested a new driver
+  based on Linux/Freedreno after repeated failed attempts. Pulled
+  `logs/gpu-reaudit-20261019.txt` from OrangeFox; SHA matches `gpu-cx-power.txt`
+  exactly, so there is no newer captured hardware result. Audited all seven
+  text logs: no GPU command completion, no accelerator service. Patch 0088
+  adds a separate portable A618 CX/PM4/ring core and XNU power adapter; removes
+  unsafe core aperture reads and disables the incomplete stage-5 GX sequence.
+  It adds fresh MX/CX resource checks, all-ones rejection and power settling.
+  PM4/ring code is not attached to hardware: firmware, SMMU, clocks and the iOS
+  graphics interface remain absent. **This is not full acceleration.** See
+  `docs/adreno-port.md` for exact reuse, audit and remaining dependencies.
+  Portable C host compilation succeeded (`gcc -Wall -Wextra -Werror`), and
+  patch application to the 0087 sources succeeded. Cross-GCC has no libc
+  headers here; authoritative XNU build pending. No new boot or flash.
+  Sources: `research/gpu/0088-work/bsd/dev/` (editable), patch 0088 (tracked).
+
+
 - **0087 stage-4 attempt inconclusive (2026-10-19 ~23:07 local, read first):**
   `fastboot boot shim/out/shim-boot-0087-cx-power-120hz.img` booted and
   reached SpringBoard, but the 45 s SweetTouch probe read an all-zero Goodix
