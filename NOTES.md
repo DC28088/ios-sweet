@@ -462,8 +462,16 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   `sweetgpu=1`; image `shim/out/shim-boot-0081-gpucc.img` is Android boot header
   v2 and contains the captured base DTB. SHA-256:
   `2115e09372cdaeaeaec8cfd6a97b54bc15e0ae37a0f313a0217ad0724139d010`.
-- User reports this image booted and touch/button input responds. Its boot args
-  select `rd=ufsroot0`, so it is using the iOS root already on `userdata`
-  (last recorded as root image v15); a new root image is not needed to test
-  this kernel probe. The GPUCC log lines have not yet been captured. Pull them
-  later from OrangeFox with `tools/sweet-log-pull.sh`.
+- User reports this image booted and touch/button input responds. This confirms
+  kernel/input progress only; iOS userland and a valid HFS+ root on this phone
+  have NOT been verified. The older v15 notes describe the original project's
+  device and must not be treated as this user's device state. The user has not
+  downloaded the iOS firmware. Only the small D22AP device tree was fetched.
+- Root-image preparation: Apple iPhone X 16.7.16 (20H392) BuildManifest is in
+  ignored `research/ipsw-x/BuildManifest.plist`. Required members are OS
+  `087-86698-044.dmg`, SystemOS `087-86593-047.dmg`, and AppOS
+  `087-86715-047.dmg` (5,830,922,492 compressed bytes in total). Initial 64 MiB
+  HTTP range transfers stalled; retrying with smaller ranges. `apfs-fuse` is
+  missing, and sudo cannot elevate in this sandbox (`no new privileges`), so
+  mounting/build steps will need the user's host terminal. No userdata flash
+  has been authorized or performed on this user's phone in this session.
