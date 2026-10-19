@@ -5,6 +5,14 @@ This document is the resumable record of the Adreno 618 work on `sweet`
 **implemented but unverified code** and from **plans**. Read it with
 `NOTES.md` and `docs/GPU_BRINGUP.md`.
 
+## Current implementation: patch 0088
+
+See [Adreno port implementation and log audit](adreno-port.md). The new
+hardware core replaces the CX power path and adds CPU-side PM4/ring
+primitives. The old stage-5 GX sequence and core-aperture reads are disabled.
+There is still no firmware/SMMU submission backend or iOS GPU acceleration.
+The 0087 behavior described later is historical and superseded by 0088.
+
 ## 120 Hz presentation experiment (patch 0085)
 
 The user requested 120 Hz framebuffer presentation. `sweetfb_hz=120` now

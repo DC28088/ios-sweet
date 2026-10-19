@@ -66,6 +66,21 @@ GPU command completion. The stage-4 boot ended before its 60-second power
 operation, so it provides no evidence that CX enable succeeded or failed.
 The touch failure precedes GPU power writes and must not be attributed to one.
 
+The recovery Linux log was also pulled to
+`logs/recovery-dmesg-20261019.txt`. It registers `gpu_cc-sdmmagpie`, a GMU
+with separate user/kernel IOMMU groups, and the GPU SMMU at 0x05040000.
+The SMMU explicitly reports **non-coherent table walks**, so the future XNU
+page-table backend must perform cache maintenance; a CPU store barrier alone
+is insufficient. `/sys/fs/pstore` and `/proc/last_kmsg` supplied no additional
+retained log. These are recovery-Linux observations, not XNU GPU initialization.
+
+Local firmware inspection: `a630_sqe.fw` starts with a four-byte container
+word that Linux skips before upload. Its following version word is 0x016ee19a
+and patch word is 0x01190001, satisfying v6.12's `a630_sqe.fw` version criteria.
+`a618_gmu.bin` is 32768 bytes with a Cortex-M vector/code prefix; it must not
+be blindly interpreted as the newer GMU block-header format. No firmware was
+uploaded to the device by this work.
+
 ## Source references and reuse boundary
 
 Use pinned, inspectable references rather than copying register guesses from

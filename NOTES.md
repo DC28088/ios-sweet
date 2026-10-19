@@ -17,7 +17,17 @@
   patch application to the 0087 sources succeeded. Cross-GCC has no libc
   headers here; first CI run `39298707871` rejected the short-context bsd/conf/files
   patch hunk before compiling. Expanded it to the full surrounding entries;
-  replacement XNU build pending. No new boot or flash.
+  replacement CI `39299055941` succeeded on `7321f15`, including the
+  built-kernel marker checks. Kernel artifact downloaded and checksum-verified:
+  `xnu/out-0088/kernel.development.sweet`, 17,240,104 bytes, SHA-256
+  `0d1750b798bb569ed6d7071b764c84782092052c2df77579f47d59fed8066439`.
+  Packaged `shim/out/shim-boot-0088-a618-cx-120hz.img` (stage 4, 120 Hz,
+  same ADT as 0087, cmdline ends `sweetfb_noconsole=1 sweetfb_hz=120
+  sweetgpu=4`), SHA-256
+  `9d495db439da798f2013cbc79b0d4da7a354aebf27b3f0b5735b0d2251fdedce`
+  (payload `634822b8862377c84349caba6b2626c70a5aac0c24277995f2dcf4ca050687ff`);
+  bootv2 unpack round-trip matches the payload. Not booted; no new hardware
+  result yet.
   Sources: `research/gpu/0088-work/bsd/dev/` (editable), patch 0088 (tracked).
 
 
