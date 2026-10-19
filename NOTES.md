@@ -605,3 +605,12 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   corrected 0081 and applied 0082 successfully, resulting source matches the
   intended GPUCC audit. Collected primary sources/logs stay in research/gpu.
   logs/ is now ignored to keep device-specific logs out of git.
+
+- ADB became accessible during this turn (OrangeFox). Mounted the existing
+  vendor logical block device dm-4 as EROFS **read-only**, copied matching
+  a618_gmu.bin (32,768 bytes), a630_sqe.fw (32,136 bytes), all a615_zap
+  components and vendor build.prop into ignored research/gpu/device-firmware,
+  then unmounted and removed the RAM-backed mountpoint. Manifest has hashes.
+  Vendor reports V14.0.8.0.TKFMIXM / RKQ1.210614.002, sweet / M2101K6G;
+  recovery product is sweetin. No userdata or boot partition writes occurred.
+  Firmware authenticity/redistribution permission not established; keep local.
