@@ -2,6 +2,19 @@
 
 ## Current local device state (2026-10-19, read first)
 
+- GPU work now on branch `codex/adreno-power-audit`. The 0081 artifact was
+  incorrectly labeled as containing the GPU probe: CI run 39205190400 skipped
+  patch 0081 (bsd/conf/files and sweet_ufs.c context failures). Its kernel and
+  boot image contain no GPU strings. Treat earlier probe-build claims below
+  as superseded. The saved `logs/gpu-baseline.txt` confirms eight cores came
+  alive, framebuffer swaps and working touch, but has no GPU output.
+- Fixed 0081 against patches through 0080; new 0082 adds GPUCC-only CX/GX
+  power/reset and ten clock snapshots with `GPUCC audit v2` marker. No MMIO
+  writes, new GPU aperture accesses, firmware or rendering acceleration.
+  Workflow now rejects skipped project patches and requires marker in kernel.
+  Kernel compilation, packaging and hardware audit are pending.
+- User clarifies lag: quick taps, animations below 20 fps, blur absent.
+  Do not rebuild/reflash the iOS root for this GPU diagnostic.
 - This user now reports iOS userland boots using
   `shim/out/shim-boot-0081-gpucc.img` and the new root image, but is extremely
   laggy. No boot log or timing measurements have been captured yet. The
@@ -579,3 +592,13 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   User was asked whether lag is choppy animation, delayed input, or settles
   after a few minutes; response pending. Actual CPU count and crash loops
   still need a device log. Eight-core image is packaged but NOT boot-tested.
+
+### GPU audit implementation (2026-10-19)
+
+- Reviewed live FDT and pinned Qualcomm/Lineage SM6150 sources. Exact CX/GX
+  GDSC and reset locations are recorded in docs/GPU_BRINGUP.md. Firmware
+  selection is a630_sqe.fw / a618_gmu.bin / a615_zap; no firmware copied yet.
+- Reproduced 0081's patch rejection against the relevant XNU 8796.141.3 files;
+  corrected 0081 and applied 0082 successfully, resulting source matches the
+  intended GPUCC audit. Collected primary sources/logs stay in research/gpu.
+  logs/ is now ignored to keep device-specific logs out of git.

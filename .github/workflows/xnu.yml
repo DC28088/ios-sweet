@@ -51,6 +51,21 @@ jobs:
           # libfirehose_kernel is built arm64e-only; the SWEET kernel is plain arm64
           sed -i '' 's/ARCHS="x86_64 arm64e" VALID_ARCHS="x86_64 arm64e"/ARCHS="x86_64 arm64e arm64" VALID_ARCHS="x86_64 arm64e arm64"/' dxb/build.sh
           grep -c 'VALID_ARCHS="x86_64 arm64e arm64"' dxb/build.sh
+          # The upstream builder skips rejected patches. Our patches must apply.
+          python3 - <<'PYCODE'
+          from pathlib import Path
+          builder = Path("dxb/build.sh")
+          source = builder.read_text()
+          needle = '                warning "Skipping patch ${PATCH}'
+          assert source.count(needle) == 1, "builder patch loop changed"
+          names = "|".join(p.name for p in sorted(Path("xnu/patches").glob("*.patch")))
+          guard = ('                case "${PATCH##*/}" in\n'
+                   f'                    {names})\n'
+                   '                        printf "Required project patch rejected: %s\\n%s\\n" "$PATCH" "$APPLY_CHECK" >&2\n'
+                   '                        exit 1 ;;\n'
+                   '                esac\n')
+          builder.write_text(source.replace(needle, guard + needle))
+          PYCODE
           ls dxb/patches
 
       - name: Deps
@@ -73,6 +88,13 @@ jobs:
           # keep going after errors so one run reports every compile failure
           MAKEFLAGS: ${{ inputs.keep_going == 'false' && '' || '-k' }}
         run: bash build.sh
+
+      - name: Require SWEET GPU code in the built kernel
+        if: env.MACHINE_CONFIG == 'SWEET'
+        run: |
+          grep -F 'sweet_gpu_probe();' dxb/xnu/bsd/dev/sweet_ufs.c
+          CONFIG=$(printf '%s' "$KERNEL_CONFIG" | tr '[:upper:]' '[:lower:]')
+          grep -aFq 'SWEET GPU: GPUCC audit v2' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
 
       - name: Package build tree for local compiles
         if: always()
