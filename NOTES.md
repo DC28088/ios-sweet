@@ -12,9 +12,9 @@
   power/reset and ten clock snapshots with `GPUCC audit v2` marker. No MMIO
   writes, new GPU aperture accesses, firmware or rendering acceleration.
   Workflow now rejects skipped project patches and requires marker in kernel.
-  Commit `d37d1ca` pushed to myfork; CI run `39228692751` is in progress.
-  Local freestanding ARM64 compile passed; real XNU compile, packaging and
-  hardware audit are pending.
+  Commit `d37d1ca` pushed to myfork; CI run `39228692751` succeeded,
+  including the GPU marker check. Local ARM64 and real XNU compiles passed.
+  Artifact download/boot packaging and hardware audit are pending.
 - User clarifies lag: quick taps, animations below 20 fps, blur absent.
   Do not rebuild/reflash the iOS root for this GPU diagnostic.
 - This user now reports iOS userland boots using
@@ -614,3 +614,11 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   Vendor reports V14.0.8.0.TKFMIXM / RKQ1.210614.002, sweet / M2101K6G;
   recovery product is sweetin. No userdata or boot partition writes occurred.
   Firmware authenticity/redistribution permission not established; keep local.
+
+- OrangeFox KGSL reports `Adreno618v1`, recovery kernel
+  `4.14.348-openela-SML/b0507b61`, available GPU frequencies
+  800/650/565/430/355/267/180 MHz. This describes recovery's Linux driver,
+  not the state inherited by XNU after the next ABL boot.
+- CI 39228692751 completed successfully on source d37d1ca. Both the full
+  kernel compile and the required GPU marker check passed. Downloading the
+  xnu-kernel artifact to xnu/out-0082-gpu-audit; no new boot yet.
