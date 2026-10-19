@@ -75,6 +75,18 @@ To check a patch locally before spending a CI run, `tools/xnu-cc.py` replays the
 
 Download the iPhone X (iPhone10,3) iOS 16.7.16 (20H392) IPSW from Apple. Then, on Linux, with `apfs-fuse`, `hfsprogs` and sudo:
 
+The APFS reader must support LZBITMAP compression. Older packages based on the
+2020 source mount the images but report I/O errors when reading compressed files.
+On Fedora, build a local reader with:
+
+```sh
+sudo dnf install cmake gcc-c++ fuse3-devel zlib-ng-compat-devel bzip2-devel
+bash tools/build-apfs-reader.sh
+export APFS_FUSE="$PWD/research/apfs-fuse-current/build/apfs-fuse"
+```
+
+`mkiosroot.sh` checks that compressed plists can be read before creating its output.
+
 ```sh
 # OS, SystemOS and AppOS disk images from the IPSW (see BuildManifest.plist for their names)
 tools/mkiosroot.sh OS.dmg SystemOS.dmg AppOS.dmg ios16-root.img 16G
