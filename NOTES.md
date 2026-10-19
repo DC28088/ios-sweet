@@ -760,3 +760,8 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   Reference: https://lists.openwall.net/linux-kernel/2025/11/21/534
   Hardware raw response is the next prerequisite; readback was not claimed
   to be an inherited vote in the new code.
+
+- 120 Hz scheduler change committed/pushed as `c056996`; combined CI run
+  `39245587501` builds patches through 0085 and requires both ARC-readback
+  and scheduler-v2 markers. It supersedes the readback-only run 39244904492.
+  No phone reboot or partition write performed in this continuation yet.
