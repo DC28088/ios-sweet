@@ -2,6 +2,23 @@
 
 ## Current local device state (2026-10-19, read first)
 
+- **0086 build ready, boot approval pending (2026-10-19 ~21:35 local):**
+  patch `0086-sweet-adreno-gfx-raise.patch` adds `sweetgpu=3`, a raise-only
+  `gfx.lvl` ARC vote with an immediate readback. Commit `065acbd`; CI run
+  `39277061501` succeeded and its kernel marker check passed. Kernel
+  `xnu/out-0086/kernel.development.sweet` (17,223,288 bytes, SHA-256
+  `f7f95c9f4ff87a0856e2b5149577cd974c1a292b2220ab524fed99503a31aa95`)
+  contains the new markers and none of the 0083 fixed-vote strings. The
+  temporary image
+  `shim/out/shim-boot-0086-gfx-raise-120hz.img` (17,149,952 bytes, SHA-256
+  `536da97e93168dfb361b4ceb9bf1c576fe2066a2a99035174734c188f735d8bc`,
+  cmdline `... sweetfb_noconsole=1 sweetfb_hz=120 sweetgpu=3`) reuses the
+  0083 shim kernel/DTB and the 0084/0085 code. At 60 s it reads `mx.lvl` and
+  `cx.lvl` read-only, reads `gfx.lvl`, and writes selector 2 (consumer
+  level 65) only if the current level is below 65; it then re-reads and
+  requires the reply to match. No `mx.lvl`/`cx.lvl`, GPUCC, GMU or partition
+  write. **The boot and the on-device `gfx.lvl` write are NOT approved yet;
+  the image is packaged but unbooted.**
 - **0085 hardware result (2026-10-19 20:12, read first):** booted
   `shim/out/shim-boot-0085-arc-readback-120hz.img` with
   `sweetfb_hz=120 sweetgpu=2`. Read-only pull:

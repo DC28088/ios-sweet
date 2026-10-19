@@ -58,6 +58,43 @@ This measures timer callbacks and calls into the CPU copy path, not rendered
 frames or panel scanout. The physical panel mode remains whatever ABL
 selected; 120 fps is not established.
 
+## 0086 candidate: raise-only `gfx.lvl` (built, CI-passed, not booted)
+
+Patch `0086-sweet-adreno-gfx-raise.patch` (commit `065acbd`) implements the
+next write gate. `sweetgpu=3` waits 60 s, re-reads `mx.lvl` and `cx.lvl`
+without writing them, then calls `sweet_rpmh_arc_raise("gfx.lvl", 65)`.
+That helper reads the current selector first and:
+
+- refuses to write unless the reply is a valid table index;
+- does nothing if the current consumer level is already >= 65 (LOW_SVS);
+- otherwise writes the first table selector whose consumer level is >= 65
+  (`gfx.lvl` selector 2, level 65 in the current table), then re-reads and
+  requires the reply to equal the written selector;
+- on mismatch or error, stops; there is no retry, no GPUCC access and no
+  `mx.lvl`/`cx.lvl` write.
+
+The single level write matches the upstream `qcom,rpmh-arc-regulator`
+active request: `RPMH_REGULATOR_REG_ARC_PSEUDO_ENABLE` is a Linux-side
+aggregation mask and is explicitly cleared from the RPMh command bits, so
+the actual RPMh ARC command carries `ARC_LEVEL` (offset 0) only. The 0086
+command is therefore the same active-vote shape the upstream driver would
+send, not a partial register set.
+
+CI run `39277061501` built and linked the kernel; the marker checks include
+`SWEET GPU: ARC gfx raise v1 starting`. Kernel
+`xnu/out-0086/kernel.development.sweet` (17,223,288 bytes, SHA-256
+`f7f95c9f4ff87a0856e2b5149577cd974c1a292b2220ab524fed99503a31aa95`)
+contains the new markers and no 0083 `SWEET RPMH: ARC vote` string.
+
+Packaged temporary image (same 0083 shim kernel/DTB, new XNU payload):
+`shim/out/shim-boot-0086-gfx-raise-120hz.img` (17,149,952 bytes, SHA-256
+`536da97e93168dfb361b4ceb9bf1c576fe2066a2a99035174734c188f735d8bc`),
+cmdline `... sweetfb_noconsole=1 sweetfb_hz=120 sweetgpu=3`. The boot and
+the `gfx.lvl` write require explicit user approval and have not been run.
+Passing this gate means only that the APPS ARC level vote was stored and
+read back; it does not prove the rail voltage changed, does not enable
+GPUCC, and does not produce GPU acceleration.
+
 ## Current correction: patch 0084
 
 The latest recovered boot log, `logs/gpu-opencode-0083.txt`, confirms the
@@ -97,10 +134,11 @@ Keep resource writes disabled until that meaning is established.
 
 The older stage-3 instructions below describe 0083 history and must not be
 used as the current procedure. The 0084/0085 `sweetgpu=2` readback gate
-passed on 2026-10-19 (above). The next proposed gate is a raise-only
-`gfx.lvl` vote with a post-write read, then GPUCC CX/GX power and an
-`RBBM_IDENTIFIER` read; the vote requires explicit approval and has not been
-run. This remains a power-driver prerequisite, not GPU acceleration.
+passed on 2026-10-19 (above). Patch 0086 (commit `065acbd`) implements the
+raise-only `gfx.lvl` vote with a post-write read, and CI run `39277061501`
+built it; the temporary image is packaged but **not booted**. After it
+passes, the next gate is GPUCC CX/GX power and an `RBBM_IDENTIFIER` read.
+This remains a power-driver prerequisite, not GPU acceleration.
 
 ## Current truth
 
@@ -366,10 +404,44 @@ default. A stage is complete only when its gate passes **on the phone**.
   IOSurface; compare against the software frame.
 - Only after gate C should CoreAnimation switch renderers.
 
-## Test procedure for the current milestone (0084/0085)
+## Test procedure for the current milestone (0086; 0084/0085 below)
 
-Build and boot through CI as usual; do not flash a partition. The 0085 image
-bundles the 0084 READ path and the 120 Hz scheduler:
+Build and boot through CI as usual; do not flash a partition. The 0086 image
+bundles the 0084 READ path, the 0085 120 Hz scheduler and the raise-only
+`gfx.lvl` write:
+
+```sh
+fastboot boot shim/out/shim-boot-0086-gfx-raise-120hz.img
+
+# after iOS runs >= 60 s, recover the persistent log via OrangeFox
+bash tools/sweet-log-pull.sh logs/gpu-gfx-raise.txt
+rg 'SWEET GPU:|SWEET RPMH:.*ARC|SWEET FB: timing' logs/gpu-gfx-raise.txt
+```
+
+Expected markers for `sweetgpu=3`:
+
+```
+SWEET GPU: ARC tables read-only complete
+SWEET GPU: ARC gfx raise v1 scheduled in 60 s; gfx only
+SWEET GPU: ARC gfx raise v1 starting; mx/cx read-only
+SWEET RPMH: ... mx.lvl ... ACTIVE read complete raw=...
+SWEET RPMH: ... cx.lvl ... ACTIVE read complete raw=...
+SWEET RPMH: ARC gfx.lvl raise before=... table-count=... target-vlvl=65
+SWEET RPMH: ARC gfx.lvl raise selector=2 vlvl=65 from=... vlvl=...
+SWEET RPMH: ARC gfx.lvl raise after=0x2 expected=2
+SWEET RPMH: ARC gfx.lvl raise verified selector=2 vlvl=65
+SWEET GPU: ARC gfx raise v1 complete; GPUCC power/clock writes remain disabled
+SWEET FB: timing ... target=120 Hz
+```
+
+If the current gfx reply is already >= 65, the log instead contains
+`already at/above vlvl=...; no write`. If the reply is not a table index,
+the selector is missing, or the post-write readback differs, the code prints
+a refusal/mismatch and stops without GPUCC access. Keep the log and do not
+add GPUCC writes after a mismatch.
+
+The older 0085 120 Hz image and its `sweetgpu=2` READ path remain the
+fallback:
 
 ```sh
 fastboot boot shim/out/shim-boot-0085-arc-readback-120hz.img
@@ -390,10 +462,10 @@ SWEET GPU: ARC readback v1 complete; power/clock writes remain disabled
 SWEET FB: timing ... target=120 Hz
 ```
 
-Do not boot the 0083 `sweetgpu=2` fixed-vote image. The next write is the
-proposed raise-only `gfx.lvl` vote; do not run it without explicit approval.
-If a run regresses the display or crashes, keep the previous image and the
-log; do not add GPUCC writes.
+Do not boot the 0083 `sweetgpu=2` fixed-vote image. The 0086 raise-only
+`gfx.lvl` vote is now implemented and CI-built; do not run it without
+explicit approval. If a run regresses the display or crashes, keep the
+previous image and the log; do not add GPUCC writes.
 
 ## Safety and recovery
 
