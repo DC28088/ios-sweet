@@ -20,10 +20,12 @@
   `qcom,gpucc-sdmmagpie` at `0x05090000`/`0x9000`, Adreno chip ID
   `0x06010800`, GPU regs at `0x05000000`, GMU at `0x0506a000`, and KGSL SMMU
   at `0x05040000`. The five probe offsets match Qualcomm's SDM Magpie source.
-- Next: install the AArch64 cross-toolchain and obtain the D22AP ADT from the
-  iPhone10,3 iOS 16.7.16 IPSW; then build the SWEET ADT, payload with
-  `sweetgpu=1`, and temporary shim boot image. `mkbootimg`, host `gcc`, and
-  `cpio` are present. No boot image has been built or fastboot-booted yet.
+- Extracted the D22AP DeviceTree from the iPhone10,3 iOS 16.7.16 IPSW into
+  `research/ipsw-x/d22ap.adt`; generated `shim/out/sweet.adt` with its `/product`
+  node. The raw Apple artifact remains under ignored `research/`.
+- Next: install the AArch64 cross-toolchain, then build the shim and payload
+  with `sweetgpu=1`. `mkbootimg`, host `gcc`, and `cpio` are present. No boot
+  image has been built or fastboot-booted yet.
   Preserve Android partitions; use `fastboot boot`, never flash boot.
 
 **STATE at end of 2026-10-18 (evening):**
