@@ -37,13 +37,30 @@ GPU wedged or the panel black.
    matching user-space translation layer. Only after it renders an IOSurface
    correctly should CoreAnimation switch from software rendering.
 
-## Required evidence before phase 1
+## Phase 1: opt-in GPUCC status probe
 
-- A stock `sweet` DTB and the exact Android firmware build used on the phone.
-- A hardware log with the stock bootloader's GPU clock/power state, plus the
-  corresponding SM7150 Linux GPUCC/GMU/SMMU device-tree data.
+Patch `0081-sweet-adreno-readonly-gpucc.patch` adds a read-only probe for the
+SM6150 GPU clock controller at `0x05090000`. It reads the GX/CX clock branch
+control registers identified by the upstream SM6150 GPUCC driver. It does not
+map the Adreno core aperture, change power or clocks, reset hardware, load
+firmware, or submit commands. It is disabled by default; pass `sweetgpu=1` to
+opt in. The output is intended to establish the ABL-inherited clock state
+before touching GPU registers.
+
+This is diagnostic bring-up code, not a rendering driver. The probe has not
+been built or run on hardware yet. Do not treat clock-controller values as
+proof that command submission is safe.
+
+## Required evidence before powering or accessing the Adreno core
+
+- The stock `sweet` base DTB and DTBO (or the post-overlay live FDT), plus the
+  exact Android firmware build used on the phone.
+- A hardware log from the opt-in GPUCC probe and the corresponding SM7150
+  Linux GPUCC/GMU/SMMU device-tree data.
 - The firmware redistribution status and a recoverable test procedure using
   `fastboot boot`; no boot partition is flashed.
 
-The next implementation change should be the read-only probe in a new XNU
-patch, tested first with `sweetgpu=1`. Do not enable it by default.
+The next implementation change should use those readings to identify the GX
+power state, then add a separately gated read-only Adreno/GMU register probe.
+Keep `sweetgpu` disabled by default until the power-state reads are validated
+against the exact firmware on the phone.
