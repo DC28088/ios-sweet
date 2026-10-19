@@ -699,4 +699,17 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   Next: package `sweetgpu=1` stage-2 image (read-only ARC tables) from this
   kernel, ask the user for approval, boot it temporarily, and recover the
   log before any `sweetgpu=2` vote. Exact gate criteria and expected markers
-  are in `docs/GPU_PROGRESS.md`.
+  are in `docs/GPU_PROGRESS.md`. **User approved the stage-2-only temporary
+  boot on 2026-10-19; stage 3 (ARC votes) is not approved yet.**
+- Stage-2 image is built and verified: kernel
+  `xnu/out-0083/kernel.development.sweet` (17,222,944 bytes, SHA-256
+  `ed03acc1ca6d9388969cf42b15e152b8d26eb633b1405bfc2225dcb525f3c3b6`,
+  matches the CI artifact SHA256SUMS and the ZIP-range copy), ADT
+  `shim/out/sweet.adt` (unchanged eight-core ADT), cmdline identical to the
+  tested 0082 image except it keeps `sweetgpu=1`; payload
+  `shim/out/payload-0083-arc-probe.bin`; boot image
+  `shim/out/shim-boot-0083-arc-probe.img` (17,149,952 bytes, SHA-256
+  `1e549e65b4aa0e2d4113825b05bd8b496f8c1631edc38fff937e78c19107f9ef`).
+  Boot v2 unpack, embedded payload match and ARC marker all verified. Phone
+  is in fastboot; sandbox fastboot has no USB access, so the user must run
+  the temporary boot from the host.
