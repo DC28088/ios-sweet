@@ -65,6 +65,11 @@ The live DT routes GPU power through three ARC level regulators:
 - `cx.lvl` (`pm6150l_s2_level`, MX-parented) - CX rail
 - `gfx.lvl` (`pm6150_s2_level`) - GPU GX rail
 
+The live DT initializes all three at consumer level 17 (retention), so the
+LOW_SVS (65) vote is a deliberate raise, not a readback of the boot state.
+`mx.lvl` also has an always-on (`_ao`) sibling; this stage votes only the
+active resource.
+
 These are **performance-level votes**, not millivolt VRM commands. The
 existing touch driver's `sweet_rpmh_vreg_enable()` writes PM6150L L11C VRM
 registers (voltage/mode/enable) and cannot be reused unchanged.
