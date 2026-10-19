@@ -108,7 +108,7 @@ vote is stored and read back on this board. It does not prove the rail
 voltage changed, does not enable GPUCC, and does not produce GPU
 acceleration.
 
-The next gate is 0087 (built and packaged; boot pending): power the GPUCC CX domain with
+The next gate is 0087 (built and packaged; first stage-4 attempt inconclusive): power the GPUCC CX domain with
 the downstream GDSC sequence, poll its status, and - only if the GPU AHB
 branch reports a running clock - read a small table of RBBM/CP/VBIF
 registers from the GPU aperture. `sweetgpu=5` adds the `gfx.lvl` raise and
@@ -381,7 +381,7 @@ default. A stage is complete only when its gate passes **on the phone**.
 - Fail: readback mismatch, timeout, display regression, or crash. Do not
   proceed to stage 4; recover the log.
 
-### Stage 4 - GPUCC CX/GX power and gated aperture read (built and packaged, not run)
+### Stage 4 - GPUCC CX/GX power and gated aperture read (built and packaged; first attempt inconclusive)
 
 - Prerequisite: stage 3 passes (done) and the inherited/shared ARC votes are
   understood.
@@ -408,8 +408,14 @@ default. A stage is complete only when its gate passes **on the phone**.
   `RBBM_STATUS3` SMMU-stalled clear and `CP_HW_FAULT` zero.
 - Fail: GDSC poll timeout, `0xFFFFFFFF` aperture reads, SMMU-stalled bit,
   bus hang, panel loss or panic. Stop; do not add clock-tree writes.
-- Approval: **not yet approved.** Build and CI only; the boot needs explicit
-  user approval, `sweetgpu=4` before `sweetgpu=5`.
+- Approval: stage 4 was approved and attempted once (2026-10-19 ~23:07).
+  The image booted and reached SpringBoard, but the 45 s SweetTouch probe
+  read an all-zero Goodix info page and stopped (`no unique supported IC`);
+  the 60 s `GPUCC CX power v1 starting` marker is absent, so the CX write
+  never ran. The result is inconclusive, not a pass: the touch code is
+  unchanged from 0086, and the phone was force-rebooted before the GPU
+  timer. Log: `logs/gpu-cx-power.txt` (ignored). Stage 5 is not approved and
+  remains blocked until the CX gate passes.
 
 ### Stage 5 - GMU firmware boot
 
@@ -566,8 +572,10 @@ SWEET FB: timing ... target=120 Hz
 Do not boot the 0083 `sweetgpu=2` fixed-vote image. The 0086 raise-only
 `gfx.lvl` vote has been run and passed; do not re-run it without a reason.
 The 0087 CX/GX power patch is implemented (CI run `39289968547` green on
-`f6f8624`; both images packaged); the `sweetgpu=4` and `sweetgpu=5` boots
-each need explicit approval, and 4 comes before 5. If a
+`f6f8624`; both images packaged). Stage 4 was approved and attempted once;
+the result is inconclusive because the SweetTouch probe failed before the
+60 s CX write. The `sweetgpu=4` retry and the `sweetgpu=5` boot each need
+explicit approval, and 4 comes before 5. If a
 run regresses the display or crashes, keep the previous image and the log;
 do not add clock-tree or GMU writes.
 
