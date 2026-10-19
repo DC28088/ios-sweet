@@ -15,7 +15,9 @@
   `docs/adreno-port.md` for exact reuse, audit and remaining dependencies.
   Portable C host compilation succeeded (`gcc -Wall -Wextra -Werror`), and
   patch application to the 0087 sources succeeded. Cross-GCC has no libc
-  headers here; authoritative XNU build pending. No new boot or flash.
+  headers here; first CI run `39298707871` rejected the short-context bsd/conf/files
+  patch hunk before compiling. Expanded it to the full surrounding entries;
+  replacement XNU build pending. No new boot or flash.
   Sources: `research/gpu/0088-work/bsd/dev/` (editable), patch 0088 (tracked).
 
 
