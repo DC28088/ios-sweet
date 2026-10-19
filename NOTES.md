@@ -671,3 +671,13 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   81bd8e1670f3d49c5b157aa6c65a632307baa00f5e9863404aaaf6ef9060483c.
   Same kernel/ADT and boot args except sweetgpu=0. Payload differs in exactly
   one byte; boot image also differs in its recomputed header SHA-1. Not booted.
+
+- End of audit cycle: phone remains in OrangeFox with ADB accessible; no
+  further reboot/flash performed after log/recovery backup. Changes pushed
+  to myfork/codex/adreno-power-audit (source d37d1ca, hardware report 64439b0).
+  Next code requires shared ARC level-vote handling before GPUCC power writes;
+  acceleration remains unimplemented. Full kernel artifact is also saved as
+  research/gpu/xnu-kernel-0082.zip (60,010,491 bytes); the independent ZIP-range
+  kernel copy was used for the successful boot. Original gh download session
+  39357 may still be fetching the same artifact into its separate ignored
+  output directory; do not confuse it with the verified xnu/out-0082-range.
