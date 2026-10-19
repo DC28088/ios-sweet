@@ -2,6 +2,13 @@
 
 ## Current local device state (2026-10-19, read first)
 
+- **Latest GPU hardware result:** audit source d37d1ca boots to iOS (user
+  confirmed). `logs/gpu-audit-v2.txt` contains the complete v2 audit:
+  CX_GDSCR=0x222001, CX_HW_CTRL=0x5ff4, GX_GDSCR=0x222001,
+  GX_DOMAIN=1, GX_BCR=0; every sampled CBCR has CLK_OFF set. Both domains
+  collapsed; GX clamped. No GPU/core/GMU writes or acceleration implemented.
+  Next phase is ARC cx.lvl/mx.lvl/gfx.lvl voting and the matching GPUCC power
+  sequence; existing L11C VRM helper cannot drive ARC levels unchanged.
 - GPU work now on branch `codex/adreno-power-audit`. The 0081 artifact was
   incorrectly labeled as containing the GPU probe: CI run 39205190400 skipped
   patch 0081 (bsd/conf/files and sweet_ufs.c context failures). Its kernel and
@@ -647,3 +654,20 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   user can enter installed OrangeFox with the hardware recovery key sequence;
   once ADB returns, first pull the current recovery partition read-only for
   future temporary boots. Do not substitute stock boot.img or flash recovery.
+
+- User confirmed audit image boots to iOS; missing acceleration is expected
+  because the image only reads GPUCC. Returned to OrangeFox, recovered full
+  persistent log into logs/gpu-audit-v2.txt (flush 12, 215,412 console bytes).
+  GPUCC audit completes, all GPU clocks off and CX/GX collapsed. See current
+  handoff and docs/GPU_BRINGUP.md for exact values and ARC implementation gap.
+- Read-only recovery partition backup now exists at recovery/recovery.img
+  (128 MiB), SHA-256
+  4efe904506a021f2853d756d19b97f113f991b64f5531bd4228b3293131f7e54.
+  Source was /dev/block/bootdevice/by-name/recovery -> /dev/block/sda30.
+  It is an Android boot image, not a partition write. Earlier "missing"
+  recovery-image note is superseded.
+- Also prepared an audit-disabled comparison image:
+  shim/out/shim-boot-0082-gpu-disabled.img, SHA-256
+  81bd8e1670f3d49c5b157aa6c65a632307baa00f5e9863404aaaf6ef9060483c.
+  Same kernel/ADT and boot args except sweetgpu=0. Payload differs in exactly
+  one byte; boot image also differs in its recomputed header SHA-1. Not booted.
