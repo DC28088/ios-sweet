@@ -12,7 +12,9 @@
   power/reset and ten clock snapshots with `GPUCC audit v2` marker. No MMIO
   writes, new GPU aperture accesses, firmware or rendering acceleration.
   Workflow now rejects skipped project patches and requires marker in kernel.
-  Kernel compilation, packaging and hardware audit are pending.
+  Commit `d37d1ca` pushed to myfork; CI run `39228692751` is in progress.
+  Local freestanding ARM64 compile passed; real XNU compile, packaging and
+  hardware audit are pending.
 - User clarifies lag: quick taps, animations below 20 fps, blur absent.
   Do not rebuild/reflash the iOS root for this GPU diagnostic.
 - This user now reports iOS userland boots using
@@ -29,8 +31,9 @@
   transcript is not available. Do not reflash or rebuild the root for lag.
 - Next performance comparison: temporary boot of
   `shim/out/shim-boot-0081-gpucc-8cpu.img`. It changes only `cpus=6` to `cpus=8`
-  (enables the A76 pair supported by patch 0078); no hardware result yet.
-  Rendering is still software. Keep the six-core image as fallback.
+  (enables the A76 pair supported by patch 0078). The saved baseline log
+  confirms all eight CPUs started. Rendering is still software; backboardd
+  repeatedly finds no IOAcceleratorES service. Keep the six-core image as fallback.
 
 ## Agent handoff / active work (2026-10-15, latest)
 
