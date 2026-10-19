@@ -134,6 +134,7 @@ printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' \
 df -h "$work/root"
 sudo umount "$work/root"
 # Linux hfsplus decomposes some non-ASCII names (localized Shortcuts examples)
-# differently from Apple's tables; let fsck_hfs rewrite them, then verify.
-fsck.hfsplus -f -y "$out" | grep -v 'Illegal name' || true
-fsck.hfsplus -f -n "$out"
+# differently from Apple's tables; let fsck_hfs repair and check the volume.
+# hfsprogs 540.1's -n mode can report a primary-header cache EDEADLK as damage;
+# use the full write-enabled check and preserve its exit status.
+fsck.hfsplus -f -y "$out"
