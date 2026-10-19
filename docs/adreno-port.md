@@ -60,11 +60,15 @@ to the previous `gpu-cx-power.txt`: there is no newer retained boot log.
 | gpu-gfx-raise | Stage 3 gfx selector 0 → 2 readback; no GPUCC write |
 | gpu-cx-power | Stage 4 scheduled, but its start marker never appears; touch discovery fails |
 | gpu-reaudit-20261019 | Same retained stage-4 boot as previous row |
+| gpu-0088-a618-cx | **Stage 4 CX pass**: errno=0, control=0xf8228000, status=0x80001fe0; touch GT9896 works; no accelerator |
 
-Every capture contains an unsuccessful IOAcceleratorES lookup. None contains a
-GPU command completion. The stage-4 boot ended before its 60-second power
-operation, so it provides no evidence that CX enable succeeded or failed.
-The touch failure precedes GPU power writes and must not be attributed to one.
+Every capture contains an unsuccessful IOAcceleratorES lookup. The 0088
+capture is the first with a successful GPUCC CX power operation (`SWEET
+ADRENO: CX result errno=0 ... waited_us=1`, status bit 31 set), but it still
+contains no GPU command completion or rendering. The earlier 0087 stage-4
+boot ended before its 60-second power operation, so it provides no evidence
+that CX enable succeeded or failed; the touch failure precedes GPU power
+writes and must not be attributed to one.
 
 The recovery Linux log was also pulled to
 `logs/recovery-dmesg-20261019.txt`. It registers `gpu_cc-sdmmagpie`, a GMU

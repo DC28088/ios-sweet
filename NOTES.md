@@ -26,8 +26,19 @@
   sweetgpu=4`), SHA-256
   `9d495db439da798f2013cbc79b0d4da7a354aebf27b3f0b5735b0d2251fdedce`
   (payload `634822b8862377c84349caba6b2626c70a5aac0c24277995f2dcf4ca050687ff`);
-  bootv2 unpack round-trip matches the payload. Not booted; no new hardware
-  result yet.
+  bootv2 unpack round-trip matches the payload.
+  **Booted 2026-10-19 ~23:53 local; stage 4 CX power PASSED on hardware.**
+  Touch worked (GT9896, pid 0x39383936 = "9896", fw 03.02.00.0c). At 60 s
+  the A618 core logged `SWEET ADRENO: CX result errno=0 control=0xf8228000
+  status=0x80001fe0 waited_us=1` (status bit 31 set) and finished; no panic,
+  display and touch survived. This is the first verified GPUCC CX power-up
+  under XNU. Rendering is unchanged: `backboardd` still matches
+  `IOAcceleratorES -> 0 found`; 0088 performs no GPU core access and stage 5
+  remains disabled. Log `logs/gpu-0088-a618-cx.txt` (277,866 bytes, flush
+  #25, SHA-256
+  `d2d9582d458b68a118db580a31e085f06acf17be7fa4826d47ed3e9c33e77946`,
+  ignored); raw ring `logs/gpu-0088-a618-cx.txt.bin`. Phone returned to
+  fastboot; no flash.
   Sources: `research/gpu/0088-work/bsd/dev/` (editable), patch 0088 (tracked).
 
 
