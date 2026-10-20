@@ -12,6 +12,10 @@ on:
       machine_config:
         description: xnu MACHINE_CONFIG
         default: SWEET
+      run_tests:
+        description: Run portable Adreno regression tests
+        type: boolean
+        default: true
       keep_going:
         description: make -k (collect all compile errors in one run)
         default: "true"
@@ -42,6 +46,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Check portable Adreno state transitions
+        if: github.event_name != 'workflow_dispatch' || inputs.run_tests
         run: python3 tools/check-adreno-core.py
 
       - name: Fetch build script

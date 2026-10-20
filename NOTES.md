@@ -2,6 +2,34 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **Current request: build only, no tests (2026-10-20):** user supplied a
+  phystokv_range panic photo after another agent's 0092 attempt. Reviewed new
+  commits through `9de2ec6` (also remote branch HEAD). Photo reports an illegal
+  low PA with physical base 0x100000000. The original cache-attribute flush
+  shifts a 32-bit ppnum_t before widening; `0093-sweet-highmem-cache-sync.patch`
+  correctly uses ptoa(), whose XNU macro casts to vm_address_t before shifting.
+  This explains a high-bank DMA allocation panic, but has not been confirmed
+  by a subsequent boot. Preserve this fix. Latest local stage-7 capture stops
+  after SMMU IDs, before TCM/DMA completion markers; it does not itself record
+  the pictured panic or prove an exact failing call stack. Stage-6 control
+  capture records 32768 verified TCM bytes and errno=0. Neither is evidence of
+  GPU execution. User explicitly requests implementation/build without tests:
+  **do not boot/flash, run portable regressions or device tests this turn.**
+  Implementing ordered patch 0094: polled legacy HFI RPC with echoed-header
+  validation, bounded ACK/debug queues, fault/timeout poisoning, INIT/version/
+  performance/bandwidth/end-init exchange, and A618 PDC/RSC/M3/GX handshake.
+  Capture `gpu-0092-dma-hfi.txt`: 170228 bytes, SHA-256
+  `c84980e78eb2a8723aebfd7fcca806deedf903c3337c7aa4a024715613cc31b8`.
+  Capture `gpu-0092-stage6.txt`: 269447 bytes, SHA-256
+  `a93b8c64ef39395868f21900af29f2c2748c484dc5da26e1cdb322d36d96d213`.
+  New opt-in `sweetgpu=8`; stages 1-7 keep their prior behavior. Uses documented
+  minimum 180 MHz GPU / 200 MHz GMU OPPs and raw command-DB ARC votes. This is
+  GMU firmware startup infrastructure, **not CP/SQE submission or native iOS
+  graphics acceleration**. Host interconnect bandwidth, protected ZAP/SQE,
+  GPU stream mappings, command execution/fences, recovery/thermal management,
+  and the iOS graphics ABI remain unfinished. Editable sources:
+  `research/gpu/0094-work/`; CI tests are now separately selectable.
+
 - **0091 hardware pass / 0092 DMA backend (2026-10-20):** user reported
   iOS boots but performance remains poor; requested working driver using
   latest information. Temporarily booted OrangeFox and pulled
@@ -49,7 +77,7 @@
   GMU firmware CRC32 `0x574c0d4b`/SHA-256 `9ef10b2b...bbacbf2e` matches the
   local 32768-byte blob and stored ADT properties. Manifest
   `research/gpu/0092-boot-manifest.json`. Next: temporary boot on the
-  connected FASTBOOT phone (`21fd1806`), wait at least 90 s, then pull
+  connected FASTBOOT phone, wait at least 90 s, then pull
   `logs/gpu-0092-dma-hfi.txt`. Editable sources `research/gpu/0092-work/`.
   Root image unchanged, no flash.
 

@@ -308,3 +308,47 @@ sections 16.5.29 and 16.5.35–36, defines some control readbacks as unspecified
 CB1 must have translation disabled, with other reset bits allowed to vary.
 Cache-inhibited RAM is cleared with aligned volatile stores rather than an
 optimized zero routine, avoiding Device-memory DC ZVA/vector assumptions.
+
+
+## 0093 panic repair and 0094 firmware protocol (2026-10-20)
+
+The new OpenCode commit 9de2ec6 repairs pmap_sync_page_attributes_phys:
+ppnum_t must be widened before shifting above 4 GB. XNU's ptoa macro does
+that. The supplied photo shows phystokv_range rejecting a low physical address
+while DRAM begins at 0x100000000, consistent with truncation. The stage-7 log
+ends after SMMU identification; only the stage-6 control records completed TCM
+staging. A repaired boot has not been observed.
+
+Patch 0094 adds a serialized, polled HFI v1 command/ACK implementation and
+SM7150/A618 cold startup. Sources are the pinned a6xx_gmu.c, a6xx_hfi.c/.h,
+a6xx_gmu.xml, a6xx.xml and sm7150.dtsi listed in adreno-port-sources.json.
+Register IDs in XML are DWORDs; the GMU aperture starts at GPU byte 0x6a000.
+RSC uses GMU+0x23000; PDC regions are 0x0b290000 and 0x0b490000.
+PDC wake CX data is **2 on A618**, not the generic A6xx value 3. The third
+PDC command address 0x30090 is the A618-specific Linux value; its resource name
+has not been confirmed and is not asserted to be xo.lvl.
+
+HFI accepts only complete ACK v1 packets (id 126, type 2) whose echoed
+request header matches id, size and sequence. All waits have finite deadlines;
+firmware faults, malformed responses and timeout poison the session. DMA and
+rails stay held after failure; resetting a possibly outstanding RPMh command
+is not a recovery strategy. Host interrupts remain masked because no GMU IRQ
+handler exists yet. Initialization exchanges INIT, supported version 1.10,
+fixed-size performance and A618 bandwidth tables, then the legacy end-init
+message (wire id 5, called TEST in Linux). Only two OPP entries are supplied:
+off and 180 MHz MIN_SVS for GPU, off and 200 MHz MIN_SVS for GMU. Votes use raw
+ARC levels, not regulator consumer levels (+1). No overclocking is involved.
+
+`sweetgpu=8` opts into this execution path after successful stage-7 mappings.
+This source has **not been exercised on hardware**. Parent rail/bus votes must
+remain held, and the A618 bandwidth message does not replace host interconnect
+programming. A successful firmware handshake would not establish GPU rendering:
+protected ZAP/SQE initialization, GPU stream mappings, CP execution/fences,
+fault recovery, thermal policy and native iOS graphics ABI integration still
+remain. Existing PM4 encoders and ring code alone cannot make SpringBoard use
+Adreno. Turnip/Freedreno implement different userspace interfaces from Apple's
+Metal/IOAccelerator drivers.
+
+Per the user's request, this iteration compiles only. No portable regression
+suite, emulator, temporary boot or flash is run. Workflow run_tests is a
+separate boolean input, default true; this build dispatch selects false.
