@@ -77,7 +77,7 @@ public:
      * No base/control/SQE/WPTR writes and no memory clearing. The board owns
      * all mappings for the boot lifetime. Seed is the observed completed
      * CACHE_FLUSH_TS value, with shadow and fence in separate storage.
-     * Only trusted kernel submit() is supported; A7xx framing is refused. */
+     * Trusted kernel submissions only; framed submissions use the A6xx sequence. */
     IOReturn adoptA6xx(const NativeAdrenoRingIo *,const NativeAdrenoRingCache *,
         void *ring,size_t ring_bytes,uint64_t ring_iova,
         void *fence,size_t fence_bytes,uint64_t fence_iova,
@@ -89,8 +89,8 @@ public:
      * it with one WPTR update. Returns a nonzero fence value on success. The
      * words are copied; the caller's buffer is never retained. */
     IOReturn submit(const uint32_t *words,size_t word_count,uint32_t *fence);
-    /* User command buffers: the A7XX BR/BV thread framing of a7xx_submit() around the words (CP init and the kernel's own
-     * bring-up packets keep the plain submit() above, as Linux sends them outside a7xx_submit()). */
+    /* Validated command buffers: A6xx cache invalidation plus legacy timestamp
+     * fence, or A7xx BR/BV framing. No VM switch or client isolation is implied. */
     IOReturn submitFramed(const uint32_t *words,size_t word_count,uint32_t *fence);
     /* The next framed submission starts with the A7XX context entry of a6xx_set_pagetable() (BR/BV counters, on-chip
      * timestamps and resource table cleared between thread syncs); a new user client requests it, as Linux does per context. */

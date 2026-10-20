@@ -2,6 +2,21 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0108 core implementation / build-only (2026-10-20):** execution restored
+  through approved repository/network commands; NO USB access. Imported MIT
+  NativeAdrenoMemory/Cpu/SmmuMemory/Vm/Submit and ArmSmmu4K into third_party;
+  patch0108 compiles the core into XNU. Ported complete16KiB CPU ownership,
+  separate logical4KiB GPU extents, padding-inclusive budgets/pool allocations,
+  PAGE_SHIFT cache attributes and guarded physical maintenance. A6xx framed
+  submissions use pinned Linux cache/CCU packets and legacy fences rather than
+  A7xx BR/BV state. Local portable SMMU C and ring C++ compilation passed;
+  ARM-only MMIO syntax compiled, no tests or hardware runs. Full XNU CI pending.
+  This is not a lag fix: dynamic BO arena is not bound to CB0, no userclient,
+  Darwin Turnip/Metal plugin or IOSurface rendering deployed. Keep0106 cold-SQE
+  fix and existing GMU CB1. docs/native-adreno-0108.md records exact gaps;
+  docs/native-adreno-0108-sources.json records source/adapted hashes. Original
+  mode-only working changes must remain unstaged. User boots manually.
+
 - **0107 build SUCCESS /image ready (2026-10-20):** CI39458079908 exactsource
   cc09e1f4f779dbffdc3b4e92388aeddfd70b32a2; portable testsSKIPPED. Job118750074042,
   kernel artifact12280989818 ZIP60138774. Kernel17243456 bytes SHA256

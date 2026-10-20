@@ -94,6 +94,34 @@ static size_t packet(uint32_t *words,size_t at,uint32_t opcode,const uint32_t *p
 IOReturn NativeAdrenoRing::emitPrologue(uint32_t at,bool reset,uint32_t *end)
 {
     const uint32_t mask=(uint32_t)(ring_bytes_/4-1);
+    if(a6xx_) {
+        /* Linux a6xx_set_pagetable/a6xx_submit at the pinned SM7150 revision.
+         * One already-owned context: no TTBR switch and no A7xx thread state.
+         * A requested context entry initializes performance SRAM under protected
+         * mode, waits for its real status, then restores protected mode. */
+        uint32_t words[19]={};
+        size_t n=0;
+        if(reset) {
+            const uint32_t off=0;
+            n=packet(words,n,0x5f,&off,1);
+            if(!n || AdrenoPM4Type4(RingPerfctrSramInit,1,&words[n])!=AdrenoPM4Success)return poison();
+            words[n+1]=1;n+=2;
+        }
+        const uint32_t invalidate=RingCacheInvalidate;
+        n=packet(words,n,RingFenceOpcode,&invalidate,1);
+        if(reset && n) {
+            const uint32_t wait[6]={RingWaitWriteEq,RingPerfctrSramInitStatus,0,1,1,0},on=1;
+            n=packet(words,n,RingWaitRegMem,wait,6);
+            if(n)n=packet(words,n,0x5f,&on,1);
+        }
+        const uint32_t depth=RingCcuInvalidateDepth,color=RingCcuInvalidateColor;
+        if(n)n=packet(words,n,RingFenceOpcode,&depth,1);
+        if(n)n=packet(words,n,RingFenceOpcode,&color,1);
+        const size_t count=6+(reset?13:0);
+        if(n!=count)return poison();
+        for(size_t i=0;i<count;++i)ring_[(at+(uint32_t)i)&mask]=words[i];
+        *end=(at+(uint32_t)count)&mask;return kIOReturnSuccess;
+    }
     uint32_t words[RingPrologueWords+RingResetWords]={0};
     const uint32_t br=RingSyncThreads|RingThreadBr,syncBoth=RingSyncThreads|RingThreadBoth,both=RingThreadBoth,marker=0x101;
     const uint32_t count=RingPrologueWords+(reset?uint32_t(RingResetWords):0u);
@@ -248,7 +276,6 @@ IOReturn NativeAdrenoRing::submit(const uint32_t *words,size_t word_count,uint32
 }
 IOReturn NativeAdrenoRing::submitFramed(const uint32_t *words,size_t word_count,uint32_t *fence)
 {
-    if(a6xx_) {if(fence)*fence=0;return kIOReturnUnsupported;}
     return submitWords(words,word_count,fence,true);
 }
 IOReturn NativeAdrenoRing::submitWords(const uint32_t *words,size_t word_count,uint32_t *fence,bool framed)
@@ -259,7 +286,8 @@ IOReturn NativeAdrenoRing::submitWords(const uint32_t *words,size_t word_count,u
     if(seqno_==UINT32_MAX)return kIOReturnNoResources;
     const uint32_t size_words=(uint32_t)(ring_bytes_/4),mask=size_words-1;
     const bool reset=framed && reset_pending_;
-    const uint32_t extra=framed?RingPrologueWords+(reset?uint32_t(RingResetWords):0u)+RingFramedFenceWords:(a6xx_?8u:uint32_t(RingFenceWords));
+    const uint32_t extra=a6xx_?(framed?(6u+(reset?13u:0u)+8u):8u):
+        (framed?RingPrologueWords+(reset?uint32_t(RingResetWords):0u)+RingFramedFenceWords:uint32_t(RingFenceWords));
     if(word_count>size_words-extra-8)return kIOReturnNoResources;
     uint32_t rptr=0;IOReturn status=readRptr(&rptr);
     if(status)return status;
@@ -273,7 +301,7 @@ IOReturn NativeAdrenoRing::submitWords(const uint32_t *words,size_t word_count,u
     for(size_t i=0;i<word_count;++i)ring_[(at+i)&mask]=words[i];
     at=(at+(uint32_t)word_count)&mask;
     uint32_t end=0;
-    status=framed?emitFramedFence(at,seqno_+1,&end):emitFence(at,seqno_+1,&end);
+    status=framed && !a6xx_?emitFramedFence(at,seqno_+1,&end):emitFence(at,seqno_+1,&end);
     if(status)return status;
     /* Whole-ring publication is deliberate: a submission may wrap, and one
      * clean of the owned pool is cheaper than a split range proof. */
