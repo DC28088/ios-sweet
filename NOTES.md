@@ -2,6 +2,25 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0102 hardware: aperture succeeds; SQE illegal instruction at PC0:**
+  User reached iOS and returned FASTBOOT. Temporary recovery boot; pulled
+  logs/gpu-0102-cp-startup.txt225639 console bytes flush9. InitialTSB all0,
+  aperture errno0 phase3 status0 response0. ME_INIT still timed out:0/12words,
+  shadowRPTR0; CB0FSR402 FAR0, FSYNR0=1 FSYNR1=4030000. SQE_STAT PC0 and
+  all registers0 except word29=70000000. CP_STATUS1=81000006,
+  CP_INTERRUPT_STATUS=80 = CP_ILLEGAL_INSTR_ERROR (XMLbit7). RBBM IRQ0
+  masked summary failed to reveal this; CP backend must check local status.
+  This is failure before established firmware startup, not proof ME_INIT runs.
+  0103 stages SQE separately with full volatile CPU readback and independent
+  physical IO alias check before mapping/start; start rechecks without overwriting.
+  Moves optional SCM aperture before SQE/ring base programming as Linux order.
+  Adds CP local error mask f7, captures on any started-SQE failure, halts only
+  poisoned engine then captures bounded1024-word instruction-cache bank plus
+  ACTLR/HOST_AP/SQE_AP. No reset/retry, page-zero mapping or speculative SMMU
+  change. Optional availability-query transport failures now skip like Linux;
+  advertised configuration failure remains fatal. Full acceleration absent.
+  Phone currently recovery. Need CI/hardware result before claiming any repair.
+
 - **0102 compiled and temporarily booted (2026-10-20 07:39:45 UTC):**
   CI39386882928 SUCCESS on478dd39d6543c3744662a3dcfee10ea3bec7c7bc;
   portable regressions SKIPPED. Artifact12247599799 ZIP60126914 bytes,
