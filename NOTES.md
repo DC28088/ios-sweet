@@ -2,6 +2,22 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0098 compiled and CP attempt booted (2026-10-20 06:45:06 UTC):**
+  CI39381215265 SUCCESS on d110d0d; includes0093 high-bank fix and0095-0098
+  SMMU/HFI/CP changes. Portable regressions SKIPPED. Kernel artifact12245856852
+  xnu-kernel ZIP60106156 bytes, selected entry CRC/SHA matched.
+  Kernel xnu/out-0098/kernel.development.sweet SHA256
+  97c6ad6496ef1ac9af374723c241299c1c18dfdac976ef3c2882fbea5c5e84b4 (17241488 bytes).
+  Stage9 shim/out/shim-boot-0098-sqe-cp-120hz.img SHA256
+  804c87ff169ca5a6857efcf2e3914b73635c07494821857ab1f66c44123fd613 (17256448 bytes).
+  Manifest research/gpu/0098-boot-manifest.json, build log build-0098.log,
+  helper output finish-0098.log. Firmware ADT sweet-0096-cp-firmware.adt.
+  ADB rebooted recovery to bootloader; fastboot boot returned Sending/Booting
+  OKAY (0.720s). No flash/root edits. **Await fresh driver log after90s**;
+  bootloader acceptance does not prove iOS boot, HFI, SQE/CP, ZAP or fences.
+  User requested attempting execution. Full graphics ABI/renderer and lag fix
+  remain unfinished; no accelerator service or performance success is claimed.
+
 - **0098 final CP audit build dispatched:** commit
   d110d0d (full source hash in git) pushed; CI39381215265 compiles patches
   through0098 with portable regressions skipped. Older0096 CI39380282997 and
