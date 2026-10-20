@@ -374,3 +374,34 @@ available. Fault/timeout leaves resources retained and prohibits retry. A
 phase-6 result must never be reported as GPU acceleration or used to claim a
 frame-rate improvement. A 120 Hz presentation timer also does not establish
 120 FPS rendering or prove that the panel is scanning at that rate.
+
+
+## Command engine backend (0096, not yet hardware validated)
+
+A separate 96 KiB allocation contains 16 KiB of tables, 32 KiB of SQE storage,
+32 KiB of ring storage and 16 KiB of fence/data storage. Only the last 80 KiB
+are mapped to GPU stream 0 at 0x70000000. CB0 must be inactive and no existing
+stream may match; the backend refuses takeover otherwise. GMU CB1/stream5
+remain separate. All twenty pages and an unmapped guard must pass ATOS.
+SQE pages are read-only/executable; ring/fence pages are writable/nonexecutable.
+
+The CP backend requests firmware GPU_SET before any GX register read, rejects
+an already used ring, uses the A618 protection span policy from the pinned
+Linux catalogue, and submits the documented ME_INIT packet. After a signed
+ZAP image is authenticated through restricted Qualcomm PAS13 calls, it emits
+CP_SET_SECURE_MODE, a memory-write sentinel and CACHE_FLUSH_TS fence. Success
+requires consumed ring indices, idle status, no recorded CP/GMU fault, and
+correct data/fence readback. All failure paths retain memory/power ownership.
+This is not a complete runtime scheduler or fault recovery implementation.
+
+ZAP metadata resides in a separate permanently retained cache-inhibited page.
+The live reserved range is checked as 0x97f15000/0x2000; only the signed load
+segment's 4 KiB relocation range is written. No arbitrary SCM API is exposed.
+There is no direct security-register fallback on authentication failure.
+
+The captured backboardd log probes IOAcceleratorES/IOAcceleratorESLegacy and
+finds neither. Registering those names with successful stubs would provide no
+renderer or shader compiler. Native iOS graphics requires a real userspace
+renderer and its matching memory/context/command ABI, including IOSurface
+sharing and synchronization. The bootstrap backend does not implement that
+ABI; it must not be advertised as Metal or as a fix for choppy animations.
