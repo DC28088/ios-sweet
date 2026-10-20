@@ -2,6 +2,30 @@
 
 ## Current local device state (2026-10-19, read first)
 
+- **0089 postmarketOS GMU port in progress (2026-10-20):** user requested
+  continuing toward full acceleration using postmarketOS's Redmi Note 10 Pro
+  sources. Pinned sm7150-mainline/linux revision
+  `fd78d17954a86ea6ceb0c535e618ea129e09f8dd` (v7.2 branch); reference files and
+  SHA-256 manifest in `research/gpu/pmos-pinned/`. Important correction:
+  Linux deliberately uses a no-op GX power-domain enable; the GMU owns GX
+  startup. Do not restore the old manual GX reset experiment.
+  Patch 0089 implements the GPUCC/GCC GMU 200 MHz clock sequence, validates
+  the inherited fixed GPLL0 rate, retains shared votes and checks branch/RCG
+  status with deadlines. `sweetgpu=5` runs CX plus clocks and reads only
+  CX-side GMU status and SMMU IDs; `sweetgpu=6` additionally uploads the raw
+  32 KiB firmware into TCM only while SYSRESET is already asserted, checking
+  CRC and every uploaded word. It never releases the M3. GPU core accesses,
+  firmware execution, SMMU configuration and rendering remain absent.
+  Firmware ADT packaging: `tools/sweet-adreno-firmware.py`, local blob only,
+  mandatory expected SHA-256; no blobs committed or included in CI.
+  `python3 tools/check-adreno-core.py` passed host checks for power/PLL
+  preconditions, bit preservation, stuck bus/RCG/UPDATE, invalid reads,
+  malformed/corrupt firmware, reset ownership and partial upload failure.
+  Patch applied to complete pre-0089 sources and host compilation passed.
+  XNU CI pending; no 0089 hardware result. Phone last known in fastboot.
+  Editable sources: `research/gpu/0089-work/bsd/dev/`.
+
+
 - **0088 new core / fresh audit (2026-10-19):** user requested a new driver
   based on Linux/Freedreno after repeated failed attempts. Pulled
   `logs/gpu-reaudit-20261019.txt` from OrangeFox; SHA matches `gpu-cx-power.txt`
