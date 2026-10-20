@@ -14,9 +14,9 @@ diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
 +     sweet_adreno_read64((void *)smmu, 0x8020),
 +     sweet_adreno_read((void *)smmu, 0x8030), sweet_adreno_read((void *)smmu, 0x8000));
 + printf("SWEET ADRENO: CP addresses SQE=%#llx RING=%#llx SHADOW=%#llx CNTL=%#x SQECTL=%#x\n",
-+     sweet_adreno_read64((void *)core, 0x20c0),
-+     sweet_adreno_read64((void *)core, 0x2000),
-+     sweet_adreno_read64((void *)core, 0x2010),
++     ((uint64_t)sweet_adreno_read((void *)core, 0x20c4) << 32) | sweet_adreno_read((void *)core, 0x20c0),
++     ((uint64_t)sweet_adreno_read((void *)core, 0x2004) << 32) | sweet_adreno_read((void *)core, 0x2000),
++     ((uint64_t)sweet_adreno_read((void *)core, 0x2014) << 32) | sweet_adreno_read((void *)core, 0x2010),
 +     sweet_adreno_read((void *)core, 0x2008), sweet_adreno_read((void *)core, 0x2020));
   if (error) return error;
   error = sweet_adreno_pas_allocate(&metadata);
