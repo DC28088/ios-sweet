@@ -5,25 +5,19 @@ This document is the resumable record of the Adreno 618 work on `sweet`
 **implemented but unverified code** and from **plans**. Read it with
 `NOTES.md` and `docs/GPU_BRINGUP.md`.
 
-## Current implementation: patches 0089–0091
+## Current implementation: patch 0092 in development
 
-See [Adreno port implementation and log audit](adreno-port.md). CX power was
-verified on hardware in 0088 and again in 0089. The 0089 hardware run
-reached iOS, then stopped clock setup at the unnecessary CXO_AON gate
-(`0x1004`, enable readback zero) after the three GCC branches passed.
-Firmware upload and GMU/SMMU status reads were not reached. Patch 0090
-removes this extra gate, which is absent from the SM7150 GMU DT clock list;
-required CXO and GMU checks remain. Portable regression passed; 0090 has
-passed CI `39349325350` and reached iOS. Its log verifies required CXO
-and AHB before stopping at the second extra gate, GPUCC CX_SNOC_DVM
-(`0x108c`, readback zero). Patch 0091 removes it: the SMMU uses GCC
-SNOC_DVM_GFX, which passed. Six unique DT clock dependencies remain.
-0091 portable checks and CI `39350600573` passed; temporary boot accepted
-by FASTBOOT, hardware result pending. Patch 0089 adds the postmarketOS SM7150 GMU/bus
-clock path and firmware staging while M3 reset stays asserted, with portable
-failure checks. It still lacks firmware execution, SMMU mappings, rendering
-submission and the iOS graphics interface. Older stage-5/GX descriptions below
-are historical; GMU firmware must own GX startup.
+0091 hardware verified all six clocks, SMMU IDs and 32768 bytes of GMU TCM
+upload/readback. The M3 stayed in reset. No firmware or rendering commands
+executed, so unchanged UI performance is expected.
+
+0092 adds actual wired uncached DMA allocation, a bounded SMMUv2 stage-1
+backend and legacy HFI queue transport. Stage 7 validates every GMU page
+using hardware ATOS and an unmapped guard before publishing stream 5.
+It leaves GPU CB0 and protected contexts alone, requires inactive CB1 and
+retains memory on failure. Source compiles locally; XNU/hardware validation
+pending. Firmware startup, ZAP/SQE, command submission and the iOS graphics
+interface are still missing. See [port details](adreno-port.md).
 
 ## 120 Hz presentation experiment (patch 0085)
 

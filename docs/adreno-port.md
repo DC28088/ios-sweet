@@ -265,3 +265,39 @@ requests it. The XNU port therefore retains the downstream sdmmagpie AHB
 register at `0x1078`, verified running in the 0090 hardware log. The
 mainline DT clock list provides consumer dependencies; it does not prove
 the fallback driver is complete for this board.
+
+## 0091 verified hardware / 0092 DMA and firmware-queue backend
+
+0091 verified all six clocks and the exact SMMU profile (IDR0 `0x48016605`,
+IDR1 `0x20008005`, IDR2 `0x7511`). GMU reset stayed asserted and all 32768
+firmware bytes passed write/readback. This proves upload, not execution.
+
+0092 implements these concrete prerequisites:
+
+- `SweetAdrenoDMA.cpp`: 80 KiB wired, physically contiguous, uncached
+  IOBufferMemoryDescriptor; real physical address/extent checks, 36-bit PA
+  bound, permanent ownership after allocation. No cached queue aliases.
+- `sweet_adreno_smmu.c`: 4 KiB stage-1 tables inside a 16 KiB host page;
+  Normal NC, outer-shareable R/W data with execution disabled; only the
+  64 KiB GMU shared range mapped at `0x60000000`. Table memory is unmapped.
+- Measured-profile checks; inactive CB1, unused exact-match stream slot;
+  hardware ATOS must match all 16 physical pages and fault on a guard before
+  publishing stream 5. No context 0, stream 4, broad stream mask or bypass.
+- `sweet_adreno_hfi.c`: actual v1 table and queue layout, unpadded legacy
+  packets, wrap/space/bounds checks, ordered publication on uncached RAM.
+  It does not claim a firmware response from host-only queue initialization.
+- `sweetgpu=7` runs allocation/mapping checks after successful clock/TCM
+  staging, with reset and GX isolation checked again. Logs identify exact
+  register/translation failures. Deadlines and retained allocations prevent
+  retry storms or freeing memory with uncertain device ownership.
+
+Uncached tables provide visibility for the noncoherent SMMU; barriers order
+stores before TTBR use. Qualcomm's advertised 16 KiB SMMU table granule is
+avoided, matching its mainline implementation quirk. The source's AArch64
+TCR conversion uses EPD1/AS and no AArch32 EAE bit. Original implementation
+references are pinned `arm-smmu.c/h`, `arm-smmu-qcom.c`, `io-pgtable-arm.c`
+and `a6xx_hfi.c/h`; source-list and host C compilation passed.
+
+M3 execution, PDC/RSC setup, complete HFI negotiation, GPU ring execution,
+fault recovery and the iOS graphics interface remain required. These DMA and
+queue components alone cannot increase the frame rate.

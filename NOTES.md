@@ -2,6 +2,31 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0091 hardware pass / 0092 DMA backend (2026-10-20):** user reported
+  iOS boots but performance remains poor; requested working driver using
+  latest information. Temporarily booted OrangeFox and pulled
+  `logs/gpu-0091-gmu-tcm.txt` (229047 bytes, flush #13), SHA-256
+  `f2bc97421bb61a8dd1ceef684691360401cede2f8e991e30175ad23e631697ac`.
+  **All six GMU/SMMU clocks PASSED**, GMU SYSRESET=1, POWER_STATUS=0xd4,
+  AHB_FENCE_STATUS=0. SMMU IDR0=0x48016605, IDR1=0x20008005, IDR2=0x7511.
+  **All 32768 GMU firmware bytes uploaded and read back correctly.** M3
+  remains reset; no commands execute, so no performance increase expected.
+  Implementing patch 0092 with actual uncached wired DMA allocation, 4K
+  SMMUv2 translation tables and bounded legacy HFI queue transport.
+  Stage 7 maps only the 64K GMU shared region, using inactive CB1 and a
+  free exact-match stream slot for GMU kernel stream 5. CB0/GPU stream 0,
+  user stream 4 and protected banks remain untouched. Hardware ATOS must
+  verify all 16 pages and an unmapped guard before publishing stream 5.
+  Requires fresh M3 reset, GX collapse/clamp, measured ID profile, free
+  context and no existing matching stream. Buffers retained on failure.
+  HFI has bounds/space/packet checks; no firmware execution or accelerator
+  service is implemented. Also inspects `xo.lvl` read-only for PDC resource
+  identity (write whitelist unchanged). Host C compilation passed for
+  SMMU/HFI, source list and BSD patch application checks passed. Next:
+  finish integration, CI build, package stage 7, temporary boot, hardware
+  translation log. Editable sources `research/gpu/0092-work/`.
+  Phone currently OrangeFox; root image unchanged, no flash.
+
 - **0091 verified build / temporary boot (2026-10-20):** CI
   `39350600573` succeeded on `2743562bdff764a27cccdb105d84577d5d1c8c4c`;
   portable regressions, XNU compile and built-kernel markers all passed.
