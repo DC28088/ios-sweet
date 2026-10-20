@@ -447,3 +447,22 @@ and reads back SQE/ring/shadow addresses and control registers before any new
 probe or W1C. GPU address pairs use two 32-bit register reads. This patch adds
 diagnostics; it does not claim to repair the mapping or provide a renderer.
 PAS authentication and memory-write fence execution have not been reached.
+
+
+### 0099 null access and 0100 completion shadow
+
+0099 captures FAR=0, FSYNR0=1 (read, translation level 1), FSYNR1=0x4030000,
+SID=0. SQE=0x70000000 and ring=0x70008000 read back correctly; the read-pointer
+shadow base is zero. This identifies the null access, but does not prove that
+the unset shadow caused it.
+
+The pinned Linux firmware path requires WHERE_AM_I support, allocates a
+privileged shadow buffer, programs CP_RB_RPTR_ADDR, appends WHERE_AM_I during
+each flush and uses the shadow for consumer progress. 0100 implements this
+missing path using existing RW/NX CP memory at IOVA 0x70010100 (CPU offset
+0x14100), separate from fence/sentinel words. It verifies the programmed
+address before SQE release, includes the appended three DWORDs in capacity
+and progress accounting, and bounds/validates memory consumer reads. It
+retains NO_UPDATE for this non-expanded-APRIV target. No page-zero mapping
+or fake success is introduced. Hardware results remain required before
+calling the null access resolved; native iOS acceleration is still absent.
