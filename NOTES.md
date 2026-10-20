@@ -2,6 +2,23 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0102 compiled and temporarily booted (2026-10-20 07:39:45 UTC):**
+  CI39386882928 SUCCESS on478dd39d6543c3744662a3dcfee10ea3bec7c7bc;
+  portable regressions SKIPPED. Artifact12247599799 ZIP60126914 bytes,
+  selected kernel CRC and published SHA matched. Kernel17241536 bytes
+  xnu/out-0102/kernel.development.sweet SHA256
+  9408a441d344f4177cd9b6662cf5df93e320b33eab2e39450491d22b0e1e8fd4.
+  Image shim/out/shim-boot-0102-cp-startup-120hz.img17272832 bytes SHA256
+  2d247c903d7614175fcb14a57c256cffa9cb52b6d79c33ed9d938c0d75ab2170.
+  Manifest research/gpu/0102-boot-manifest.json; finish-0102.log. Job log
+  tail helper build-0102-tail.log may still be downloading (session27605).
+  ADB reboot bootloader; fastboot boot Sending/Booting OKAY0.693s. No flash
+  or root edits. Wait90s then user returns FASTBOOT; boot recovery and pull
+  logs/gpu-0102-cp-startup.txt. Inspect initialTSB, aperture phase/status,
+  CP progress/FAR and SQE_STAT[0..50] on failure. Decode captured PC against
+  local a630-sqe.disasm; do not infer CPU-shadow null fault was fixed without
+  evidence. PAS/fence remain unobserved. Native iOS renderer still absent.
+
 - **Offline SQE disassembly prepared:** cloned official Freedreno/envytools
   revision9836b7b79233f038dd2159f7480417ea54290d12 into ignored research/gpu/.
   Built afuc-build/afuc-disasm directly with GCC/rnn sources and system libxml2;
