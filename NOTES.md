@@ -2,6 +2,24 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0104 compiled and temporarily booted (2026-10-20 08:06:28 UTC):**
+  CI39389711266 SUCCESS onbcf90e4cf7b5593fefd61d74b389c256504716fb;
+  portable regressions SKIPPED. Selected artifact kernel CRC and published
+  SHA verified. Kernel xnu/out-0104/kernel.development.sweet17241656 bytes SHA
+  4fdfb29c48dd760498b8cf63625afc498a5faf93925a37d2e7737c9d5f793015.
+  Image shim/out/shim-boot-0104-sqe-zap-120hz.img17272832 bytes SHA256
+  d4c73f7726d9d9f0b57baa188a13b7b1253396345c869dac481bc94d7d3d74a3.
+  Manifest research/gpu/0104-boot-manifest.json; helper finish-0104.log after
+  transient metadata retry. Job118518552305; tail helper build-0104-tail.log
+  session24432 may still run. ADB reboot bootloader, temporary fastboot boot
+  Sending/Booting OKAY0.657s. No flash/root edits. Wait90s then user returns
+  FASTBOOT; boot recovery and pull logs/gpu-0104-sqe-zap.txt. Inspect full
+  physical readback words/heads, pre-SQE PAS attempted/error/phase/status,
+  local_irq, sqe_started, FAR, SQE_STAT and SQE_CACHE after a failure. If PAS
+  fails SQE stays halted; don't mistake that for instruction-fetch improvement.
+  CPU alias readback does not prove GPU fetch; cache/CP progress still required.
+  Full iOS renderer remains unimplemented; no lag/acceleration success claimed.
+
 - **Native iOS ABI investigation advanced during0104 build:** read-only HFS
   cache indexing found actual AGXMetalA11 executable in dyld cache (standalone
   file remains absent), plus IOAccelerator/IOSurface/Metal/GLEngine/GPUSupport.
