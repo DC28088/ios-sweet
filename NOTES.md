@@ -2,6 +2,23 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0107 build SUCCESS /image ready (2026-10-20):** CI39458079908 exactsource
+  cc09e1f4f779dbffdc3b4e92388aeddfd70b32a2; portable testsSKIPPED. Job118750074042,
+  kernel artifact12280989818 ZIP60138774. Kernel17243456 bytes SHA256
+  8f1c304069f7004568b4098b201fb2b7c0d6d3710d2bff1309441f43678bdd36,
+  published artifact checksum verified; both NativeAdreno adapter log markers
+  present. Image shim/out/shim-boot-0107-native-adreno-a618-120hz.img17276928
+  bytes SHA256 cb84c79382dd110734e2a37edba6870e4dfb1644dbdb655b82506507ba069148.
+  Boot v2 stub and payload roundtrip match. Manifestresearch/gpu/0107-boot-manifest.json;
+  finish-0107.log complete, helpersfetch/packageonly (no device commands).
+  sweetusb=2 added for existing live-console transport; sweetgpu9/fbtarget120.
+  NO0107hardwarebootyet: normal fastboot devices returns empty; asked user to
+  connectFASTBOOT or leavebuildunbooted. Wait for reply before dependent device
+  work; do not claim handoffreadyonhardware. No flashing/rootedits/radiopower.
+  Full GPU acceleration NOT implemented: next code is16KiB BO/IOSurface/VM,
+  A6xx context/IBs, NativeAdreno ABI userclient, Darwin Turnip and iOS16 Metal.
+  Before proceeding with hardware, check async answer and device visibility.
+
 - **0107 corrected build /Metal ABI:** CI39458079908 on exactsource
   cc09e1f, testsfalse; first CI39457578705 failed during patch application.
   finish-0107.py/package-0107.py updated source/run; first helper log preserved.
