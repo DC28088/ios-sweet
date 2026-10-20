@@ -72,8 +72,9 @@ CI [39347214431](https://github.com/DC28088/ios-sweet/actions/runs/39347214431)
 succeeded on `b1a4b3c`, including the portable checks, full XNU build and kernel
 marker checks. The verified kernel SHA-256 is
 `6d0f9903c9c0f97c1ecce4c56e0d24955900af21b1669b23e5edfbd08549fda8`.
-The stage-6 local image was handed off with `fastboot boot`; hardware clock,
-SMMU-ID and upload results are pending the retained log. No flash was used.
+The stage-6 local image reached iOS. The retained log shows a stop at the
+extra CXO_AON gate, before SMMU-ID reads or upload; see the 0090 correction
+below. No flash was used.
 
 **Full GPU acceleration remains unimplemented.** Subsequent dependencies are
 XNU DMA mappings and SMMU setup, GMU/HFI startup, ZAP and SQE initialization,

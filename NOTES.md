@@ -14,7 +14,8 @@
   not request CXO_AON. Patch 0090 removes that extra branch, retaining
   required CXO/GMU and bus checks. Regression covers zero-valued unused AON
   with no access, and required CXO stuck-off still failing. Portable checks
-  passed. Next: CI build, package using 0089 firmware ADT, temporary boot,
+  passed. Commit `2054211`; CI `39349325350` running on that exact source.
+  Next: finish CI build, package using 0089 firmware ADT, temporary boot,
   capture next log. Phone currently OrangeFox; no flash.
 
 - **0089 verified build artifacts:** CI `39347214431` succeeded on
