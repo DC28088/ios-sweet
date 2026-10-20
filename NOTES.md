@@ -2,6 +2,23 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0108 kernel build SUCCESS / image packaged (2026-10-20):** CI39464554694
+  exactsource11e8daf2b57fa01c5e954eb3284aa095cf23e82a, testsSKIPPED. New
+  memory/CPU/VM/submit and SMMU compile commands confirmed in saved CI log
+  research/gpu/build-0108.log. Kernel artifact12283999169 ZIP60359513 bytes;
+  kernel17318512 bytes SHA256
+  84919178dc601d422abac875eb432f2a6f046a2a69b736b67ba91d7970ec406f,
+  matches published checksum. Image
+  shim/out/shim-boot-0108-native-adreno-core-120hz.img17334272 bytes SHA256
+  6809ac8ad2fb224649265364912bc61f7c0b1108b1101051fa476c9f4ca2b7a8.
+  Bootv2 kernel/payload unpack roundtrip matches. Manifest
+  research/gpu/0108-boot-manifest.json. No USB, hardware tests, flashes or root
+  edits. Full acceleration STILL UNFINISHED: the imported resource core is
+  compiled but not attached to live CB0; no userclient/Turnip/Metal renderer.
+  Do not expect UI lag improvement from this image alone. Next implementation
+  is pre-CP dynamic table arena plus live VM ownership, then NativeAdreno ABI
+  and iOS16 rendering frontend; docs/native-adreno-0108.md has exact boundaries.
+
 - **0108 full kernel CI running:** run39464554694 exactsource
   11e8daf2b57fa01c5e954eb3284aa095cf23e82a, testsfalse. First run39464251721
   on76a874a failed before compilation because source-list hunk began at1;
