@@ -4,10 +4,11 @@
 
 Patch 0088 starts a separate `bsd/dev/sweet_adreno.c` hardware core and an
 XNU adapter in `sweet_gpu.c`. **This is not a working graphics accelerator.**
-No captured boot has submitted a GPU command. There is no Metal driver,
-IOAcceleratorES service, Mesa userspace backend, GPU address-space allocator,
-GMU/HFI startup, SQE startup, or working GX clock driver in this implementation.
-The command transport has no attached hardware backend yet.
+No captured boot has submitted a GPU command. Patch 0094 now implements
+GMU cold startup and HFI exchange, but neither has a recorded hardware result.
+There is no Metal driver, IOAcceleratorES service, Mesa userspace backend,
+GPU address-space allocator or SQE startup. The command transport has no
+attached CP hardware backend yet.
 
 The previous 0087 implementation was a power experiment, not a rendering
 implementation. Rebuilding it could not enable blur or GPU compositing.
@@ -337,7 +338,9 @@ handler exists yet. Initialization exchanges INIT, supported version 1.10,
 fixed-size performance and A618 bandwidth tables, then the legacy end-init
 message (wire id 5, called TEST in Linux). Only two OPP entries are supplied:
 off and 180 MHz MIN_SVS for GPU, off and 200 MHz MIN_SVS for GMU. Votes use raw
-ARC levels, not regulator consumer levels (+1). No overclocking is involved.
+ARC levels, not regulator consumer levels (+1). MIN_SVS is raw level 48 in
+the pinned RPMh binding; the measured GFX/CX tables round it up to 64, and MX
+to 192. No overclocking is involved.
 
 `sweetgpu=8` opts into this execution path after successful stage-7 mappings.
 This source has **not been exercised on hardware**. Parent rail/bus votes must
