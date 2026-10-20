@@ -2,6 +2,21 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0095 hardware: GMU actually runs; HFI INIT blocked (2026-10-20):**
+  user reported iOS boot and returned toFASTBOOT. Temporarily booted recovery;
+  pulled logs/gpu-0095-gmu-hfi.txt (256695 console bytes, flush19), SHA256
+  b6f74f35c647c652f94c677f0024917c3d3d068bcebf07168d979f60a1809a64.
+  All16 SMMU pages/guard passed; FSR0x400 now correctly treated as metadata.
+  CB0 SCTLR=0, stream slots1..4 free, slot0 correctly routes5 toCB1.
+  xo.lvl cmdDB address confirmed **0x30090**, levels0,32,80,128.
+  MIN_SVS votes both0x400202. GMU boot errno60 phase5, HFICTRL_STATUS1:
+  M3 init, GX OOB and SPTPRAC passed; HFI INIT/version exchange did not.
+  No CP commands ran.0096 implements CP backend, initial CI39380282997.
+  Patch0097 aligns HFI ACK timeout with Linux's1s (ours incorrectly10ms),
+  matches echoed command ID+sequence (actual ACK type/length still checked),
+  and captures queue/doorbell/SMMU/response diagnostics. Rebuild before
+  attempting stage9. Phone currently in recovery; no flash/root modifications.
+
 - **SQE/CP backend implementation in progress (2026-10-20):** patch0096
   adds private 96K wired GPU allocation, 4K tables for inactive CB0/exact SID0
   (ASID0x62), 20 page probes + guard, RO/executable SQE and RW/NX ring/fence.
