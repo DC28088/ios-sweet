@@ -2,6 +2,13 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0100 compiling:** CI39384752447 source3a679fbe99902045b6fb34f4bf6be2f2a9950bc5,
+  run_tests=false. Host CP compilation-Wall-Wextra-Werror succeeds with latest
+  0089 core header and0097 DMA header (an initial attempt selected outdated
+  0088 header and failed on the missing GMU fence macro; corrected include path).
+  Helpers finish-0100.py/package-0100.py only fetch/hash/package exact source;
+  no device actions. Current device recovery, plan temporary boot after success.
+
 - **0099 hardware fault captured /0100 shadow fix (2026-10-20):**
   User reached iOS unchanged, returned FASTBOOT. Temporary recovery boot and
   logs/gpu-0099-cp-fault.txt pull:229110 bytes flush10. GMU/HFI still passes.
