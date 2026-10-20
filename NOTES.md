@@ -2,6 +2,12 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0102 compiling:** CI39386882928 exactsource478dd39d6543c3744662a3dcfee10ea3bec7c7bc,
+  run_tests=false.0101 CI39386538128 canceled/superseded, no0101 image booted.
+  Host CP-Wall-Wextra-Werror compilation passes. Helpers finish-0102.py and
+  package-0102.py only fetch/hash/package on exact CI success, never device actions.
+  Temporary boot planned after success; phone OrangeFox. Full rendering absent.
+
 - **0102 further startup audit:** pinned a6xx hw_init also initializes TSB
   control/base/size and64-bit TSB mode before SQE.0102 adds that omitted step
   under acknowledged GPU_SET, records initial values and requires zero range
