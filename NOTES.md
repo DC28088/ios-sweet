@@ -33,9 +33,25 @@
   ARM SMMUv2 spec audit found AFE/TRE readback is UNK/SBOP for long
   descriptors; compare only defined control fields, and test CB1.M for
   inactive state rather than requiring every reset bit zero. Reject all-ones
-  PAR even on guard probes. Latest CI pending. Next: build,
-  package stage 7, temporary boot and capture hardware translation log. Editable sources `research/gpu/0092-work/`.
-  Phone currently OrangeFox; root image unchanged, no flash.
+  PAR even on guard probes. CI `39354082431` succeeded on exact source
+  `f0c5dab` (kernel artifact `12233929276`, `xnu-kernel`); the artifact was
+  re-downloaded and its ZIP CRC passed. Kernel SHA-256
+  `1ff583218737c86ecac55ae829301671b51c6011ad4b33af9e6a303a1a1b73b7`
+  (17257032 bytes) matches `xnu/out-0092` byte for byte. An independent
+  `tools/mkpayload.py` rebuild produced payload SHA-256
+  `a4cec076aaaddb14f300a217075478095d2f3aa6d346cdfa82bec996ab07d822`,
+  and a fresh shim rebuild produced stage-7 image
+  `shim/out/shim-boot-0092-dma-hfi-120hz.img` (17215488 bytes, SHA-256
+  `325cae1dc265472941a67fdf7dbfb354c5f7e0c1ce867b8707d230adbd481750`);
+  both are byte-identical to the artifacts codex built. Bootv2 unpack round
+  trip matches the payload. Embedded ADT SHA-256
+  `73f9c127a087755491fe2cd01fdb81d8b6b35007fa0410bab2dafe928a76b320`;
+  GMU firmware CRC32 `0x574c0d4b`/SHA-256 `9ef10b2b...bbacbf2e` matches the
+  local 32768-byte blob and stored ADT properties. Manifest
+  `research/gpu/0092-boot-manifest.json`. Next: temporary boot on the
+  connected FASTBOOT phone (`21fd1806`), wait at least 90 s, then pull
+  `logs/gpu-0092-dma-hfi.txt`. Editable sources `research/gpu/0092-work/`.
+  Root image unchanged, no flash.
 
 - **0091 verified build / temporary boot (2026-10-20):** CI
   `39350600573` succeeded on `2743562bdff764a27cccdb105d84577d5d1c8c4c`;
