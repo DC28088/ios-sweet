@@ -2,6 +2,21 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0108 user result /0109 connected-VM work (2026-10-20):** user confirms
+  0108 reached iOS with unchanged performance, now FASTBOOT. User explicitly
+  accepted implementation work without another unconnected-image boot. Do not
+  access the phone or request a boot until an actual rendering path exists.
+  Latest Topaz fetched d8c82d9dd5925136fa226e8e23bf773eeac2d69d: only new0139
+  IOSurface address publication; no public GPU driver/Turnip/Metal path found.
+  NativeMetal HEAD remains6dcd4cb.0109 now replaces pre-SQE fixed20-leaf CB0
+  setup with an owned2GiB4K BO arena (16K host), maps the same boot SQE/ring/
+  fence allocations, probes their20 translations plus guard, then connects
+  NativeVm to NativeSubmit after the proven CP fence/adopt. Adds an explicit
+  measured A618 context/polling profile; no unhandled IRQ enable or CB1 changes.
+  Boot storage borrowed NC with permanent owner, never freed or cache-remapped.
+  Portable SMMU compilation and patch staging passed; full XNU compile pending.
+  Not hardware qualified; still no userclient, Turnip or Metal deployment.
+
 - **0108 temporary boot sent (2026-10-20):** user reported FASTBOOT.
   Approved direct fastboot boot of
   shim/out/shim-boot-0108-native-adreno-core-120hz.img succeeded:

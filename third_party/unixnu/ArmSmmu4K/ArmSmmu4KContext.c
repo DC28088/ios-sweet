@@ -28,7 +28,7 @@ ArmSmmu4KStatus ArmSmmu4KEncodeContext(const ArmSmmu4KContextConfig *c,
     out->cbar=out->cba2r=out->tcr=out->tcr2=out->mair0=out->mair1=out->sctlr=0;
     out->reserved_zero=0;
     out->ttbr0=out->ttbr1=0;
-    if(!c || (!c->lower && !c->upper) || c->asid>65535 || c->coherent_walk>1 ||
+    if(!c || c->profile>1 || (!c->lower && !c->upper) || c->asid>65535 || c->coherent_walk>1 ||
         c->stall_on_fault>1 || c->continue_after_fault>1 ||
         !region_valid(c->lower,c->lower_tables,0) || !region_valid(c->upper,c->upper_tables,1))return ArmSmmu4KArgument;
     unsigned va=width_bits((c->id2>>8)&15),pa=width_bits((c->id2>>4)&15);
@@ -56,6 +56,14 @@ ArmSmmu4KStatus ArmSmmu4KEncodeContext(const ArmSmmu4KContextConfig *c,
     if(c->upper)v.ttbr1|=c->upper_tables->root_physical;
     v.mair0=0xff44;v.mair1=0;
     v.sctlr=0x1067|(c->stall_on_fault<<7)|(c->continue_after_fault<<8);
+    if(c->profile==1) {
+        if(c->id0!=0x48016605 || c->id2!=0x7511 || !c->lower || c->upper ||
+            c->lower->input_bits!=32 || c->lower->output_bits!=36 || c->asid!=0x62 ||
+            c->coherent_walk || c->stall_on_fault || !c->continue_after_fault)return ArmSmmu4KUnsupported;
+        /* Measured0106: EPD1 with unusedTG1 zero, TTBR1zero, CFIEdisabled.
+         * The board polls faults synchronously and never enables unhandled IRQs. */
+        v.tcr=0x802020;v.ttbr1=0;v.sctlr=0x1127;
+    }
     v.reserved_zero=0;
     *out=v;
     return ArmSmmu4KSuccess;

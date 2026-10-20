@@ -19,7 +19,7 @@ static ArmSmmu4KStatus global(const ArmSmmu4KIo *io,ArmSmmu4KStreamResult *r)
      * policy (USFCFG). Configuration-access fault reporting (GCFGFRE/GCFGFIE) is not required: Linux sets
      * it only in its own global reset, and firmware that owns sCR0 may leave it clear (an Adreno SMMU read
      * 0x002f0406). It reports bad register accesses, it does not change translation or bypass. */
-    if((r->scr0&0x407)!=0x406 || !!(r->scr0&8)!=exids(r->id0))return ArmSmmu4KStateMismatch;
+    if(io->polling_faults>1 || (r->scr0&0x407)!=(io->polling_faults?0x402u:0x406u) || !!(r->scr0&8)!=exids(r->id0))return ArmSmmu4KStateMismatch;
     return r->global_fault?ArmSmmu4KFault:ArmSmmu4KSuccess;
 }
 static ArmSmmu4KStatus scan(const ArmSmmu4KIo *io,const ArmSmmu4KStream *s,unsigned n,

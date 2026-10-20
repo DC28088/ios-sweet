@@ -17,6 +17,7 @@ typedef struct {
     int (*write32)(void *,size_t,uint32_t);
     int (*write64)(void *,size_t,uint64_t);
     int (*barrier)(void *);
+    unsigned polling_faults; /*1: board owns synchronous fault polling; no GFIE requirement.*/
 } ArmSmmu4KIo;
 typedef struct {
     uint64_t context_offset;

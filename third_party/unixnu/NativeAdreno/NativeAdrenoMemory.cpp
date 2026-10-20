@@ -245,6 +245,18 @@ IOReturn NativeAdrenoMemory::importTask(void *task,uint64_t address,size_t bytes
 failed:
     (void)release();return status;
 }
+IOReturn NativeAdrenoMemory::borrowBootStorage(void *mapping,uint64_t physical,size_t bytes,unsigned bits)
+{
+    if(backed() || spans_ || owned_spans_ || quarantined_)return kIOReturnBusy;
+    if(!mapping || !physical || !bytes || (bytes&4095) || (physical&4095) ||
+        ((uintptr_t)mapping&4095) || !outputWidth(bits) || bytes>UINTPTR_MAX-(uintptr_t)mapping ||
+        physical>=(UINT64_C(1)<<bits) || bytes>(UINT64_C(1)<<bits)-physical)return kIOReturnBadArgument;
+    spans_=IONew(NativeAdrenoPhysicalSpan,1);
+    if(!spans_)return kIOReturnNoMemory;
+    spans_[0]={0,physical,bytes};span_count_=span_capacity_=1;
+    mapping_=mapping;bytes_=allocated_bytes_=bytes;borrowed_nc_=prepared_=true;
+    return kIOReturnSuccess;
+}
 IOReturn NativeAdrenoMemory::makeWriteCombined()
 {
     if(write_combined_ && prepared_ && !quarantined_ && !device_references_)return kIOReturnSuccess;
@@ -292,7 +304,7 @@ IOReturn NativeAdrenoMemory::release()
     if(spans_)IODelete(spans_,NativeAdrenoPhysicalSpan,span_capacity_);
     if(owned_spans_)IODelete(owned_spans_,NativeAdrenoPhysicalSpan,owned_capacity_);
     owned_spans_=nullptr;owned_count_=owned_capacity_=0;
-    mapping_=nullptr;spans_=nullptr;bytes_=allocated_bytes_=span_count_=span_capacity_=0;read_only_=false;
+    prepared_=false;borrowed_nc_=false;mapping_=nullptr;spans_=nullptr;bytes_=allocated_bytes_=span_count_=span_capacity_=0;read_only_=false;
     return kIOReturnSuccess;
 }
 IOReturn NativeAdrenoMemory::holdForDevice()
@@ -311,6 +323,7 @@ IOReturn NativeAdrenoMemory::publishForDevice(size_t offset,size_t bytes,bool wr
 {
     if(!backed() || !prepared_ || quarantined_)return kIOReturnNotReady;
     if(!bytes || ((offset|bytes)&4095) || offset>bytes_ || bytes>bytes_-offset)return kIOReturnBadArgument;
+    if(borrowed_nc_) {__asm__ volatile("dsb sy":::"memory");return kIOReturnSuccess;}
     if(imported_)return maintainImported(offset,bytes,writes?NativeAdrenoCleanInvalidate:NativeAdrenoClean);
     if(write_combined_)   /* no CPU mapping should cache these pages; if one does, reach its lines through the physical pages */
         return include_write_combined?maintainImported(offset,bytes,writes?NativeAdrenoCleanInvalidate:NativeAdrenoClean):kIOReturnSuccess;
@@ -322,6 +335,7 @@ IOReturn NativeAdrenoMemory::acquireDeviceWrites(size_t offset,size_t bytes)
     if(!backed() || !prepared_ || quarantined_)return kIOReturnNotReady;
     if(!bytes || ((offset|bytes)&4095) || offset>bytes_ || bytes>bytes_-offset)return kIOReturnBadArgument;
     /* Imported pages may hold the owner's unrelated dirty lines next to the GPU's writes: clean as well as invalidate. */
+    if(borrowed_nc_) {__asm__ volatile("dsb sy":::"memory");return kIOReturnSuccess;}
     if(imported_)return maintainImported(offset,bytes,NativeAdrenoCleanInvalidate);
     if(write_combined_)return kIOReturnSuccess;
     return NativeAdrenoMaintainOwnedPages(static_cast<unsigned char *>(mapping_)+offset,bytes,NativeAdrenoInvalidate);
