@@ -101,6 +101,11 @@
       "path": "drivers/iommu/io-pgtable-arm.c",
       "sha256": "41885615ee42cadf527eda2be1066f9dbf8ee60e3d6f1d96f11a639886d4255e",
       "bytes": 35755
+    },
+    {
+      "path": "drivers/gpu/drm/msm/registers/adreno/a6xx.xml",
+      "sha256": "1776505dbdb01d0355c9a828b857eaec61b286802d3509a33d6ced9e6ce54000",
+      "bytes": 279250
     }
   ]
 }
