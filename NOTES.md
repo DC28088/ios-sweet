@@ -2,6 +2,21 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **Offline SQE disassembly prepared:** cloned official Freedreno/envytools
+  revision9836b7b79233f038dd2159f7480417ea54290d12 into ignored research/gpu/.
+  Built afuc-build/afuc-disasm directly with GCC/rnn sources and system libxml2;
+  no assembler, Lua, Mesa full build or global package installation required.
+  Fedora libxml2-devel2.12.10-5.fc43.x86_64 RPM signature checked OK and headers
+  extracted only into research/gpu/host-tool-root (runtime2.12.10 matches).
+  Local build.py/compile.log and sqe-disassembler-manifest.json record tool/SHA.
+  Actual device a630_sqe.fw decoded to research/gpu/a630-sqe.disasm, all local.
+  Firmware bootstrap starts atPC0; PC16 reads CP_SQE_INSTR_BASE, PC1a..1d
+  reads that memory to locate the dispatch table.0102 SQE_STAT will locate the
+  null reader. Decoding is not proof that hardware executes those instructions.
+  Tool compile has a harmless old-source unreachable macro warning; no kernel
+  dependencies changed. DNF downloaded headers only, did not import rejected
+  unrelated repository key or install packages. Keep firmware/disassembly out of git.
+
 - **0102 compiling:** CI39386882928 exactsource478dd39d6543c3744662a3dcfee10ea3bec7c7bc,
   run_tests=false.0101 CI39386538128 canceled/superseded, no0101 image booted.
   Host CP-Wall-Wextra-Werror compilation passes. Helpers finish-0102.py and
