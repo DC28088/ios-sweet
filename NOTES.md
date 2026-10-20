@@ -2,6 +2,17 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0094 temporary boot sent (2026-10-20):** user explicitly superseded
+  build-only direction and requested booting the new image from FASTBOOT.
+  Rechecked image SHA-256
+  `053fda6fa9e9515c05ef1006d6532e60914f05c7f63c5bf79111c789518cb31a`.
+  `fastboot boot shim/out/shim-boot-0094-gmu-hfi-120hz.img` returned Sending
+  OKAY (0.525 s), Booting OKAY (0.130 s), total 0.673 s. No partition flashed.
+  Bootloader accepted the image; iOS startup and GMU/HFI results pending.
+  Allow at least 90 seconds for the deferred GPU worker (scheduled after 60 s).
+  Need screen result and a fresh log before claiming startup success or that
+  the previous panic is resolved. Full GPU acceleration remains unfinished.
+
 - **0094 compile-only artifact complete (2026-10-20):** implementation
   commits `ca70c43` and `4a6565767c523387f1fa3dbbdea3909ab16febeb` are pushed to
   `myfork/codex/adreno-power-audit`. Includes existing 0093 high-bank repair.
