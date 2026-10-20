@@ -2,6 +2,23 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0100 hardware: shadow fixed, null READ persists /0101 implemented:**
+  User reached iOS unchanged, FASTBOOT confirmed by read-only enumeration.
+  Temporary recovery boot; logs/gpu-0100-cp-shadow.txt239079 console bytes,
+  flush13. HFI passes; CP SHADOW70010100 is now correct. ME_INIT still errno60,
+  submitted12 completed0 shadowRPTR0 WPTR12; CB0FSR402 FAR0 FSYNR0=1
+  FSYNR1=4030000. Missing shadow was NOT established as the null reader.
+  0101 adds fixed CB0 SCM aperture: optional INFO availability query forMP0c/1b,
+  advertised call uses4 value args{ffff0000,ffffffff,ffffffff,ffffffff} inx2..5.
+  Normal STD64 SIP convention retained (0x42000000 base is correct; do not
+  accidentally change to FAST). Unsupported query/call availability skips as
+  Linux; advertised call failure stops SQE. Existing PAS calls gain zero fourth
+  arg; no generic SCM exposure or secure-register fallback. Logs phase/status.
+  After a submitted CP failure, captures51 SQE_STAT words (selector2420/data2424)
+  and directRPTR/CP_STATUS1/CP_INTERRUPT_STATUS. First SMMU FAR still captured
+  before selector writes. Need CI/hardware result; full rendering absent.
+  Phone currently OrangeFox; no partition writes or iOS root edits.
+
 - **0100 compiled and temporarily booted (2026-10-20 07:20:01 UTC):**
   CI39384752447 SUCCESS on3a679fbe99902045b6fb34f4bf6be2f2a9950bc5;
   portable regressions SKIPPED. Artifact CRC/published SHA verified.
