@@ -5,10 +5,16 @@ This document is the resumable record of the Adreno 618 work on `sweet`
 **implemented but unverified code** and from **plans**. Read it with
 `NOTES.md` and `docs/GPU_BRINGUP.md`.
 
-## Current implementation: patch 0089
+## Current implementation: patches 0089–0090
 
 See [Adreno port implementation and log audit](adreno-port.md). CX power was
-verified on hardware in 0088. Patch 0089 adds the postmarketOS SM7150 GMU/bus
+verified on hardware in 0088 and again in 0089. The 0089 hardware run
+reached iOS, then stopped clock setup at the unnecessary CXO_AON gate
+(`0x1004`, enable readback zero) after the three GCC branches passed.
+Firmware upload and GMU/SMMU status reads were not reached. Patch 0090
+removes this extra gate, which is absent from the SM7150 GMU DT clock list;
+required CXO and GMU checks remain. Portable regression passed; 0090 has
+not yet been built or booted. Patch 0089 adds the postmarketOS SM7150 GMU/bus
 clock path and firmware staging while M3 reset stays asserted, with portable
 failure checks. It still lacks firmware execution, SMMU mappings, rendering
 submission and the iOS graphics interface. Older stage-5/GX descriptions below

@@ -12,6 +12,7 @@ struct model {
  uint32_t regs[0x72000 / 4];
  unsigned writes;
  unsigned reads;
+ unsigned aon_accesses;
  uint32_t bad_read;
  uint32_t stuck;
  int stuck_update;
@@ -25,6 +26,7 @@ read_reg(void *cookie, uint32_t offset)
  struct model *m = cookie;
  CHECK(!(offset & 3) && offset < sizeof(m->regs));
  ++m->reads;
+ if (m->gpucc && offset == 0x1004) ++m->aon_accesses;
  if (offset == m->bad_read) return 0xffffffffu;
  return m->regs[offset / 4];
 }
@@ -34,6 +36,7 @@ write_reg(void *cookie, uint32_t offset, uint32_t value)
  struct model *m = cookie;
  CHECK(!(offset & 3) && offset < sizeof(m->regs));
  ++m->writes;
+ if (m->gpucc && offset == 0x1004) ++m->aon_accesses;
  m->regs[offset / 4] = value;
  if (offset == m->stuck) return;
  if (m->gpucc && offset == 0x1120) {
@@ -72,7 +75,8 @@ static void check_clocks(void) {
  struct a618_clock_result r;
  setup();
  CHECK(a618_enable_gmu_clocks(&g, &c, &r) == 0);
- CHECK(r.completed == 8);
+ CHECK(r.completed == 7);
+ CHECK(!gpucc.aon_accesses); /* Not a GMU DT dependency; no AON access. */
  CHECK(gpucc.regs[0x1124 / 4] == 0x602);
  CHECK((gpucc.regs[0x1120 / 4] & 3) == 2);
  CHECK((gpucc.regs[0x1098 / 4] & 0xff1) == 0xff1);
@@ -80,6 +84,12 @@ static void check_clocks(void) {
  CHECK(gcc.regs[0x52000 / 4] == 0x81);
  CHECK(gcc.regs[4 / 4] == 31 && gcc.regs[0x38 / 4] == 0x4000);
 
+ setup(); gpucc.regs[0x1004 / 4] = 0; /* Reproduce hardware AON state. */
+ CHECK(a618_enable_gmu_clocks(&g, &c, &r) == 0);
+ CHECK(!gpucc.aon_accesses && gpucc.regs[0x1004 / 4] == 0);
+ setup(); gpucc.stuck = 0x109c; /* Required CXO must still be observed on. */
+ CHECK(a618_enable_gmu_clocks(&g, &c, &r) == ETIMEDOUT);
+ CHECK(r.offset == 0x109c && !gpucc.regs[0x1124 / 4]);
  setup(); gcc.regs[0] = 0x40100001; /* ACTIVE suffices in vote-FSM mode. */
  CHECK(a618_enable_gmu_clocks(&g, &c, &r) == 0);
  setup(); gcc.regs[0] = 0x80000001; gcc.regs[0x2c / 4] = 1;
