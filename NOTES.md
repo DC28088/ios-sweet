@@ -2,6 +2,19 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **Further CP audit, not implemented:** pinned adreno_hw_init optionally
+  queries and invokes qcom_scm_set_gpu_smmu_aperture(CB0) before SQE. Protocol
+  qcom_scm.h: MP service0x0c, command0x1b,4 value args{ffff0000,ffffffff,
+  ffffffff,ffffffff}; INFO query as usual. Current restricted PAS transport only
+  supports3 args and does not implement this prerequisite. If0100 still faults,
+  audit this path and capture SQE_STAT before changing mappings. Do not claim
+  that SHADOW0 caused FAR0: syndrome is a READ, and shadow writes alone are
+  not proof of the null reader. Linux CP progress shadow path is nevertheless
+  a real missing implementation fixed by0100. No SCM aperture call was attempted.
+  Local pinned a6xx_gpu_state.c documents indexed-register auto-increment;
+  use bounded51-word CP_SQE_STAT capture (addr0x2420,data0x2424) after failure
+  if needed, then decode PC with official Mesa qrisc tools. No raw memory probe.
+
 - **0100 compiling:** CI39384752447 source3a679fbe99902045b6fb34f4bf6be2f2a9950bc5,
   run_tests=false. Host CP compilation-Wall-Wextra-Werror succeeds with latest
   0089 core header and0097 DMA header (an initial attempt selected outdated
