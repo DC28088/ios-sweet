@@ -13,6 +13,7 @@ struct model {
  unsigned writes;
  unsigned reads;
  unsigned aon_accesses;
+ unsigned cx_snoc_accesses;
  uint32_t bad_read;
  uint32_t stuck;
  int stuck_update;
@@ -27,6 +28,7 @@ read_reg(void *cookie, uint32_t offset)
  CHECK(!(offset & 3) && offset < sizeof(m->regs));
  ++m->reads;
  if (m->gpucc && offset == 0x1004) ++m->aon_accesses;
+ if (m->gpucc && offset == 0x108c) ++m->cx_snoc_accesses;
  if (offset == m->bad_read) return 0xffffffffu;
  return m->regs[offset / 4];
 }
@@ -37,6 +39,7 @@ write_reg(void *cookie, uint32_t offset, uint32_t value)
  CHECK(!(offset & 3) && offset < sizeof(m->regs));
  ++m->writes;
  if (m->gpucc && offset == 0x1004) ++m->aon_accesses;
+ if (m->gpucc && offset == 0x108c) ++m->cx_snoc_accesses;
  m->regs[offset / 4] = value;
  if (offset == m->stuck) return;
  if (m->gpucc && offset == 0x1120) {
@@ -75,7 +78,8 @@ static void check_clocks(void) {
  struct a618_clock_result r;
  setup();
  CHECK(a618_enable_gmu_clocks(&g, &c, &r) == 0);
- CHECK(r.completed == 7);
+ CHECK(r.completed == 6);
+ CHECK(!gpucc.cx_snoc_accesses);
  CHECK(!gpucc.aon_accesses); /* Not a GMU DT dependency; no AON access. */
  CHECK(gpucc.regs[0x1124 / 4] == 0x602);
  CHECK((gpucc.regs[0x1120 / 4] & 3) == 2);
@@ -84,9 +88,10 @@ static void check_clocks(void) {
  CHECK(gcc.regs[0x52000 / 4] == 0x81);
  CHECK(gcc.regs[4 / 4] == 31 && gcc.regs[0x38 / 4] == 0x4000);
 
- setup(); gpucc.regs[0x1004 / 4] = 0; /* Reproduce hardware AON state. */
+ setup(); gpucc.regs[0x1004 / 4] = gpucc.regs[0x108c / 4] = 0; /* Hardware unused-gate state. */
  CHECK(a618_enable_gmu_clocks(&g, &c, &r) == 0);
  CHECK(!gpucc.aon_accesses && gpucc.regs[0x1004 / 4] == 0);
+ CHECK(!gpucc.cx_snoc_accesses && gpucc.regs[0x108c / 4] == 0);
  setup(); gpucc.stuck = 0x109c; /* Required CXO must still be observed on. */
  CHECK(a618_enable_gmu_clocks(&g, &c, &r) == ETIMEDOUT);
  CHECK(r.offset == 0x109c && !gpucc.regs[0x1124 / 4]);
