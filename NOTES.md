@@ -2,6 +2,44 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0106 hardware: CP startup and PM4 execution succeed (2026-10-20 09:00
+  UTC):** user booted the temporary image to the iOS home screen (performance
+  unchanged, expected without a renderer) and returned FASTBOOT; a temporary
+  recovery boot pulled logs/gpu-0106-cp-startup-trace.txt 257946 bytes flush62
+  SHA256 fd36a5767d03b269550140641992ff6316fe9daddc9f01b413c3275a65a67829.
+  All 14 CP SNAP steps show IRQ=0; phase2 reads SQECTL=0/INSTR=0/RB_CNTL=0, so
+  the guarded early halt correctly did not write 3 and no error latched. After
+  instr_base INSTR=0x70000000, RB_CNTL=0x800020c, auth clean, release SQECTL=1,
+  bootstrap CP2GMU=0x4 at 10us. ME_INIT errno=0 phase=3 12/12 submitted/
+  completed RPTR=WPTR=0xc status=0x1 IRQ=0 fault=0. leave-secure + fence
+  errno=0 phase=6 29/29 fence=1 value=0x0618c0de, proving CP consumed PM4 and
+  wrote memory, not merely fetched. CB0FSR=0x400 (previous builds 0x402),
+  FAR=0 FSYNR0=0 FSYNR1=0. Root cause confirmed: the unconditional
+  CP_SQE_CNTL=3 write to a cold (SQECTL=0) engine latched
+  CP_INTERRUPT_STATUS bit7; 0106's removal fixed startup. iOS still
+  software-rendered; no renderer or iOS graphics ABI work. Phone is in
+  FASTBOOT. Added research/gpu/analyze-0106.py. Live console is already
+  available via boot-arg sweetusb=2 + tools/sweet-usbnet.sh (patches
+  0072/0073/0077); future images should include it for live logs during boot.
+
+- **0106 built and temporarily booted (2026-10-20 09:45 UTC):** CI
+  39397948195 SUCCESS on 6f74eecc4e1527d6c88ca7ea0fcb88d14e393e30;
+  portable transitions SKIPPED. Kernel artifact 12253851262 (60101595 ZIP
+  bytes); xnu/out-0106/kernel.development.sweet 17241680 bytes SHA256
+  1f503f968984b061c5f7f6e344c97c9a4e2bc7fbfaae2d397f87a21f24816677,
+  artifact checksum verified. Image
+  shim/out/shim-boot-0106-cp-startup-trace-120hz.img 17272832 bytes SHA256
+  e10f2ab2d61c3b41a2b9e78cc2a349d1b9603312f1a7addb56299d4cc8f682f6;
+  manifest research/gpu/0106-boot-manifest.json. bootv2 unpack round-trip
+  matched payload 3a13828e9ad8114fef27362ceadc056245d9ef3695cff4e7c84e6c7d2a8aa23a
+  and stub kernel. `fastboot boot` Sending/Booting OKAY 0.656s, no flash/root
+  edits. Waiting for user iOS confirmation, then temporary recovery boot and
+  pull logs/gpu-0106-cp-startup-trace.txt; summarize with
+  research/gpu/analyze-0106.py (per-step CP SNAP tags, phase2 IRQ,
+  first_fault, CP2GMU/SQECTL/INSTR). Note: if phase2 SQECTL reads 0x3 the
+  guarded early-halt still rewrites 3; snapshots distinguish that from a
+  pre-existing latch.
+
 - **0105 hardware result /0106 implemented (2026-10-20):** user booted the
   temporary image to the iOS home screen with unchanged slow performance and
   returned FASTBOOT. Log pulled with a temporary OrangeFox boot:
