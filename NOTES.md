@@ -26,7 +26,10 @@
   CI `39352692300` rejected the new-file diff headers before compiling
   (`dev/null: No such file or directory`). Added explicit new-file modes;
   complete patch application including all new files now passes and matches
-  editable sources byte for byte. Replacement CI pending. Next: build,
+  editable sources byte for byte. Replacement CI `39353002324` superseded
+  before boot: allocator now clears inhibited-cache memory with aligned
+  volatile words instead of bzero (avoids Device-memory DC ZVA faults).
+  Complete patch revalidated; latest CI pending. Next: build,
   package stage 7, temporary boot and capture hardware translation log. Editable sources `research/gpu/0092-work/`.
   Phone currently OrangeFox; root image unchanged, no flash.
 
