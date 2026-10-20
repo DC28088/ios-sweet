@@ -2,6 +2,12 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0101 compiling:** CI39386538128 sourcebfb7028d1fdc0135c0c57c53cf9013af458af4cc,
+  run_tests=false. Host CP-Wall-Wextra-Werror compilation passes. ARM SCM
+  assembly and XNU adapter compile via CI (local ARM clang absent). Helpers
+  finish-0101.py/package-0101.py only fetch/hash/package exact source; no
+  device actions. Phone in recovery, temporary boot planned after CI success.
+
 - **0100 hardware: shadow fixed, null READ persists /0101 implemented:**
   User reached iOS unchanged, FASTBOOT confirmed by read-only enumeration.
   Temporary recovery boot; logs/gpu-0100-cp-shadow.txt239079 console bytes,
