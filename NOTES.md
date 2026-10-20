@@ -2,6 +2,22 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0099 hardware fault captured /0100 shadow fix (2026-10-20):**
+  User reached iOS unchanged, returned FASTBOOT. Temporary recovery boot and
+  logs/gpu-0099-cp-fault.txt pull:229110 bytes flush10. GMU/HFI still passes.
+  ME_INIT errno60, FAR0 FSYNR0=1(read,L1), FSYNR1=0x4030000, SID0;
+  SQE70000000/RING70008000 correct, SHADOW0, CB0FSR402, RPTR0/WPTR9.
+  Null access established, shadow as its cause remains a hypothesis.
+  Pinned Linux allocates shadow for WHERE_AM_I-capable SQE and reads its memory
+  instead of CP_RB_RPTR.0100 programs mapped shadow70010100 (CPUoffset14100),
+  initializes it before SQE, verifies register readback, appends WHERE_AM_I to
+  every publish and uses validated shadow for ring progress. Same20 mapped
+  pages, no zero-page mapping, no generic trust-register bypass. Records real
+  submitted/completed DWORDs including3-word WHERE_AM_I. Fence offsets0/4
+  stay separate. Need CI then hardware result; no rendering fix claimed.
+  Also audited preemption: pinned Linux returns immediately for single ring,
+  so no invented preemption records added. Phone currently OrangeFox.
+
 - **0099 compiled and temporarily booted (2026-10-20 07:03:13 UTC):**
   CI39383140126 SUCCESS on6a4de0a69b69e146141ce92970429953ec357d2c,
   portable tests SKIPPED. Artifact CRC and published SHA verified.
