@@ -18,7 +18,8 @@ passed CI `39349325350` and reached iOS. Its log verifies required CXO
 and AHB before stopping at the second extra gate, GPUCC CX_SNOC_DVM
 (`0x108c`, readback zero). Patch 0091 removes it: the SMMU uses GCC
 SNOC_DVM_GFX, which passed. Six unique DT clock dependencies remain.
-0091 portable checks passed; hardware result pending. Patch 0089 adds the postmarketOS SM7150 GMU/bus
+0091 portable checks and CI `39350600573` passed; temporary boot accepted
+by FASTBOOT, hardware result pending. Patch 0089 adds the postmarketOS SM7150 GMU/bus
 clock path and firmware staging while M3 reset stays asserted, with portable
 failure checks. It still lacks firmware execution, SMMU mappings, rendering
 submission and the iOS graphics interface. Older stage-5/GX descriptions below
