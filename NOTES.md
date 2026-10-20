@@ -2,6 +2,12 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0107 initial CI39457578705 failed before compilation:** required patch
+  application rejected the one-context-line files.arm64 insertion. Corrected
+  to the existing seven-line surrounding context; no hardware image resulted.
+  This was patch staging, not a C++/GPU execution result. Job118748365910
+  diagnostics saved research/gpu/build-0107-tail.log.
+
 - **UniXNU port started /0107 (2026-10-20):** user supplied NativeAdreno,
   NativeMetal and MakrSas/ios-topaz. Cloned/read and pinned exact commits/hashes
   in docs/unixnu-port-sources.json; details docs/unixnu-sweet-port.md. MIT ring,
