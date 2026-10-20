@@ -239,3 +239,22 @@ CXO_AON is not a dependency. Patch 0090 removes that extra gate instead of
 pretending its enable succeeded. Required CXO still needs a running status,
 and a regression checks both unused AON reading zero and required CXO
 remaining off. Full acceleration remains unfinished.
+
+## 0090 hardware result and 0091 complete clock-list audit
+
+The 0090 temporary image reached iOS. CX, three GCC branches, required
+GPUCC CXO and AHB passed. Setup stopped at extra GPUCC CX_SNOC_DVM
+(`0x108c`, readback zero, `errno=5`, five completed branches).
+Firmware upload and GMU/SMMU status reads were not reached.
+
+Auditing both pinned SM7150 DT nodes gives six unique clock dependencies:
+
+| Consumer | Clocks |
+| --- | --- |
+| GMU | GPUCC CX_GMU, GPUCC CXO, GCC DDRSS_GPU_AXI, GCC GPU_MEMNOC_GFX |
+| SMMU | GPUCC AHB, GCC GPU_MEMNOC_GFX, GCC GPU_SNOC_DVM_GFX |
+
+0091 removes the extra GPUCC CX_SNOC_DVM access. GCC SNOC stays enabled
+and verified. Both removed gates are now covered by no-access regressions,
+including their actual zero-valued hardware state; required CXO failure
+still aborts. This does not establish firmware startup or rendering.

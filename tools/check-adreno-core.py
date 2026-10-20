@@ -11,7 +11,8 @@ with tempfile.TemporaryDirectory(prefix='sweet-adreno-check-') as temporary:
     work = Path(temporary)
     subprocess.run(['git', 'init', '-q', str(work)], check=True)
     for name in ('0088-sweet-adreno-core.patch', '0089-sweet-adreno-gmu-clocks.patch',
-                 '0090-sweet-adreno-required-clocks.patch'):
+                 '0090-sweet-adreno-required-clocks.patch',
+                 '0091-sweet-adreno-gmu-smmu-clock-list.patch'):
         subprocess.run(['git', '-C', str(work), 'apply',
                         '--include=bsd/dev/sweet_adreno.c',
                         '--include=bsd/dev/sweet_adreno.h',

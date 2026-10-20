@@ -2,6 +2,21 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0090 hardware result / 0091 correction (2026-10-20):** user confirmed
+  iOS reached home screen and returned to FASTBOOT. Temporarily booted
+  OrangeFox and pulled `logs/gpu-0090-gmu-tcm.txt` (242594 bytes, flush #12),
+  SHA-256 `2e49f50db1c9e57e87adfb7df627387e4c16c1fc09d0f29cbe88da08f48cfbee`.
+  CX passed. GCC three branches, required GPUCC CXO and AHB passed
+  (`completed=5`). Next extra GPUCC CX_SNOC_DVM at `0x108c` returned zero
+  after enable: `errno=5`. No GMU/SMMU ID read or firmware upload.
+  Audited both full clock lists: GMU uses CX_GMU, CXO, DDRSS AXI, MEMNOC;
+  SMMU uses GPUCC AHB, GCC MEMNOC and GCC SNOC_DVM_GFX. Neither uses
+  GPUCC CX_SNOC_DVM. Patch 0091 removes this second extra dependency;
+  six unique required branches remain, including GCC SNOC. Host regressions
+  pass with both unused gates zero and assert no access to either; required
+  CXO failure still stops setup. Next: build and temporarily boot 0091,
+  capture `logs/gpu-0091-gmu-tcm.txt`. Phone in OrangeFox; no flash.
+
 - **0090 built and temporarily booted (2026-10-20):** CI
   `39349325350` succeeded on exact source `2054211`, including portable
   regressions, XNU compile and kernel marker checks. Kernel artifact
@@ -14,10 +29,8 @@
   `acf0b27a1a0870ab7a535ac2685bbba299ff990848ac74a8c06235442c9d134a`.
   Manifest `research/gpu/0090-boot-manifest.json`.
   Rebooted OrangeFox to bootloader and temporarily booted stage 6:
-  Sending/Booting OKAY (0.674 s). Await user boot result after at least
-  90 seconds for the 60-second GPU worker, then FASTBOOT, temporary
-  OrangeFox boot and `logs/gpu-0090-gmu-tcm.txt` pull. No flash.
-  Clock/TCM status remains unverified; this is not rendering acceleration.
+  Sending/Booting OKAY (0.674 s). User reached iOS; retained log collected
+  in OrangeFox, see above. No flash; no rendering acceleration.
 
 - **0089 hardware log / 0090 correction (2026-10-20):** user confirmed
   stage-6 image reached iOS and returned to FASTBOOT. Temporarily booted
