@@ -485,3 +485,29 @@ following the documented A6xx register bank and auto-increment protocol.
 remains required to leave secure mode. CI39386882928 compiled both changes;
 the kernel was temporarily booted and awaits its hardware log. These changes
 provide no native iOS renderer or performance guarantee.
+
+
+### 0102 hardware and signed ZAP ordering
+
+0102 confirms optional SCM aperture setup succeeds (phase 3, status 0) and
+TSB initially contains zero. The null read persists. SQE indexed state reports
+PC=0, while CP_INTERRUPT_STATUS=0x80 identifies an illegal instruction. No
+firmware startup or ME_INIT completion is established. The backend now checks
+the CP-local error bits directly instead of relying only on masked RBBM
+summary status and a timeout.
+
+0103 separates staging from execution, verifies every CPU-staged firmware
+word and independently reads its physical backing before startup. It also
+moves aperture setup before SQE/ring base programming, and captures a bounded
+instruction-cache bank after halting a failed SQE. This is evidence collection,
+not proof that GPU fetch works.
+
+0104 follows the matching device vendor's order: signed ZAP authentication
+runs synchronously after clocks, GPU_SET and base setup, before SQE release.
+The mainline flow previously used by this port authenticated after ME_INIT;
+that stage was never reached. The new callback must succeed before SQE starts.
+The existing CP_SET_SECURE_MODE remains after successful ME_INIT. Source pin
+and file hash are in adreno-vendor-startup-source.json. CI39389711266 compiled
+the changes, and the temporary image awaits its hardware log. Native iOS
+renderer investigation is recorded separately in ios-graphics-abi.md; no
+working rendering path or performance improvement is claimed.
