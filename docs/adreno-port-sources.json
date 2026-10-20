@@ -161,6 +161,11 @@
       "path": "drivers/gpu/drm/msm/adreno/a6xx_gpu.h",
       "bytes": 10914,
       "sha256": "d37cbe3919f9d31b217d21a5a1985c3fded2534bb762c407a541fce465c85be5"
+    },
+    {
+      "path": "drivers/gpu/drm/msm/adreno/a6xx_preempt.c",
+      "bytes": 11639,
+      "sha256": "3975a996c49fc756cc58a7cbf546914a78632638241e39a752214ab0ec64941f"
     }
   ]
 }
