@@ -38,6 +38,16 @@ recorded separately in NOTES.md; imported code is not presumed qualified.
 | Deployment | UniXNU build script targets arm64-apple-ios17.0, MinimumOSVersion 17.0 | Build for iOS 16 and verify symbols/protocols; changing the deployment version alone is insufficient |
 | Display | UniXNU scanout handoff / NativeMobileDisplay | Integrate with sweet's IOSurface and framebuffer ownership and synchronization |
 
+A read-only check of this exact iOS root found `_MTLAddDevice` exported by
+Metal and `_MTLDevice` class_ro instance size **528** (instance start8), with
+the class name verified through its exported Objective-C class metadata.
+The reference frontend explicitly requires **536** for iPadOS17.7.11. Its
+plugin also uses target-specific raw display addresses. See
+`native-metal-ios16-profile.json`; this is static evidence, not runtime
+qualification or permission to publish an incompletely implemented device.
+The metadata reader uses the public [Objective-C runtime layout](https://github.com/apple-oss-distributions/objc4/blob/main/runtime/objc-runtime-new.h).
+Apple cache bytes/disassembly remain excluded from Git.
+
 The supplied NativeAdreno and NativeMetal repositories contain reusable
 layers, but their current hardware/frontend qualification is for sheng.
 No plugin is installed and the iOS root is unchanged. Do not claim acceleration

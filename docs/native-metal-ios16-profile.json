@@ -1,0 +1,19 @@
+{
+  "firmware": "iPhone10,3 iOS 16.7.16 20H392",
+  "objc_class": "_MTLDevice",
+  "observed_static_instance_size": 528,
+  "observed_instance_start": 8,
+  "upstream_native_metal_expected_instance_size": 536,
+  "upstream_target": "iPadOS 17.7.11",
+  "MTLAddDevice_export_present": true,
+  "evidence": "Read-only HFS dyld cache: Metal export to objc_class data/class_ro name and instance size; local metadata remains ignored",
+  "runtime_qualification_complete": false,
+  "plugin_installed": false,
+  "blockers": [
+    "16KiB host BO allocation and IOSurface import backend",
+    "A618 context/IB submission; current ring only accepts trusted kernel words",
+    "native Darwin Turnip KMD plus translator build for iOS16",
+    "Qualify private Metal selectors, class/runtime layouts and discovery",
+    "Replace or disable iPadOS17 hardcoded display probes; do not use offsets on iOS16"
+  ]
+}

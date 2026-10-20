@@ -2,6 +2,16 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0107 corrected build /Metal ABI:** CI39458079908 on exactsource
+  cc09e1f, testsfalse; first CI39457578705 failed during patch application.
+  finish-0107.py/package-0107.py updated source/run; first helper log preserved.
+  New payload adds sweetusb=2 for existing live-console transport. No device
+  action or root edits. Read-only Metal Objective-C class_ro inspection verified
+  _MTLDevice name, instanceStart8, instanceSize528 for20H392; upstream expects
+ 536 foriPadOS17.7.11. _MTLAddDevice exported. docs/native-metal-ios16-profile.json
+  records partial static evidence; do not merely change536to528 and publish.
+  Upstream plugin has hardcodediPadOS17 display probes that require replacement.
+
 - **0107 initial CI39457578705 failed before compilation:** required patch
   application rejected the one-context-line files.arm64 insertion. Corrected
   to the existing seven-line surrounding context; no hardware image resulted.
