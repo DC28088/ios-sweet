@@ -43,7 +43,7 @@ class NativeAdrenoMemory final {
     NativeAdrenoPhysicalSpan *owned_spans_=nullptr;
     size_t owned_count_=0,owned_capacity_=0;
     uint32_t device_references_=0;
-    bool prepared_=false,quarantined_=false,write_combined_=false,pooled_=false;
+    bool prepared_=false,quarantined_=false,write_combined_=false,pooled_=false,borrowed_nc_=false;
     size_t pool_offset_=0;
     IOReturn maintainImported(size_t offset,size_t bytes,NativeAdrenoCacheOperation);
 public:
@@ -86,7 +86,10 @@ public:
      * 1280 submissions, while walking the pool's pages took 0.65 ms of each). The submissions' line audit still covers every object. */
     IOReturn reassertWriteCombined(uint32_t *reset) const
     {return write_combined_ && span_count_ && !pooled_?NativeAdrenoReassertWriteCombined(owned_spans_,owned_count_,reset):kIOReturnSuccess;}
-    bool backed() const {return descriptor_ || imported_ || pooled_;}
+    /* Kernel board only: the boot owner permanently retains this exact NC
+     * mapping and raw physical allocation. Never changes attributes/frees it. */
+    IOReturn borrowBootStorage(void *mapping,uint64_t physical,size_t bytes,unsigned output_bits);
+    bool backed() const {return descriptor_ || imported_ || pooled_ || borrowed_nc_;}
     /* Refuses device references/quarantine; only clears ownership after real
      * descriptor complete() succeeds. No automatic reset or resource recycling. */
     IOReturn release();
