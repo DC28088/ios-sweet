@@ -2,6 +2,18 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0104 vendor ordering /0103 superseded before boot:** pinned matching
+  Lineage device kernel at e03e5ba22586be70673afb5d3c3f70510524e658,
+  drivers/gpu/msm/adreno_a6xx.c: a6xx_rb_start calls microcode_load including
+  signed ZAP subsystem load BEFORE SQE_CNTL1/CP_INIT. Source/hash recorded in
+  docs/adreno-vendor-startup-source.json.0104 follows that device vendor order:
+  fixed synchronous adapter callback after GPU_SET/DCVS/aperture/base programming
+  authenticates existing signed ZAP, then releases SQE only on success. Logs
+  attempted/error/PAS phase/status/response. Metadata/reserved mapping retained;
+  no repeat auth after ME_INIT, CP_SET_SECURE_MODE still occurs after ME_INIT.
+  0103 diagnostics/physical verification retained.0103 CI39389309335 superseded,
+  no0103 image booted. Need final0104 compile/result, full iOS rendering absent.
+
 - **0102 hardware: aperture succeeds; SQE illegal instruction at PC0:**
   User reached iOS and returned FASTBOOT. Temporary recovery boot; pulled
   logs/gpu-0102-cp-startup.txt225639 console bytes flush9. InitialTSB all0,
