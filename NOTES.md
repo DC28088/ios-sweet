@@ -2,6 +2,21 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0094 booted iOS; SMMU false failure found (2026-10-20):** user reports
+  successful home screen, unchanged performance; now requests actual SQE/CP
+  execution and iOS graphics integration. User returned to FASTBOOT on request.
+  Temporarily booted recovery and pulled `logs/gpu-0094-gmu-hfi.txt`: 239956
+  console bytes, flush #15. DMA allocated PA=0x1047e8000; previous truncation
+  panic did not recur. All 16 pages translated and unmapped guard faulted.
+  Stage 8 stopped errno=5 because cleanup wrongly required the entire FSR to
+  clear; read-only Format[10:9]=2 leaves 0x400. ARM IHI0062D.c 16.5.9 confirms
+  Format is not a W1C fault. Patch0095 masks actual fault bits, keeps stalled
+  status fatal, and logs nonsecure CB0/stream baseline for the CP backend.
+  GMU stayed reset; no HFI transaction or GPU command executed on 0094.
+  The latest instruction authorizes attempting GPU command execution, superseding
+  the earlier no-test/build-only direction. Full acceleration is still absent;
+  do not claim a lag fix without rendering and iOS integration evidence.
+
 - **0094 temporary boot sent (2026-10-20):** user explicitly superseded
   build-only direction and requested booting the new image from FASTBOOT.
   Rechecked image SHA-256
