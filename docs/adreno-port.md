@@ -429,3 +429,21 @@ executable, but this root reader does not find a standalone executable at that
 path; no shader binary or userclient ABI has been decoded from it. The probe
 log alone does not specify the complete userspace rendering ABI. No working
 Metal/OpenGLES renderer has been implemented or claimed.
+
+
+### 0098 hardware: HFI completes; CP fetch still faults
+
+The next hardware log records successful GMU boot (phase 6, firmware 0x10110000)
+and all five HFI responses with drained queues and no drops. The separate CB0
+mapping passes twenty translation probes plus its guard. However, the first
+ME_INIT submission times out: RPTR=0, WPTR=9, completed=0, RBBM_STATUS=0x800005.
+CB0 FSR becomes 0x402 (translation fault plus format metadata), while GMU CB1
+remains 0x400. CP hardware-fault and interrupt registers report zero. The first
+fault's address and syndrome are needed; successful ATOS probes alone do not
+prove the engine accessed an address covered by those tables.
+
+0099 records the original FAR, FSYNR0/1, stream SID, TTBR0, TCR and SCTLR,
+and reads back SQE/ring/shadow addresses and control registers before any new
+probe or W1C. GPU address pairs use two 32-bit register reads. This patch adds
+diagnostics; it does not claim to repair the mapping or provide a renderer.
+PAS authentication and memory-write fence execution have not been reached.
