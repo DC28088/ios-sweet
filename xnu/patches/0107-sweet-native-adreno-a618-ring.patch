@@ -736,8 +736,14 @@ diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
 diff --git a/iokit/conf/files.arm64 b/iokit/conf/files.arm64
 --- a/iokit/conf/files.arm64
 +++ b/iokit/conf/files.arm64
-@@ -19,1 +19,4 @@
+@@ -16,7 +16,10 @@
+ iokit/Kernel/arm/SweetSurface.cpp                                optional iokitcpp
+ iokit/Kernel/arm/SweetFramebuffer.cpp                            optional iokitcpp
+ iokit/Kernel/arm/SweetBattery.cpp                                optional iokitcpp
  iokit/Kernel/arm/SweetAdrenoDMA.cpp                              optional iokitcpp
 +iokit/Kernel/arm/SweetNativeAdreno.cpp                            optional iokitcpp
 +iokit/Kernel/arm/unixnu/NativeAdrenoRing.cpp                       optional iokitcpp
 +iokit/Kernel/arm/unixnu/AdrenoPM4.cpp                              optional iokitcpp
+ iokit/Kernel/arm/hid/SweetHID.cpp                                optional iokitcpp
+ iokit/Kernel/arm/hid/IOHIDEvent.cpp                              optional iokitcpp
+ iokit/Kernel/arm/hid/IOHIDEventServiceQueue.cpp                  optional iokitcpp
