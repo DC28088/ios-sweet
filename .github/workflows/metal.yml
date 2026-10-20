@@ -1,6 +1,7 @@
 name: sweet-metal
 on:
   workflow_dispatch:
+  workflow_call:
 jobs:
   build:
     runs-on: macos-14
