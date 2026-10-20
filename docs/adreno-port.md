@@ -466,3 +466,22 @@ and progress accounting, and bounds/validates memory consumer reads. It
 retains NO_UPDATE for this non-expanded-APRIV target. No page-zero mapping
 or fake success is introduced. Hardware results remain required before
 calling the null access resolved; native iOS acceleration is still absent.
+
+
+### 0100 result and 0101–0102 startup completion
+
+0100 confirms SHADOW=0x70010100, but the same null read persists (FAR=0,
+FSYNR0=1, FSYNR1=0x4030000). No command completes. The missing shadow path was
+a real implementation omission, but has not explained the null reader.
+
+0101 implements the pinned Linux optional MP/CP SMMU aperture protocol for
+CB0. INFO availability is checked before the fixed four-value call; advertised
+call failure prevents SQE release. The restricted SCM transport now carries
+the fourth register argument, with existing PAS calls supplying zero. It
+captures the 51-word indexed SQE state after a submitted command failure,
+following the documented A6xx register bank and auto-increment protocol.
+0102 also implements normal trusted-memory-range control/base/size setup and
+64-bit address mode, with initial-state logging and readback checks. ZAP
+remains required to leave secure mode. CI39386882928 compiled both changes;
+the kernel was temporarily booted and awaits its hardware log. These changes
+provide no native iOS renderer or performance guarantee.
