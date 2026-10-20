@@ -26,6 +26,13 @@ The 0106 driver already executed ME_INIT and memory-fence PM4 on hardware.
 That does not establish rendering. 0107 compilation and hardware status are
 recorded separately in NOTES.md; imported code is not presumed qualified.
 
+Sweet's live GPU node supplies chip ID `0x06010800`, highest bank bit14
+and minimum access length32. The native Darwin Turnip KMD derives GPU618
+from that KGSL-style chip ID. This is distinct from the packed chip ID sent
+to legacy GMU firmware; a future DeviceInfo reply must use the live GPU ID.
+GMEM allocation/window and UBWC capabilities must also match actual hardware
+programming before the driver reports them to Turnip.
+
 ## Required adaptations before Metal can run
 
 | Component | Reference requirement | Sweet work remaining |
@@ -52,6 +59,24 @@ The supplied NativeAdreno and NativeMetal repositories contain reusable
 layers, but their current hardware/frontend qualification is for sheng.
 No plugin is installed and the iOS root is unchanged. Do not claim acceleration
 or enable a service merely by returning success from missing methods.
+
+## Next BO/VM work
+
+Keep CPU page size16KiB. Track a BO's logical4KiB extent separately from its
+host allocation rounded to16KiB; expose only its authorized GPU extent. Walk
+raw physical segments in4KiB units for SMMU tables, without treating a4KiB
+subpage as an independently owned CPU page. CPU map sizes, pin/unpin and cache
+attribute changes must respect16KiB host-page ownership. Imported IOSurfaces
+need retained task descriptors, explicit coherency and fence-based lifetime;
+do not apply page-wide cache-attribute changes to unrelated subpage owners.
+Serialize mappings and command publication, invalidate the owned context with
+completion checks, and retain every uncertain BO after a timeout/fault. The
+current private ring API must not become an unchecked external submit method.
+
+Topaz0138's empty IOAcceleratorES service is a discovery-wait workaround, not
+a renderer. It is not imported into this GPU port. NativeMetal's original
+accelerator header qualifies IOService ancestry for iOS17; sweet must qualify
+its own discovery/base ABI when its actual renderer and userclient are ready.
 
 ## Topaz WLAN reference
 
