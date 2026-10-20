@@ -2,6 +2,17 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **CP clock/fence audit (0098):** source audit added the required legacy
+  DCVS request selecting performance index1 (180MHz) before GPU_SET/GX access.
+  ARC voltage selection alone does not set GX frequency. Bounded OOB23/ACK31
+  handshake, DCVS_RETURN check. Fence visibility is polled separately after
+  ring drain; posted AXI writes cannot be assumed immediately CPU-visible.
+  Added post-ME_INIT SMMU fault snapshots. Host CP C compilation succeeds;
+  local ARM compile helper is unavailable because ~/swift/usr/bin/clang is
+  absent. Full compile must use macOS CI. Source3005b17 CI39380737829 is
+  superseded for CP hardware work by this final audit refinement. No CP
+  execution or native iOS acceleration has been observed yet.
+
 - **0095 hardware: GMU actually runs; HFI INIT blocked (2026-10-20):**
   user reported iOS boot and returned toFASTBOOT. Temporarily booted recovery;
   pulled logs/gpu-0095-gmu-hfi.txt (256695 console bytes, flush19), SHA256
