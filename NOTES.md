@@ -2,6 +2,13 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0105 build dispatched:** CI39394541705 on exact source
+  ec7e90ccd9b201532a851b665362723c915df7cc, run_tests=false. Job118533887681.
+  finish-0105.py / package-0105.py fetch, verify source/artifact and package
+  only; no device commands. Background helper session98089 writes
+  research/gpu/finish-0105.log; job-log-tail session34205 writes
+  build-0105-tail.log. Kernel compilation ongoing; no0105 hardware claim.
+
 - **0104 hardware result /0105 next:** user reached iOS with unchanged slow
   performance and returned FASTBOOT. Temporary recovery boot OK; log pulled
   logs/gpu-0104-sqe-zap.txt (304784 console bytes, flush117). Full8033-word
