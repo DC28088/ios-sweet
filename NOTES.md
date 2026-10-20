@@ -2,6 +2,20 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0100 compiled and temporarily booted (2026-10-20 07:20:01 UTC):**
+  CI39384752447 SUCCESS on3a679fbe99902045b6fb34f4bf6be2f2a9950bc5;
+  portable regressions SKIPPED. Artifact CRC/published SHA verified.
+  Kernel xnu/out-0100/kernel.development.sweet SHA256
+  1d4c230cc82b7145219abb7829cd99cbf681cb610fada9354741ba67db641c32.
+  Image shim/out/shim-boot-0100-cp-shadow-120hz.img17272832 bytes SHA256
+  f14a66683795414bda2aa65b414adc8e86e58b1c1b0f194bc1548dde28b76cc9.
+  Manifest research/gpu/0100-boot-manifest.json; helper finish-0100.log.
+  ADB reboot bootloader; fastboot boot Sending/Booting OKAY0.697s. No flash
+  or root changes. Wait90s for worker then user returns FASTBOOT; boot recovery
+  and pull logs/gpu-0100-cp-shadow.txt. Compare FAR, SHADOW70010100, shadow
+  RPTR/WPTR12 and CB0FSR; if ME_INIT completes inspect subsequent PAS/fence.
+  Full renderer/native iOS ABI still absent; no acceleration/lag claim.
+
 - **Further CP audit, not implemented:** pinned adreno_hw_init optionally
   queries and invokes qcom_scm_set_gpu_smmu_aperture(CB0) before SQE. Protocol
   qcom_scm.h: MP service0x0c, command0x1b,4 value args{ffff0000,ffffffff,
