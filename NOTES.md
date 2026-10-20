@@ -2,6 +2,22 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **Native iOS ABI investigation advanced during0104 build:** read-only HFS
+  cache indexing found actual AGXMetalA11 executable in dyld cache (standalone
+  file remains absent), plus IOAccelerator/IOSurface/Metal/GLEngine/GPUSupport.
+  2710 images across44 cache-format files; selected headers and export tries
+  parsed without extracting2.7GB cache. Local ios-abi/index-cache.py,
+  cache-exports.py, trace-ioaccel.py and JSON/disassembly outputs stay ignored.
+  Resolved ARM64 shared-cache adrp/add/br stubs to actual IOKit exports before
+  interpreting calls. GL client type0, Device1, CL3, Queue4; ContextSubmitExt2
+  selector2 input0x88 with variable output; Device info selector2 output0x258.
+  docs/ios-graphics-abi.md records verified partial contract and limitations.
+  No service stubs, resources/command ABI, shader translation or renderer were
+  implemented; no root changes. Capstone was already installed. Previous
+  standalone AGX lookup uncertainty is resolved by cached-image identification.
+  Helper finish-0104-first-attempt.log records transient GH network failure;
+  restarted finish-0104.py with metadata retries in finish-0104.log.
+
 - **0104 compiling:** CI39389711266 exactsourcebcf90e4cf7b5593fefd61d74b389c256504716fb,
   run_tests=false. Host CP compilation-Wall-Wextra-Werror succeeds.0103 CI
   39389309335 canceled, no0103 image booted. Helpers finish-0104.py/package-0104.py
