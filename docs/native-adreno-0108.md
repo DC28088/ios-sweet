@@ -55,7 +55,10 @@ Local GCC C11 compilation passed for the portable SMMU units. The ARM-only direc
 MMIO source passed C syntax compilation with the AArch64 target macro; it was not
 assembled for x86. The adapted ring passed G++ C++14 compilation with warnings as
 errors (upstream formatting warning suppressed). No tests or device actions ran.
-Full kernel CI status is recorded in NOTES.md.
+Full ARM64 XNU kernel compilation succeeded in GitHub Actions run
+39464554694 on source `11e8daf2b57fa01c5e954eb3284aa095cf23e82a`.
+The CI log contains actual compile commands for the new source units. Tests
+were skipped; no hardware boot was performed. Artifact hashes are in NOTES.md.
 
 ## Remaining integration
 
