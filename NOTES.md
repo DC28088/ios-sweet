@@ -2,6 +2,22 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0091 verified build / temporary boot (2026-10-20):** CI
+  `39350600573` succeeded on `2743562bdff764a27cccdb105d84577d5d1c8c4c`;
+  portable regressions, XNU compile and built-kernel markers all passed.
+  Kernel artifact `12232857474` (ZIP 60034907 bytes), CRC/SHA verified.
+  Kernel `xnu/out-0091/kernel.development.sweet` SHA-256
+  `913878692b86b2f37dd85fb8e75b4f55e8b1d54e04c6899a529a9c89e79930c2`.
+  Stage-6 image `shim/out/shim-boot-0091-gmu-tcm-120hz.img` SHA-256
+  `63de6f0be72a48a5856466f1919095e6ca94548ff1f2c49465430c3224dc61b3`.
+  Packaging kept the known shim/base DTB and 0089 firmware ADT; bootv2
+  unpack round trips passed. Manifest `research/gpu/0091-boot-manifest.json`.
+  Rebooted OrangeFox to bootloader and `fastboot boot` stage 6 returned
+  Sending/Booting OKAY (0.690 s). Await at least 90 seconds for the 60-second
+  worker and user boot result; return to FASTBOOT, temporarily boot OrangeFox,
+  pull `logs/gpu-0091-gmu-tcm.txt`. No flash or root-image changes. Hardware
+  clock/firmware results pending; rendering is still unimplemented.
+
 - **0090 hardware result / 0091 correction (2026-10-20):** user confirmed
   iOS reached home screen and returned to FASTBOOT. Temporarily booted
   OrangeFox and pulled `logs/gpu-0090-gmu-tcm.txt` (242594 bytes, flush #12),
@@ -16,7 +32,7 @@
   pass with both unused gates zero and assert no access to either; required
   CXO failure still stops setup. Next: build and temporarily boot 0091,
   capture `logs/gpu-0091-gmu-tcm.txt`. Commit `2743562`; CI
-  `39350600573` compiling that exact source. Phone in OrangeFox; no flash.
+  `39350600573` passed; stage-6 temporary boot underway, see above.
 
 - **0090 built and temporarily booted (2026-10-20):** CI
   `39349325350` succeeded on exact source `2054211`, including portable
