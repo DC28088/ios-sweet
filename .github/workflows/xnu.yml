@@ -41,6 +41,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check portable Adreno state transitions
+        run: python3 tools/check-adreno-core.py
+
       - name: Fetch build script
         run: |
           git init -q dxb
@@ -99,8 +102,10 @@ jobs:
           grep -aFq 'SWEET GPU: ARC readback v1 starting' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
           grep -aFq 'SWEET GPU: ARC gfx raise v1 starting' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
           grep -aFq 'SWEET ADRENO: CX controller v2 starting' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
-          grep -aFq 'SWEET ADRENO: GX unavailable:' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
+          grep -aFq 'SWEET ADRENO: postmarketOS SM7150 GMU clocks v1 starting' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
           grep -aFq 'SWEET FB: scheduler v2 requested=' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
+
+          grep -aFq 'SWEET ADRENO: GMU TCM staging errno=' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
 
       - name: Package build tree for local compiles
         if: always()
