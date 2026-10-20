@@ -80,6 +80,14 @@ static void check_clocks(void) {
  CHECK(gcc.regs[0x52000 / 4] == 0x81);
  CHECK(gcc.regs[4 / 4] == 31 && gcc.regs[0x38 / 4] == 0x4000);
 
+ setup(); gcc.regs[0] = 0x40100001; /* ACTIVE suffices in vote-FSM mode. */
+ CHECK(a618_enable_gmu_clocks(&g, &c, &r) == 0);
+ setup(); gcc.regs[0] = 0x80000001; gcc.regs[0x2c / 4] = 1;
+ CHECK(a618_enable_gmu_clocks(&g, &c, &r) == 0);
+ CHECK(gcc.regs[0x52000 / 4] == 0x80); /* No irrelevant vote in direct mode. */
+ setup(); gcc.regs[0] = 0x80000001; gcc.regs[0x2c / 4] = 0;
+ CHECK(a618_enable_gmu_clocks(&g, &c, &r) == EBUSY);
+ CHECK(!gcc.writes && !gpucc.writes);
  setup(); gpucc.regs[0x1540 / 4] = 0;
  CHECK(a618_enable_gmu_clocks(&g, &c, &r) == EAGAIN);
  CHECK(!gcc.writes && !gpucc.writes);

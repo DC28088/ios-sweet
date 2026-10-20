@@ -12,6 +12,67 @@ The command transport has no attached hardware backend yet.
 The previous 0087 implementation was a power experiment, not a rendering
 implementation. Rebuilding it could not enable blur or GPU compositing.
 
+## postmarketOS SM7150 port (0089, 2026-10-20)
+
+Reference kernel: [sm7150-mainline/linux at fd78d179](https://github.com/sm7150-mainline/linux/tree/fd78d17954a86ea6ceb0c535e618ea129e09f8dd),
+from the SM7150 mainlining project used by postmarketOS. The
+[pmaports kernel recipe](https://github.com/sm7150-mainline/pmaports/blob/7aaf86b4b194987aeedbad7e29f3de53c8c28ebd/device/community/linux-postmarketos-qcom-sm7150/APKBUILD)
+identifies that kernel repository; the recipe snapshot is older than the
+selected kernel revision. Neither is an iOS graphics implementation.
+The per-file hashes and immutable source paths are in
+[adreno-port-sources.json](adreno-port-sources.json).
+
+A key source correction is that [GX enable is deliberately a no-op](https://github.com/sm7150-mainline/linux/blob/fd78d17954a86ea6ceb0c535e618ea129e09f8dd/drivers/clk/qcom/gpucc-sc7180.c).
+[GMU startup](https://github.com/sm7150-mainline/linux/blob/fd78d17954a86ea6ceb0c535e618ea129e09f8dd/drivers/gpu/drm/msm/adreno/a6xx_gmu.c)
+controls GX. The earlier manual GX GDSC/BCR sequence must remain disabled.
+The following original XNU code implements the public hardware sequence;
+it does not compile Linux DRM source into XNU.
+
+Patch 0089 adds `bsd/dev/sweet_adreno_clock.c`:
+
+- Requires the verified CX power state and fresh MX/CX resource checks.
+- Validates GPLL0's inherited fixed 600 MHz rate, supports vote-FSM and already
+  running direct-control modes, and changes no PLL rate registers. Linux waits
+  for ACTIVE in vote-FSM mode; direct mode requires LOCK and RUN.
+- Enables the GCC DDRSS GPU AXI, GPU MEMNOC and GPU SNOC clocks, and GPUCC CXO,
+  AHB and CX SNOC clocks, preserving unrelated vote/register bits.
+- Configures the GMU RCG for 200 MHz from the existing 300 MHz divided GPLL0
+  output, waits for the UPDATE handshake and enables CX GMU. The root remains
+  explicitly held on for this development stage. Running status is checked
+  before any GMU register access; failures stop without accessing later blocks.
+- Reads only CX-side GMU status and the SMMU ID registers; it does not read GX,
+  CP or shader registers, route SMMU streams, or enable translation.
+- Can stage the captured legacy 32 KiB `a618_gmu.bin` into ITCM. The M3 must
+  already be held in reset; CRC, vector bounds and every uploaded word are
+  checked. The loader does not release reset or execute firmware. This is
+  upload verification, not a GMU startup result.
+
+Boot arguments are `sweetgpu=4` for the verified CX path, `sweetgpu=5` for CX
+plus GMU clocks/status, and `sweetgpu=6` for clocks plus firmware staging.
+Stage 6 needs `/sweet-adreno` firmware properties in the local boot ADT:
+
+```sh
+python3 tools/sweet-adreno-firmware.py BASE.adt a618_gmu.bin OUTPUT.adt --sha256 EXPECTED_SHA256
+```
+
+The tool requires the expected SHA-256, checks the exact length and Cortex-M
+vector table, and exclusively creates the output. It preserves the base tree's
+existing nodes. Firmware bytes are local boot inputs and are not included in
+Git or the CI kernel artifacts. CRC guards upload integrity; it is not a secure
+boot authentication mechanism.
+
+`python3 tools/check-adreno-core.py` extracts the actual driver source from the
+patches and exercises valid clocks, shared-bit preservation, both PLL modes,
+power/PLL preconditions, all-ones reads, stuck branches/RCG/UPDATE, invalid
+firmware, CRC mismatch, reset ownership and partial readback failure. These
+checks validate software failure handling; hardware results are recorded
+separately in NOTES.md. XNU CI also runs these checks.
+
+**Full GPU acceleration remains unimplemented.** Subsequent dependencies are
+XNU DMA mappings and SMMU setup, GMU/HFI startup, ZAP and SQE initialization,
+submission/fault recovery, the Mesa userspace backend, and iOS graphics API
+integration. A successful clock/staging run cannot establish rendered frames.
+
 ## Implemented in 0088
 
 - Separate hardware core with an XNU MMIO adapter. CX enable uses the live-DT
@@ -39,8 +100,8 @@ implementation. Rebuilding it could not enable blur or GPU compositing.
   supply a DMA synchronization/doorbell backend, and establish CP/SMMU/power
   readiness first. It is kernel-only and is not a userspace submission API.
 
-`sweetgpu=4` invokes the new CX controller after 60 seconds. `sweetgpu=5`
-refuses writes. Stages 1–3 keep their existing diagnostic behavior. The 120 Hz
+In 0088, `sweetgpu=4` invokes the new CX controller after 60 seconds and
+`sweetgpu=5` refuses writes. 0089 supersedes stage 5 as described above. Stages 1–3 keep their existing diagnostic behavior. The 120 Hz
 software framebuffer scheduler remains unchanged; physical DSI timing is not
 configured by it.
 
@@ -117,9 +178,9 @@ research storage, not in this patch or the kernel.
 
 ## Remaining work in dependency order
 
-1. Establish CX power on this device, then implement the exact GPUCC root/branch
-   clocks, GX reset and power sequence. A timeout must retain a diagnostic state
-   rather than proceeding into a potentially inaccessible register bank.
+1. CX power is verified in 0088. Verify the 0089 GMU/bus clocks and reset-held
+   firmware staging on hardware, then proceed through GMU-owned GX startup.
+   Never proceed after an uncertain clock/power transition.
 2. Implement XNU-owned DMA buffers and GPU/GMU SMMU mappings with faults, cache
    maintenance, teardown, and explicit IOVA ownership. Never use CPU physical
    addresses as GPU addresses without a mapped address space.
