@@ -2,6 +2,22 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0104 hardware result /0105 next:** user reached iOS with unchanged slow
+  performance and returned FASTBOOT. Temporary recovery boot OK; log pulled
+  logs/gpu-0104-sqe-zap.txt (304784 console bytes, flush117). Full8033-word
+  physical SQE alias verification passed. Signed ZAP PAS phase5/status0 passed.
+  CP local IRQ80, ME_INIT errno5 with0 submitted/completed, SQE_STAT PC0,
+  CB0FSR402/FAR0/FSYNR0=1/FSYNR1=4030000. SQE cache captured; first8 words0,
+  later SRAM contents do not establish valid firmware fetch. No rendering.
+  0105 adds IRQ snapshots after GPU power, before/after PAS and gates submission
+  on firmware CP_CP2GMU_STATUS bit2 (bounded10ms), distinguishing an inherited
+  setup/auth error from a post-release execution fault. Does not clear faults,
+  add reset/retry or advertise a renderer. Host C compilation-Wall-Wextra-Werror
+  passed, no regression tests run. Full XNU build pending.
+  Investigated ACTLR303 generic Qualcomm SMMU-500 profile: rejected because
+  pinned SM7150 qcom_smmu_v2_data has no client_match. ACTLR unchanged; prior
+  commentary proposing it was corrected before build. Phone left in recovery.
+
 - **0104 compiled and temporarily booted (2026-10-20 08:06:28 UTC):**
   CI39389711266 SUCCESS onbcf90e4cf7b5593fefd61d74b389c256504716fb;
   portable regressions SKIPPED. Selected artifact kernel CRC and published
