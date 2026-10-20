@@ -3642,7 +3642,7 @@ new file mode 100644
 diff --git a/iokit/conf/files.arm64 b/iokit/conf/files.arm64
 --- a/iokit/conf/files.arm64
 +++ b/iokit/conf/files.arm64
-@@ -1,6 +1,19 @@
+@@ -20,6 +20,19 @@
  iokit/Kernel/arm/SweetNativeAdreno.cpp                            optional iokitcpp
  iokit/Kernel/arm/unixnu/NativeAdrenoRing.cpp                       optional iokitcpp
  iokit/Kernel/arm/unixnu/AdrenoPM4.cpp                              optional iokitcpp
