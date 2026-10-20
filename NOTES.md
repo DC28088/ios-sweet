@@ -2,6 +2,20 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0098 final CP audit build dispatched:** commit
+  d110d0d (full source hash in git) pushed; CI39381215265 compiles patches
+  through0098 with portable regressions skipped. Older0096 CI39380282997 and
+  0097 CI39380737829 superseded/canceled; no images from those runs booted.
+  Local firmware ADT shim/out/sweet-0096-cp-firmware.adt contains verified
+  device GMU/SQE/signed ZAP metadata/code. Helpers finish-0098.py and
+  package-0098.py prepare a stage9 image when the exact CI source succeeds.
+  Both helpers perform only download/integrity/packaging, never device commands.
+  Device is in recovery after reading0095. Native iOS integration investigation
+  confirms AGXMetalA11 and Apple Metal/OpenGLES bundle identities; a standalone
+  AGX executable is not resolved by the HFS reader. No userclient/renderer ABI
+  has been decoded, and no fake accelerator class is registered. Full rendering
+  and the requested lag fix remain unfinished.
+
 - **CP clock/fence audit (0098):** source audit added the required legacy
   DCVS request selecting performance index1 (180MHz) before GPU_SET/GX access.
   ARC voltage selection alone does not set GX frequency. Bounded OOB23/ACK31
