@@ -2,12 +2,27 @@
 
 ## Current local device state (2026-10-20, read first)
 
-- **0105 build dispatched:** CI39394541705 on exact source
-  ec7e90ccd9b201532a851b665362723c915df7cc, run_tests=false. Job118533887681.
-  finish-0105.py / package-0105.py fetch, verify source/artifact and package
-  only; no device commands. Background helper session98089 writes
-  research/gpu/finish-0105.log; job-log-tail session34205 writes
-  build-0105-tail.log. Kernel compilation ongoing; no0105 hardware claim.
+- **0105 hardware result /0106 implemented (2026-10-20):** user booted the
+  temporary image to the iOS home screen with unchanged slow performance and
+  returned FASTBOOT. Log pulled with a temporary OrangeFox boot:
+  logs/gpu-0105-sqe-bootstrap.txt, 224962 bytes, flush9, SHA256
+  95cb36a4aa5ee872ef558c558f04f4e2d7984b05b5ae691ea7939050a41230d4.
+  GMU clocks/HFI, SMMU CB0/CB1, CP firmware staging/readback and signed ZAP
+  PAS phase5/status0 all passed. The 0105 gate worked and localized the fault:
+  CP_INTERRUPT_STATUS bit7=0x80 was already latched before authentication and
+  before any CP_SQE_CNTL release (power=0 before_auth=0x80 after_auth=0x80,
+  sqe_started=0, bootstrap_us=0, CP2GMU=0), so this is an inherited setup
+  fault, not an ME_INIT execution failure. CB0FSR=0x402, FAR=0, FSYNR0=1,
+  FSYNR1=0x4030000, SID=0 again. Unconditional early `CP_SQE_CNTL=3` is now
+  the prime suspect; Linux uses 3 only to halt a running SQE, and the first
+  fetch in the disassembly still comes from CP_SQE_INSTR_BASE. 0106
+  (`xnu/patches/0106-sweet-adreno-cp-startup-snapshots.patch`) removes that
+  write, halts only when the phase-2 SQECTL readback says the engine is
+  enabled, and records IRQ/SQECTL/INSTR_BASE/RB_CNTL/CP2GMU after each setup
+  block plus a first-fault tag. It does not clear faults, reset, retry or
+  advertise a renderer. Host CP compile with -Wall -Wextra -Werror passed;
+  local patch application matches 0106-work byte for byte. No full XNU build
+  or hardware run yet. Phone is in FASTBOOT.
 
 - **0104 hardware result /0105 next:** user reached iOS with unchanged slow
   performance and returned FASTBOOT. Temporary recovery boot OK; log pulled
