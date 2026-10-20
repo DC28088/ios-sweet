@@ -15,7 +15,8 @@
   six unique required branches remain, including GCC SNOC. Host regressions
   pass with both unused gates zero and assert no access to either; required
   CXO failure still stops setup. Next: build and temporarily boot 0091,
-  capture `logs/gpu-0091-gmu-tcm.txt`. Phone in OrangeFox; no flash.
+  capture `logs/gpu-0091-gmu-tcm.txt`. Commit `2743562`; CI
+  `39350600573` compiling that exact source. Phone in OrangeFox; no flash.
 
 - **0090 built and temporarily booted (2026-10-20):** CI
   `39349325350` succeeded on exact source `2054211`, including portable
