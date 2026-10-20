@@ -69,5 +69,14 @@
       "AdrenoPM4.h"
     ]
   },
-  "rendering_acceleration_implemented": false
+  "rendering_acceleration_implemented": false,
+  "ported_file_sha256": {
+    "third_party/unixnu/AdrenoPM4/AdrenoPM4.c": "c4b0227859a1e771c5f349524b718b08444f518ef960bfa4b50f6fd4ab30ad2f",
+    "third_party/unixnu/AdrenoPM4/AdrenoPM4.h": "86f4e84eece0f2e67f786d03cea8b82c696377fc5af9f890dd164bbfe24abd29",
+    "third_party/unixnu/AdrenoPM4/LICENSE": "199298ccf9aba4cfe9d364199ff19b9d0688b07d83b770b313cf80a6a3924c69",
+    "third_party/unixnu/NativeAdreno/LICENSE": "16fbc0170994a48f60938d9f0d992d3bad113383cf90882f75c206e079c2a2dc",
+    "third_party/unixnu/NativeAdreno/NativeAdrenoABI.h": "b5574e34ee3a368616f722f9fa40ea2c87bbc5c03989a299d9d4f954c9f8be70",
+    "third_party/unixnu/NativeAdreno/NativeAdrenoRing.cpp": "dc42cc255fa2184041d6230efcf788e30534ed8f3cdbef77a86b99bc655995ed",
+    "third_party/unixnu/NativeAdreno/NativeAdrenoRing.h": "108506811b9d4a14f337e4612de8911fb9a96145098d61b7284df316ed8169db"
+  }
 }
