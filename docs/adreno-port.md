@@ -326,8 +326,7 @@ a6xx_gmu.xml, a6xx.xml and sm7150.dtsi listed in adreno-port-sources.json.
 Register IDs in XML are DWORDs; the GMU aperture starts at GPU byte 0x6a000.
 RSC uses GMU+0x23000; PDC regions are 0x0b290000 and 0x0b490000.
 PDC wake CX data is **2 on A618**, not the generic A6xx value 3. The third
-PDC command address 0x30090 is the A618-specific Linux value; its resource name
-has not been confirmed and is not asserted to be xo.lvl.
+PDC command address 0x30090 is the A618-specific Linux value; the 0095 device log now confirms command-DB xo.lvl at that address.
 
 HFI accepts only complete ACK v1 packets (id 126, type 2) whose echoed
 request header matches id, size and sequence. All waits have finite deadlines;
@@ -405,3 +404,28 @@ renderer or shader compiler. Native iOS graphics requires a real userspace
 renderer and its matching memory/context/command ABI, including IOSurface
 sharing and synchronization. The bootstrap backend does not implement that
 ABI; it must not be advertised as Metal or as a fix for choppy animations.
+
+
+### Hardware results through 0095 and final CP audit
+
+The 0094 log confirms the high-bank DMA allocation succeeds. Its apparent
+SMMU error was the read-only FSR.Format field (0x400), not a remaining fault.
+0095 now completes all sixteen translations plus the unmapped guard, publishes
+stream 5, starts M3 firmware, receives the GX boot/slumber acknowledgement,
+passes SPTPRAC power-up and reaches HFI_CTRL_STATUS=1. Its first HFI RPC times
+out. This is firmware execution evidence, not rendering evidence.
+
+0097 aligns the ACK deadline with the pinned Linux driver's one second and
+matches echoed command ID/sequence while validating the actual response
+packet's type and length. It logs response counts, queue indices and fault
+status for the next hardware attempt. 0098 adds the legacy DCVS request for
+performance index 1 (180 MHz) before GPU_SET; raw ARC voltage selection does
+not itself program the GX frequency. Fence visibility is separately bounded
+and polled after ring drain rather than inferred from CP idle.
+
+The iOS root metadata identifies AGXMetalA11.bundle, com.apple.AGXMetalA11,
+and Apple's OpenGLES/Metal frameworks. The bundle's Info.plist names an AGX
+executable, but this root reader does not find a standalone executable at that
+path; no shader binary or userclient ABI has been decoded from it. The probe
+log alone does not specify the complete userspace rendering ABI. No working
+Metal/OpenGLES renderer has been implemented or claimed.
