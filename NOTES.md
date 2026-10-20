@@ -2,6 +2,19 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0099 compiled and temporarily booted (2026-10-20 07:03:13 UTC):**
+  CI39383140126 SUCCESS on6a4de0a69b69e146141ce92970429953ec357d2c,
+  portable tests SKIPPED. Artifact CRC and published SHA verified.
+  Kernel xnu/out-0099/kernel.development.sweet17241488 bytes SHA256
+  ed9798dddad9da9fc2ac12b686b42655c7b8fc04dd0320fb4d788408e5320cfc.
+  Image shim/out/shim-boot-0099-cp-fault-120hz.img17256448 bytes SHA256
+  cad9736b94b1652ee6db0a4ced5d5fa9cebcb56f06245e34555aa0f669d3f595.
+  Manifest research/gpu/0099-boot-manifest.json, helper finish-0099.log.
+  ADB reboot bootloader, fastboot boot Sending/Booting OKAY0.699s. No flash
+  or root edits. Wait90s then user must return FASTBOOT; boot recovery and
+  pull logs/gpu-0099-cp-fault.txt. Inspect first FAR/syndrome and SQE/ring bases
+  to resolve0098 CB0FSR0x402. This is a diagnostic image, not a lag fix.
+
 - **0099 fault capture compiling:** exactsource6a4de0a69b69e146141ce92970429953ec357d2c,
   CI39383140126, run_tests=false. Earlier39383070320 canceled to ensure GPU
   diagnostic register pairs use32-bit bus accesses. Includes all0098 changes
