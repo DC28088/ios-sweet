@@ -30,7 +30,7 @@ on:
       - ".github/workflows/xnu.yml"
 
 concurrency:
-  group: xnu-${{ github.ref }}
+  group: xnu-${{ github.ref }}-${{ inputs.graphics_only && 'graphics' || 'kernel' }}
   cancel-in-progress: true
 
 env:

@@ -8,7 +8,9 @@
 #include <unistd.h>
 #include "NativeBridgeMetalFrontend.h"
 
-@interface SweetAdrenoMetalDevice : NSObject
+@interface _MTLDevice : NSObject
+@end
+@interface SweetAdrenoMetalDevice : _MTLDevice
 - (id)initWithAcceleratorPort:(unsigned)port;
 @end
 @implementation SweetAdrenoMetalDevice
