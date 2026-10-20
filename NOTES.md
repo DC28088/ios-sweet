@@ -2,6 +2,23 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0090 built and temporarily booted (2026-10-20):** CI
+  `39349325350` succeeded on exact source `2054211`, including portable
+  regressions, XNU compile and kernel marker checks. Kernel artifact
+  `12233165630` (ZIP 60034241 bytes) CRC/SHA verified; local kernel
+  `xnu/out-0090/kernel.development.sweet` SHA-256
+  `9e47bad1b65e5e0a2d5e207d966bc70557939dec0f609fe2193c02af0e843d30`.
+  Packaged images with preserved shim/base DTB and 0089 firmware ADT;
+  bootv2 unpack round trips passed. Stage-6 image
+  `shim/out/shim-boot-0090-gmu-tcm-120hz.img` SHA-256
+  `acf0b27a1a0870ab7a535ac2685bbba299ff990848ac74a8c06235442c9d134a`.
+  Manifest `research/gpu/0090-boot-manifest.json`.
+  Rebooted OrangeFox to bootloader and temporarily booted stage 6:
+  Sending/Booting OKAY (0.674 s). Await user boot result after at least
+  90 seconds for the 60-second GPU worker, then FASTBOOT, temporary
+  OrangeFox boot and `logs/gpu-0090-gmu-tcm.txt` pull. No flash.
+  Clock/TCM status remains unverified; this is not rendering acceleration.
+
 - **0089 hardware log / 0090 correction (2026-10-20):** user confirmed
   stage-6 image reached iOS and returned to FASTBOOT. Temporarily booted
   OrangeFox and pulled `logs/gpu-0089-gmu-tcm.txt` (248135 bytes, flush #14),
@@ -15,8 +32,7 @@
   required CXO/GMU and bus checks. Regression covers zero-valued unused AON
   with no access, and required CXO stuck-off still failing. Portable checks
   passed. Commit `2054211`; CI `39349325350` running on that exact source.
-  Next: finish CI build, package using 0089 firmware ADT, temporary boot,
-  capture next log. Phone currently OrangeFox; no flash.
+  Next: capture the 0090 hardware log after its temporary boot; see above.
 
 - **0089 verified build artifacts:** CI `39347214431` succeeded on
   `b1a4b3c`, including portable checks, XNU compile and kernel marker checks.
