@@ -116,6 +116,51 @@
       "path": "include/dt-bindings/power/qcom,rpmhpd.h",
       "sha256": "cef4d459df9c1ba1b12ba90571efd503199b0d3b8e08cfc1959bd49878eee309",
       "bytes": 7111
+    },
+    {
+      "path": "drivers/gpu/drm/msm/adreno/a6xx_gpu.c",
+      "sha256": "7fc37e260f4cec3d24b962980186d8467abefced4aa7423960ee3adc4963a258",
+      "bytes": 87209
+    },
+    {
+      "path": "drivers/gpu/drm/msm/adreno/a6xx_catalog.c",
+      "sha256": "d077d3d54b5f3f6f413a0ac6b087a48490033a85abd19e1f5c45e2bd57626e57",
+      "bytes": 93981
+    },
+    {
+      "path": "drivers/gpu/drm/msm/adreno/adreno_gpu.c",
+      "sha256": "34c2035512fb9e3e2196596f9c2879e89f1968975813ae4da862f179fef84aa4",
+      "bytes": 33596
+    },
+    {
+      "path": "drivers/gpu/drm/msm/msm_gpu.h",
+      "sha256": "51d56421306b6b5b321b73e274d1b85b2b20bdfc5018bb7988c32160784ddbf1",
+      "bytes": 22871
+    },
+    {
+      "path": "drivers/gpu/drm/msm/registers/adreno/adreno_pm4.xml",
+      "sha256": "f8137e5d31a3cfce27cba0a8bc269e460067dca9ccb95e620404b7fc752913fb",
+      "bytes": 94755
+    },
+    {
+      "path": "drivers/firmware/qcom/qcom_scm.c",
+      "sha256": "660b64ac596a5bc93f01ea80d9344ac3c2b944272fd72e335997fbb28632c48d",
+      "bytes": 78685
+    },
+    {
+      "path": "drivers/firmware/qcom/qcom_scm-smc.c",
+      "sha256": "bfea74b0aae0778c8eef976e9cdc84d3cb2c4778dfb73a96374205348c85e5fe",
+      "bytes": 5394
+    },
+    {
+      "path": "drivers/soc/qcom/mdt_loader.c",
+      "sha256": "aaea94b2a992efc459f5fdd7a0e50d22ec505dd244a9ad564cacd0541764d8a8",
+      "bytes": 13528
+    },
+    {
+      "path": "drivers/gpu/drm/msm/adreno/a6xx_gpu.h",
+      "bytes": 10914,
+      "sha256": "d37cbe3919f9d31b217d21a5a1985c3fded2534bb762c407a541fce465c85be5"
     }
   ]
 }

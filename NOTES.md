@@ -2,6 +2,30 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **SQE/CP backend implementation in progress (2026-10-20):** patch0096
+  adds private 96K wired GPU allocation, 4K tables for inactive CB0/exact SID0
+  (ASID0x62), 20 page probes + guard, RO/executable SQE and RW/NX ring/fence.
+  Separate PAS metadata page cannot overlap GMU/GPU data. Kernel-only CP path
+  waits for GMU GPU_SET acknowledgement, starts SQE with 32K ring and A618
+  protection ranges, submits ME_INIT, then requires signed ZAP PAS13 auth
+  before CP_SET_SECURE_MODE and memory-write/cache-flush fence readback.
+  No direct SECVID_TRUST_CNTL fallback, generic SCM access or userspace PM4.
+  Live reserved ZAP range is 0x97f15000/0x2000, not mainline's different range.
+  Firmware tool now accepts optional checksum-verified vendor SQE/MDT/B02;
+  blobs stay local. Host CP/SMMU C compilation succeeded; not yet exercised.
+  This is command-engine bring-up, not native iOS rendering. Do not register
+  IOAcceleratorES as a successful stub: backboardd expects an actual userspace
+  rendering/driver ABI. Captured log repeatedly matches IOAcceleratorES and
+  IOAcceleratorESLegacy -> none. Native graphics integration remains a real
+  separate implementation requirement; no lag fix is claimed.
+  0095 CI39379234572 succeeded on46ea342; image
+  shim/out/shim-boot-0095-gmu-hfi-120hz.img SHA256
+  1100ea6d93ed99a2cbebd58b18d76eea3232eb6907ddd979fc06f5077981ab5a.
+  Rebooted recovery to bootloader and temporarily booted0095 (Sending/Booting
+  OKAY,0.675s). Awaiting user return toFASTBOOT to read GMU result while
+  implementing CP. No flash/root changes. Earlier build-only direction was
+  superseded by user request to execute GPU commands and fix graphics.
+
 - **0094 booted iOS; SMMU false failure found (2026-10-20):** user reports
   successful home screen, unchanged performance; now requests actual SQE/CP
   execution and iOS graphics integration. User returned to FASTBOOT on request.
