@@ -1,6 +1,6 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
-## Current local device state (2026-10-19, read first)
+## Current local device state (2026-10-20, read first)
 
 - **0089 postmarketOS GMU port in progress (2026-10-20):** user requested
   continuing toward full acceleration using postmarketOS's Redmi Note 10 Pro
@@ -22,7 +22,11 @@
   preconditions, bit preservation, stuck bus/RCG/UPDATE, invalid reads,
   malformed/corrupt firmware, reset ownership and partial upload failure.
   Patch applied to complete pre-0089 sources and host compilation passed.
-  XNU CI pending; no 0089 hardware result. Phone last known in fastboot.
+  First CI `39346823712` is superseded by the PLL-mode correction: follow
+  Linux ACTIVE polling in vote mode and accept an inherited running direct
+  mode without changing its controls. Both cases pass host checks. Replacement
+  CI pending; no 0089 hardware result. Phone absent from host ADB and fastboot
+  on this continuation; user was asked to connect it in FASTBOOT.
   Editable sources: `research/gpu/0089-work/bsd/dev/`.
 
 

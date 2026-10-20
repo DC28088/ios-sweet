@@ -241,7 +241,7 @@
  #endif
 --- /dev/null
 +++ b/bsd/dev/sweet_adreno_clock.c
-@@ -0,0 +1,224 @@
+@@ -0,0 +1,238 @@
 +/* SPDX-License-Identifier: MIT
 + * Copyright (c) 2026 ios-sweet contributors
 + *
@@ -357,11 +357,25 @@
 +		return error;
 +	if (result->value != 0x4000)
 +		return ERANGE;
-+	error = update(gcc, 1, 0x52000, 1, 1, result);
++	error = read_checked(gcc, 1, 0, result);
 +	if (error)
 +		return error;
-+	error = poll(gcc, 1, 0, (1u << 31) | (1u << 30),
-+	    (1u << 31) | (1u << 30), result);
++	if (result->value & (1u << 20)) {
++		/* FABIA in vote-FSM mode: Linux waits for ACTIVE, not LOCK_DET. */
++		error = update(gcc, 1, 0x52000, 1, 1, result);
++		if (!error)
++			error = poll(gcc, 1, 0, 1u << 30, 1u << 30, result);
++	} else {
++		/* Preserve an already running direct-control PLL. Its rate was
++		 * checked above; do not change MODE/OPMODE or pretend a vote
++		 * can start a PLL which is not under vote-FSM control.
++		 */
++		if ((result->value & ((1u << 31) | 1u)) != ((1u << 31) | 1u))
++			return EBUSY;
++		error = read_checked(gcc, 1, 0x2c, result);
++		if (!error && result->value != 1)
++			error = EBUSY;
++	}
 +	if (error)
 +		return error;
 +	/* GCC_GPU_GPLL0_DIV_CLK_SRC: fixed divide by two, 300 MHz. */
