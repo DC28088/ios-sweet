@@ -225,3 +225,16 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## 0089 hardware result and 0090 clock correction (2026-10-20)
+
+The temporary stage-6 boot reached iOS. The retained log verified CX power,
+fixed GCC PLL checks and three GCC bus branches. It stopped at GPUCC
+`0x1004` (CXO_AON): `errno=5`, value zero, completed branches three.
+No firmware upload, SMMU ID read or firmware execution occurred.
+
+The pinned SM7150 GMU device-tree node requests GMU, CXO, AXI and MEMNOC;
+CXO_AON is not a dependency. Patch 0090 removes that extra gate instead of
+pretending its enable succeeded. Required CXO still needs a running status,
+and a regression checks both unused AON reading zero and required CXO
+remaining off. Full acceleration remains unfinished.
