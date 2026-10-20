@@ -1,8 +1,8 @@
 {
   "base": "c37e2f2",
   "files": {
-    "third_party/unixnu/NativeAdreno/NativeAdrenoRing.h": "951aeea0d8645d985d8d96aadfd1a3f3c51c88411d0c16ba9ebd6dc3b059a600",
-    "third_party/unixnu/NativeAdreno/NativeAdrenoRing.cpp": "9964e7962a902548af315b93b568465e0a3d3c6c13d7c23a93e5db3c6694165a",
+    "third_party/unixnu/NativeAdreno/NativeAdrenoRing.h": "de3011cd14ac3edbac7a5d6ffc1145ca86dd492aac890623fbbb9f1da6f64b5a",
+    "third_party/unixnu/NativeAdreno/NativeAdrenoRing.cpp": "528d279df215e9d67ed735ca22c35e07680c354fcfab8f46171c8626af780db2",
     "third_party/unixnu/NativeAdreno/NativeAdrenoABI.h": "b5574e34ee3a368616f722f9fa40ea2c87bbc5c03989a299d9d4f954c9f8be70",
     "third_party/unixnu/NativeAdreno/LICENSE": "16fbc0170994a48f60938d9f0d992d3bad113383cf90882f75c206e079c2a2dc",
     "third_party/unixnu/NativeAdreno/NativeAdrenoMemory.h": "37428d7e7a053537cd852cc638cbe3b2863803bff0ccf949d35c10385ab81152",

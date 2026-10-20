@@ -356,3 +356,24 @@ NativeAdrenoRingFence NativeAdrenoRing::wait(uint32_t fence,const NativeAdrenoRi
         if(clock->idle && clock->idle(clock->cookie))return NativeAdrenoRingFenceTimeout;
     }
 }
+
+IOReturn NativeAdrenoRing::drainA6xx(const NativeAdrenoRingClock *clock,uint32_t timeout_us)
+{
+    if(!attached_ || poisoned_)return kIOReturnNotReady;
+    if(!a6xx_ || !clock || !clock->now_us)return kIOReturnUnsupported;
+    const uint64_t began=clock->now_us(clock->cookie);
+    if(outstanding()) {
+        const NativeAdrenoRingFence fence=wait(seqno_,clock,timeout_us,nullptr);
+        if(fence!=NativeAdrenoRingFenceComplete)return fence==NativeAdrenoRingFenceTimeout?kIOReturnTimeout:kIOReturnIOError;
+    }
+    for(;;) {
+        uint32_t rptr=0,status=0;
+        IOReturn error=readRptr(&rptr);if(error)return error;
+        if(io_.read32(io_.cookie,0x210,&status))return poison();
+        /* Pinned Linux _a6xx_check_idle: CP_AHB_BUSY_CX_MASTER bit0 is
+         * expected while polling over AHB; all other busy bits must clear. */
+        if(rptr==next_ && !(status&~1u))return kIOReturnSuccess;
+        if(clock->now_us(clock->cookie)-began>=timeout_us)return kIOReturnTimeout;
+        if(clock->idle && clock->idle(clock->cookie))return kIOReturnTimeout;
+    }
+}

@@ -104,6 +104,9 @@ public:
      * this ring issued are accepted. Never writes a register. */
     NativeAdrenoRingFence observeFence(uint32_t fence,const NativeAdrenoRingClock *,
         uint32_t timeout_us,uint32_t *observed);
+    /* A618 VM-update barrier: actual memory RPTR must reach WPTR and the
+     * render engine must be idle after its timestamp fence. Caller holds gate. */
+    IOReturn drainA6xx(const NativeAdrenoRingClock *,uint32_t timeout_us);
     bool poisoned() const {return poisoned_;}
     uint32_t outstanding() const {return seqno_-completed_;}
     uint32_t lastSubmitted() const {return seqno_;}      /* the newest fence number handed out */

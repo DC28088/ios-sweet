@@ -60,6 +60,19 @@ shutil.copy2(WORK/'build/mesa-tu-ios/src/freedreno/vulkan/libvulkan_freedreno.dy
  CFBundlePackageType='BNDL',CFBundleVersion='1',MinimumOSVersion='16.0',NSPrincipalClass='SweetAdrenoMetalDevice')))
 for p in (out/'libvulkan_freedreno.dylib',exe):run('codesign','--force','--sign','-','--pagesize','4096',p)
 run('codesign','--force','--sign','-','--pagesize','4096',out)
+# Keep the license notices alongside the distributed own binaries.
+licenses=out/'Licenses';licenses.mkdir()
+for source,name in [(WORK/'drivers/NativeMetal/LICENSE','NativeMetal'),(WORK/'drivers/NativeAdreno/LICENSE','NativeAdreno')]:
+ shutil.copy2(source,licenses/(name+'.txt'))
+for candidate in (mesa/'docs/license.rst',mesa/'COPYING',mesa/'LICENSE'):
+ if candidate.is_file():shutil.copy2(candidate,licenses/('Mesa-'+candidate.name))
+rust_registry=Path(os.environ.get('CARGO_HOME',str(Path.home()/'.cargo')))/'registry/src'
+if rust_registry.exists():
+ for source in rust_registry.glob('*/*/*'):
+  if source.is_file() and source.name.upper().startswith(('LICENSE','COPYING','NOTICE')):
+   target=licenses/source.parent.name;target.mkdir(exist_ok=True);shutil.copy2(source,target/source.name)
+for source in (WORK/'.cache/gpu-reference/metal2vulkan').glob('LICENSE*'):
+ if source.is_file():shutil.copy2(source,licenses/('metal2vulkan-'+source.name))
 report={'unixnu':UNIXNU,'mesa':compiler['mesa']['commit'],'translator':translator['commit'],'deployment_target':'16.0',
  'runtime_qualified':False,'installed':False,'hardware_tested':False,'files':{str(p.relative_to(out)):hashlib.sha256(p.read_bytes()).hexdigest() for p in out.rglob('*') if p.is_file()}}
 (out.parent/'metal-build.json').write_text(json.dumps(report,indent=2)+'\n')
