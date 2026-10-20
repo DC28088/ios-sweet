@@ -62,7 +62,7 @@ diff --git a/bsd/dev/sweet_adreno_smmu.c b/bsd/dev/sweet_adreno_smmu.c
 new file mode 100644
 --- /dev/null
 +++ b/bsd/dev/sweet_adreno_smmu.c
-@@ -0,0 +1,148 @@
+@@ -0,0 +1,153 @@
 +/* SPDX-License-Identifier: MIT
 + * Original bounded SMMUv2 backend using the ARM architecture and public
 + * Linux/Qualcomm register protocols. See docs/adreno-port.md for source pins.
@@ -78,11 +78,11 @@ new file mode 100644
 +#define ASID 0x61u
 +static int
 +put(const struct a618_io *io, uint32_t offset, uint32_t value,
-+ struct a618_smmu_result *r)
++ uint32_t mask, struct a618_smmu_result *r)
 +{
 + io->write(io->cookie, offset, value);
 + r->offset = offset; r->value = io->read(io->cookie, offset);
-+ return r->value == value ? 0 : EIO;
++ return r->value != 0xffffffffu && (r->value & mask) == (value & mask) ? 0 : EIO;
 +}
 +static int
 +wait_clear(const struct a618_io *io, uint32_t offset, unsigned mask,
@@ -122,7 +122,8 @@ new file mode 100644
 +  * owner appears idle. CB0 and all protected banks are left alone.
 +  */
 + r->offset = CB1; r->value = io->read(io->cookie, CB1);
-+ if (r->value != 0) return EBUSY;
++ if (r->value == 0xffffffffu) return EIO;
++ if (r->value & 1) return EBUSY; /* M=0 is disabled; other reset bits may be UNKNOWN. */
 + for (unsigned i = 0; i < 5; ++i) {
 +  r->offset = 0x800 + 4 * i;
 +  uint32_t smr = r->value = io->read(io->cookie, r->offset);
@@ -152,27 +153,30 @@ new file mode 100644
 +      (3ull << 53) | (1u << 11) | (1u << 10) | (2u << 8) | (1u << 6) | 3;
 + ops->barrier(io->cookie);
 + int error;
-+ #define SET(o,v) do { error = put(io, (o), (v), r); if (error) return error; } while (0)
-+ SET(0x1804, 1); /* GR1 CBA2R(1): AArch64. */
-+ SET(0x1004, 0x1f300); /* Stage1, stage2 bypass, weak upstream attributes. */
-+ SET(CB1 + 0x10, 0x38011); /* TCR2: SEP upstream, 36-bit output, AArch64 ASID. */
-+ SET(CB1 + 0x30, 0x00802020u); /* EPD1, OSH, NC walks, T0SZ=32; AArch64, no EAE. */
++ #define SET(o,v,m) do { error = put(io, (o), (v), (m), r); if (error) return error; } while (0)
++ SET(0x1804, 1, 1); /* GR1 CBA2R(1): AArch64. */
++ SET(0x1004, 0x1f300, 0x3f3ff); /* Stage1, stage2 bypass, weak upstream attributes. */
++ SET(CB1 + 0x10, 0x38011, 0x38077); /* TCR2: SEP upstream, 36-bit output, AArch64 ASID. */
++ SET(CB1 + 0x30, 0x00802020u, 0x00c0ffbfu); /* EPD1, OSH, NC walks, T0SZ=32; AArch64, no EAE. */
 + uint64_t ttbr = memory->physical | ((uint64_t)ASID << 48);
 + ops->write64(io->cookie, CB1 + 0x20, ttbr);
 + r->offset = CB1 + 0x20;
 + r->par = ops->read64(io->cookie, r->offset);
-+ if (r->par != ttbr) return EIO;
++ if ((r->par & 0xffff000ffffff000ull) != ttbr) return EIO;
 + ops->write64(io->cookie, CB1 + 0x28, 0);
-+ SET(CB1 + 0x38, 0x44); /* MAIR[0]: Normal NC. */
-+ SET(CB1 + 0x3c, 0);
++ SET(CB1 + 0x38, 0x44, 0xff); /* MAIR[0]: Normal NC. */
++ /* MAIR1 is unused: every data PTE references MAIR0[0]. */
 + /* Fault reporting enabled, IRQ/stalling disabled until an IRQ handler
 +  * exists; HUPCF continues other transactions after an abort.
 +  */
-+ SET(CB1, 0x1127);
++ /* AFE/TRE are UNK/SBOP for long descriptors: write ones, do not
++  * compare their readback. Check M, E, fault controls, WXN and ASIDPNE.
++  */
++ SET(CB1, 0x1127, 0x17f1);
 + /* Block unmatched streams and enable this device. Preserve other controls;
 +  * do not enable interrupt sources without handlers. No reset-all/TLBI-all.
 +  */
-+ SET(0, (r->control | 0x1c12u) & ~0xe025u);
++ SET(0, (r->control | 0x1c12u) & ~0xe025u, 0xfc37);
 + io->write(io->cookie, CB1 + 0x610, ASID);
 + io->write(io->cookie, CB1 + 0x7f0, 0);
 + error = wait_clear(io, CB1 + 0x7f4, 1, r);
@@ -186,11 +190,12 @@ new file mode 100644
 +  error = wait_clear(io, CB1 + 0x8f0, 1, r);
 +  if (error) return error;
 +  r->par = ops->read64(io->cookie, CB1 + 0x50);
++  if (r->par == 0xffffffffffffffffull) return EIO;
 +  if (i == 16) {
 +   if (!(r->par & 1)) return EFAULT;
 +  } else {
 +   uint64_t expected = memory->physical + A618_TABLE_BYTES + i * 0x1000u;
-+   if ((r->par & 1) || (r->par & 0x000000fffffff000ull) != expected)
++   if ((r->par & 1) || (r->par & 0x0000000ffffff000ull) != expected)
 +    return EFAULT;
 +   ++r->translated;
 +  }
@@ -204,8 +209,8 @@ new file mode 100644
 + /* Only GMU kernel stream 5: route first, VALID last. Never program
 +  * GMU user stream 4, GPU stream 0, broad masks or a bypass entry.
 +  */
-+ SET(0xc00 + 4 * r->slot, 1);
-+ SET(0x800 + 4 * r->slot, 0x80000005u);
++ SET(0xc00 + 4 * r->slot, 1, 0x030300ff);
++ SET(0x800 + 4 * r->slot, 0x80000005u, 0xffffffffu);
 + r->fault = io->read(io->cookie, CB1 + 0x58);
 + #undef SET
 + return 0;
