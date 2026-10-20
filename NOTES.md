@@ -2,6 +2,15 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0102 further startup audit:** pinned a6xx hw_init also initializes TSB
+  control/base/size and64-bit TSB mode before SQE.0102 adds that omitted step
+  under acknowledged GPU_SET, records initial values and requires zero range
+  plus address-mode readback1. Byte offsets3e000/4/8/c,3e040 from XML.
+  Does not write SECVID_TRUST_CNTL; authenticated ZAP remains required to
+  leave secure mode. Null reader cause remains unproved until hardware log.
+  Supersede0101 CI39386538128 with0102 so the execution attempt includes both
+  audited startup prerequisites and full failure-state capture. No0101 boot.
+
 - **0101 compiling:** CI39386538128 sourcebfb7028d1fdc0135c0c57c53cf9013af458af4cc,
   run_tests=false. Host CP-Wall-Wextra-Werror compilation passes. ARM SCM
   assembly and XNU adapter compile via CI (local ARM clang absent). Helpers
