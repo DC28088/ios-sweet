@@ -2,6 +2,15 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0108 full kernel CI running:** run39464554694 exactsource
+  11e8daf2b57fa01c5e954eb3284aa095cf23e82a, testsfalse. First run39464251721
+  on76a874a failed before compilation because source-list hunk began at1;
+  corrected full-file context in11e8daf. Actual patch staging outside the
+  parent checkout applies0107/0108 and matches all committed vendor bytes.
+  research/gpu/finish-0108.py fetches/packages exactsource only, log
+  research/gpu/finish-0108.log; exec helper session29223. No device access.
+  Do not describe the expected0108 native-adreno-core image as fullacceleration.
+
 - **0108 core implementation / build-only (2026-10-20):** execution restored
   through approved repository/network commands; NO USB access. Imported MIT
   NativeAdrenoMemory/Cpu/SmmuMemory/Vm/Submit and ArmSmmu4K into third_party;
