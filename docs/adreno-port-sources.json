@@ -166,6 +166,21 @@
       "path": "drivers/gpu/drm/msm/adreno/a6xx_preempt.c",
       "bytes": 11639,
       "sha256": "3975a996c49fc756cc58a7cbf546914a78632638241e39a752214ab0ec64941f"
+    },
+    {
+      "path": "drivers/firmware/qcom/qcom_scm.h",
+      "bytes": 5614,
+      "sha256": "efe762cdbbebf200eb18d1c70c4f5d244f74e2ee02e7bcdd4d6a1d9393619e2c"
+    },
+    {
+      "path": "drivers/gpu/drm/msm/adreno/a6xx_gpu_state.c",
+      "bytes": 56419,
+      "sha256": "430e6ae26c11b3cbdf86c53cb3280c0fd1293206253a1b72294fbf52f111d66e"
+    },
+    {
+      "path": "drivers/gpu/drm/msm/adreno/a6xx_gpu_state.h",
+      "bytes": 28717,
+      "sha256": "cd6d04d4717266e02d6637738213b63597c493dc18b8f6ebb488b9effc70788b"
     }
   ]
 }
