@@ -355,3 +355,22 @@ Metal/IOAccelerator drivers.
 Per the user's request, this iteration compiles only. No portable regression
 suite, emulator, temporary boot or flash is run. Workflow run_tests is a
 separate boolean input, default true; this build dispatch selects false.
+
+
+### Firmware startup result phases
+
+| Phase | Operation in progress | Meaning after an error |
+| --- | --- | --- |
+| 0 | Preconditions, RSC idle, PDC/configuration | M3 release was not reached |
+| 1 | M3 reset release and firmware initialization | Firmware-ready signature was not established |
+| 2 | Legacy boot/slumber OOB request | GX vote handshake was not established |
+| 3 | SPTPRAC power-on | Shader power status was not established |
+| 4 | HFI controller initialization | Queue interface was not established |
+| 5 | HFI INIT/version/performance/bandwidth/end-init | Protocol sequence did not complete |
+| 6 | Completed firmware bootstrap | GMU/HFI only; CP execution is still absent |
+
+The result records the last polled offset/value and the firmware version when
+available. Fault/timeout leaves resources retained and prohibits retry. A
+phase-6 result must never be reported as GPU acceleration or used to claim a
+frame-rate improvement. A 120 Hz presentation timer also does not establish
+120 FPS rendering or prove that the panel is scanning at that rate.

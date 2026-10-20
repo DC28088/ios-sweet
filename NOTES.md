@@ -2,6 +2,32 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0094 compile-only artifact complete (2026-10-20):** implementation
+  commits `ca70c43` and `4a6565767c523387f1fa3dbbdea3909ab16febeb` are pushed to
+  `myfork/codex/adreno-power-audit`. Includes existing 0093 high-bank repair.
+  CI `39377419088` **SUCCESS** on exact source 4a65657; kernel build/link and
+  embedded-code checks succeeded, portable test step **SKIPPED** (run_tests=false).
+  Kernel artifact `12243978150` (xnu-kernel, ZIP 60117274 bytes); selected kernel
+  entry CRC and published SHA-256 matched. Kernel
+  `xnu/out-0094/kernel.development.sweet` (17273616 bytes), SHA-256
+  `5cb7fcbe81ff39b06b7429dfe9bdcafb5da3a7f7c5ea6e2243dfb4d3ffbab69b`.
+  Local stage-8 image `shim/out/shim-boot-0094-gmu-hfi-120hz.img`
+  (17215488 bytes), SHA-256
+  `053fda6fa9e9515c05ef1006d6532e60914f05c7f63c5bf79111c789518cb31a`.
+  Manifest `research/gpu/0094-boot-manifest.json`; finish/package helpers
+  `research/gpu/finish-0094.py`, `research/gpu/package-0094.py` and log
+  `research/gpu/finish-0094.log`. Reused known shim/base DTB and unchanged
+  firmware ADT (SHA-256 73f9c127...76b320). Presentation target stays 120 Hz;
+  this proves neither panel scan rate nor rendered FPS. **No tests, temporary
+  boots or flashes; installed root image and phone untouched this turn.**
+  New opt-in sweetgpu=8 executes GMU/PDC/RSC cold boot plus HFI initialization;
+  it is untested on hardware. **Full GPU acceleration is still absent**:
+  ZAP/SQE, GPU stream mappings, CP submission/fences, host interconnect policy,
+  recovery/thermal management and the native iOS graphics ABI remain unfinished.
+  Do not present this artifact as a lag fix or as verified to boot. Next code
+  work is the protected firmware / SQE / CP hardware backend, then actual
+  rendering and iOS integration. User's latest direction remains build only.
+
 - **Current request: build only, no tests (2026-10-20):** user supplied a
   phystokv_range panic photo after another agent's 0092 attempt. Reviewed new
   commits through `9de2ec6` (also remote branch HEAD). Photo reports an illegal
@@ -33,7 +59,10 @@
   step is confirmed skipped. Final source audit pinned the RPMh binding:
   MIN_SVS=48 (GFX/CX raw tables round to64, MX to192); adjusted selector to use
   the binding value, added RSC idle and AO/CM3 fault checks. Rebuilding that
-  refinement; no hardware operations. Older 0093-only CI `39375252490` on
+  refinement on `4a6565767c523387f1fa3dbbdea3909ab16febeb`, CI
+  `39377419088` (run_tests=false). C HFI/GMU compilation passed with
+  -Wall -Wextra -Werror; no binaries/tests were executed. Superseded initial
+  CI was explicitly canceled; no hardware operations. Older 0093-only CI `39375252490` on
   9de2ec6 also succeeded, but no repaired hardware boot is recorded.
 
 - **0091 hardware pass / 0092 DMA backend (2026-10-20):** user reported
