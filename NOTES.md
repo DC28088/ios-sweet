@@ -2,6 +2,14 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0108 temporary boot sent (2026-10-20):** user reported FASTBOOT.
+  Approved direct fastboot boot of
+  shim/out/shim-boot-0108-native-adreno-core-120hz.img succeeded:
+  Sending16928KB OKAY0.510s, Booting OKAY0.130s, total0.662s. No partition
+  flashing or root edits. No /dev/bus/usb filesystem permission grants were
+  requested. Waiting for user's on-screen result; fastboot success does not
+  establish iOS boot or rendering. Full GPU acceleration remains unfinished.
+
 - **0108 kernel build SUCCESS / image packaged (2026-10-20):** CI39464554694
   exactsource11e8daf2b57fa01c5e954eb3284aa095cf23e82a, testsSKIPPED. New
   memory/CPU/VM/submit and SMMU compile commands confirmed in saved CI log
