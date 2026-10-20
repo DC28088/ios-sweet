@@ -1,0 +1,29 @@
+{
+  "base": "c37e2f2",
+  "files": {
+    "third_party/unixnu/NativeAdreno/NativeAdrenoRing.h": "951aeea0d8645d985d8d96aadfd1a3f3c51c88411d0c16ba9ebd6dc3b059a600",
+    "third_party/unixnu/NativeAdreno/NativeAdrenoRing.cpp": "9964e7962a902548af315b93b568465e0a3d3c6c13d7c23a93e5db3c6694165a",
+    "third_party/unixnu/NativeAdreno/NativeAdrenoABI.h": "b5574e34ee3a368616f722f9fa40ea2c87bbc5c03989a299d9d4f954c9f8be70",
+    "third_party/unixnu/NativeAdreno/LICENSE": "16fbc0170994a48f60938d9f0d992d3bad113383cf90882f75c206e079c2a2dc",
+    "third_party/unixnu/NativeAdreno/NativeAdrenoMemory.h": "37428d7e7a053537cd852cc638cbe3b2863803bff0ccf949d35c10385ab81152",
+    "third_party/unixnu/NativeAdreno/NativeAdrenoMemory.cpp": "0b6514dedfce3fae2569f72cdebca6395d05cafc8abac98ee510ae23de954588",
+    "third_party/unixnu/NativeAdreno/NativeAdrenoCpu.cpp": "9502595979d0fb327b9c51fb80fe0f6fb9b3b31f0aeb0b04f886e425eddcac26",
+    "third_party/unixnu/NativeAdreno/NativeAdrenoSmmuMemory.h": "d2988cc8fe670e569dd14d9556924784994782b6f9efdc1715d2ab281baf3b90",
+    "third_party/unixnu/NativeAdreno/NativeAdrenoSmmuMemory.cpp": "422a1c2b14408bc2a4855822b7110a4c8b09c31cb5b9820b85dbde648a31d657",
+    "third_party/unixnu/NativeAdreno/NativeAdrenoVm.h": "b275ea459d7622d67653a5501bd82717f84670b89870cde4ce95e9985a8ea0a8",
+    "third_party/unixnu/NativeAdreno/NativeAdrenoVm.cpp": "fcb1da6147b240e74508517be54477f4b2c639df1c6e7f98eb1b3eef4b889282",
+    "third_party/unixnu/NativeAdreno/NativeAdrenoVmAlias.h": "35fe908bd80389a18e395eb3bfdd5a40cb2c133fe6634dbead8d68cf2822eeea",
+    "third_party/unixnu/NativeAdreno/NativeAdrenoSubmit.h": "03e41ee4afb6bc6ff1970ac298f93cb0add8b49ac300a14fcffef17fd91bd841",
+    "third_party/unixnu/NativeAdreno/NativeAdrenoSubmit.cpp": "c6ca547f46c8a0e813769e2656f0b619fb2111b516f07bd2cf3666fa7625d051",
+    "third_party/unixnu/NativeAdreno/NativeAdrenoUserClient.h": "2cb8de28c5096856500601147e2ca35e6e6e21cb15f22874aeb16606744a6ee8",
+    "third_party/unixnu/NativeAdreno/NativeAdrenoUserClient.cpp": "9638c0b7443f0a64a02877dc659ac509ca1b714586b704b7afb42ab3b59692b3",
+    "third_party/unixnu/NativeAdreno/NativeAdrenoTimer.h": "41fd744b29cb12a107d86b6e74a0abe33fa877326e2471e2d534241b016341eb",
+    "third_party/unixnu/NativeAdreno/NativeAdrenoTimer.cpp": "281221b6fc5c1175b71d7c54fda8275bab1b08d7b9819f7c60e4e4b10026f22a",
+    "third_party/unixnu/NativeAdreno/NativeAdrenoStatus.h": "7305cce3eefbf63176fd08f3d6eb92aa4b874fffb37bda94666fea53d62a2a34"
+  },
+  "sm7150_ubwc_source": {
+    "revision": "fd78d17954a86ea6ceb0c535e618ea129e09f8dd",
+    "path": "drivers/soc/qcom/ubwc_config.c",
+    "sha256": "aac588f9cf232b6eb7e127517b4ed8f29271bb037b9dc767a44b1fc6be77deae"
+  }
+}

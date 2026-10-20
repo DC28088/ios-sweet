@@ -2,6 +2,28 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0110 connected renderer implementation (2026-10-20, NOT booted):** new
+  SweetNativeAdrenoRender programs all A618 3D address modes,512KiB GMEM and
+  SM7150 UBWC2 (bank14/swizzle6/min32/four-channel) with register readback.
+  SweetNativeAdrenoClient publishes IOAcceleratorES/AGXAccelerator discovery
+  only after liveVM/CP/render profile connect; implements actual NativeAdreno
+  BO/import/map/IB/fence ABI and exact Darwin Turnip tunnel. One backboardd
+  connection, same GPU IOLock, real fence quiescence before maps/frees/submits,
+  retained original BO descriptors for CPU mappings; no fake render success.
+  Kernel imports actual NativeAdrenoUserClient/Timer/Status. Initial WC disabled
+  for explicit noncoherent cache maintenance; no process-isolation claim.
+  Added actual iOS16 Turnip+metal2vulkan/NativeMetal build and a minimal plugin
+  entry, removing target-specific QuartzCore probes by not compiling the old
+  plugin. Base528 static ABI guard is unqualified at runtime. Mesa build-script
+  pin85fda3b differs from survey pin c823a83: build follows compiler manifest.
+  New graphics workflow invoked through existing xnu.yml graphics_only=true;
+  run39469296081 onf56d421 currently compiling. First direct metal.yml dispatch
+  was404 because new workflows are not registered on defaultbranch.0109 kernel
+  run39468676639 was CANCELLED by old shared workflow concurrency when starting
+  graphics. Concurrency now separates kernel/graphics. New full0110 kernel build
+  pending. No root edits, installs, USB access or new boot images. User asked to
+  keep phone in FASTBOOT until the connected rendering path is ready.
+
 - **0108 user result /0109 connected-VM work (2026-10-20):** user confirms
   0108 reached iOS with unchanged performance, now FASTBOOT. User explicitly
   accepted implementation work without another unconnected-image boot. Do not
