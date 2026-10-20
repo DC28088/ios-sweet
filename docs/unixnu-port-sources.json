@@ -1,0 +1,73 @@
+{
+  "sources": [
+    {
+      "repository": "https://github.com/UniXNU/NativeAdreno",
+      "commit": "805c7e4bfb7451eb6923f4a14dea8c657b9be7d2",
+      "files": {
+        "README.md": "0dab347b689812fe87c2d882324e693136d1c4c3de9afb8af3a9d735396ad63b",
+        "LICENSE": "16fbc0170994a48f60938d9f0d992d3bad113383cf90882f75c206e079c2a2dc",
+        "NativeAdrenoRing.cpp": "dc2c71b8225ec034b800e01d107939fa7d8a8b5335a2337323c016c9e5fc083e",
+        "NativeAdrenoRing.h": "0811915d30b72a15855714527c4c3f3657ba448597a528c30174765c19b32cda",
+        "NativeAdrenoABI.h": "b5574e34ee3a368616f722f9fa40ea2c87bbc5c03989a299d9d4f954c9f8be70",
+        "NativeAdrenoCpu.cpp": "b22d613d1c8a73e33ef1ccaf02e0e5096a96c7a7c08ec911dea7b6df4e5e0515",
+        "NativeAdrenoPublish.cpp": "60b14b7431a7d1d2851448a4f4195d216d5bcd57a5d3ad2916385f8988f6a93b"
+      }
+    },
+    {
+      "repository": "https://github.com/UniXNU/NativeMetal",
+      "commit": "6dcd4cbb69eb5625988706de42aa8ad3009b8ee7",
+      "files": {
+        "README.md": "c2e9fd1817fbf94e4a4c3d66785fb04ca92b54cafead84439e4982205477a0a2",
+        "LICENSE": "c51a32dfc2140d3d56f796a3a7010e574f2e3649b97c42e010303ad57f848265",
+        "NativeAdrenoMetalPlugin.mm": "d03f4f320f59be7887e1c68170c3d977b1f9d15168c3cc7f226bd85f60f37691",
+        "bridge/NativeMetalBridge.rs": "10bc30e6f2f9ee8c9d92d16f3355c2fa9698f228e7462b01efb6ec750ab76862"
+      }
+    },
+    {
+      "repository": "https://github.com/MakrSas/ios-topaz",
+      "commit": "f999958430ebe39df75533c24487354181ac390c",
+      "files": {
+        "README.md": "86a502849c08fd3d8f1824289aabfc8ffc2accb4517b4aa1422c4edc329089e8",
+        "xnu/patches/0123-topaz-wlan-scan.patch": "a877f490925096df06e8c36d6874cd791fb012ca119310c07e95a35032e91af0",
+        "xnu/patches/0129-topaz-wlan-station.patch": "cce0e69826250df5c7445eecf4fb7d69881b5f4b9d6b82a41a9d875d11bac716",
+        "xnu/patches/0130-topaz-wlan-join-pmk.patch": "dbc9c64b6aae407e25d54b7da15ae23bc54d5f407167bec9c253f05df0ff6225"
+      }
+    },
+    {
+      "repository": "https://github.com/UniXNU/AdrenoPM4",
+      "commit": "445f8fe6d115738352b9d78dc70af6d61aa7f62f",
+      "files": {
+        "LICENSE": "199298ccf9aba4cfe9d364199ff19b9d0688b07d83b770b313cf80a6a3924c69",
+        "AdrenoPM4.h": "86f4e84eece0f2e67f786d03cea8b82c696377fc5af9f890dd164bbfe24abd29",
+        "AdrenoPM4.c": "c4b0227859a1e771c5f349524b718b08444f518ef960bfa4b50f6fd4ab30ad2f"
+      }
+    },
+    {
+      "repository": "https://github.com/UniXNU/ArmSmmu4K",
+      "commit": "4d0d6598b1a36aeec3de01091893fa6660e49388",
+      "files": {
+        "README.md": "774b6f2c5150d464587d5859d4056353386e589e6f32106ea4df8d2b24bbf805"
+      }
+    },
+    {
+      "repository": "https://github.com/UniXNU/UniXNU",
+      "commit": "ccd8b95f486aa12925cde2d24f0c1f69b57aa9da",
+      "files": {
+        "scripts/build-adreno-metal-plugin.py": "7b21618dbb7675757fa51c70670422aeda6b604221c44097b736890006df446e",
+        "scripts/data/gpu-metal-vulkan-inputs.json": "e7e98926856f7bb206a3596a9d9c56afe9aa98b00ce2a6f20d4899f22d061b88"
+      }
+    }
+  ],
+  "imports": {
+    "NativeAdreno": [
+      "NativeAdrenoRing.cpp",
+      "NativeAdrenoRing.h",
+      "NativeAdrenoABI.h"
+    ],
+    "AdrenoPM4": [
+      "AdrenoPM4.c",
+      "AdrenoPM4.h"
+    ]
+  },
+  "rendering_acceleration_implemented": false
+}

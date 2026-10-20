@@ -2,6 +2,23 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **UniXNU port started /0107 (2026-10-20):** user supplied NativeAdreno,
+  NativeMetal and MakrSas/ios-topaz. Cloned/read and pinned exact commits/hashes
+  in docs/unixnu-port-sources.json; details docs/unixnu-sweet-port.md. MIT ring,
+  ABI and PM4 imports in third_party/unixnu.0107 embeds adapted A618 ring and
+  SweetNativeAdreno adapter into XNU, adopting the completed0106 ring without
+  reset, halt, base reprogramming or clearing memory. Preserves sequence, uses
+  event4 CACHE_FLUSH_TS/WHERE_AM_I and separate fence/shadow, blocks A7 framing.
+  Private synchronous kernel submit only; no userclient/Metal renderer published.
+  No extra command submitted by adoption. Host ring C++14 and PM4 C compilation
+  passed-Wall-Wextra-Werror (ring upstream formatting warning suppressed); no
+  tests run. Need full XNU compilation. NativeMemory assumes4K CPU and cannot
+  run unchanged on sweet16K; NativeMetal build targets iOS17 and depends on
+  patched Turnip/metal2vulkan. No userspace/root edits or acceleration claim.
+  Topaz has newer station/WPA2 patches beyond README; sweet ICNSS18800000
+  differs from topaz c800000, so no hardcoded Wi-Fi register/firmware port.
+  Phone remains FASTBOOT per0106 handoff; no device action in reference audit.
+
 - **0106 hardware: CP startup and PM4 execution succeed (2026-10-20 09:00
   UTC):** user booted the temporary image to the iOS home screen (performance
   unchanged, expected without a renderer) and returned FASTBOOT; a temporary
