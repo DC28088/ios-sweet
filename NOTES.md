@@ -2,6 +2,12 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0104 compiling:** CI39389711266 exactsourcebcf90e4cf7b5593fefd61d74b389c256504716fb,
+  run_tests=false. Host CP compilation-Wall-Wextra-Werror succeeds.0103 CI
+  39389309335 canceled, no0103 image booted. Helpers finish-0104.py/package-0104.py
+  fetch/hash/package exact source only; never device commands. Current phone
+  recovery, plan temporary boot of final signed-ZAP sequence after successful CI.
+
 - **0104 vendor ordering /0103 superseded before boot:** pinned matching
   Lineage device kernel at e03e5ba22586be70673afb5d3c3f70510524e658,
   drivers/gpu/msm/adreno_a6xx.c: a6xx_rb_start calls microcode_load including
