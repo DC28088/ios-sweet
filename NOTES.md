@@ -2,6 +2,13 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0099 fault capture compiling:** exactsource6a4de0a69b69e146141ce92970429953ec357d2c,
+  CI39383140126, run_tests=false. Earlier39383070320 canceled to ensure GPU
+  diagnostic register pairs use32-bit bus accesses. Includes all0098 changes
+  plus first-fault VA/syndrome/address readback; no speculative mapping changes.
+  Local helpers finish-0099.py/package-0099.py prepare integrity-verified image
+  only after exact CI success. They never boot the phone. Current device recovery.
+
 - **0098 hardware result: HFI passes, CP translation fault (2026-10-20):**
   User reached iOS with unchanged performance and returned to FASTBOOT.
   Temporary recovery boot succeeded; logs/gpu-0098-sqe-cp.txt contains234926
