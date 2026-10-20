@@ -42,7 +42,7 @@ diff --git a/bsd/dev/sweet_adreno_gmu.c b/bsd/dev/sweet_adreno_gmu.c
 new file mode 100644
 --- /dev/null
 +++ b/bsd/dev/sweet_adreno_gmu.c
-@@ -0,0 +1,179 @@
+@@ -0,0 +1,186 @@
 +/* SPDX-License-Identifier: MIT
 + * A618 cold-start implementation using the pinned SM7150 Linux register and
 + * firmware protocols. See docs/adreno-port.md for scope and source hashes.
@@ -96,6 +96,10 @@ new file mode 100644
 + for (unsigned us = 0; us <= timeout; us += 10) {
 +  result->value = io->read(io->cookie, offset);
 +  if (result->value == 0xffffffffu) return EIO;
++  uint32_t faults = io->read(io->cookie, 0x24c14); /* AO status */
++  uint32_t interrupts = io->read(io->cookie, GMU_GMU2HOST_INTR_INFO);
++  if (faults == 0xffffffffu || interrupts == 0xffffffffu ||
++      (faults & 0x29) || (interrupts & (1u << 23))) return EIO;
 +  if ((result->value & mask) == expected) return 0;
 +  if (us != timeout) io->delay_us(io->cookie, 10);
 + }
@@ -166,6 +170,9 @@ new file mode 100644
 + gmu->write(gmu->cookie, GMU_GMU2HOST_INTR_MASK, 0xffffffffu);
 + gmu->write(gmu->cookie, GMU_AO_HOST_INTERRUPT_MASK, 0xffffffffu);
 + gmu->write(gmu->cookie, GMU_GMU2HOST_INTR_CLR, 0xffffffffu);
++ gmu->write(gmu->cookie, 0x24c10, 0xffffffffu); /* AO status W1C */
++ /* A reset M3 does not prove the independent RSC sequencer is idle. */
++ if (gmu->read(gmu->cookie, 0x23000 + 0x101 * 4) != 0) return EBUSY;
 + pdc_program(gmu, pdc, seq);
 + gmu->write(gmu->cookie, GMU_GENERAL_7, 1);
 + gmu->write(gmu->cookie, A618_GMU_FW_INIT_RESULT, 0);
@@ -415,7 +422,7 @@ diff --git a/bsd/dev/sweet_gpu.c b/bsd/dev/sweet_gpu.c
 diff --git a/bsd/dev/sweet_rpmh.c b/bsd/dev/sweet_rpmh.c
 --- a/bsd/dev/sweet_rpmh.c
 +++ b/bsd/dev/sweet_rpmh.c
-@@ -502,6 +502,42 @@
+@@ -502,6 +502,43 @@
  	return error;
  }
  
@@ -439,11 +446,12 @@ diff --git a/bsd/dev/sweet_rpmh.c b/bsd/dev/sweet_rpmh.c
 +  if (!error && resource.addr != address[r]) error = ENODEV;
 +  if (!error) error = rh_arc_levels(&resource, levels[r], &counts[r]);
 +  if (error) break;
-+  /* MIN_SVS is raw 64 in the SM7150 OPP bindings. */
++  /* MIN_SVS is raw 48 in the pinned RPMh bindings. The measured
++  * GFX/CX tables round this up to 64; MX rounds up to 192. */
 +  unsigned i;
 +  for (i = 0; i < counts[r]; ++i) {
 +   --levels[r][i];
-+   if (!selected[r] && levels[r][i] >= 64) selected[r] = i;
++   if (!selected[r] && levels[r][i] >= 48) selected[r] = i;
 +  }
 +  if (!selected[r] || levels[r][0] != 0) error = ERANGE;
 + }

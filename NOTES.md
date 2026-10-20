@@ -15,7 +15,7 @@
   capture records 32768 verified TCM bytes and errno=0. Neither is evidence of
   GPU execution. User explicitly requests implementation/build without tests:
   **do not boot/flash, run portable regressions or device tests this turn.**
-  Implementing ordered patch 0094: polled legacy HFI RPC with echoed-header
+  Implemented ordered patch 0094 (`ca70c43`, refinement follows): polled legacy HFI RPC with echoed-header
   validation, bounded ACK/debug queues, fault/timeout poisoning, INIT/version/
   performance/bandwidth/end-init exchange, and A618 PDC/RSC/M3/GX handshake.
   Capture `gpu-0092-dma-hfi.txt`: 170228 bytes, SHA-256
@@ -28,7 +28,13 @@
   graphics acceleration**. Host interconnect bandwidth, protected ZAP/SQE,
   GPU stream mappings, command execution/fences, recovery/thermal management,
   and the iOS graphics ABI remain unfinished. Editable sources:
-  `research/gpu/0094-work/`; CI tests are now separately selectable.
+  `research/gpu/0094-work/`; CI tests are now separately selectable. Initial
+  build `39377178087` on ca70c43 was dispatched with run_tests=false; its test
+  step is confirmed skipped. Final source audit pinned the RPMh binding:
+  MIN_SVS=48 (GFX/CX raw tables round to64, MX to192); adjusted selector to use
+  the binding value, added RSC idle and AO/CM3 fault checks. Rebuilding that
+  refinement; no hardware operations. Older 0093-only CI `39375252490` on
+  9de2ec6 also succeeded, but no repaired hardware boot is recorded.
 
 - **0091 hardware pass / 0092 DMA backend (2026-10-20):** user reported
   iOS boots but performance remains poor; requested working driver using

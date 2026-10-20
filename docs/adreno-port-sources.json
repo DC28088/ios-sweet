@@ -106,6 +106,16 @@
       "path": "drivers/gpu/drm/msm/registers/adreno/a6xx.xml",
       "sha256": "1776505dbdb01d0355c9a828b857eaec61b286802d3509a33d6ced9e6ce54000",
       "bytes": 279250
+    },
+    {
+      "path": "include/dt-bindings/power/qcom-rpmpd.h",
+      "sha256": "fd0f3806f6e147c19b4e25a59214bbc0c24b65a13d58750119c985cba47c6d33",
+      "bytes": 6307
+    },
+    {
+      "path": "include/dt-bindings/power/qcom,rpmhpd.h",
+      "sha256": "cef4d459df9c1ba1b12ba90571efd503199b0d3b8e08cfc1959bd49878eee309",
+      "bytes": 7111
     }
   ]
 }
