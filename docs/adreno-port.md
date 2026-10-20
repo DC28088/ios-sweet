@@ -301,3 +301,10 @@ and `a6xx_hfi.c/h`; source-list and host C compilation passed.
 M3 execution, PDC/RSC setup, complete HFI negotiation, GPU ring execution,
 fault recovery and the iOS graphics interface remain required. These DMA and
 queue components alone cannot increase the frame rate.
+
+Architecture audit: [Arm SMMUv2 specification, IHI 0062D.c](https://documentation-service.arm.com/static/5f900d34f86e16515cdc08fb),
+sections 16.5.29 and 16.5.35–36, defines some control readbacks as unspecified.
+0092 writes the required AFE/TRE ones but verifies only defined controls;
+CB1 must have translation disabled, with other reset bits allowed to vary.
+Cache-inhibited RAM is cleared with aligned volatile stores rather than an
+optimized zero routine, avoiding Device-memory DC ZVA/vector assumptions.

@@ -29,7 +29,11 @@
   editable sources byte for byte. Replacement CI `39353002324` superseded
   before boot: allocator now clears inhibited-cache memory with aligned
   volatile words instead of bzero (avoids Device-memory DC ZVA faults).
-  Complete patch revalidated; latest CI pending. Next: build,
+  Complete patch revalidated. CI `39353648283` also superseded before boot:
+  ARM SMMUv2 spec audit found AFE/TRE readback is UNK/SBOP for long
+  descriptors; compare only defined control fields, and test CB1.M for
+  inactive state rather than requiring every reset bit zero. Reject all-ones
+  PAR even on guard probes. Latest CI pending. Next: build,
   package stage 7, temporary boot and capture hardware translation log. Editable sources `research/gpu/0092-work/`.
   Phone currently OrangeFox; root image unchanged, no flash.
 
