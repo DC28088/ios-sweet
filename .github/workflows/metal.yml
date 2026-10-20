@@ -1,0 +1,32 @@
+name: sweet-metal
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build tools
+        run: |
+          brew install llvm glslang bison flex ninja pkg-config
+          echo "$(brew --prefix llvm)/bin:$(brew --prefix bison)/bin:$(brew --prefix flex)/bin:$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          rustup toolchain install 1.98.0 --profile minimal
+          rustup target add aarch64-apple-ios --toolchain 1.98.0
+      - name: Build iOS 16 graphics userspace
+        run: python3 tools/build-sweet-metal.py
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: sweet-metal-ios16
+          path: userspace/out/
+      - name: Save build diagnostics
+        if: failure()
+        run: |
+          mkdir -p userspace/diagnostics
+          find research/native-metal-build -name '*.log' -type f -exec cp {} userspace/diagnostics/ \; || true
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: sweet-metal-diagnostics
+          path: userspace/diagnostics/
