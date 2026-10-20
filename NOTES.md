@@ -2,6 +2,22 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0098 hardware result: HFI passes, CP translation fault (2026-10-20):**
+  User reached iOS with unchanged performance and returned to FASTBOOT.
+  Temporary recovery boot succeeded; logs/gpu-0098-sqe-cp.txt contains234926
+  console bytes, flush13. GMU boot errno0 phase6, FW0x10110000; all5 HFI
+  replies succeeded, no drops, queue indices drained. CP map20 pages+guard
+  passed (CB0 slot1); ME_INIT timed out phase2, submitted9 completed0,
+  RPTR0 WPTR9 status0x800005 IRQ0 CPfault0. CB0FSR0x402 vs CB1FSR0x400:
+  actual GPU translation fault, not the earlier Format-only false failure.
+  Fault VA/syndrome were not logged by0098. Patch0099 captures FAR, FSYNR0/1,
+  stream SID, TTBR0/TCR/SCTLR and GPU SQE/ring/shadow register readback before
+  any clearing/probe. Do not infer which address faulted without this evidence.
+  PAS and fence path never reached; full acceleration remains absent.
+  Phone in OrangeFox; no partitions flashed, no root edits.0098 manifest updated.
+  Local build-0098.log fetch failed HTTP2; CI success and artifact hashes were
+  checked, but do not claim the incomplete file is a saved complete build log.
+
 - **0098 compiled and CP attempt booted (2026-10-20 06:45:06 UTC):**
   CI39381215265 SUCCESS on d110d0d; includes0093 high-bank fix and0095-0098
   SMMU/HFI/CP changes. Portable regressions SKIPPED. Kernel artifact12245856852
