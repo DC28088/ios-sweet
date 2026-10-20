@@ -2,6 +2,25 @@
 
 ## Current local device state (2026-10-20, read first)
 
+- **0089 build and temporary boot (2026-10-20, awaiting hardware log):**
+  CI `39347214431` succeeded on `b1a4b3c`, including portable failure checks,
+  full XNU compile and built-kernel marker checks. Downloaded artifact
+  `12232465856` and verified CRC/SHA-256. Kernel
+  `xnu/out-0089/kernel.development.sweet` SHA-256
+  `6d0f9903c9c0f97c1ecce4c56e0d24955900af21b1669b23e5edfbd08549fda8`.
+  Packaged clock-only image `shim/out/shim-boot-0089-gmu-clocks-120hz.img`
+  SHA-256 `b6a07f13702a3e840f4ab5017842518c82d6580d8832ec5221810b32bac21fc4`
+  and firmware-staging image `shim/out/shim-boot-0089-gmu-tcm-120hz.img`
+  SHA-256 `c92cf13ed47b6fcb60f5559d1023cd836da3d1a7cadf2c181ac10fef57440911`.
+  Packaging preserved the known shim/base DTB and checked both bootv2
+  unpack round trips; manifest `research/gpu/0089-boot-manifest.json`.
+  User connected the phone in FASTBOOT; `fastboot boot` of the stage-6 image
+  returned Sending/Booting OKAY (0.678 s). **This establishes only the
+  bootloader handoff.** Wait at least 90 s for the 60 s worker, then return
+  to FASTBOOT/recovery and pull a unique log. No partition flash.
+  Firmware remains reset-held and rendering is unavailable by design.
+  Next implementation research: `research/gpu/smmu-gmu-next.md`.
+
 - **0089 postmarketOS GMU port in progress (2026-10-20):** user requested
   continuing toward full acceleration using postmarketOS's Redmi Note 10 Pro
   sources. Pinned sm7150-mainline/linux revision
