@@ -10,3 +10,8 @@ xnu/out-*/
 __pycache__/
 # kernel logs can contain device identifiers
 logs/
+
+# Generated graphics userspace binaries and private build checkouts.
+userspace/out/
+userspace/diagnostics/
+research/native-metal-build/
