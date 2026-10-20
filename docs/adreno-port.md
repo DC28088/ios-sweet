@@ -258,3 +258,10 @@ Auditing both pinned SM7150 DT nodes gives six unique clock dependencies:
 and verified. Both removed gates are now covered by no-access regressions,
 including their actual zero-valued hardware state; required CXO failure
 still aborts. This does not establish firmware startup or rendering.
+
+Source limitation: the pinned `gpucc-sc7180.c` fallback clock array omits
+`GPU_CC_AHB_CLK`, although its binding defines it and the SM7150 SMMU DT
+requests it. The XNU port therefore retains the downstream sdmmagpie AHB
+register at `0x1078`, verified running in the 0090 hardware log. The
+mainline DT clock list provides consumer dependencies; it does not prove
+the fallback driver is complete for this board.
