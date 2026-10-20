@@ -1,4 +1,5 @@
 diff --git a/bsd/dev/sweet_adreno_dma.h b/bsd/dev/sweet_adreno_dma.h
+new file mode 100644
 --- /dev/null
 +++ b/bsd/dev/sweet_adreno_dma.h
 @@ -0,0 +1,55 @@
@@ -58,6 +59,7 @@ diff --git a/bsd/dev/sweet_adreno_dma.h b/bsd/dev/sweet_adreno_dma.h
 +#endif
 +#endif
 diff --git a/bsd/dev/sweet_adreno_smmu.c b/bsd/dev/sweet_adreno_smmu.c
+new file mode 100644
 --- /dev/null
 +++ b/bsd/dev/sweet_adreno_smmu.c
 @@ -0,0 +1,148 @@
@@ -210,6 +212,7 @@ diff --git a/bsd/dev/sweet_adreno_smmu.c b/bsd/dev/sweet_adreno_smmu.c
 +}
 +#endif
 diff --git a/bsd/dev/sweet_adreno_hfi.c b/bsd/dev/sweet_adreno_hfi.c
+new file mode 100644
 --- /dev/null
 +++ b/bsd/dev/sweet_adreno_hfi.c
 @@ -0,0 +1,98 @@
@@ -312,6 +315,7 @@ diff --git a/bsd/dev/sweet_adreno_hfi.c b/bsd/dev/sweet_adreno_hfi.c
 +}
 +#endif
 diff --git a/iokit/Kernel/arm/SweetAdrenoDMA.cpp b/iokit/Kernel/arm/SweetAdrenoDMA.cpp
+new file mode 100644
 --- /dev/null
 +++ b/iokit/Kernel/arm/SweetAdrenoDMA.cpp
 @@ -0,0 +1,44 @@

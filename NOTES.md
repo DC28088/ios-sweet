@@ -23,8 +23,11 @@
   service is implemented. Also inspects `xo.lvl` read-only for PDC resource
   identity (write whitelist unchanged). Host C compilation passed for
   SMMU/HFI, source list and BSD patch application checks passed. Next:
-  finish integration, CI build, package stage 7, temporary boot, hardware
-  translation log. Editable sources `research/gpu/0092-work/`.
+  CI `39352692300` rejected the new-file diff headers before compiling
+  (`dev/null: No such file or directory`). Added explicit new-file modes;
+  complete patch application including all new files now passes and matches
+  editable sources byte for byte. Replacement CI pending. Next: build,
+  package stage 7, temporary boot and capture hardware translation log. Editable sources `research/gpu/0092-work/`.
   Phone currently OrangeFox; root image unchanged, no flash.
 
 - **0091 verified build / temporary boot (2026-10-20):** CI
