@@ -318,7 +318,7 @@ diff --git a/iokit/Kernel/arm/SweetAdrenoDMA.cpp b/iokit/Kernel/arm/SweetAdrenoD
 new file mode 100644
 --- /dev/null
 +++ b/iokit/Kernel/arm/SweetAdrenoDMA.cpp
-@@ -0,0 +1,44 @@
+@@ -0,0 +1,47 @@
 +/* SPDX-License-Identifier: MIT
 + * Wired, uncached memory for the Adreno SMMU and legacy GMU HFI.
 + */
@@ -358,7 +358,10 @@ new file mode 100644
 + region->physical = physical;
 + region->bytes = A618_DMA_BYTES;
 + region->uncached = 1;
-+ bzero(cpu, A618_DMA_BYTES);
++ /* Cache-inhibited mappings may be Device memory: avoid bzero/DC ZVA
++  * and vectorized stores. Use naturally aligned volatile word stores. */
++ volatile uint32_t *words = (volatile uint32_t *)cpu;
++ for (unsigned i = 0; i < A618_DMA_BYTES / 4; ++i) words[i] = 0;
 + __asm__ volatile("dsb sy" ::: "memory");
 + return 0;
 +}
