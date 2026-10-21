@@ -15,7 +15,9 @@
   polling profile permits ignored low CBNDX byte only for FAULT readback;
   translated routes still exact. Better startup detail log before failure.
   Vendor Streams C compilation with-Wall-Wextra-Werror and patch staging pass;
-  full kernel CI pending, no tests/hardware run. Userspace ABI/bundle unchanged.
+  Full kernel CI39537556638 runs on6cf3c60c393a0ac5b82ef8fe311be5475d5d8d6e,
+  testsfalse. research/gpu/finish-0111.py polls/downloads/packages automatically
+  (session96448, finish-0111.log). No tests/hardware run. Bundle ABI unchanged.
   Phone LEFT ORANGEFOX; do not reflash root. Source manifest in
   docs/native-adreno-0111-sources.json. This fixes a measured initialization
   blocker; it does not prove later Metal calls or acceleration work.
