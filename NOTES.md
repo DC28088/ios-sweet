@@ -2,6 +2,25 @@
 
 ## Current direction and last known device state (2026-10-22, read first)
 
+- **0114 BUILD SUCCESS / PACKAGED, NOT BOOTED (2026-10-22):** CI39683698934
+  passed on source231196d88d541ac7d43be007e5bce8c5b5f480f4. Portable tests
+  SKIPPED as requested by session instructions. Artifact12385946044 fetched
+  with ZIP CRC and published SHA verification. Kernel xnu/out-0114/
+  kernel.development.sweet SHA256
+  944f53f2a40edc65e7bf866e4c9cf43ee240443ac6be05b123bc3e9bc9d63b36.
+  Image shim/out/shim-boot-0114-rpmh-completion-120hz.img,17399808bytes,
+  SHA2564d16341c9c016f9c788a8aa4fc8a1e6aa86887c18c10d8be2cf56c741d327351.
+  Manifest research/gpu/0114-boot-manifest.json; watcher/package helpers
+  finish-0114.py/package-0114.py in research/gpu. Boot-v2 unpack verified
+  exact original shim+DTB, ramdisk==payload, deterministic repack from new
+  kernel+existing firmwareADT+cmdline. New RPMh marker present. Stage9,
+  120Hz scheduler, USB logging retained; old installed Metal bundle remains
+  ABI-compatible. No GLES frontend built/included, no hardware boot or root
+  changes; acceleration NOT established. Initial run39683486855 was cancelled
+  and superseded before packaging to preserve touchscreen regulator behavior.
+  Next: user-controlled temporary boot of this image and collect the fresh
+  latch/GIC/CX/GMU/CP/provider result, then port Mesa/GLES userspace transport.
+
 - **0114 GPU IMAGE BUILD PREPARATION (2026-10-22):** user requested a new
   GPU image. Mesa documentation confirms Gallium freedreno supports Adreno
   6xx GLES and Turnip supports 6xx Vulkan. Neither replaces our XNU hardware
