@@ -2,6 +2,21 @@
 
 ## Current local device state (2026-10-21, read first)
 
+- **0113 BUILD SUCCESS / READY, NOT BOOTED (2026-10-21):** CI39630488384
+  succeeded on source133087d; portable test stepSKIPPED. Kernel artifact
+  12360100686 CRC/publishedSHA verified. KernelSHA25694c85d755f64520bb663356dd0dcba82c9cce6f5f2c05e56d0b5980411eade3c.
+  Imageshim/out/shim-boot-0113-native-adreno-renderer-120hz.img 17399808bytes,
+  SHA256d9ba2cc6091adb9062fe430d2550cc29a9a2f1f583b392ff61dea1d9dfee35ef. Manifest research/gpu/0113-boot-manifest.json.
+  Corrects inappropriate optional0x534 access and detects sentinel readbacks;
+  hardware outcome/provider publication/iOS acceleration remain UNVERIFIED.
+  Existing installed0110Metal bundle is still ABI-compatible; no root changes.
+  This turn changed no device state: phone remains running0112; live0112capture
+  receiver session85796 was still active at last check, bounded1800seconds.
+  Before any0113boot, ensure a receiver is active and separate capture by boot.
+  Topaz reference audit committed; useful IOSurface support remains to port with
+  memory ownership review and actual compositor trace. No complete public
+  Topaz GPU renderer was found. No sweet Wi-Fi driver was installed or enabled.
+
 - **Topaz source comparison detail:** reconstructed current SweetSurface.cpp:
   sweet only0046+0068; lacks IOSurfaceAddress, client wrapping6/7 and real
   values9..11/bulk27; release trap immediately drops maps. Topaz0131..0139
