@@ -2,6 +2,17 @@
 
 ## Current direction and last known device state (2026-10-22, read first)
 
+- **0115 GLES KERNEL INTEGRATION STAGED:** patch0115 adds explicit
+  sweetgles=1 boot mode: backboardd-only fixed DYLD_INSERT_LIBRARIES,
+  scoped AMFI dyld policy, no MetalPluginName on the live A618 provider,
+  and IOSurfaceAddress/client-readonly memory wiring with exact bitmap rows.
+  Normal boots retain Metal discovery; GLES library is loaded only with
+  the new flag. Full ordered patch staging passed for all5 touched files.
+  GLES frontend CI39687042106 is building source1549316. Companion kernel
+  CI pending. No hardware test or root write. Source integration is not a
+  claim of successful compositor rendering; actual A618 service readiness
+  still needs the0114/0115 startup trace.
+
 - **GLES USERSPACE IMPLEMENTATION STARTED (2026-10-22):** user reports0114
   booted with zero visible improvement and explicitly requests finished
   Sailfish-style userspace integration. No0114 trace collected yet; do not
