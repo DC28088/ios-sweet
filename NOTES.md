@@ -2,6 +2,23 @@
 
 ## Current local device state (2026-10-21, read first)
 
+- **0111 BUILD SUCCESS / READY, NOT BOOTED:** CI39537556638 success on exact
+  source6cf3c60c393a0ac5b82ef8fe311be5475d5d8d6e; portable testsSKIPPED.
+  finish-0111 helper verified published artifact checksum and packaged image.
+  Kernel SHA256 519ccd305ad132ca1b8dcacc54e319cb354ad5ba3e1d6666a241cea14df56a06.
+  Image shim/out/shim-boot-0111-native-adreno-renderer-120hz.img17383424bytes,
+  SHA256 eeb53575f3e316461d00656d2d77caf28a52ec2643b36aa30a2d6c72378fb5da.
+  Binary contains new S2CR probe/quirk and existing renderer publication markers.
+  Existing installed0110 Metal bundle remains matching (ABI unchanged).
+  Phone LEFT ORANGEFOX, no device writes/reboot this turn. User previously
+  preferred manual boots. Live USB receiver READY session96141,1800s bound,
+  logs/live-0111-usb.txt; stdout/tmp/sweet-usb-0111.out and statusfile. Dedicated
+  NM sweet-usb-log should assignIPv4 automatically when iOS re-enumerates.
+  Watch probe/readback, CB0 translation count, CP fence and provider publication;
+  then actual Metal discovery/commands. Hardware correction and acceleration
+  UNVERIFIED until boot. No root reinstall needed. Fresh diagnostic/persistent
+  log0110 SHA25674ce09c2f10e8edd21e4c0c860a9fc3270e6a715ca1298b385a1df89aa5e0c15.
+
 - **0110 STARTUP BLOCKER FOUND /0111 code correction:** user entered OrangeFox.
   Pulled logs/gpu-0110-paired-startup.txt273477bytes, flush55. GMU/HFI succeeds,
   then SWEET NATIVE VM route preflight failed0xa=ArmSmmu4KBusy; CP SMMU errno5,
