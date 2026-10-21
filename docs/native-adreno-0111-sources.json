@@ -1,0 +1,12 @@
+{
+  "base_commit": "9eea2123b89999f03ac28b3d4444ca1dc4610e94",
+  "startup_failure": "0110 route preflight ArmSmmu4KBusy (0xa), firmware S2CR0x200ff",
+  "linux_revision": "fd78d17954a86ea6ceb0c535e618ea129e09f8dd",
+  "linux_source": "drivers/iommu/arm/arm-smmu/arm-smmu-qcom.c",
+  "linux_sha256": "4f0cb902cbd324dc002108d2d363b016c70274d2a7155886d08b91824f2a60d4",
+  "modified": {
+    "third_party/unixnu/ArmSmmu4K/ArmSmmu4KStreams.c": "a21bf6801fbcc6888ffdb8c6397e4c07c1c6563f82e11a00243cc40c7755378d",
+    "xnu/patches/0111-sweet-qcom-smmu-fault-route.patch": "10d10d6b99fe83815777c29448bb7820819b8e9d7777e9351b17b5c64baa4101"
+  },
+  "hardware_verified": false
+}

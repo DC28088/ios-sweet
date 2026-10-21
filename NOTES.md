@@ -2,6 +2,24 @@
 
 ## Current local device state (2026-10-21, read first)
 
+- **0110 STARTUP BLOCKER FOUND /0111 code correction:** user entered OrangeFox.
+  Pulled logs/gpu-0110-paired-startup.txt273477bytes, flush55. GMU/HFI succeeds,
+  then SWEET NATIVE VM route preflight failed0xa=ArmSmmu4KBusy; CP SMMU errno5,
+  stage9 ends, NO render-provider publication. Installed Metal cannot initialize
+  when provider never exists. Baseline invalid slots show S2CR0x200ff. Strict
+  upstream preflight expects0x20000; Linux qcom_smmu_cfg_probe/write_s2cr documents
+  firmware ignoring FAULT writes, rewriting BYPASS to FAULT with CBNDXff.
+  Added0111: probe ONLY the leased INVALID stream slot, determine firmware
+  encoding, normalize subsequent FAULT requests at board MMIO adapter. Require
+  actual FAULT readback, no global reset/no GMU CB1 changes. Exact sweetID and
+  polling profile permits ignored low CBNDX byte only for FAULT readback;
+  translated routes still exact. Better startup detail log before failure.
+  Vendor Streams C compilation with-Wall-Wextra-Werror and patch staging pass;
+  full kernel CI pending, no tests/hardware run. Userspace ABI/bundle unchanged.
+  Phone LEFT ORANGEFOX; do not reflash root. Source manifest in
+  docs/native-adreno-0111-sources.json. This fixes a measured initialization
+  blocker; it does not prove later Metal calls or acceleration work.
+
 - **0110 paired boot still slow; USB live logging NOW VERIFIED:** user says
   installed bundle +0110 boots with unchanged performance. Current device iOS,
   enumerated1209:0001, USB Ethernet MAC02:00:5e:77:ee:01. Host enp0s20f0u3 had
