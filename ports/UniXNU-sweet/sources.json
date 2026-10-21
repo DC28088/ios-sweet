@@ -50,11 +50,12 @@
     ]
   },
   "readiness": {
-    "uefi_compiled": false,
+    "uefi_compiled": true,
     "kernel_adapted": false,
     "bootable": false,
     "tests_run": false,
-    "device_modified": false
+    "device_modified": false,
+    "note": "Prototype image was packaged, but device boot is unverified and the iOS16 kernel/payload is not integrated."
   },
   "native_prelink_reference": {
     "repository": "https://github.com/UniXNU/NativePrelink",

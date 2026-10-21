@@ -2,6 +2,27 @@
 
 ## Current local device state (2026-10-21, read first)
 
+- **FIRST UniXNU SWEET UEFI PROTOTYPE BUILD SUCCESS, NOT BOOTED:** CI39636995649
+  succeeded on4d353bf61d5dc254895014503550d4aeb66391a7. Artifacts downloaded
+  research/unixnu-ios16-out/firmware-39636995649; published SHA256 pass.
+  Mu-sweet.img2220032bytes SHA256
+  bf846fd6e1d56aef0ca429e2ab30dd23b8a73dfec3a04e83efcd3b4216fdcc91.
+  SWEET_UEFI.fd3145728bytes SHA256
+  4902b3ee867000cfdc45867634cbf62c001836ac7b8ff5974deb094aa759347c.
+  Image header1/page2048/kernelAddress0x10000000; kernel gzip unpacks to
+  144byte ARM64header BootShim + exact compiled3MiBFD at0x9fc00000, appended
+  FDT397690bytes. UniXNU app+registrar embedded, no DarwinBoot/iOSkernel.
+  Metadata ports/uefi-sweet/initial-build.json. This is firmware/menu prototype,
+  NOT an iOS16 boot image, NOT a GPU acceleration fix. Device has NOT booted it.
+  Reference DTB msmID365 matches saved phone; generic boardID0 differs from
+  phone46. Recorded for first boot investigation; no board-ID patch guessed.
+  Board/overlay TOML updated to observed prototype header fields. Main board
+  example/readiness gate remains: iOS16 kernel/driver integration incomplete.
+  No phone I/O or flashing this turn. Existing HFS+iOS16 root remains intact.
+  New plan/source oncodex/unixnu-ios16-sweet; legacy fallbackadreno branch kept.
+  No tests run. Old boundedUSB capture likely expired; start suitable logging
+  when a later user-authorized UEFI boot is attempted.
+
 - **iOS16 kernel patch staging started:** pristine XNU8796.141.3 archive fetched
   into research/unixnu-ios16-source; source audit worktree in
   /tmp/unixnu-ios16-kernel-audit. Upstream sorted patch sequence first rejected

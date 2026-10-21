@@ -1,0 +1,52 @@
+{
+  "ci_run": "39636995649",
+  "source_commit": "4d353bf61d5dc254895014503550d4aeb66391a7",
+  "board": "sweet; sweetin target compatibility unverified",
+  "firmware_revision": "098e303fd9703669ab06d38744cad14d49c0f702",
+  "unixnu_revision": "89801d6e9265ba9aa49e56de642565288d679f83",
+  "contains_unixnu_menu": true,
+  "contains_ios_kernel": false,
+  "hardware_booted": false,
+  "tests_run": false,
+  "image": {
+    "bytes": 2220032,
+    "sha256": "bf846fd6e1d56aef0ca429e2ab30dd23b8a73dfec3a04e83efcd3b4216fdcc91",
+    "header_version": 1,
+    "page_size": 2048,
+    "kernel_size": 2217546,
+    "ramdisk_size": 0,
+    "bootshim_size": 144,
+    "appended_dtb_size": 397690,
+    "arm64_header_checked": true,
+    "kernel_address": "0x10000000"
+  },
+  "firmware": {
+    "base": "0x9fc00000",
+    "bytes": 3145728,
+    "sha256": "4902b3ee867000cfdc45867634cbf62c001836ac7b8ff5974deb094aa759347c"
+  },
+  "menu_inputs": {
+    "UniXNU.efi": "e07e632bb0b1a22d311ed182c2115c533b9d219bf91211777e92281ab5a8d488",
+    "UniXNUDxe.efi": "d3d4c35e3e70fc39721b9563133e414abef735776d564483082bad2f1ae09b8a",
+    "UniXNUDxe.depex": "f7126f1178fee554f86cfc02416cea9e34d816608cd6835ebf9f4251270f8171"
+  },
+  "dtb_identity": {
+    "firmware_msm_id": [
+      365,
+      0
+    ],
+    "firmware_board_id": [
+      0,
+      0
+    ],
+    "saved_phone_msm_id": [
+      365,
+      0
+    ],
+    "saved_phone_board_id": [
+      46,
+      0
+    ],
+    "observation": "The upstream firmware DTB is generic; device compatibility must be established by the first boot, not assumed from its compiled image."
+  }
+}
