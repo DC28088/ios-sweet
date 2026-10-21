@@ -2,6 +2,15 @@
 
 ## Current local device state (2026-10-21, read first)
 
+- **Recovery boot attempted after sandbox disabled (2026-10-21):** user
+  asked to run fastboot directly. Device detected; fastboot boot
+  recovery/recovery.img sent131072KB OKAY3.965s, Booting OKAY0.130s,
+  total4.407s. Subsequent checks still detect FASTBOOT, no ADB recovery device.
+  This proves command acceptance only, not successful recovery startup.
+  Stopped the pending adb wait. No partitions flashed, no root writes, Metal
+  bundle NOT installed. Host sudo requires a password. Need determine why
+  temporary recovery returns/remains in fastboot before installing bundle.
+
 - **PAIRED0110 BUILD COMPLETE (not installed/booted):** kernel39532260702
   and graphics39532264309 both SUCCESS on1fae147d3bcba8a2377b8bc3995ab0d66c97022f.
   Graphics artifact12315364871 ZIP58511001bytes. Final bundle licensing precedes
