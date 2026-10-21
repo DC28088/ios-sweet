@@ -1,0 +1,11 @@
+{
+  "topaz_commit": "89451b811a4e6cc5cdcf734c45887163d92c599e",
+  "vendor_repository": "https://github.com/LineageOS/android_kernel_xiaomi_sm6150",
+  "vendor_revision": "e03e5ba22586be70673afb5d3c3f70510524e658",
+  "vendor_path": "drivers/gpu/msm/adreno_a6xx.c",
+  "vendor_sha256": "978eecd2edb3c0dfddcf38b3c377619afafa0b48ab06fb3ff842784a062e7f04",
+  "observation": "0112 reg0x534 reads0xdeafbead; downstream only accesses RBBM_NC_MODE_CNTL for macrotiling-channels==8. Sweet FDT has no such override. SM7150 profile uses default macrotiling mode0.",
+  "tests_run": false,
+  "hardware_verified": false,
+  "runtime_acceleration_verified": false
+}
