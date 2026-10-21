@@ -2,6 +2,35 @@
 
 ## Current local device state (2026-10-21, read first)
 
+- **PAIRED0110 BUILD COMPLETE (not installed/booted):** kernel39532260702
+  and graphics39532264309 both SUCCESS on1fae147d3bcba8a2377b8bc3995ab0d66c97022f.
+  Graphics artifact12315364871 ZIP58511001bytes. Final bundle licensing precedes
+  codesign seal; codesign --verify --strict passed in CI. Downloaded to
+  userspace/out/0110-1fae147/; verified all53 recorded bundle file hashes,
+  SweetAdrenoMetalDevice principal class, included dylib/licenses/signature.
+  Same directory now contains0110 boot image, boot-build.json, metal-build.json,
+  paired-build.json and README.md. Kernel full build log saved under
+  research/gpu/build-0110.log (gh HTTP2 download failed twice; urllib GET worked).
+  Actual compiler invocations forClient/Render confirmed; no hardware/tests.
+  Frame acceleration/performance remains UNVERIFIED. Matching bundle must be
+  installed into active root /System/Library/Extensions before evaluating this
+  kernel. No root, USB, reboot or partition operations performed this turn.
+  docs/native-adreno-0110-deployment.md and docs/usb-live-logging.md record
+  deployment/rollback/logging; do not ask another kernel-only diagnostic boot.
+
+- **0110 kernel build and packaging SUCCESS:** CI39532260702 on exactsource
+  1fae147d3bcba8a2377b8bc3995ab0d66c97022f; portable test step SKIPPED.
+  Kernel artifact12315548449 ZIP60534401bytes; downloaded selected files and
+  verified published SHA256. Kernel SHA256
+  e7aee71d91fb4b9a51ff2ee353ca4b40adf3fb44849909753eae1528e284dbef.
+  Image shim/out/shim-boot-0110-native-adreno-renderer-120hz.img17383424bytes
+  SHA256 ed9a809ae4c5980c90c4ab2955e49325beb60f538daef98bf6759374b78029a8.
+  Existing0083 shim and0096 firmwareADT reused; XNU sweetgpu9,120Hz target,
+  sweetusb2,sweetusblog1. Manifest research/gpu/0110-boot-manifest.json.
+  Binary contains actual provider/Metal discovery/live VM strings. Paired
+  graphics CI39532264309 subsequently succeeded (see above). Do not boot the kernel
+  alone: matching root Metal bundle still required. No phone/root access.
+
 - **Build resumed, USB guide reviewed:** graphics run39472089044 on3ced921
   succeeded. Kernel run39472076417 failed at SweetNativeAdrenoClient.cpp:196:
   IOPlatformExpert was only forward declared. Pending local patch includes
