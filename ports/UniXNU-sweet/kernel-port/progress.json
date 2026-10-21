@@ -23,7 +23,7 @@
     "native-aes-personality.patch",
     "source-machine-layer.patch"
   ],
-  "verification": "Each selected patch applies cumulatively with git apply to a pristine XNU 8796.141.3 tree.",
+  "verification": "Each selected patch applies cumulatively with git apply to a pristine XNU 8796.141.3 tree; the 45-entry device queue and the two NativePrelink kit patches were checked together.",
   "compiled": false,
   "prelinked": false,
   "runtime_verified": false,
@@ -240,5 +240,18 @@
       "state": "deferred",
       "reason": "Depends on the offline-owner kern_exec.c context and Darwin23 sleh.c/Makefile layout. Optional observation layer; deferred."
     }
-  ]
+  ],
+  "extra_patches": [
+    {
+      "patch": "darwin22-kpc-source-omission.patch",
+      "state": "applied",
+      "reason": "xnu-8796.141.3 files.arm64 names osfmk/arm64/kpc.c but the public source archive does not contain it; the BCM2837 DEVELOPMENT set now keeps KDP and drops kperf/kpc."
+    }
+  ],
+  "staged_queue": {
+    "total": 45,
+    "applied": 45,
+    "rejected": 0,
+    "note": "44 upstream-audited entries plus darwin22-kpc-source-omission.patch; NativePrelink kit patches are applied separately by the build script."
+  }
 }

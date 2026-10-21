@@ -1,0 +1,24 @@
+From: ios-sweet Darwin22 port
+Subject: [PATCH] config: drop kperf/kpc from the Darwin22 BCM2837 DEVELOPMENT set
+
+xnu-8796.141.3's osfmk/conf/files.arm64 still names osfmk/arm64/kpc.c,
+but that file is not in the public source release. The DEVELOPMENT config
+selects PERF_DBG_DEV, which pulls in PERF_DBG_BASE -> kperf/kpc, so make
+stops with "No rule to make target .../osfmk/arm64/kpc.c".
+
+Keep the rest of PERF_DBG_BASE (mach_kdp, config_serial_kdp) and drop
+kperf/kpc until a Darwin22 kpc backend exists. This is a source-release
+adaptation, not a runtime result.
+--- a/config/MASTER.arm64.bcm2837
++++ b/config/MASTER.arm64.bcm2837
+@@ -48,7 +48,9 @@
+ #  LIBKERN_RELEASE =[ LIBKERN_BASE ]
+ #  LIBKERN_DEV =    [ LIBKERN_BASE iotracking ]
+ #  LIBKERN_DEBUG =  [ LIBKERN_BASE iotracking ]
+-#  PERF_DBG_BASE =  [ mach_kdp config_serial_kdp kperf kpc ]
++# xnu-8796.141.3 names osfmk/arm64/kpc.c in files.arm64 but does not ship
++# that file. Keep KDP; drop kperf/kpc until a Darwin22 backend exists.
++#  PERF_DBG_BASE =  [ mach_kdp config_serial_kdp ]
+ #  PERF_DBG_RELEASE=[ PERF_DBG_BASE ist_kdebug ]
+ #  PERF_DBG_DEV =   [ PERF_DBG_BASE config_dtrace zleaks kdp_interactive_debugging alternate_debugger sched_hygiene_debug config_iotrace]
+ #  PERF_DBG_DEBUG = [ PERF_DBG_BASE config_dtrace zleaks kdp_interactive_debugging alternate_debugger sched_hygiene_debug config_iotrace]
