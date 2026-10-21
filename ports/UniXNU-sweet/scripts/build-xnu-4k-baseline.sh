@@ -51,7 +51,14 @@ for PATCH in "$ROOT"/patches/xnu/*.patch "$ROOT"/kits/NativePrelink/patches/*.pa
   fi
 done
 export XNU_AVAILABILITY_PL=$ROOT/.cache/fakeroot/usr/local/libexec/availability.pl
-python3 scripts/prepare-xnu-source.py
+# xnu-8796 ships the DriverKit and TrustCache headers that the restore pass
+# copies from an earlier Apple source; for Darwin22 it would restore nothing
+# and only needs the rate-limited GitHub contents API. Skip it for 8796.
+if [ "$XNU_VERSION" = "8796.141.3" ]; then
+  echo 'prepare-xnu-source.py: Darwin22 source already carries the restored headers'
+else
+  python3 scripts/prepare-xnu-source.py
+fi
 # The first pass of a new tree (XNU_BOOTSTRAP=1, set by the unixnu driver) only has to leave the compile records and
 # link.filelist for the archive builders that run after it, so it links without their archives.
 BOOTSTRAP=${XNU_BOOTSTRAP:-0}

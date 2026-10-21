@@ -1,7 +1,8 @@
 # Configuration for the new source-port effort, not the old SWEET machine.
-# These platform selections need Darwin22 source adaptation before linking.
+# First compile milestone: the generic DT platform only. ArmCpu, corecrypto,
+# UFS and the Adreno stack are added after this kernel builds.
 CONFIG_XNU_ARM_DT_PLATFORM=y
-CONFIG_XNU_ARMCPU=y
+# CONFIG_XNU_ARMCPU is not set
 # CONFIG_XNU_ARMVIRT_PLATFORM is not set
 # CONFIG_XNU_NATIVE_UFS is not set
 # CONFIG_XNU_NATIVE_ADRENO is not set
