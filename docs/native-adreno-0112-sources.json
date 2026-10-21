@@ -1,0 +1,18 @@
+{
+  "observed_log": "logs/gpu-0111-paired-startup.txt",
+  "log_sha256": "a1f1bf3624e3afa72f2c65b4a88409332f9ce844c57862e1ea28a8390e3527b3",
+  "linux_commit": "fd78d17954a86ea6ceb0c535e618ea129e09f8dd",
+  "linux_sources": [
+    "drivers/gpu/drm/msm/adreno/a6xx_gpu.c",
+    "drivers/usb/dwc3/gadget.c"
+  ],
+  "observed_gmem": {
+    "register": "0xe0d",
+    "write": "0x17ffff",
+    "read": "0x17f000",
+    "readback_mask": "0xfffff000"
+  },
+  "hardware_verified": false,
+  "runtime_acceleration_verified": false,
+  "root_bundle_abi_changed": false
+}

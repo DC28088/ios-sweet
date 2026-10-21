@@ -2,6 +2,25 @@
 
 ## Current local device state (2026-10-21, read first)
 
+- **0111 SAVED LOG FOUND /0112 correction staged (2026-10-21):** OrangeFox
+  confirmed, pulled logs/gpu-0111-paired-startup.txt600600bytes, flush121.
+  0111 S2CR quirk confirmed; live CB0 has1027pages/20bootstraptranslations.
+  SQE ME_INIT completes12/12; real CP timestamp fence completes29/29,
+  value0x618c0de, no CP fault. NEW BLOCKER: renderprofile reg0xe0d expects
+  inclusive0x17ffff but reads0x17f000. Provider publication stops here, so
+  installed Metal still has no GPU to open. 0112 preserves Linux's GMEM limit
+  write and validates upper20addressbits; low12RAZ inferred from hardware log.
+  USB log proves no endpoint reconfiguration after later bus resets. 0112
+  tracks data transfer resource IDs, ends active transfers before DMA reuse,
+  clears configuration/queues on reset/disconnect/SET_CONFIGURATION0, locks
+  setup against TX, ignores unconfigured RX completion. Failed stop disables
+  data path for rest of boot. Console replays last1MiB after a valid host frame
+  per configuration, bounded16datagrams/100ms, restores cursor on send error.
+  Host helper sends bounded subnet probe to initiate ARP. Added bounded actual
+  Metal compositor open/method-result telemetry. Kernel patch0112 applies to
+  reconstructed0072..0077USB and0110render/client sources. CI pending dispatch;
+  no local ARM compiler, no tests run. No phone writes/reboots/root changes.
+
 - **User reports0111 booted, performance unchanged; live capture FAILED:** user
   requested debug collection from current iOS. Old bounded receiver is gone,
   logs/live-0111-usb.txt was0bytes. Restarted receiver; correct hostIPv4 exists.
