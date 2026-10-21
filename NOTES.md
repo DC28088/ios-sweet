@@ -1,6 +1,19 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
-## Current local device state (2026-10-20, read first)
+## Current local device state (2026-10-21, read first)
+
+- **Build resumed, USB guide reviewed:** graphics run39472089044 on3ced921
+  succeeded. Kernel run39472076417 failed at SweetNativeAdrenoClient.cpp:196:
+  IOPlatformExpert was only forward declared. Pending local patch includes
+  IOKit/IOPlatformExpert.h to provide inheritance definition. Earlier missing
+  NativeAdrenoABI.h was fixed in3ced921. Fix bundle signing order: licenses
+  must be copied BEFORE sealing bundle; require codesign --verify --strict.
+  Rebuild both on the new commit, run_tests=false. No device access/boot.
+  User-provided USB-SHIM-GUIDE.md is an MSM8953 CDC-ACM design description,
+  not implementation sources. Existing sweet patches0072-0077 implement
+  CDC-ECM logging (sweetusb=2, sweetusblog=1, UDP5140); retain sweet addresses.
+  Transport has not been newly hardware-qualified this turn.
+
 
 - **0110 connected renderer implementation (2026-10-20, NOT booted):** new
   SweetNativeAdrenoRender programs all A618 3D address modes,512KiB GMEM and
