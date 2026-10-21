@@ -29,18 +29,24 @@ def main():
   while args.duration is None or time.monotonic()-start<args.duration:
    name=interface()
    if name and name!=configured:
-    profiles=subprocess.check_output(['nmcli','--escape','no','-g','NAME','connection','show'],text=True).splitlines()
-    if PROFILE not in profiles:
-     run('nmcli','connection','add','type','ethernet','con-name',PROFILE,'ifname','*',
-         '802-3-ethernet.mac-address',MAC,'ipv4.method','manual','ipv4.addresses','192.168.7.1/24',
-         'ipv4.never-default','yes','ipv6.method','disabled','connection.autoconnect','yes',
-         'connection.autoconnect-priority','100')
-    bound=subprocess.check_output(['nmcli','--escape','no','-g','802-3-ethernet.mac-address','connection','show',PROFILE],text=True).strip().lower()
-    if bound!=MAC:raise RuntimeError('Existing sweet-usb-log profile has an unexpected MAC; inspect it before proceeding')
-    current=subprocess.check_output(['nmcli','--escape','no','-g','GENERAL.CONNECTION','device','show',name],text=True).strip()
-    if current!=PROFILE:run('nmcli','connection','up',PROFILE,'ifname',name)
-    configured=name
-    print(f'{name}: receiver ready (host192.168.7.1, phone192.168.7.2); awaiting first console packet',file=sys.stderr,flush=True)
+    try:
+     profiles=subprocess.check_output(['nmcli','--escape','no','-g','NAME','connection','show'],text=True).splitlines()
+     if PROFILE not in profiles:
+      run('nmcli','connection','add','type','ethernet','con-name',PROFILE,'ifname','*',
+          '802-3-ethernet.mac-address',MAC,'ipv4.method','manual','ipv4.addresses','192.168.7.1/24',
+          'ipv4.never-default','yes','ipv6.method','disabled','connection.autoconnect','yes',
+          'connection.autoconnect-priority','100')
+     bound=subprocess.check_output(['nmcli','--escape','no','-g','802-3-ethernet.mac-address','connection','show',PROFILE],text=True).strip().lower()
+     if bound!=MAC:raise RuntimeError('Existing sweet-usb-log profile has an unexpected MAC; inspect it before proceeding')
+     current=subprocess.check_output(['nmcli','--escape','no','-g','GENERAL.CONNECTION','device','show',name],text=True).strip()
+     if current!=PROFILE:run('nmcli','connection','up',PROFILE,'ifname',name)
+    except subprocess.CalledProcessError:
+     # udev may rename usb0 after interface() and before nmcli device show.
+     # Retry discovery on the next receive timeout instead of losing capture.
+     configured=None
+    else:
+     configured=name
+     print(f'{name}: receiver ready (host192.168.7.1, phone192.168.7.2); awaiting first console packet',file=sys.stderr,flush=True)
    elif not name:configured=None
    # Trigger ARP on the dedicated phone subnet. 0112 replays its console
    # backlog only after receiving a valid host frame in this configuration.
