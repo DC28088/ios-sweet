@@ -18,6 +18,9 @@
   ADT/firmware/shim. Existing installed Metal bundle ABI unchanged. This
   kernel image does NOT include a ported GLES userland; do not claim GLES
   or UI acceleration. No tests or device commands run; CI build pending.
+  Follow-up scopes the new completion mode to ARC/GPU only; preserve the
+  established ldoc11 touchscreen transaction path. Supersede initial
+  run39683486855 with the scoped version before packaging.
 
 - **PLAN CHANGED BACK: DIRECT SHIM + iOS16 + GLES (2026-10-22):** user
   explicitly returned to main/adreno-power-audit and supplied the Pixel1

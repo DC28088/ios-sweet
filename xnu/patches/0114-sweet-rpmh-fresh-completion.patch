@@ -51,52 +51,52 @@
  static int
  rh_send_cmds(const char *res, uint32_t address, uint32_t align_mask,
      const uint32_t *offsets, const uint32_t *values, unsigned n,
-@@ -332,7 +369,7 @@
+@@ -332,7 +369,8 @@
  	uint32_t b = t * RH_TCS_STRIDE, bit = 1u << t;
  	uint32_t enable = (1u << n) - 1u;
  	uint32_t irq_en = rh_read(rh_tcs, RH_IRQ_EN);
 -	if (irq_en == 0xffffffffu || !rh_free(t)) {
-+	if (irq_en == 0xffffffffu || !rh_free(t) || !rh_poll_delivery_disabled()) {
++	const bool poll_latch = strcmp(res, "ldoc11") != 0;
++	if (irq_en == 0xffffffffu || !rh_free(t) || (poll_latch && !rh_poll_delivery_disabled())) {
  		return EBUSY;
  	}
  	/* Only this TCS's source is masked. Other sources/CPU IRQs remain intact. */
-@@ -363,9 +400,20 @@
+@@ -362,6 +400,19 @@
+ 	if (!rh_sync(b + RH_WAIT, enable) || !rh_sync(b + RH_ENABLE, enable) ||
  	    !rh_sync(b + RH_CONTROL, 0) || !rh_sync(b + RH_CONTROL, RH_AMC_EN)) {
  		return EIO;
- 	}
++	}
 +	/* Linux keeps ACTIVE TCS completion sources enabled. Masking this
 +	 * source made IRQ_STATUS stay zero and left only a transient busy edge
 +	 * as completion evidence. Clear only our known-free latch, enable it,
 +	 * and require it to start clear. GIC delivery stays disabled throughout. */
-+	rh_write(rh_tcs, RH_IRQ_CLEAR, bit);
-+	if ((rh_read(rh_tcs, RH_IRQ_STATUS) & bit) ||
-+	    !rh_sync(RH_IRQ_EN, rh_read(rh_tcs, RH_IRQ_EN) | bit) ||
-+	    (rh_read(rh_tcs, RH_IRQ_STATUS) & bit)) {
-+		rh_quarantine_source(bit);
-+		return EIO;
-+	}
++	if (poll_latch) {
++		rh_write(rh_tcs, RH_IRQ_CLEAR, bit);
++		if ((rh_read(rh_tcs, RH_IRQ_STATUS) & bit) ||
++		    !rh_sync(RH_IRQ_EN, rh_read(rh_tcs, RH_IRQ_EN) | bit) ||
++		    (rh_read(rh_tcs, RH_IRQ_STATUS) & bit)) {
++			rh_quarantine_source(bit);
++			return EIO;
++		}
+ 	}
  	rh_write(rh_tcs, b + RH_CONTROL, RH_AMC_EN | RH_TRIGGER);
  	uint32_t irq = 0, idle = 0, status[RH_ARC_MAX_LEVELS] = {0};
--	bool done = false, progress = false;
-+	bool done = false;
- 	for (unsigned us = 0; us < timeout_us; ++us) {
- 		irq = rh_read(rh_tcs, RH_IRQ_STATUS);
- 		idle = rh_read(rh_tcs, b + RH_STATUS);
-@@ -375,10 +423,10 @@
+@@ -375,10 +426,12 @@
  			complete &= status[c] != 0xffffffffu &&
  			    (status[c] & (RH_ISSUED | RH_COMPLETE)) == (RH_ISSUED | RH_COMPLETE);
  		}
 -		/* A fresh IRQ or observed execution transition excludes stale CMD_STATUS. */
--		progress |= idle == 0 || !complete;
-+		/* Only the fresh latch proves this request finished; old command
-+		 * status and an idle TCS alone are never accepted. */
+ 		progress |= idle == 0 || !complete;
++		/* ARC requires the fresh latch. Preserve the existing touchscreen
++		 * regulator path; it is not part of this GPU completion change.
++		 * Old command status and an idle TCS alone are never accepted. */
  		if (idle && idle != 0xffffffffu && irq != 0xffffffffu &&
 -		    ((irq & bit) || progress) && complete) {
-+		    (irq & bit) && complete) {
++		    ((irq & bit) || (!poll_latch && progress)) && complete) {
  			done = true;
  			break;
  		}
-@@ -391,13 +439,15 @@
+@@ -391,13 +444,15 @@
  	}
  	printf("\n");
  	if (!done) {

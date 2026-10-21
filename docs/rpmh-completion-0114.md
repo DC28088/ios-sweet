@@ -14,6 +14,10 @@ ACTIVE-TCS mask initialization. No Linux source was copied into the patch.
 
 Patch 0114 separates completion latching from interrupt delivery:
 
+The change is restricted to ARC/GPU transactions. The existing touchscreen
+`ldoc11` regulator transaction retains its prior completion handling, so an
+unexpected GIC ownership state in the GPU path cannot block touch power.
+
 1. Require the selected TCS to be free under the existing controller lock.
 2. Read the GIC distributor and require the RPMh SPI to be disabled/inactive.
    The saved live FDT has distributor 0x17a00000 and apps_rsc interrupts
