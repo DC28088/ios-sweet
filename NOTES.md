@@ -2,6 +2,20 @@
 
 ## Current local device state (2026-10-21, read first)
 
+- **UniXNU initial menu SUCCESS / exact sweet firmware CI staged:** generic
+  menu CI39635176783 succeeded onba7bce9. Downloaded ARM64 EFI app/registrar
+  to research/unixnu-ios16-out/menu; published SHA verification passed.
+  Both are generic EFI binaries, NOT a sweet phone boot image. NativePrelink
+  reference2b6ffb50117eee820b98aca9bd51b5c7dfb2970e parsed20H392 kernelcache
+  successfully:18segments,239components. Original IOSurface336.60.1,
+  IOMobileGraphicsFamily343.0.0, IOGPUFamily65.60.1 identified; no prelink yet.
+  Legacy Mu source clone completed at exact098e303. Build contract confirmed:
+  actual FV filename SWEET_UEFI.fd, not SILICIUM_UEFI.fd. Added firmware CI
+  after menu job: pin legacy sweet/Mu202405 submodules, inject app/registrar
+  prebuilt into FvMain with proper variable-protocol DEPEX, compile/pack using
+  legacy upstream builder. No iOS16 payload in first prototype. No tests run;
+  firmware build pending, source injector bytecode compile only. No phone I/O.
+
 - **PLAN CHANGED: UniXNU UEFI architecture, KEEP iOS16 (2026-10-21):** user
   explicitly switched to unixnu.com/porting and selected keep16/adaptnewstack.
   Work now on codex/unixnu-ios16-sweet; legacy GPU work preserved on
@@ -13,8 +27,8 @@
   098e303fd9703669ab06d38744cad14d49c0f702 uses old sweet.conf/library paths;
   port overlay ports/uefi-sweet translates base0x9fc00000/size3MiB to TOML.
   Current upstreamMu42fe563 has sweet_k6a, NOT exactsweet; never substitute.
-  Reference clone research/unixnu-reference/mu-sweet still fetching at last
-  check (session93738), no submodules initialized. Alternative reference
+  Reference clone research/unixnu-reference/mu-sweet completed at the pin;
+  no local submodules initialized. Alternative reference
   sm7150-sweet7d53df4 cloned, read only, no scripts run.
   Apple20H392 rawKernelCache/DeviceTree/StaticTrustCache extracted via ranged
   ZIP with CRC and pinned SHA; files under research/unixnu-ios16-out/ipsw/20H392.

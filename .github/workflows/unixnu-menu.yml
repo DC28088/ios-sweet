@@ -46,3 +46,61 @@ jobs:
           name: unixnu-menu-aarch64
           path: out/
           if-no-files-found: warn
+
+  sweet_firmware:
+    needs: menu
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: unixnu-menu-aarch64
+          path: menu-inputs
+      - name: Install legacy firmware dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential uuid-dev nasm acpica-tools gcc-aarch64-linux-gnu clang llvm lld mono-devel nuget python3-venv python3-distutils gettext
+      - name: Fetch exact sweet firmware source
+        run: |
+          git init -q uefi-sweet
+          git -C uefi-sweet fetch --depth 1 https://github.com/tagicmi/Mu-Silicium-marble-davinci.git 098e303fd9703669ab06d38744cad14d49c0f702
+          git -C uefi-sweet checkout --detach FETCH_HEAD
+          git -C uefi-sweet submodule update --init --depth 1 -- Binaries Common/Mu Common/Mu_OEM_Sample Common/Mu_Tiano_Plus Features/DFCI Mu_Basecore Silicon/Arm/Mu_Tiano Silicium-ACPI
+          python3 -m venv .venv
+          .venv/bin/pip install -r uefi-sweet/pip-requirements.txt
+      - name: Integrate menu and compile sweet UEFI
+        run: |
+          (cd menu-inputs && sha256sum -c SHA256SUMS)
+          python3 ports/uefi-sweet/inject-unixnu.py uefi-sweet menu-inputs
+          source .venv/bin/activate
+          export CLANGPDB_AARCH64_PREFIX=aarch64-linux-gnu-
+          cd uefi-sweet
+          bash build_uefi.sh -d sweet -r DEBUG
+          test -s Mu-sweet.img
+          test "$(stat -c %s Build/sweetPkg/DEBUG_CLANGPDB/FV/SWEET_UEFI.fd)" = 3145728
+          mkdir -p ../firmware-out
+          cp Mu-sweet.img ../firmware-out/
+          cp Build/sweetPkg/DEBUG_CLANGPDB/FV/SWEET_UEFI.fd ../firmware-out/
+          cp Platforms/Xiaomi/sweetPkg/PrebuiltUniXNU/inputs.json ../firmware-out/menu-inputs.json
+          git submodule status > ../firmware-out/submodules.txt
+          printf '%s\n' 'Experimental sweet UEFI + UniXNU menu only. No iOS16 kernel/payload. Not hardware verified; no phone flashing performed by CI.' > ../firmware-out/README.txt
+          (cd ../firmware-out && sha256sum Mu-sweet.img SWEET_UEFI.fd > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unixnu-sweet-uefi
+          path: firmware-out/
+          if-no-files-found: warn
+      - name: Collect firmware diagnostics
+        if: failure()
+        run: |
+          mkdir -p firmware-diagnostics
+          cp uefi-sweet/Build/BUILDLOG* firmware-diagnostics/ 2>/dev/null || true
+          cp -R uefi-sweet/Build/sweetPkg/*/*.log firmware-diagnostics/ 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: unixnu-sweet-uefi-diagnostics
+          path: firmware-diagnostics/
+          if-no-files-found: warn
