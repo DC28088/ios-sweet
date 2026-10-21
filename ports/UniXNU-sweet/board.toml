@@ -1,0 +1,49 @@
+# iOS16 sweet device definition, under development.
+# UniXNU's readiness gate stays enabled until the legacy UEFI and Darwin22
+# integration have been ported. defconfig/status/IPSW extraction are available.
+[board]
+name = "sweet"
+soc = "SM7150"
+description = "Redmi Note 10 Pro / Pro Max (sweet/sweetin), iOS16 migration"
+kit = "sweet"
+example = true
+
+[ipsw]
+url = "https://updates.cdn-apple.com/2025FallFCS/fullrestores/122-77006/1158E502-D76D-4226-AA06-ED5E30CD1111/iPhone10,3,iPhone10,6_16.7.16_20H392_Restore.ipsw"
+product = "iPhone10,3"
+version = "16.7.16"
+build = "20H392"
+device_class = "d22ap"
+chip_id = 0x8015
+board_id = 6
+fetch = ["KernelCache", "DeviceTree", "StaticTrustCache"]
+
+[kernel]
+defconfig = "sweet_ios16_defconfig"
+
+# No prelink addresses/roots, userdata LBAs or payload root UUID are borrowed
+# from sheng. Fill these from the selected iOS16 kernelcache and sweet GPT.
+
+[firmware]
+config = "sweet"
+dsc = "Platforms/Xiaomi/sweetPkg/sweet.dsc"
+fd = "Build/sweetPkg/{target}_CLANGPDB/FV/SILICIUM_UEFI.fd"
+packages = ["{uefi}", "{uefi}/Platforms/Xiaomi", "{tree}/package", "{tree}/drivers/DarwinBoot", "{edk2}"]
+
+[firmware.defines]
+DEVICE_MODEL = "sweet"
+
+# Matches the saved stock Android boot header; packing remains gated until
+# BootShim, the actual firmware output and the payload handoff are integrated.
+[bootimg.image]
+header_version = 2
+base = 0
+kernel_offset = 0x8000
+ramdisk_offset = 0x1000000
+tags_offset = 0x100
+pagesize = 4096
+
+[ipsw.sha256]
+"kernelcache.release.iphone10b" = "2d6a13d040aaf87cec09bb6906d43e9bd8cea951e43d1aa1cd62707dfdc5aaec"
+"DeviceTree.d22ap.im4p" = "480e8b0888949b4128b7aa2cd254497581c69e1bafa596a760b2fa955a8a6368"
+"087-86698-044.dmg.trustcache" = "63e01c03b31e1532a5581a24865490673f0b5c297b0199fe0095637c6100ef4b"

@@ -1,0 +1,59 @@
+{
+  "unixnu": {
+    "repository": "https://github.com/UniXNU/UniXNU",
+    "revision": "89801d6e9265ba9aa49e56de642565288d679f83"
+  },
+  "mu_sweet": {
+    "repository": "https://github.com/tagicmi/Mu-Silicium-marble-davinci",
+    "revision": "098e303fd9703669ab06d38744cad14d49c0f702",
+    "device": "Platforms/Xiaomi/sweetPkg",
+    "legacy_config": "Resources/Configs/sweet.conf",
+    "fd_base": "0x9fc00000",
+    "fd_size": "0x300000",
+    "hardware_verified_here": false
+  },
+  "alternative_edk2": {
+    "repository": "https://github.com/Cristiano1103/sm7150-sweet",
+    "revision": "7d53df4a0797d14274b2176092bea2d718b4d04b"
+  },
+  "current_mu": {
+    "repository": "https://github.com/Project-Silicium/Mu-Silicium",
+    "revision": "42fe563791e51bf5500c2e470ed294ca0c94b97c",
+    "observation": "Has sweet_k6a, not exact sweet; do not use that board configuration."
+  },
+  "target": {
+    "product": "iPhone10,3",
+    "version": "16.7.16",
+    "build": "20H392",
+    "device_class": "d22ap",
+    "ap_chip_id": "0x8015",
+    "ap_board_id": 6,
+    "manifest_sha256": "2d1452103a2f5ad71cb78d94454977fc70632472201980a468c247fba14b10b7",
+    "kernelcache_decompressed_sha256": "2ec297bac95bcba01046fd0148e97e7e5885c05a6c18827f39f534ba375c1221",
+    "kernel_version": "Darwin Kernel Version 22.6.0: Tue Jul  2 20:47:35 PDT 2024; root:xnu-8796.142.1.703.8~1/RELEASE_ARM64_T8015",
+    "raw_members": [
+      {
+        "member": "kernelcache.release.iphone10b",
+        "bytes": 18204358,
+        "sha256": "2d6a13d040aaf87cec09bb6906d43e9bd8cea951e43d1aa1cd62707dfdc5aaec"
+      },
+      {
+        "member": "Firmware/all_flash/DeviceTree.d22ap.im4p",
+        "bytes": 33719,
+        "sha256": "480e8b0888949b4128b7aa2cd254497581c69e1bafa596a760b2fa955a8a6368"
+      },
+      {
+        "member": "Firmware/087-86698-044.dmg.trustcache",
+        "bytes": 66289,
+        "sha256": "63e01c03b31e1532a5581a24865490673f0b5c297b0199fe0095637c6100ef4b"
+      }
+    ]
+  },
+  "readiness": {
+    "uefi_compiled": false,
+    "kernel_adapted": false,
+    "bootable": false,
+    "tests_run": false,
+    "device_modified": false
+  }
+}

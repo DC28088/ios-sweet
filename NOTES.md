@@ -2,6 +2,35 @@
 
 ## Current local device state (2026-10-21, read first)
 
+- **PLAN CHANGED: UniXNU UEFI architecture, KEEP iOS16 (2026-10-21):** user
+  explicitly switched to unixnu.com/porting and selected keep16/adaptnewstack.
+  Work now on codex/unixnu-ios16-sweet; legacy GPU work preserved on
+  codex/adreno-power-audit at4e84f4e. Do not continue0114RPMh experiment as the
+  main plan unless asked. Prepared ports/UniXNU-sweet board/feeds/defconfig,
+  sources.json and README; CLI defconfig/status succeeds (example/readiness
+  flag still gates build/packing). New UniXNU pin89801d6e9265ba9aa49e56de642565288d679f83.
+  Exact sweet Mu source tagicmi/Mu-Silicium-marble-davinci at
+  098e303fd9703669ab06d38744cad14d49c0f702 uses old sweet.conf/library paths;
+  port overlay ports/uefi-sweet translates base0x9fc00000/size3MiB to TOML.
+  Current upstreamMu42fe563 has sweet_k6a, NOT exactsweet; never substitute.
+  Reference clone research/unixnu-reference/mu-sweet still fetching at last
+  check (session93738), no submodules initialized. Alternative reference
+  sm7150-sweet7d53df4 cloned, read only, no scripts run.
+  Apple20H392 rawKernelCache/DeviceTree/StaticTrustCache extracted via ranged
+  ZIP with CRC and pinned SHA; files under research/unixnu-ios16-out/ipsw/20H392.
+  Original kernel decoded to ARM64 Mach-O50937856bytes SHA256
+  2ec297bac95bcba01046fd0148e97e7e5885c05a6c18827f39f534ba375c1221.
+  Original kernel Darwin22.6 XNU8796.142.1.703.8; OSS8796.141.3 pinned for port.
+  Upstream is Darwin23/iOS17/4K: its kernel patches, prelink/archive builders,
+  graphics ABI and4K integration still require iOS16 adaptation. No new kernel
+  or board firmware compiled; no new userdata layout, LBAs, UUIDs or prelink
+  addresses guessed. Current installed root remains HFS+; upstreamAPFSwindows
+  cannot be applied to it unchanged. Generic menu-only CI workflow added and
+  exposed as uefi_menu=true through existing xnu workflow, testsfalse. Its EFI
+  outputs are NOT a phone boot.img or proof of firmware compatibility.
+  No device changes this turn. Phone last left running0113; oldUSB receiver
+  bounded1800s may have expired. No tests added/run. Initial menu CI pending.
+
 - **0113 TEMPORARY BOOT / RPMh CX TIMEOUT (2026-10-21):** user authorized
   boot; fastboot product sweetin verified, image SHA matched. fastboot boot
   sent16992KB OKAY0.514s, BootingOKAY0.130s. No partition flashing/root writes.

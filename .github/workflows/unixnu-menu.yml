@@ -1,0 +1,48 @@
+name: UniXNU AArch64 menu
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  menu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install compiler dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential uuid-dev nasm acpica-tools clang-18 llvm-18 lld-18 python3-setuptools
+      - name: Fetch pinned UniXNU and Mu base
+        run: |
+          git init -q upstream-unixnu
+          git -C upstream-unixnu fetch --depth 1 https://github.com/UniXNU/UniXNU.git 89801d6e9265ba9aa49e56de642565288d679f83
+          git -C upstream-unixnu checkout --detach FETCH_HEAD
+          git init -q mu-basecore
+          git -C mu-basecore fetch --depth 1 https://github.com/microsoft/mu_basecore.git cfb93724a06ff86ff5ba971413368a7809ee42a5
+          git -C mu-basecore checkout --detach FETCH_HEAD
+          git -C mu-basecore submodule update --init --depth 1 -- MdePkg/Library/BaseFdtLib/libfdt MdePkg/Library/MipiSysTLib/mipisyst BaseTools/Source/C/BrotliCompress/brotli
+      - name: Compile generic menu applications
+        env:
+          CLANG_BIN: /usr/lib/llvm-18/bin/
+          JOBS: 4
+        run: |
+          export UNIXNU_EDK2="$GITHUB_WORKSPACE/mu-basecore"
+          export UNIXNU_BUILD_DIR="$GITHUB_WORKSPACE/menu-build"
+          bash upstream-unixnu/package/build.sh -b DEBUG -t CLANGPDB
+          mkdir -p out
+          cp menu-build/Build/Out/AARCH64-DEBUG/UniXNU.efi out/
+          cp menu-build/Build/Out/AARCH64-DEBUG/UniXNUDxe.efi out/
+          cp ports/UniXNU-sweet/sources.json out/source-inputs.json
+          printf '%s\n' 'Generic AArch64 UEFI menu only. Not a sweet boot.img or an iOS16 kernel. No hardware tests executed.' > out/README.txt
+          (cd out && sha256sum *.efi > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unixnu-menu-aarch64
+          path: out/
+          if-no-files-found: warn

@@ -1,0 +1,11 @@
+# Configuration for the new source-port effort, not the old SWEET machine.
+# These platform selections need Darwin22 source adaptation before linking.
+CONFIG_XNU_ARM_DT_PLATFORM=y
+CONFIG_XNU_ARMCPU=y
+# CONFIG_XNU_ARMVIRT_PLATFORM is not set
+# CONFIG_XNU_NATIVE_UFS is not set
+# CONFIG_XNU_NATIVE_ADRENO is not set
+# CONFIG_XNU_SOURCE_CORECRYPTO14 is not set
+# CONFIG_XNU_SOURCE_PTHREAD is not set
+# Native storage/power, original iOS16 libraries and graphics are staged after
+# the UEFI menu/framebuffer/payload milestone. No sheng power driver is selected.
