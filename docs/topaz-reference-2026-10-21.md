@@ -1,8 +1,8 @@
 # Topaz reference refresh, 2026-10-21
 
 Pinned the current `topaz` branch at
-`89451b811a4e6cc5cdcf734c45887163d92c599e` after fetching it again. The local
-checkout remains unchanged; inspect this revision with `git show`. Topaz is
+`89451b811a4e6cc5cdcf734c45887163d92c599e` after fetching it again. The clean local
+reference checkout is detached at this exact revision. Topaz is
 SM6225/Adreno610, while sweet is SM7150/Adreno618.
 
 ## Public implementation and reported hardware results
@@ -53,3 +53,24 @@ All remaining required readbacks also explicitly reject0xdeafbead so that small
 bit masks cannot accidentally accept an inaccessible register. This remains a
 startup correction, with iOS rendering unverified. Source identity is recorded
 in native-adreno-0113-sources.json. No ABI or installed-root change is needed.
+
+## Concrete IOSurface comparison
+
+Reconstructed both complete SweetSurface.cpp files from their patch series in
+`/tmp/surface-audit-{sweet,topaz}` (temporary inspection files; no source tests).
+Sweet's current code is only0046 plus0068. It allocates a new buffer on create,
+ignores IOSurfaceAddress, has no wrapping methods6/7 and treats value/bulk calls
+as successful no-ops. Topaz adds real methods6/7,9/10/11,27; state for
+accelerator binding12, purgeability20 and matrix5; and separate detach/release
+view handling. These are concrete missing APIs, although their effect on the
+installed NativeMetal path still requires a compositor trace. Port the logical
+operations with retained descriptors and16KiB range accounting; do not copy
+Topaz0092/0093's display-specific contiguous-pool addresses or scanout hooks.
+The existing renderer's original BO/task-descriptor ownership must be retained.
+
+The public WLAN radio API has scan/heard/PMK/join/transmit/ready hooks. A search
+of this pinned public tree did not locate an IO80211/AppleBCMWLAN compatibility
+class or a consumer of the ready hook. Therefore the README's complete Settings
+integration cannot be independently established from the public radio patches
+alone. Account for the iOS-facing interface as well as the hardware port; do not
+promise that transplanting the radio API produces working sweet Settings Wi-Fi.
