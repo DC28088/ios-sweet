@@ -2,6 +2,19 @@
 
 ## Current direction and last known device state (2026-10-22, read first)
 
+- **GLES INSTALLATION READY / WRITE APPROVAL PENDING:** fresh overlay full
+  fsck-fy passed, read-only mount verified library hash/executable mode and
+  install record. research/gles-install-0115/delta.json contains67 disjoint,
+  4KiB-aligned chunks totaling22740992bytes (21.6875MiB). ALL before/after
+  bytes and hashes saved under delta/. Both read-only NBD servers are up:
+  /tmp/sweet-gles-root.sock and /tmp/sweet-gles-edited.sock. No phone writes.
+  Asked user to approve this concrete raw userdata delta per AGENTS.md.
+  preflight.py currently freshly compares every original phone block;
+  apply-delta.py repeats all checks then writes/readback-verifies each chunk.
+  restore-delta.py refuses rollback after unrelated root changes. Current
+  phone remains OrangeFox. On approval, applydelta then update installed
+  status and offer matching0116 temporary boot; no runtime acceleration yet.
+
 - **0116 AND GLES PAIR BUILT (2026-10-22):** kernel CI39688634861 passed
   on53b3f58c25d80fe318e2bbb8c01e564deaf84791. Artifact12387816032 checksum
   verified. Image shim/out/shim-boot-0116-gles-compositor-120hz.img,
