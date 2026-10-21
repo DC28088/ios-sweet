@@ -41,6 +41,13 @@ connect_dev(void)
  # Stop unsupported command types reaching the compatibility transport.
  s=once(s,'\t\tstruct sbo *b = sc[i].submit_idx', '\t\tif (sc[i].type != MSM_SUBMIT_CMD_BUF) { ret=-EINVAL; break; }\n\t\tstruct sbo *b = sc[i].submit_idx')
  s=once(s,'sbo_add((uint32_t)out[0], out[1], map, out[2])', 'sbo_add((uint32_t)out[0], out[1], map & ~16383ull, out[2])')
+ s=once(s,'static uint64_t gmem_base, max_freq;', 'static uint64_t gmem_base;')
+ s=s.replace('gmem_base=info[2];max_freq=0;', 'gmem_base=info[2];')
+ s=once(s,'((struct drm_msm_submitqueue *)data)->id = ++queues;\n\t\treturn 0;', 'struct drm_msm_submitqueue *q=data;\n        if (q->flags || q->prio) return -EINVAL;\n        pthread_mutex_lock(&lock);\n        for (uint32_t id=1;id<8;id++) {\n            if (!(queues & (1u<<id))) {\n                queues|=1u<<id;q->id=id;\n                pthread_mutex_unlock(&lock);return 0;\n            }\n        }\n        pthread_mutex_unlock(&lock);return -ENOSPC;')
+ s=once(s,'case DRM_MSM_SUBMITQUEUE_NEW:\n\t\t', 'case DRM_MSM_SUBMITQUEUE_NEW: {\n\t\t')
+ s=once(s,'case DRM_MSM_SUBMITQUEUE_CLOSE:\n\t\treturn 0;', '}\n    case DRM_MSM_SUBMITQUEUE_CLOSE: {\n        uint32_t id=*(uint32_t *)data;\n        if (!id || id>=8) return -EINVAL;\n        pthread_mutex_lock(&lock);\n        int active=(queues&(1u<<id))!=0;\n        queues&=~(1u<<id);\n        pthread_mutex_unlock(&lock);\n        return active?0:-EINVAL;\n    }')
+ s=once(s,'*(uint32_t *)(uintptr_t)q->data = 0;', 'uint64_t faults=0,suspends=0;\n        if (sweet_gpu_status(&faults,&suspends)) return -EIO;\n        *(uint32_t *)(uintptr_t)q->data = faults>UINT32_MAX?UINT32_MAX:(uint32_t)faults;')
+ s=once(s,'if (!r->nr_cmds || r->nr_cmds > 4096 || !r->nr_bos || r->nr_bos > 1024) return -EINVAL;', 'if (!r->nr_cmds || r->nr_cmds > 4096 || !r->nr_bos || r->nr_bos > 1024 || !r->queueid || r->queueid>=8) return -EINVAL;')
  # Cache invalidation and frame presentation use the same base that the kernel pins.
  return s
 edit('sweet_drm.c',drm)
