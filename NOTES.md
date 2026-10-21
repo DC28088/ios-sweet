@@ -2,6 +2,22 @@
 
 ## Current local device state (2026-10-21, read first)
 
+- **0112 BUILD SUCCESS / READY, NOT BOOTED:** CI39625892744 succeeded on
+  sourcefbb439533ba3c0dc7bd84d4a6a883a576dc8d537; portable test stepSKIPPED.
+  Artifact12356753481 published checksum and ZIP CRC verified by fetch helper.
+  Kernel SHA256 044f900704fad68c0e4c030094b4aa36d2c84e695edf1c6589dffa7cd891b722.
+  Image shim/out/shim-boot-0112-native-adreno-renderer-120hz.img 17399808bytes,
+  SHA256 c31cb71ffe3d03ac395bf9b0df2e006919d591afa8c7cb375e84337a31662ef2.
+  Manifest research/gpu/0112-boot-manifest.json; staged source saved in
+  research/gpu/0112-work. No device writes/reboot; phone left OrangeFox.
+  Existing0110 installed Metal bundle remains ABI-compatible; do not reinstall
+  root. User prefers manual temporary fastboot boot. Bounded USB receiver
+  session85796 waits1800seconds onUDP5140, logs/live-0112-usb.txt and
+  logs/live-0112-capture.out/status. A listening socket is not proof of transfer.
+  After boot expect GMEM profile acceptance, provider publication, backboardd
+  client connection and ABI submit/wait results; none yet hardware-verified.
+  USB reset/reconnect correction and UI acceleration remain UNVERIFIED.
+
 - **0111 SAVED LOG FOUND /0112 correction staged (2026-10-21):** OrangeFox
   confirmed, pulled logs/gpu-0111-paired-startup.txt600600bytes, flush121.
   0111 S2CR quirk confirmed; live CB0 has1027pages/20bootstraptranslations.
@@ -18,8 +34,10 @@
   per configuration, bounded16datagrams/100ms, restores cursor on send error.
   Host helper sends bounded subnet probe to initiate ARP. Added bounded actual
   Metal compositor open/method-result telemetry. Kernel patch0112 applies to
-  reconstructed0072..0077USB and0110render/client sources. CI pending dispatch;
-  no local ARM compiler, no tests run. No phone writes/reboots/root changes.
+  reconstructed0072..0077USB and0110render/client sources. CI39625892744 builds exact
+  sourcefbb439533ba3c0dc7bd84d4a6a883a576dc8d537; finish-0112.py watches,
+  downloads the kernel with published SHA verification and packages0112.
+  No local ARM compiler, no tests run. No phone writes/reboots/root changes.
 
 - **User reports0111 booted, performance unchanged; live capture FAILED:** user
   requested debug collection from current iOS. Old bounded receiver is gone,
