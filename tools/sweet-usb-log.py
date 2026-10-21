@@ -23,7 +23,7 @@ def main():
  out=None
  if args.logfile:
   path=pathlib.Path(args.logfile);path.parent.mkdir(parents=True,exist_ok=True);out=path.open('ab',buffering=0)
- start=time.monotonic();configured=None;total=0;last_notice=start
+ start=time.monotonic();configured=None;total=0;last_notice=start;last_probe=0
  print('Listening on UDP5140; waiting for sweet USB Ethernet '+MAC,file=sys.stderr,flush=True)
  try:
   while args.duration is None or time.monotonic()-start<args.duration:
@@ -42,6 +42,16 @@ def main():
     configured=name
     print(f'{name}: receiver ready (host192.168.7.1, phone192.168.7.2); awaiting first console packet',file=sys.stderr,flush=True)
    elif not name:configured=None
+   # Trigger ARP on the dedicated phone subnet. 0112 replays its console
+   # backlog only after receiving a valid host frame in this configuration.
+   # Port9 has no control protocol; no shell/debug commands are sent.
+   now=time.monotonic()
+   if configured and now-last_probe>=5:
+    try:
+     with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as probe:
+      probe.bind(('192.168.7.1',0));probe.sendto(b'sweet-log',('192.168.7.2',9))
+    except OSError:pass # address may still be coming up
+    last_probe=now
    try:data,peer=sock.recvfrom(65535)
    except socket.timeout:
     now=time.monotonic()
