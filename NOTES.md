@@ -2,6 +2,26 @@
 
 ## Current direction and last known device state (2026-10-22, read first)
 
+- **0116 AND GLES PAIR BUILT (2026-10-22):** kernel CI39688634861 passed
+  on53b3f58c25d80fe318e2bbb8c01e564deaf84791. Artifact12387816032 checksum
+  verified. Image shim/out/shim-boot-0116-gles-compositor-120hz.img,
+  17399808bytes, SHA2569ac29bf16277d7b41eb28690f6181832feabcb80def8d66b1cbb337c70f981c3.
+  Local unpack checks: unchanged shim/DTB, payload match/deterministic repack,
+  required markers and stage9/120Hz/GLES/backboardd flags. Mesa/EAGL library
+  CI39688037690 on4e701be succeeded; userspace/out/0115-gles-4e701be/sweetgl.dylib,
+  18756112bytes, SHA2560ae1789bb55795dec09edd3c741cba0687fdde0e36da1db2ad2dcc8fd377083d.
+  Mach-O iOS platform2 minimum16.0; IOKit Versions/A installname is present
+  in the actual cache. Active phone root read-only inspection matches iOS
+  16.7.16/20H392/cacheUUID8f970452c9e33e88b114feb1864bc9e0, no prior GLES
+  library. Fresh qcow2 overlay contains library and install record; final
+  filesystem validation/delta preparation ongoing. NO phone writes or boot.
+  Recovery connected; read-only nbdkit /tmp/sweet-gles-root.sock running.
+  Host stage research/gles-install-0115 (freshcache). fsck540.1 -fn has known
+  header-cache false damage report; finalize with full-fy then read-only
+  mount/hash check, as documented in tools/mkiosroot.sh. See docs/GLES_0116.md.
+  No tests run, no runtime acceleration claim. Need concrete write approval
+  once block delta/rollback are fully prepared, per AGENTS.md.
+
 - **0114 LOG RECOVERED / GLES BUILD SUCCESS (2026-10-22):** user entered
   OrangeFox with USB. Read-only recovery pull logs/gpu-0114-before-gles.txt
   proves RPMh correction passed, GMU/HFI/SQE startup passed, CP29/29 and
