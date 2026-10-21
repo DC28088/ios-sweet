@@ -2,6 +2,32 @@
 
 ## Current local device state (2026-10-21, read first)
 
+- **METAL BUNDLE INSTALLED into phone userdata (2026-10-21):** user manually
+  entered OrangeFox with Power+VolUp after software recovery boot returned to
+  FASTBOOT. ADB recovery root now works. User explicitly authorized copying the
+  matching bundle into the installed root. OrangeFox has FUSE but no HFS kernel
+  driver; host sudo needs password. Used a read-only ADB-backed NBD export of
+  the first16GiB HFSX volume, Linux guest + qcow2 overlay, to install
+  /System/Library/Extensions/NativeAdrenoMetal.bundle from0110-1fae147.
+  Confirmed actual iOS16.7.16 /20H392 SystemVersion.plist. No old bundle existed.
+  Set root:wheel0:0, executable755. All53 bundle SHA256s passed twice, including
+  after a read-only remount; all guest mounts cleanly unmounted before applying.
+  fsck repair mode repaired preexisting hard-link metadata and post-copy volume
+  header, then reportedOK. Read-only -fn continues the known (1,0) header warning
+  documented for these journaled volumes; do not claim -fn clean.
+  Saved ALL before/after chunks in research/metal-install-0110/delta/ with
+  delta.json and guarded restore-delta.py (refuses unexpected changed blocks).
+  Live preflight matched every original chunk. Applied285 chunks,241303552bytes,
+  only inside first16GiB of userdata; every written chunk readback SHA verified.
+  Volume headers written last; final sync complete. No other partition writes,
+  no root reflash, no GPT change; persistent log tail outside volume untouched.
+  Full guest/stage/apply logs and helper sources under research/metal-install-0110/.
+  Local userspace/out/0110-1fae147/installation.json records evidence.
+  Device LEFT IN ORANGEFOX, not rebooted. Matching0110 boot image is ready.
+  GPU/Metal rendering performance still UNVERIFIED. Next step is paired kernel
+  boot with live log capture; user earlier preferred manual boot. Do not restore
+  raw before blocks after any subsequent iOS write without consistency analysis.
+
 - **Recovery boot attempted after sandbox disabled (2026-10-21):** user
   asked to run fastboot directly. Device detected; fastboot boot
   recovery/recovery.img sent131072KB OKAY3.965s, Booting OKAY0.130s,
