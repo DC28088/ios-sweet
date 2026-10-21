@@ -2,11 +2,24 @@
 
 ## Current local device state (2026-10-21, read first)
 
+- **iOS16 kernel patch staging started:** pristine XNU8796.141.3 archive fetched
+  into research/unixnu-ios16-source; source audit worktree in
+  /tmp/unixnu-ios16-kernel-audit. Upstream sorted patch sequence first rejected
+  AppleCPUtunables context. Staged replacements under
+  ports/UniXNU-sweet/kernel-port for tunables guards and external archive
+  dependencies (.unstripped is the actual Darwin22 link target; .noctf is not).
+  Sequential patch application progressed to native-aes-personality.patch,
+  now rejecting KernelConfigTables.cpp. progress.json records exact source
+  identities and applied stages. This module is NOT wired to kernel build;
+  native kernel not compiled, no tests run. Full replacement patch module,
+  archive builders, prelink and platform drivers still need Darwin22 porting.
+
 - **First full firmware attempt failed in host dependency setup:** run39636226290
   generic menu success; firmware exact source/vendor submodules fetched, both
   EFI hashes checked and FvMain injection succeeded, BootShim compiled. Old
   edk2toolext import fails ModuleNotFoundError:pkg_resources before firmware
-  compile. Pin setuptools80.9.0 to retain that legacy API; next run pending.
+  compile. Pin setuptools80.9.0 to retain that legacy API; retryCI39636995649 on
+  source4d353bf is running. Watcher logs research/gpu/watch-unixnu-firmware-39636995649.log.
   Failed log research/gpu/unixnu-firmware-39636226290-failed.log. No hardware
   actions, no tests run. Current board records original decoded kernel pin.
 
