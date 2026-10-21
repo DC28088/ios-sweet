@@ -21,6 +21,10 @@ fetch = ["KernelCache", "DeviceTree", "StaticTrustCache"]
 [kernel]
 defconfig = "sweet_ios16_defconfig"
 
+[kernel.prelink]
+# Decoded ordinary ARM64 Mach-O from the selected 20H392 restore identity.
+kernelcache_sha256 = "2ec297bac95bcba01046fd0148e97e7e5885c05a6c18827f39f534ba375c1221"
+
 # No prelink addresses/roots, userdata LBAs or payload root UUID are borrowed
 # from sheng. Fill these from the selected iOS16 kernelcache and sweet GPT.
 
