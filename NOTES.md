@@ -2,6 +2,25 @@
 
 ## Current direction and last known device state (2026-10-22, read first)
 
+- **GLES USERSPACE IMPLEMENTATION STARTED (2026-10-22):** user reports0114
+  booted with zero visible improvement and explicitly requests finished
+  Sailfish-style userspace integration. No0114 trace collected yet; do not
+  claim hardware readiness. Implemented userspace/gles/sweet_native.cpp
+  adapting Sailfish BO/import/submit/wait operations to our NativeAdreno
+  ABI1, real chip/GMEM/aperture query, cached CPU maps, resource cache
+  maintenance, retained IOSurfaces, fenced frees and ordered16-IB batches.
+  tools/prepare-sweet-gles.py fetch-source adaptation preserves the EAGL/GLI
+  frontend and shader fixes. Original iPhoneX root cache was read only:
+  UUID8f970452c9e33e88b114feb1864bc9e0. QuartzCore table/switch and12 prologues
+  match the Sailfish source at +0x4000; recorded userspace/gles/cache-profile.json.
+  Runtime UUID gate added before EAGL/QuartzCore changes. Mesa pinned to
+  f2a70d066e69c0ad62070d2f25e175a4198d273b, all3 Sailfish Mesa hunks apply.
+  Reproducible macOS builder tools/build-sweet-gles.py, GLES workflow, and
+  reversible offline root installer prepared. No source-level/hardware tests
+  added or run. Kernel GLES discovery/load policy and IOSurface source
+  wrapping still being implemented. Library compilation pending; nothing
+  installed and no new phone command beyond empty adb device listing.
+
 - **0114 BUILD SUCCESS / PACKAGED, NOT BOOTED (2026-10-22):** CI39683698934
   passed on source231196d88d541ac7d43be007e5bce8c5b5f480f4. Portable tests
   SKIPPED as requested by session instructions. Artifact12385946044 fetched

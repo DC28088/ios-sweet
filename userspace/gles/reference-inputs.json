@@ -3,9 +3,9 @@
   "commit": "ce637521bacc06fab5cc29cf144febee2fca9ff8",
   "target": "sweet / SM7150 / Adreno 618 / iOS 16.7.16 (20H392)",
   "approach": "Core Animation GLES -> EAGL bridge -> Mesa Gallium freedreno -> A618 kernel backend",
-  "status": "source audit; not built, installed or hardware qualified",
-  "mesa_commit": null,
-  "mesa_pin_note": "The reference setup expects a preexisting research/mesa checkout and does not identify its revision. Resolve a compatible exact revision before building.",
+  "status": "A618 transport and iPhoneX cache adaptation implemented; compilation pending",
+  "mesa_commit": "f2a70d066e69c0ad62070d2f25e175a4198d273b",
+  "mesa_pin_note": "Pinned Mesa27 development source; the three Sailfish Mesa hunks apply unchanged. Build is Gallium freedreno/msm, not Turnip.",
   "reference_files_sha256": {
     "tools/sweetgl/sweet_drm.c": "8d0f77c50264d0a92d7a3762f1eefdceb86e67b50d286d704df96185377e4890",
     "tools/sweetgl/sweetgl.c": "815ae0b74edeaa575829b88785b762a90ea738c289d16655096b728cd67ea395",
@@ -23,5 +23,6 @@
     "xnu/patches/0166-sweet-ioacceleratores-iokit-quiet.patch": "5297c7d4eb36e91cd26c0c0830d20e5af6083fb8cd0ab71971b72e9b195bc5d7",
     "xnu/patches/0104-sailfish-sweetenv-boot-arg.patch": "ebc2b6d17893ec88c028e60ee65e29bd27560f463d6540dcbfd34c6b3f38e4af",
     "xnu/patches/0139-sailfish-amfi-dyld-policy.patch": "5a11cafdbaef454a4095cc8f41897064979c3813f4a701ea07d139555725de2a"
-  }
+  },
+  "mesa_repository": "https://github.com/chaotic-cx/mesa-mirror.git"
 }

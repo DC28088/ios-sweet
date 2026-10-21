@@ -1,0 +1,78 @@
+{
+  "firmware": "iPhone10,3 / iOS16.7.16 / 20H392",
+  "cache_uuid": "8f970452c9e33e88b114feb1864bc9e0",
+  "quartzcore_address_delta": 16384,
+  "shader_table": "0x1d5b48a10",
+  "uniform_switch": "0x18855e1e4",
+  "validated_function_prologues": [
+    {
+      "name": "emit_filter",
+      "address": "0x188428e54",
+      "expected": "ffc303d1eb2b076de923086dfc6f09a9"
+    },
+    {
+      "name": "render_vibrant_color_matrix",
+      "address": "0x18842b248",
+      "expected": "e923b96dfc6f01a9fa6702a9f85f03a9"
+    },
+    {
+      "name": "render_vibrant_filter",
+      "address": "0x18842b018",
+      "expected": "ffc302d1ed33056deb2b066de923076d"
+    },
+    {
+      "name": "filter_node",
+      "address": "0x1883940d0",
+      "expected": "f85fbca9f65701a9f44f02a9fd7b03a9"
+    },
+    {
+      "name": "MaskNode::apply",
+      "address": "0x188376f74",
+      "expected": "ff0307d1e923156dfc6f16a9fa6717a9"
+    },
+    {
+      "name": "prepare_filters",
+      "address": "0x188351888",
+      "expected": "ef3bb66ded33016deb2b026de923036d"
+    },
+    {
+      "name": "emit_filter_quads_color",
+      "address": "0x188353480",
+      "expected": "ff0303d1e923066dfa6707a9f85f08a9"
+    },
+    {
+      "name": "render_background",
+      "address": "0x1882d70b8",
+      "expected": "ff4302d1e923036dfa6704a9f85f05a9"
+    },
+    {
+      "name": "render_solid_background",
+      "address": "0x188315534",
+      "expected": "e923b96dfc6f01a9fa6702a9f85f03a9"
+    },
+    {
+      "name": "fill_round_rect",
+      "address": "0x1884d904c",
+      "expected": "ff8304d1e9230d6dfc6f0ea9f6570fa9"
+    },
+    {
+      "name": "fill_color_rect",
+      "address": "0x1882f5298",
+      "expected": "ff0302d1f85f04a9f65705a9f44f06a9"
+    },
+    {
+      "name": "create_shader",
+      "address": "0x1884b30d8",
+      "expected": "fc6fbaa9fa6701a9f85f02a9f65703a9"
+    }
+  ],
+  "uniform_switch_bytes": {
+    "0x13": "0x0",
+    "0x14": "0xde",
+    "0x26": "0xde",
+    "0x27": "0xde",
+    "0x2d": "0xde"
+  },
+  "access": "read-only original root image",
+  "runtime_gate": "cache UUID must match before swizzling or patching"
+}
