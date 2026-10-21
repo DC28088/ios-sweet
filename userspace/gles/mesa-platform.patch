@@ -1,0 +1,18 @@
+--- a/src/gallium/drivers/freedreno/freedreno_screen.c
++++ b/src/gallium/drivers/freedreno/freedreno_screen.c
+@@ -682,8 +682,15 @@
+    caps->query_memory_info = get_memory_size(screen) != 0;
+ 
+    caps->uma = true;
++#ifdef __APPLE__
++   /* NativeAdreno provides task-page imports and timestamp fences. It has
++    * no Linux PRIME/sync_file descriptors; do not advertise those APIs. */
++   caps->memobj = false;
++   caps->native_fence_fd = false;
++#else
+    caps->memobj = fd_device_version(screen->dev) >= FD_VERSION_MEMORY_FD;
+    caps->native_fence_fd = fd_device_version(screen->dev) >= FD_VERSION_FENCE_FD;
++#endif
+    caps->fence_signal = screen->has_syncobj;
+    caps->cull_distance = is_a6xx(screen);
+    caps->shader_stencil_export = is_a6xx(screen);

@@ -2,6 +2,17 @@
 
 ## Current direction and last known device state (2026-10-22, read first)
 
+- GLES first build39687042106 compiled all Mesa static libraries and the
+  EAGL/dispatch frontend, then failed on sweet_native.cpp's IOSurface.h
+  include (iOS SDK provides IOSurfaceRef.h). Corrected. Source review also
+  removed user cache-maintenance assumptions: every Mesa BO now uses
+  task-owned VM pinned through Native BoImport, so publishMapped and
+  acquireImported maintain actual physical cache lines at submission/fence
+  retirement. This avoids nonexistent sys_dcache_invalidate and ineffective
+  user-level flushes on this ARM platform. Disabled unsupported PRIME/native
+  fence-FD capabilities, bounded logical queue IDs, real fault counters.
+  Companion kernel39687265147 builds266325e; GLES rebuild pending.
+
 - **0115 GLES KERNEL INTEGRATION STAGED:** patch0115 adds explicit
   sweetgles=1 boot mode: backboardd-only fixed DYLD_INSERT_LIBRARIES,
   scoped AMFI dyld policy, no MetalPluginName on the live A618 provider,

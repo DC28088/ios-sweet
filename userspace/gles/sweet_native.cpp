@@ -3,10 +3,8 @@
 // Kernel handles, userspace GEM handles, CPU addresses and GPU VAs are distinct.
 #include "sweet_native.h"
 #include "NativeAdrenoABI.h"
-#include <IOSurface/IOSurface.h>
-#include <libkern/OSCacheControl.h>
+#include <IOSurface/IOSurfaceRef.h>
 #include <mach/mach.h>
-#include <mach/mach_vm.h>
 #include <pthread.h>
 #include <algorithm>
 #include <cstring>
@@ -21,7 +19,7 @@ struct Bo {
     uint64_t handle=0, va=0, bytes=0, cpu=0, mapped_bytes=0, fence=0;
     uint32_t token=0;
     IOSurfaceRef surface=nullptr;
-    bool imported=false, quarantined=false;
+    bool imported=false, owns_cpu=false, quarantined=false;
 };
 Bo bos[MaxBos];
 io_connect_t connection=0;
@@ -64,26 +62,18 @@ kern_return_t wait(uint64_t fence,uint64_t timeout_ns) {
     NativeAdrenoAbiWaitFence request{fence,timeout_ns};
     return call(NativeAdrenoMethodWaitFence,&request,sizeof request,nullptr,0);
 }
-void invalidate_surfaces(uint64_t completed) {
-    for (Bo &b:bos)
-        if (b.handle && b.imported && b.cpu && b.fence && b.fence<=completed)
-            sys_dcache_invalidate(reinterpret_cast<void *>(b.cpu),b.bytes);
-}
 kern_return_t destroy(Bo &b) {
     kern_return_t kr=wait(b.fence,5000000000ull);
     if (kr) { b.quarantined=true; lost=true; return kr; }
-    if (b.imported && b.cpu && b.fence) sys_dcache_invalidate(reinterpret_cast<void *>(b.cpu),b.bytes);
-    if (b.token) {
-        kr=IOConnectUnmapMemory64(connection,b.token,mach_task_self(),b.cpu);
-        if (kr) { b.quarantined=true; lost=true; return kr; }
-        NativeAdrenoAbiBoCpuUnmap request{b.handle,b.token,0};
-        kr=call(NativeAdrenoMethodBoCpuUnmap,&request,sizeof request,nullptr,0);
-        if (kr) { b.quarantined=true; lost=true; return kr; }
-        b.token=0;
-    }
     NativeAdrenoAbiBoFree request{b.handle};
     kr=call(NativeAdrenoMethodBoFree,&request,sizeof request,nullptr,0);
     if (kr) { b.quarantined=true; lost=true; return kr; }
+    // Native BoFree drops the task-page pin only after GPU quiescence.
+    // CPU storage can be released only after that operation succeeded.
+    if (b.owns_cpu) {
+        kr=vm_deallocate(mach_task_self(),b.cpu,b.bytes);
+        if (kr) {b.quarantined=true;lost=true;return kr;}
+    }
     if (b.surface) CFRelease(b.surface);
     b={};return KERN_SUCCESS;
 }
@@ -106,11 +96,11 @@ kern_return_t make_bo(uint64_t bytes,IOSurfaceRef surface,uint64_t *out) {
         // IOSurfaceAddress's first-page offset. Verify that whole extent is
         // mapped in this task before asking NativeAdreno to pin it.
         if (!base || !size || (size&16383) || size!=bytes) return kIOReturnBadArgument;
-        mach_vm_address_t region=base;mach_vm_size_t region_bytes=0;
+        vm_address_t region=base;vm_size_t region_bytes=0;
         vm_region_basic_info_data_64_t region_info{};
         mach_msg_type_number_t info_count=VM_REGION_BASIC_INFO_COUNT_64;
         mach_port_t object=MACH_PORT_NULL;
-        auto region_kr=mach_vm_region(mach_task_self(),&region,&region_bytes,VM_REGION_BASIC_INFO_64,
+        auto region_kr=vm_region_64(mach_task_self(),&region,&region_bytes,VM_REGION_BASIC_INFO_64,
                          reinterpret_cast<vm_region_info_t>(&region_info),&info_count,&object);
         if (object) mach_port_deallocate(mach_task_self(),object);
         if (region_kr || region>base || region_bytes<base-region || bytes>region_bytes-(base-region) ||
@@ -121,32 +111,17 @@ kern_return_t make_bo(uint64_t bytes,IOSurfaceRef surface,uint64_t *out) {
         b.handle=reply.handle;b.bytes=bytes;b.cpu=base;b.imported=true;
         b.surface=surface;CFRetain(surface);
     } else {
-        NativeAdrenoAbiBoAlloc request{bytes,14,0};
-        kr=call(NativeAdrenoMethodBoAlloc,&request,sizeof request,&reply,sizeof reply);
+        // Every Mesa BO is task-owned VM imported into NativeAdreno. This
+        // deliberately uses its physical-page cache maintenance for both
+        // ordinary BOs and IOSurfaces. Apple's user sys_dcache_flush is not
+        // a substitute for non-coherent DMA cache maintenance.
+        vm_address_t address=0;
+        kr=vm_allocate(mach_task_self(),&address,bytes,VM_FLAGS_ANYWHERE);
         if (kr) return kr;
-        b.handle=reply.handle;b.bytes=bytes;
-        NativeAdrenoAbiBoCpuMap map{b.handle};NativeAdrenoAbiBoCpuMapReply mapping{};
-        kr=call(NativeAdrenoMethodBoCpuMap,&map,sizeof map,&mapping,sizeof mapping);
-        if (!kr) {
-            b.token=mapping.token;b.mapped_bytes=mapping.bytes;
-            mach_vm_address_t address=0;mach_vm_size_t size=mapping.bytes;
-            kr=IOConnectMapMemory64(connection,mapping.token,mach_task_self(),&address,&size,kIOMapAnywhere);
-            if (!kr && size>=bytes) {b.cpu=address;b.mapped_bytes=size;}
-            else {
-                // Release the lease even if mapClientMemory failed. Never
-                // unmap address0 as though a CPU mapping had succeeded.
-                if (!kr) {
-                    auto unmap_kr=IOConnectUnmapMemory64(connection,mapping.token,mach_task_self(),address);
-                    if (unmap_kr) {b.quarantined=true;lost=true;return unmap_kr;}
-                }
-                NativeAdrenoAbiBoCpuUnmap unmap{b.handle,b.token,0};
-                kern_return_t drop=call(NativeAdrenoMethodBoCpuUnmap,&unmap,sizeof unmap,nullptr,0);
-                if (drop) {b.quarantined=true;lost=true;return drop;}
-                b.token=0;
-                if (!kr) kr=kIOReturnNoMemory;
-            }
-        }
-        if (kr) {kern_return_t cleanup=destroy(b);return cleanup?cleanup:kr;}
+        NativeAdrenoAbiBoImport request{address,bytes};
+        kr=call(NativeAdrenoMethodBoImport,&request,sizeof request,&reply,sizeof reply);
+        if (kr) {vm_deallocate(mach_task_self(),address,bytes);return kr;}
+        b.handle=reply.handle;b.bytes=bytes;b.cpu=address;b.imported=true;b.owns_cpu=true;
     }
     NativeAdrenoAbiBoMap map{b.handle,va,3,0,2,0};NativeAdrenoAbiBoMapReply mapped{};
     kr=call(NativeAdrenoMethodBoMap,&map,sizeof map,&mapped,sizeof mapped);
@@ -207,14 +182,14 @@ extern "C" kern_return_t sweet_gpu_scalar(io_connect_t c,uint32_t selector,const
     case 14: { // Pixel WAIT_FENCE, milliseconds -> Native nanoseconds
         if (count!=2 || !in || in[1]>UINT64_MAX/1000000) return kIOReturnBadArgument;
         auto kr=wait(in[0],in[1]*1000000);
-        if (!kr) invalidate_surfaces(in[0]);
+        // Kernel fence retirement acquires device writes for every imported BO.
         return kr;
     }
     case 16: { // Pixel CPU_PREP invalidate after real completion
         if (count!=1 || !in) return kIOReturnBadArgument;
         Bo *b=bo(in[0]);if (!b) return kIOReturnBadArgument;
         auto kr=wait(b->fence,0);
-        if (!kr && b->cpu) sys_dcache_invalidate(reinterpret_cast<void *>(b->cpu),b->bytes);
+        // NativeAdrenoSubmit::release acquires all imported BO cache lines.
         return kr;
     }
     default:return kIOReturnUnsupported;
@@ -254,8 +229,8 @@ extern "C" kern_return_t sweet_gpu_method(io_connect_t c,uint32_t selector,const
         }
         if (!commands[i].handle) return kIOReturnBadArgument;
     }
-    for (size_t i=0;i<nb;++i)
-        if (resources[i]->cpu) sys_dcache_flush(reinterpret_cast<void *>(resources[i]->cpu),resources[i]->bytes);
+    // NativeAdrenoSubmit publishes all mapped BOs by physical page before
+    // ringing CP and acquires every imported BO on real fence retirement.
     __atomic_thread_fence(__ATOMIC_SEQ_CST);
     uint64_t fence=0;
     // Preserve order across Native ABI's 16-IB batches. The kernel quiesces
