@@ -2,6 +2,27 @@
 
 ## Current local device state (2026-10-21, read first)
 
+- **0113 TEMPORARY BOOT / RPMh CX TIMEOUT (2026-10-21):** user authorized
+  boot; fastboot product sweetin verified, image SHA matched. fastboot boot
+  sent16992KB OKAY0.514s, BootingOKAY0.130s. No partition flashing/root writes.
+  User confirms iOS still running. Live capture logs/live-0113-usb.txt:
+  initial host helper crashed on udev usb0->enp0s20f0u3 rename (nmcli device
+  lookup exit10). Restarted receiver session11777, actual UDP data confirmed.
+  User unplugged/reconnected USB on request. USB reset/reconfiguration and
+  backlog replay worked; host new-link RX282packets/errors0 at inspection.
+  Replay shows current failure EARLIER than render profile: ARC READ mx.lvl
+  completes selector3/level321; following cx.lvl READ TCS0 times out (errno60),
+  TCS quarantined/no retry. CX preconditions fail; no GPUCC write, no GMU/SQE
+  or renderer publication. 0113 optional-register correction NOT REACHED, so
+  do not claim its runtime success. Need examine RPMh/TCS transaction lifecycle
+  and its CX request before another register/Metal change; preserve quarantine
+  semantics, do not blindly reset or reuse uncertain TCS.
+  Captured trace remains logs/live-0113-usb.txt; helper session11777 bounded
+  1800seconds active at last check. Host helper now retries nmcli discovery
+  failures so interface renaming cannot terminate capture; Python compilation
+  passed, no tests added/run. Running receiver is older loaded source; use
+  updated helper on next start. Phone left running0113, no further reboot.
+
 - **0113 BUILD SUCCESS / READY, NOT BOOTED (2026-10-21):** CI39630488384
   succeeded on source133087d; portable test stepSKIPPED. Kernel artifact
   12360100686 CRC/publishedSHA verified. KernelSHA25694c85d755f64520bb663356dd0dcba82c9cce6f5f2c05e56d0b5980411eade3c.
