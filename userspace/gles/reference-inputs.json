@@ -1,0 +1,27 @@
+{
+  "repository": "https://github.com/joranv1/ios-sailfish",
+  "commit": "ce637521bacc06fab5cc29cf144febee2fca9ff8",
+  "target": "sweet / SM7150 / Adreno 618 / iOS 16.7.16 (20H392)",
+  "approach": "Core Animation GLES -> EAGL bridge -> Mesa Gallium freedreno -> A618 kernel backend",
+  "status": "source audit; not built, installed or hardware qualified",
+  "mesa_commit": null,
+  "mesa_pin_note": "The reference setup expects a preexisting research/mesa checkout and does not identify its revision. Resolve a compatible exact revision before building.",
+  "reference_files_sha256": {
+    "tools/sweetgl/sweet_drm.c": "8d0f77c50264d0a92d7a3762f1eefdceb86e67b50d286d704df96185377e4890",
+    "tools/sweetgl/sweetgl.c": "815ae0b74edeaa575829b88785b762a90ea738c289d16655096b728cd67ea395",
+    "tools/sweetgl/eagl.c": "7d73f44d6713a4d82678d598caee093ace5a9d87da8608c369a90ad3c8d36169",
+    "tools/sweetgl/mesa.patch": "21b851ae1e99fafed389d1872b8b99cb433ab318a91fc9c6482fb795eeec6415",
+    "tools/sweetgl/mesa-setup.sh": "d83c8506a4d5088ddfe6a1b0e7e59e944f2089217a3188e94635360efe1451d5",
+    "tools/sweetgl/build.sh": "f658179f30baf5219bca27ced15055ffc4ba2ec4283d81c6ce02bf741d325cfc",
+    "tools/sweetgl/ios-cross.txt": "d824dfe40a33356fbf8b8d3fa659b9c17017020086d3a27616b45c1cb61ce5f5",
+    "tools/sweetgl/gen-dispatch.py": "d977ea9d609e38b45c6763a3b0e3e3d26a0693a9cce99f7de66de62545012f3c",
+    "tools/sweetgl/ios-dispatch.txt": "2766fbc0f49cfdae10eee4b7c86622aab75cd24939c4584ff09a71500f4a26e9",
+    "xnu/patches/0150-sailfish-gpu-bo-submit.patch": "8cb6f2564d9f34e68dc57f7824908b06719abe0557cec517f4badb21cfb7b8be",
+    "xnu/patches/0157-sweet-iosurface-client-address.patch": "5d36869291293d8eb484db7d6db35359b744344a5dec53b78eb9e14108492699",
+    "xnu/patches/0158-sweet-iosurface-client-memory-readonly.patch": "6572fb64754e42492fa86a85a8b3d3c31745f2b8e7c298821caf48495796bb35",
+    "xnu/patches/0164-sailfish-gpu-present-600mhz.patch": "dcbc64e834eed8f72b56f87106910708bd9937f87edb2589a89c32b9e626b0ac",
+    "xnu/patches/0166-sweet-ioacceleratores-iokit-quiet.patch": "5297c7d4eb36e91cd26c0c0830d20e5af6083fb8cd0ab71971b72e9b195bc5d7",
+    "xnu/patches/0104-sailfish-sweetenv-boot-arg.patch": "ebc2b6d17893ec88c028e60ee65e29bd27560f463d6540dcbfd34c6b3f38e4af",
+    "xnu/patches/0139-sailfish-amfi-dyld-policy.patch": "5a11cafdbaef454a4095cc8f41897064979c3813f4a701ea07d139555725de2a"
+  }
+}
