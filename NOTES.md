@@ -2,6 +2,23 @@
 
 ## Current local device state (2026-10-21, read first)
 
+- **First full firmware attempt failed in host dependency setup:** run39636226290
+  generic menu success; firmware exact source/vendor submodules fetched, both
+  EFI hashes checked and FvMain injection succeeded, BootShim compiled. Old
+  edk2toolext import fails ModuleNotFoundError:pkg_resources before firmware
+  compile. Pin setuptools80.9.0 to retain that legacy API; next run pending.
+  Failed log research/gpu/unixnu-firmware-39636226290-failed.log. No hardware
+  actions, no tests run. Current board records original decoded kernel pin.
+
+- **UEFI firmware attempt started:** CI39636226290 source10803bd363035bb18d7d943affd12482303a999f
+  compiles generic menu then pinned exactsweet legacy Mu firmware. Firmware
+  stage embeds the two EFI images into FvMain and preserves registrar DEPEX;
+  no DarwinBoot/iOS kernel in this first image. Legacy builder packages its
+  BootShim/gzippedFD/DTB in Mu-sweet.img; no fastboot/flash command in CI.
+  Original iOS16 input parsed with NativePrelink's real parser (not only custom
+  inventory); board now records decoded kernel hash as prelink input pin.
+  No prelink tool/roots/addresses selected yet; source compatibility unqualified.
+
 - **UniXNU initial menu SUCCESS / exact sweet firmware CI staged:** generic
   menu CI39635176783 succeeded onba7bce9. Downloaded ARM64 EFI app/registrar
   to research/unixnu-ios16-out/menu; published SHA verification passed.

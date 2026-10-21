@@ -68,6 +68,7 @@ jobs:
           git -C uefi-sweet checkout --detach FETCH_HEAD
           git -C uefi-sweet submodule update --init --depth 1 -- Binaries Common/Mu Common/Mu_OEM_Sample Common/Mu_Tiano_Plus Features/DFCI Mu_Basecore Silicon/Arm/Mu_Tiano Silicium-ACPI
           python3 -m venv .venv
+          .venv/bin/pip install setuptools==80.9.0
           .venv/bin/pip install -r uefi-sweet/pip-requirements.txt
       - name: Integrate menu and compile sweet UEFI
         run: |
