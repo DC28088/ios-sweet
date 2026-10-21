@@ -1,0 +1,21 @@
+# Translation of the exact sweet legacy Mu-Silicium sweet.conf, not sweet_k6a.
+# Reference commit098e303fd9703669ab06d38744cad14d49c0f702.
+# This is configuration input for the UEFI port; not a complete firmware tree.
+[boot_shim]
+requires_kernel_header = true
+
+[uefi_fd]
+base = 0x9fc00000
+size = 0x00300000
+
+[boot_image_kernel]
+kernel_compression = "gzip"
+append_dtb = true
+
+[boot_image]
+header_version = 2
+base = 0
+kernel_offset = 0x8000
+ramdisk_offset = 0x1000000
+tags_offset = 0x100
+pagesize = 4096

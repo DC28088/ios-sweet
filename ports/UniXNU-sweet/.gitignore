@@ -1,0 +1,7 @@
+.cache/
+out/
+local.toml
+*.ipsw
+*.img
+*.dtb
+*.adt
