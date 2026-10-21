@@ -66,3 +66,12 @@ HTTP ranges with ZIP CRC checking, SHA256-pinned in board.toml, and retained
 outside Git. The kernelcache is LZFSE and was decoded on Fedora using the
 already available lzfse library. Its original version is8796.142.1.703.8; the
 source baseline8796.141.3 therefore needs an explicit prelink ABI audit.
+
+The firmware CI stage builds the pinned legacy sweet firmware with the two
+compiled EFI images embedded in its main FV. The registrar keeps its variable
+protocol DEPEX and installs the UniXNU boot option. This prototype uses the
+legacy firmware's own BootShim/Android-image packaging and pinned submodules;
+it does not turn the incomplete current board.toml into a kernel-ready port.
+The output name is SWEET_UEFI.fd (confirmed from its source packaging script).
+NativePrelink's input parser also reads the selected iOS16 kernelcache:18
+segments and239 prelinked components. No native kernel has been linked yet.

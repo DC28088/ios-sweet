@@ -27,7 +27,7 @@ defconfig = "sweet_ios16_defconfig"
 [firmware]
 config = "sweet"
 dsc = "Platforms/Xiaomi/sweetPkg/sweet.dsc"
-fd = "Build/sweetPkg/{target}_CLANGPDB/FV/SILICIUM_UEFI.fd"
+fd = "Build/sweetPkg/{target}_CLANGPDB/FV/SWEET_UEFI.fd"
 packages = ["{uefi}", "{uefi}/Platforms/Xiaomi", "{tree}/package", "{tree}/drivers/DarwinBoot", "{edk2}"]
 
 [firmware.defines]

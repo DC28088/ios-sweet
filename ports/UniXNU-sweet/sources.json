@@ -55,5 +55,12 @@
     "bootable": false,
     "tests_run": false,
     "device_modified": false
+  },
+  "native_prelink_reference": {
+    "repository": "https://github.com/UniXNU/NativePrelink",
+    "revision": "2b6ffb50117eee820b98aca9bd51b5c7dfb2970e",
+    "ios16_input_parsed": true,
+    "original_components": 239,
+    "native_kernel_linked": false
   }
 }
