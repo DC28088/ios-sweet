@@ -2,6 +2,19 @@
 
 ## Current local device state (2026-10-21, read first)
 
+- **Topaz reference refreshed /0113 source correction (2026-10-21):** fetched
+  origin/topaz89451b811a4e6cc5cdcf734c45887163d92c599e (local reference HEAD
+  remainsf999958; use git show origin/topaz). Public0113..0130 Wi-Fi code exists;
+  author README reports WPA2/HTTPS. Reported Topaz GPU uses private HackiOS
+  GLES patches; README explicitly excludes GPU source and lists Metal later.
+  Public0131..0139 are IOSurface support,0138 empty discovery service. Audit:
+  docs/topaz-reference-2026-10-21.md. Sweet WLAN MMIO/SID/reserved pool differ;
+  no radio initialization/root changes. Current GPU blocker resolved in source
+  by0113: downstream vendor a6xx_start only touches0x534 whenchannel==8;
+  sweet has no such override. Skip this optional access, preserve reset state.
+  Required registers now explicitly reject0xdeafbead before masked comparison.
+  No tests run; patch staging/CI pending. Existing Metal ABI unchanged.
+
 - **0112 TEMPORARY BOOT / LIVE USB WORKING (2026-10-21):** user explicitly
   authorized ADB/fastboot commands. adb reboot bootloader succeeded from
   OrangeFox; fastboot boot0112 sent16992KB/BootingOKAY. No partition flashing.
