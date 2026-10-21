@@ -23,7 +23,7 @@ def main():
  out=None
  if args.logfile:
   path=pathlib.Path(args.logfile);path.parent.mkdir(parents=True,exist_ok=True);out=path.open('ab',buffering=0)
- start=time.monotonic();configured=None;total=0
+ start=time.monotonic();configured=None;total=0;last_notice=start
  print('Listening on UDP5140; waiting for sweet USB Ethernet '+MAC,file=sys.stderr,flush=True)
  try:
   while args.duration is None or time.monotonic()-start<args.duration:
@@ -40,11 +40,21 @@ def main():
     current=subprocess.check_output(['nmcli','--escape','no','-g','GENERAL.CONNECTION','device','show',name],text=True).strip()
     if current!=PROFILE:run('nmcli','connection','up',PROFILE,'ifname',name)
     configured=name
-    print(f'{name}: host192.168.7.1, phone192.168.7.2; recording kernel console',file=sys.stderr,flush=True)
+    print(f'{name}: receiver ready (host192.168.7.1, phone192.168.7.2); awaiting first console packet',file=sys.stderr,flush=True)
    elif not name:configured=None
    try:data,peer=sock.recvfrom(65535)
-   except socket.timeout:continue
+   except socket.timeout:
+    now=time.monotonic()
+    if configured and not total and now-last_notice>=30:
+     stats=pathlib.Path('/sys/class/net')/configured/'statistics'
+     try:
+      packets=(stats/'rx_packets').read_text().strip();errors=(stats/'rx_errors').read_text().strip()
+     except OSError:packets=errors='unavailable'
+     print(f'No console packets received; {configured} RX packets={packets}, RX errors={errors}. Link enumeration alone does not prove data transfer.',file=sys.stderr,flush=True)
+     last_notice=now
+    continue
    if peer[0]!='192.168.7.2':continue
+   if not total:print(f'Live console verified: received {len(data)} bytes from {peer[0]}',file=sys.stderr,flush=True)
    if out:out.write(data)
    sys.stdout.buffer.write(data);sys.stdout.buffer.flush();total+=len(data)
  except KeyboardInterrupt:pass
