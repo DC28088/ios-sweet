@@ -2,6 +2,27 @@
 
 ## Current local device state (2026-10-21, read first)
 
+- **User reports0111 booted, performance unchanged; live capture FAILED:** user
+  requested debug collection from current iOS. Old bounded receiver is gone,
+  logs/live-0111-usb.txt was0bytes. Restarted receiver; correct hostIPv4 exists.
+  USB1209:0001 enumerates, but RX/TX packets0, RX errors144900+ climbing,
+  TX errors climbing; no ARP/ping response. NM link down/up did not help.
+  User ran authorized sudo usbreset1209:0001; re-enumerated device9->11,
+  still zero RX/TX valid packets and thousands of new errors. Captured ZERO
+  GPU console bytes; do not claim0111 SMMU result or infer Metal discovery.
+  Source review identifies missing configured/queue reset onUSB bus reset:
+  0073 reset handles onlyDCFG address;0075 ud_configure returns immediately
+  when ud.configured remains true. Likely explains endpoint loss on reconnect;
+  not yet hardware-proven as sole cause. No new kernel patch/build this turn.
+  dumpcap launch denied by host capabilities; no usable PCAP captured.
+  Asked user to manually enterOrangeFox to pull0111 saved startup, await reply.
+  Active bounded receiver session2642 (600s) writes logs/live-0111-usb.txt,
+  logs/live-0111-capture.out/status. New helper now distinguishes receiver-ready
+  from first actual packet and reports no-data/RX-error status every30s.
+  No device writes/reboot or root changes this turn. Need actual saved GPU
+  trace before driver changes. A live connection needs USB reset/reconnect
+  handling and backlog replay, not just a desktop socket listener.
+
 - **0111 BUILD SUCCESS / READY, NOT BOOTED:** CI39537556638 success on exact
   source6cf3c60c393a0ac5b82ef8fe311be5475d5d8d6e; portable testsSKIPPED.
   finish-0111 helper verified published artifact checksum and packaged image.
