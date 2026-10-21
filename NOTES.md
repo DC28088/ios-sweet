@@ -1,6 +1,35 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
-## Current local device state (2026-10-21, read first)
+## Current direction and last known device state (2026-10-22, read first)
+
+- **PLAN CHANGED BACK: DIRECT SHIM + iOS16 + GLES (2026-10-22):** user
+  explicitly returned to main/adreno-power-audit and supplied the Pixel1
+  sailfish GPU reference. Active branch is `codex/adreno-power-audit`,
+  starting from 4e84f4e. Fetched myfork/main at 8cfc234; that main has no
+  commits absent from this branch, so no merge was needed. Preserve the
+  UniXNU branch at 8cba86f; its unfinished KPC edits were saved in stash
+  `Preserve unfinished UniXNU Darwin22 KPC edits before requested return to
+  Adreno branch`. No discard/reset, no device commands or new build.
+  Clean reference checkout research/ios-sailfish pinned to
+  ce637521bacc06fab5cc29cf144febee2fca9ff8. Public Mesa/EAGL/DRM source
+  exists, unlike the earlier private Topaz renderer. Author reports GLES
+  UI rendering at 15–35fps, up to60Hz presentation, NO Metal. These are
+  source/README findings, not measurements on sweet. New direction audit:
+  docs/sailfish-gles-port.md; selected source hashes:
+  userspace/gles/reference-inputs.json. No Mesa revision is pinned by the
+  reference setup script; resolve one before building.
+  Plan: retain our A618 kernel backend; port CoreAnimation GLES/EAGL through
+  Mesa Gallium freedreno, adapting Pixel scalar SweetGPU selectors to our
+  NativeAdreno structured ABI. Do not import A530 power/firmware/addresses,
+  or trust its dsc-8 QuartzCore patch addresses on our installed root.
+  First hardware blocker remains saved0113 RPMh cx.lvl completion timeout;
+  accepting stale CMD_STATUS is not a fix. Need fresh completion evidence
+  before GPUCC/provider initialization, then GLES BO/import/fence transport,
+  IOSurface/dispatch/cache ABI and reversible backboardd dylib loading.
+  No new acceleration image or dylib compiled/installed; no tests run.
+  Phone state was NOT inspected this turn. Most recent recorded operation
+  on the separate UniXNU branch was a temporary UEFI boot on2026-10-21;
+  current screen/USB state unknown. Installed HFS+iOS16 root preserved.
 
 - **0113 TEMPORARY BOOT / RPMh CX TIMEOUT (2026-10-21):** user authorized
   boot; fastboot product sweetin verified, image SHA matched. fastboot boot

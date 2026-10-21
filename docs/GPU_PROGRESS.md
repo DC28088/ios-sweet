@@ -1,5 +1,14 @@
 # GPU progress and architecture (2026-10-19)
 
+## Active direction (2026-10-22)
+
+Returned to `codex/adreno-power-audit` and the original direct-shim/iOS16
+boot path at the user's request. New graphics reference is the public Pixel1
+Mesa/GLES/EAGL port. See [source comparison and implementation order](sailfish-gles-port.md)
+and the current entry in `NOTES.md`. The stage0092 description below is
+historical; saved0112 reached CP fence completion, while saved0113 failed
+earlier at RPMh CX transaction completion. GPU UI acceleration is unverified.
+
 This document is the resumable record of the Adreno 618 work on `sweet`
 (Redmi Note 10 Pro, SM7150). It separates **verified observations** from
 **implemented but unverified code** and from **plans**. Read it with
