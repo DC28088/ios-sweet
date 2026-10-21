@@ -88,7 +88,8 @@ jobs:
           ./unixnu/unixnu defconfig sweet_ios16_defconfig \
             -D "$UNIXNU_DEVICE" --out "$UNIXNU_OUT"
           ./unixnu/unixnu tree -D "$UNIXNU_DEVICE" --out "$UNIXNU_OUT"
-          readlink -f "$UNIXNU_OUT/sweet/tree/patches/xnu"
+          python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' \
+            "$UNIXNU_OUT/sweet/tree/patches/xnu"
           test -f "$UNIXNU_OUT/sweet/tree/patches/xnu/source-machine-layer.patch"
           test ! -e "$UNIXNU_OUT/sweet/tree/patches/xnu/zzz-boot-progress.patch"
           grep -q 'miphoneos-version-min=16.0' \
@@ -96,7 +97,7 @@ jobs:
       - name: Compile the Darwin22 kernel
         run: |
           python3 tools/build-sweet-kernel.py \
-            --out "$UNIXNU_OUT" --device "$UNIXNU_DEVICE" \
+            --unixnu unixnu --out "$UNIXNU_OUT" --device "$UNIXNU_DEVICE" \
             --jobs "${{ inputs.jobs || '4' }}"
       - name: Record the built kernel
         if: always()
@@ -106,7 +107,7 @@ jobs:
           mkdir -p kernel-out
           cp "$UNIXNU_OUT/sweet/tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf" kernel-out/ 2>/dev/null || true
           cp "$UNIXNU_OUT/sweet/tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837" kernel-out/ 2>/dev/null || true
-          (cd kernel-out && sha256sum * > SHA256SUMS 2>/dev/null || true)
+          (cd kernel-out && shasum -a 256 * > SHA256SUMS 2>/dev/null || true)
       - uses: actions/upload-artifact@v4
         if: always()
         with:

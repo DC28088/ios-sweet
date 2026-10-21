@@ -18,15 +18,17 @@ from pathlib import Path
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument('--unixnu', required=True, type=Path,
+                        help='pinned UniXNU checkout (provides scripts/unixnu)')
     parser.add_argument('--out', required=True, type=Path)
     parser.add_argument('--device', required=True, type=Path)
     parser.add_argument('--jobs', type=int, default=4)
     args = parser.parse_args()
 
-    tree = args.out / 'sweet/tree'
-    if not (tree / 'scripts/unixnu/cli.py').is_file():
-        raise SystemExit(f'{tree} is not an assembled UniXNU tree')
-    sys.path.insert(0, str(tree / 'scripts'))
+    package = args.unixnu / 'scripts'
+    if not (package / 'unixnu/cli.py').is_file():
+        raise SystemExit(f'{package} does not contain the unixnu package')
+    sys.path.insert(0, str(package))
     from unixnu import cli, kernel
 
     def no_prelink(ctx):
