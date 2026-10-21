@@ -2,6 +2,22 @@
 
 ## Current local device state (2026-10-21, read first)
 
+- **0112 TEMPORARY BOOT / LIVE USB WORKING (2026-10-21):** user explicitly
+  authorized ADB/fastboot commands. adb reboot bootloader succeeded from
+  OrangeFox; fastboot boot0112 sent16992KB/BootingOKAY. No partition flashing.
+  Live UDP console receives real data from192.168.7.2, logs/live-0112-usb.txt
+  >216KiB. Host fixed-MAC interface has correct profile; capture session85796
+  remains active. Reset lifecycle across a subsequent replug is not yet proven.
+  GMEM validation now passes; CP still completes29/29, fence0x618c0de.
+  NEW BLOCKER live trace: SWEET RENDER reg0x534 expected0 read0xdeafbead
+  (RBBM_NC_MODE_CNTL). Render profile fails0xe00002ca; provider NOT published;
+  GMUstage9 ends errno5. Do not claim acceleration. Need determine A618
+  support/access for this macrotile-mode register against pinned Linux and
+  downstream/vendor configuration before changing its validation or access.
+  Phone left running temporary0112; home-screen state not visually confirmed.
+  No root image changes. Prior manual-boot preference superseded for this boot
+  by explicit user authorization. Existing Metal bundle stays compatible.
+
 - **0112 BUILD SUCCESS / READY, NOT BOOTED:** CI39625892744 succeeded on
   sourcefbb439533ba3c0dc7bd84d4a6a883a576dc8d537; portable test stepSKIPPED.
   Artifact12356753481 published checksum and ZIP CRC verified by fetch helper.
