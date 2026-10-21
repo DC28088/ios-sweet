@@ -1,0 +1,121 @@
+name: UniXNU sweet Darwin22 kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      jobs:
+        description: Parallel make jobs
+        default: "4"
+  push:
+    branches: [codex/unixnu-ios16-sweet]
+    paths:
+      - "ports/UniXNU-sweet/**"
+      - "tools/build-sweet-kernel.py"
+      - "tools/unixnu-kernel-port.py"
+      - ".github/workflows/unixnu-kernel.yml"
+
+concurrency:
+  group: unixnu-sweet-kernel-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  UNIXNU_REPO: https://github.com/UniXNU/UniXNU.git
+  UNIXNU_SHA: 89801d6e9265ba9aa49e56de642565288d679f83
+  XNU_REPO: https://github.com/apple-oss-distributions/xnu.git
+  XNU_SHA: 1b191cb58250d0705d8a51287127505aa4bc0789
+
+jobs:
+  patch_queue:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch the pinned Apple XNU source
+        run: |
+          git init -q xnu
+          git -C xnu fetch --depth 1 "$XNU_REPO" "$XNU_SHA"
+          git -C xnu checkout --detach FETCH_HEAD
+      - name: Apply the staged Darwin22 queue to pristine XNU
+        run: |
+          python3 tools/unixnu-kernel-port.py \
+            --source xnu \
+            --patches ports/UniXNU-sweet/patches/xnu \
+            --replacements ports/UniXNU-sweet/kernel-port \
+            --check \
+            --report patch-report.json
+          python3 - <<'PY'
+          import json
+          report = json.load(open('patch-report.json'))
+          assert report['complete'], report
+          assert report['rejected'] == 0, report
+          print(f"{report['applied']} patches apply; {report['skipped']} skipped")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unixnu-sweet-patch-report
+          path: patch-report.json
+          if-no-files-found: warn
+
+  kernel:
+    needs: patch_queue
+    runs-on: macos-14
+    timeout-minutes: 180
+    env:
+      UNIXNU_OUT: ${{ github.workspace }}/out
+      UNIXNU_DEVICE: ${{ github.workspace }}/ports/UniXNU-sweet
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode and install build tools
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app
+          xcodebuild -version
+          xcrun --find iig
+          brew install cmake ninja unifdef
+      - name: Fetch pinned UniXNU and submodules
+        run: |
+          git init -q unixnu
+          git -C unixnu fetch --depth 1 "$UNIXNU_REPO" "$UNIXNU_SHA"
+          git -C unixnu checkout --detach FETCH_HEAD
+          git -C unixnu submodule update --init --recursive --depth 1
+      - name: Configure and assemble the sweet tree
+        run: |
+          ./unixnu/unixnu defconfig sweet_ios16_defconfig \
+            -D "$UNIXNU_DEVICE" --out "$UNIXNU_OUT"
+          ./unixnu/unixnu tree -D "$UNIXNU_DEVICE" --out "$UNIXNU_OUT"
+          readlink -f "$UNIXNU_OUT/sweet/tree/patches/xnu"
+          test -f "$UNIXNU_OUT/sweet/tree/patches/xnu/source-machine-layer.patch"
+          test ! -e "$UNIXNU_OUT/sweet/tree/patches/xnu/zzz-boot-progress.patch"
+          grep -q 'miphoneos-version-min=16.0' \
+            "$UNIXNU_OUT/sweet/tree/scripts/build-xnu-4k-baseline.sh"
+      - name: Compile the Darwin22 kernel
+        run: |
+          python3 tools/build-sweet-kernel.py \
+            --out "$UNIXNU_OUT" --device "$UNIXNU_DEVICE" \
+            --jobs "${{ inputs.jobs || '4' }}"
+      - name: Record the built kernel
+        if: always()
+        run: |
+          find "$UNIXNU_OUT/sweet/tree/build/xnu" -maxdepth 4 \
+            \( -name 'mach.development.*' -o -name '*.unstripped*' \) 2>/dev/null | head -20
+          mkdir -p kernel-out
+          cp "$UNIXNU_OUT/sweet/tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf" kernel-out/ 2>/dev/null || true
+          cp "$UNIXNU_OUT/sweet/tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837" kernel-out/ 2>/dev/null || true
+          (cd kernel-out && sha256sum * > SHA256SUMS 2>/dev/null || true)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unixnu-sweet-darwin22-kernel
+          path: kernel-out/
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unixnu-sweet-darwin22-logs
+          path: |
+            out/sweet/logs/
+            out/sweet/tree/build/xnu/**/*.log
+          if-no-files-found: warn

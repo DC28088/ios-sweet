@@ -1,79 +1,244 @@
 {
-  "xnu_revision": "1b191cb58250d0705d8a51287127505aa4bc0789",
-  "unixnu_revision": "89801d6e9265ba9aa49e56de642565288d679f83",
-  "order": "sorted patches/xnu, stops at first unresolved rejection",
+  "xnu": {
+    "revision": "1b191cb58250d0705d8a51287127505aa4bc0789",
+    "version": "8796.141.3",
+    "darwin": "22.6.0",
+    "archive_sha256": "6f725962608800b26767242a0a19b8ed1c79e2bf1a0f659506f15ab0737c5acc",
+    "source_url": "https://github.com/apple-oss-distributions/xnu.git"
+  },
+  "unixnu": {
+    "revision": "89801d6e9265ba9aa49e56de642565288d679f83",
+    "patches": "patches/xnu"
+  },
+  "queue": {
+    "total": 51,
+    "applied": 44,
+    "darwin22_replacements": 4,
+    "deferred": 7,
+    "rejected": 0
+  },
+  "replacements": [
+    "apple-only-cpu-tunables.patch",
+    "external-archive-dependencies.patch",
+    "native-aes-personality.patch",
+    "source-machine-layer.patch"
+  ],
+  "verification": "Each selected patch applies cumulatively with git apply to a pristine XNU 8796.141.3 tree.",
+  "compiled": false,
+  "prelinked": false,
+  "runtime_verified": false,
+  "tests_run": false,
   "results": [
     {
       "patch": "apple-only-cpu-tunables.patch",
-      "state": "iOS16 replacement staged and applied"
+      "state": "applied with Darwin22 replacement"
     },
     {
       "patch": "architectural-timer-entry.patch",
-      "state": "upstream applied to iOS16"
+      "state": "applied upstream"
     },
     {
       "patch": "armvirt-platform-personality.patch",
-      "state": "upstream applied to iOS16"
+      "state": "applied upstream"
     },
     {
       "patch": "cxx-flag-dependencies.patch",
-      "state": "upstream applied to iOS16"
+      "state": "applied upstream"
     },
     {
       "patch": "disabled-deferred-reclaim.patch",
-      "state": "upstream applied to iOS16"
+      "state": "applied upstream"
     },
     {
       "patch": "external-archive-dependencies.patch",
-      "state": "iOS16 replacement staged and applied"
+      "state": "applied with Darwin22 replacement"
     },
     {
       "patch": "kernel-sdk-root.patch",
-      "state": "upstream applied to iOS16"
+      "state": "applied upstream"
     },
     {
       "patch": "local-availability.patch",
-      "state": "upstream applied to iOS16"
+      "state": "applied upstream"
     },
     {
       "patch": "mockfs-intermediate-lookup.patch",
-      "state": "upstream applied to iOS16"
+      "state": "applied upstream"
     },
     {
       "patch": "mockfs-memory-device-width.patch",
-      "state": "upstream applied to iOS16"
+      "state": "applied upstream"
     },
     {
       "patch": "mockfs-statfs.patch",
-      "state": "upstream applied to iOS16"
+      "state": "applied upstream"
     },
     {
       "patch": "mockfs-test-file.patch",
-      "state": "upstream applied to iOS16"
+      "state": "applied upstream"
     },
     {
       "patch": "mockfs-typed-allocation.patch",
-      "state": "upstream applied to iOS16"
+      "state": "applied upstream"
     },
     {
       "patch": "native-4k-bootstrap-capacity.patch",
-      "state": "upstream applied to iOS16"
+      "state": "applied upstream"
     },
     {
       "patch": "native-4k-signature-hash-cache.patch",
-      "state": "upstream applied to iOS16"
+      "state": "applied upstream"
     },
     {
       "patch": "native-4k-user-abi.patch",
-      "state": "upstream applied to iOS16"
+      "state": "applied upstream"
     },
     {
       "patch": "native-aes-personality.patch",
-      "state": "needs port",
-      "diagnostic": "error: patch failed: iokit/KernelConfigTables.cpp:61\nerror: iokit/KernelConfigTables.cpp: patch does not apply"
+      "state": "applied with Darwin22 replacement"
+    },
+    {
+      "patch": "native-arm-pan.patch",
+      "state": "applied upstream"
+    },
+    {
+      "patch": "native-dt-panic-region.patch",
+      "state": "applied upstream"
+    },
+    {
+      "patch": "native-priv-work-interval.patch",
+      "state": "applied upstream"
+    },
+    {
+      "patch": "native-quiet-managed-page-report.patch",
+      "state": "applied upstream"
+    },
+    {
+      "patch": "native-smp-secondary.patch",
+      "state": "applied upstream"
+    },
+    {
+      "patch": "native-trust-cache-runtime.patch",
+      "state": "applied upstream"
+    },
+    {
+      "patch": "native-union-getattrlistbulk.patch",
+      "state": "applied upstream"
+    },
+    {
+      "patch": "native-work-interval-soft-fail.patch",
+      "state": "applied upstream"
+    },
+    {
+      "patch": "native-work-interval-trace.patch",
+      "state": "applied upstream"
+    },
+    {
+      "patch": "non-apple-cache-monitor.patch",
+      "state": "applied upstream"
+    },
+    {
+      "patch": "non-apple-iommu-bootstrap.patch",
+      "state": "applied upstream"
+    },
+    {
+      "patch": "non-apple-pmap-field.patch",
+      "state": "applied upstream"
+    },
+    {
+      "patch": "null-root-media.patch",
+      "state": "applied upstream"
+    },
+    {
+      "patch": "offline-component-load-probes.patch",
+      "state": "applied upstream"
+    },
+    {
+      "patch": "offline-legacy-start.patch",
+      "state": "applied upstream"
+    },
+    {
+      "patch": "offline-native-gpu-broker.patch",
+      "state": "applied upstream"
+    },
+    {
+      "patch": "offline-owner-boot-manifest.patch",
+      "state": "applied upstream"
+    },
+    {
+      "patch": "offline-owner-cache-carrier.patch",
+      "state": "applied upstream"
+    },
+    {
+      "patch": "offline-owner-root-binding-audit.patch",
+      "state": "applied upstream"
+    },
+    {
+      "patch": "offline-owner-root-crypto-probe.patch",
+      "state": "applied upstream"
+    },
+    {
+      "patch": "offline-owner-systemos-mount.patch",
+      "state": "deferred",
+      "reason": "Owner-project SystemOS cache mount (XNU_OWNER_* APFS UUIDs, dyld preboot cache). Not part of the first sweet bring-up, which mounts the existing HFS+ root. Needs a full Darwin22 rewrite, not a context fix."
+    },
+    {
+      "patch": "offline-owner-z-air-init.patch",
+      "state": "applied upstream"
+    },
+    {
+      "patch": "offline-pgz-alignment-probe.patch",
+      "state": "applied upstream"
+    },
+    {
+      "patch": "pgz-aligned-validation.patch",
+      "state": "deferred",
+      "reason": "Patches zone_id_require_aligned(), which does not exist in XNU 8796. Darwin23-only hardening; not required to build or boot."
+    },
+    {
+      "patch": "public-entitlements-header.patch",
+      "state": "deferred",
+      "reason": "Switches CodeSignature/Entitlements.h to CoreEntitlements, which Darwin22 does not use. Darwin23-only source layout."
+    },
+    {
+      "patch": "published-freezer-condition.patch",
+      "state": "deferred",
+      "reason": "Edits FREEZE_ENABLED_DEFAULT, absent from XNU 8796. Darwin23-only memorystatus code."
+    },
+    {
+      "patch": "sheng-platform-power.patch",
+      "state": "applied upstream"
+    },
+    {
+      "patch": "source-corecrypto14-bootstrap.patch",
+      "state": "applied upstream"
+    },
+    {
+      "patch": "source-machine-layer.patch",
+      "state": "applied with Darwin22 replacement"
+    },
+    {
+      "patch": "source-pthread-bootstrap.patch",
+      "state": "applied upstream"
+    },
+    {
+      "patch": "zzw-native-adreno-sandbox-grant.patch",
+      "state": "applied upstream"
+    },
+    {
+      "patch": "zzx-pmap-sync-64bit-pa.patch",
+      "state": "deferred",
+      "reason": "Edits osfmk/arm64/sptm/pmap/pmap.c; SPTM does not exist in Darwin22."
+    },
+    {
+      "patch": "zzy-native-gpu-addon-mount.patch",
+      "state": "deferred",
+      "reason": "Depends on the offline-owner kern_exec.c context (SystemOS cache mount). Deferred with that feature."
+    },
+    {
+      "patch": "zzz-boot-progress.patch",
+      "state": "deferred",
+      "reason": "Depends on the offline-owner kern_exec.c context and Darwin23 sleh.c/Makefile layout. Optional observation layer; deferred."
     }
-  ],
-  "compiled": false,
-  "runtime_verified": false,
-  "tests_run": false
+  ]
 }

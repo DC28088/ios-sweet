@@ -2,6 +2,34 @@
 
 ## Current local device state (2026-10-21, read first)
 
+- **UEFI MENU PROTOTYPE SENT / DARWIN22 PATCH QUEUE COMPLETE (2026-10-21):**
+  phone was already in FASTBOOT; verified bundled SHA256SUMS, then
+  `fastboot boot research/unixnu-ios16-out/firmware-39636995649/Mu-sweet.img`
+  sent2168KB OKAY0.075s, BootingOKAY0.130s, no flash. Phone left fastboot and
+  no USB device appeared, so the firmware/menu ran far enough to leave the
+  bootloader; the actual on-screen UniXNU menu needs user confirmation. No
+  partition/root write and no iOS boot claim.
+  Kernel port: audited all51 pinned UniXNU XNU patches against XNU8796.141.3.
+  44 apply cumulatively (40 unchanged,4 Darwin22 replacements:
+  apple-only-cpu-tunables, external-archive-dependencies,
+  native-aes-personality, source-machine-layer). 7 deferred with reasons in
+  ports/UniXNU-sweet/kernel-port/skip.json (owner SystemOS cache, PGZ Darwin23
+  only, CoreEntitlements, freezer condition, SPTM,zzy/zzz dependents).
+  Reproducer tools/unixnu-kernel-port.py; report kernel-port/progress.json.
+  Staged queue is ports/UniXNU-sweet/patches/xnu (device module chosen by
+  UniXNU) and the pinned build script now uses the iOS16.0 deployment floor.
+  board.toml no longer gated as example and has the first ArmDTPlatform archive
+  builder. New CI .github/workflows/unixnu-kernel.yml: Linux patch gate plus
+  macOS-14 XNU compile with prelink intentionally skipped. NOT pushed/run yet,
+  no kernel compiled locally, no prelink and no hardware kernel test.
+  DarwinBoot submodule fetched at85332b3; its BootArgs.h is Darwin23-only for
+  the tail of the structure: iOS16 arm64 boot_args has CommandLine[608] and
+  bootFlags at0x32c, memSizeActual at0x334 (total0x33c), while DarwinBoot
+  writes1024 command-line bytes and places them at0x478. Needs a Darwin22
+  BootArgs variant before any kernel hand-off; do not boot a DarwinBoot image
+  built from the unmodified header.
+  No tests added/run beyond patch application checks.
+
 - **FIRST UniXNU SWEET UEFI PROTOTYPE BUILD SUCCESS, NOT BOOTED:** CI39636995649
   succeeded on4d353bf61d5dc254895014503550d4aeb66391a7. Artifacts downloaded
   research/unixnu-ios16-out/firmware-39636995649; published SHA256 pass.

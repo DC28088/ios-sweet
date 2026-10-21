@@ -1,18 +1,30 @@
 # Darwin22 source adaptation
 
-This directory stages replacements for the current UniXNU kernel patches on
-XNU8796.141.3. It is not wired into the generic kernel build: that build still
-needs a complete replacement patch module and matching archive/prelink scripts.
-The board readiness flag remains set.
+UniXNU at `89801d6e9265ba9aa49e56de642565288d679f83` applies 51 XNU patches
+sorted from `patches/xnu`. The selected Apple source is XNU `8796.141.3`
+(`1b191cb5`, Darwin 22.6.0), while upstream targets XNU `10063`/Darwin 23.
 
-The first upstream patch, apple-only-cpu-tunables, rejects the iOS16 start.s
-context. Its replacement preserves the same non-Apple CPU guard using the
-actual iOS16 source layout. The archive-dependency replacement targets
-Darwin22's .unstripped link rule rather than Darwin23's .unstripped.noctf.
-Source application was checked; no kernel was compiled or executed.
-progress.json records the next unresolved patch. Do not
-interpret a patch applying cleanly as a working4KiB kernel or driver.
+`progress.json` records the full audit. Every selected patch applies
+cumulatively to a pristine source tree:
 
-Reference: UniXNU89801d6e9265ba9aa49e56de642565288d679f83 patches/xnu;
-Apple XNU1b191cb58250d0705d8a51287127505aa4bc0789. The source patch retains
-the Apple source's license and the upstream patch's attribution/provenance.
+- 44 apply: 40 unchanged upstream, 4 with replacement patches here.
+- 7 are deliberately deferred; `skip.json` records why for each.
+- `tools/unixnu-kernel-port.py` reproduces the check. It never compiles code.
+
+The four replacements are context/layout adaptations, not behavior changes:
+
+| Patch | Darwin22 difference |
+| --- | --- |
+| `apple-only-cpu-tunables.patch` | guards the actual iOS16 `start.s` MIDR/tunables block |
+| `external-archive-dependencies.patch` | targets `.unstripped`, the real Darwin22 link product (not `.noctf`) |
+| `native-aes-personality.patch` | inserts the personalities after the shorter iOS16 `KernelConfigTables.cpp` table |
+| `source-machine-layer.patch` | adds `CONFIG_APPLE_AMCC`, the missing `nos_arm_asm/nos_arm_pmap` bits, and gates the absent AMCC sources |
+
+The device's `../patches/xnu` is the staged queue that UniXNU assembles as
+`tree/patches/xnu`; it already contains the replacements and omits the deferred
+patches. `../scripts/build-xnu-4k-baseline.sh` is the pinned upstream build
+script with the deployment floor changed from iOS 17.0 to 16.0.
+
+Applying a patch is not a compile, a link, a prelink or a hardware result. The
+first macOS kernel build is in `.github/workflows/unixnu-kernel.yml`; prelink
+against the 20H392 kernelcache is intentionally not part of that first run.
