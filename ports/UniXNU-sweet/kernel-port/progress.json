@@ -1,0 +1,79 @@
+{
+  "xnu_revision": "1b191cb58250d0705d8a51287127505aa4bc0789",
+  "unixnu_revision": "89801d6e9265ba9aa49e56de642565288d679f83",
+  "order": "sorted patches/xnu, stops at first unresolved rejection",
+  "results": [
+    {
+      "patch": "apple-only-cpu-tunables.patch",
+      "state": "iOS16 replacement staged and applied"
+    },
+    {
+      "patch": "architectural-timer-entry.patch",
+      "state": "upstream applied to iOS16"
+    },
+    {
+      "patch": "armvirt-platform-personality.patch",
+      "state": "upstream applied to iOS16"
+    },
+    {
+      "patch": "cxx-flag-dependencies.patch",
+      "state": "upstream applied to iOS16"
+    },
+    {
+      "patch": "disabled-deferred-reclaim.patch",
+      "state": "upstream applied to iOS16"
+    },
+    {
+      "patch": "external-archive-dependencies.patch",
+      "state": "iOS16 replacement staged and applied"
+    },
+    {
+      "patch": "kernel-sdk-root.patch",
+      "state": "upstream applied to iOS16"
+    },
+    {
+      "patch": "local-availability.patch",
+      "state": "upstream applied to iOS16"
+    },
+    {
+      "patch": "mockfs-intermediate-lookup.patch",
+      "state": "upstream applied to iOS16"
+    },
+    {
+      "patch": "mockfs-memory-device-width.patch",
+      "state": "upstream applied to iOS16"
+    },
+    {
+      "patch": "mockfs-statfs.patch",
+      "state": "upstream applied to iOS16"
+    },
+    {
+      "patch": "mockfs-test-file.patch",
+      "state": "upstream applied to iOS16"
+    },
+    {
+      "patch": "mockfs-typed-allocation.patch",
+      "state": "upstream applied to iOS16"
+    },
+    {
+      "patch": "native-4k-bootstrap-capacity.patch",
+      "state": "upstream applied to iOS16"
+    },
+    {
+      "patch": "native-4k-signature-hash-cache.patch",
+      "state": "upstream applied to iOS16"
+    },
+    {
+      "patch": "native-4k-user-abi.patch",
+      "state": "upstream applied to iOS16"
+    },
+    {
+      "patch": "native-aes-personality.patch",
+      "state": "needs port",
+      "diagnostic": "error: patch failed: iokit/KernelConfigTables.cpp:61\nerror: iokit/KernelConfigTables.cpp: patch does not apply"
+    }
+  ],
+  "compiled": false,
+  "runtime_verified": false,
+  "tests_run": false
+}
