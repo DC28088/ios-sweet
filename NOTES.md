@@ -2,6 +2,21 @@
 
 ## Current direction and last known device state (2026-10-22, read first)
 
+- **GLES LIBRARY INSTALLED AND READBACK VERIFIED (2026-10-22):** user
+  explicitly approved the staged userdata write. apply-delta.py freshly
+  matched ALL67 original chunks before the first write, applied22740992bytes
+  and verified every changed chunk by readbackSHA256. delta.json state is
+  installed-readback-verified;67/67 written_verified. Active root now has
+  /usr/lib/sweetgl.dylib SHA2560ae1789bb55795dec09edd3c741cba0687fdde0e36da1db2ad2dcc8fd377083d
+  and /private/var/db/sweet-gles-install.json. Exact original blocks retained
+  under research/gles-install-0115/delta; apply.log saved. Recovery/bootloader
+  partitions unchanged. Phone remains OrangeFox; NO reboot or runtime test.
+  NEXT: temporary boot shim/out/shim-boot-0116-gles-compositor-120hz.img
+  (not0115), then collect startup/provider/EAGL/submission evidence before
+  claiming acceleration. Existing Metal bundle retained; original boot
+  without sweetgles=1 does not inject the new library. All older pending
+  installation entries below are historical and superseded by this result.
+
 - **GLES INSTALLATION READY / WRITE APPROVAL PENDING:** fresh overlay full
   fsck-fy passed, read-only mount verified library hash/executable mode and
   install record. research/gles-install-0115/delta.json contains67 disjoint,
