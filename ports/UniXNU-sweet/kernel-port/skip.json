@@ -1,0 +1,12 @@
+{
+  "comment": "Patches of the pinned UniXNU queue that are deliberately not applied to Darwin22. Each entry records why. They are not replaced by a fake no-op: the staging script removes them from the build queue.",
+  "patches": {
+    "offline-owner-systemos-mount.patch": "Owner-project SystemOS cache mount (XNU_OWNER_* APFS UUIDs, dyld preboot cache). Not part of the first sweet bring-up, which mounts the existing HFS+ root. Needs a full Darwin22 rewrite, not a context fix.",
+    "pgz-aligned-validation.patch": "Patches zone_id_require_aligned(), which does not exist in XNU 8796. Darwin23-only hardening; not required to build or boot.",
+    "public-entitlements-header.patch": "Switches CodeSignature/Entitlements.h to CoreEntitlements, which Darwin22 does not use. Darwin23-only source layout.",
+    "published-freezer-condition.patch": "Edits FREEZE_ENABLED_DEFAULT, absent from XNU 8796. Darwin23-only memorystatus code.",
+    "zzy-native-gpu-addon-mount.patch": "Depends on the offline-owner kern_exec.c context (SystemOS cache mount). Deferred with that feature.",
+    "zzx-pmap-sync-64bit-pa.patch": "Edits osfmk/arm64/sptm/pmap/pmap.c; SPTM does not exist in Darwin22.",
+    "zzz-boot-progress.patch": "Depends on the offline-owner kern_exec.c context and Darwin23 sleh.c/Makefile layout. Optional observation layer; deferred."
+  }
+}

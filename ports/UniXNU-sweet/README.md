@@ -76,16 +76,28 @@ The output name is SWEET_UEFI.fd (confirmed from its source packaging script).
 NativePrelink's input parser also reads the selected iOS16 kernelcache:18
 segments and239 prelinked components. No native kernel has been linked yet.
 
-## First UEFI prototype built
+## First UEFI prototype built and sent
 
 CI39636995649 succeeded on4d353bf after pinning setuptools80.9.0 for the
 legacy build tools. Verified artifacts are in
 research/unixnu-ios16-out/firmware-39636995649: Mu-sweet.img and SWEET_UEFI.fd.
 The image contains the generic UniXNU application and registrar in the sweet
-FV. It does not contain DarwinBoot or a native iOS16 kernel/payload. It has not
-been booted on the phone. The compiled FD, ARM64 BootShim header and appended
-DTB were inspected against the packed image, and published SHA256 checks pass.
-See ../uefi-sweet/initial-build.json for exact hashes and header parameters.
+FV. It does not contain DarwinBoot or a native iOS16 kernel/payload.
+On 2026-10-21 it was sent with `fastboot boot` (temporary, no flash); the phone
+left fastboot. The on-screen menu result still needs the user's confirmation;
+the host saw no USB device afterwards. The compiled FD, ARM64 BootShim header
+and appended DTB were inspected against the packed image, and published SHA256
+checks pass. See ../uefi-sweet/initial-build.json for exact hashes and header
+parameters.
+
+## Darwin22 kernel patch queue
+
+The upstream 51-patch queue was audited against XNU 8796.141.3: 44 apply
+(4 with Darwin22 replacements in `kernel-port/`), 7 are deferred with reasons
+in `kernel-port/skip.json`. The staged `patches/xnu` and the iOS16 deployment
+floor are wired into the UniXNU device layout, and
+`.github/workflows/unixnu-kernel.yml` runs the first macOS compile without
+prelink. A clean patch application is not a compiled or bootable kernel.
 
 The reference firmware DTB has matching SM7150 ID365 and generic board ID0;
 the saved phone tree has board ID46. This difference is recorded for the first

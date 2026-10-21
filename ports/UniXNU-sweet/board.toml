@@ -6,7 +6,10 @@ name = "sweet"
 soc = "SM7150"
 description = "Redmi Note 10 Pro / Pro Max (sweet/sweetin), iOS16 migration"
 kit = "sweet"
-example = true
+# The kernel step is now buildable from the Darwin22 patch queue below. The
+# board stays incomplete (no payload/DarwinBoot boot path, no UFS/GPU backend),
+# so do not describe its output as a bootable iOS16 port.
+example = false
 
 [ipsw]
 url = "https://updates.cdn-apple.com/2025FallFCS/fullrestores/122-77006/1158E502-D76D-4226-AA06-ED5E30CD1111/iPhone10,3,iPhone10,6_16.7.16_20H392_Restore.ipsw"
@@ -20,6 +23,11 @@ fetch = ["KernelCache", "DeviceTree", "StaticTrustCache"]
 
 [kernel]
 defconfig = "sweet_ios16_defconfig"
+# First compile milestone: the generic DT platform only. ArmCpu, corecrypto,
+# UFS and the Adreno stack are added after this kernel builds.
+archives = [
+  "build-arm-driver.py ArmDTPlatform",
+]
 
 [kernel.prelink]
 # Decoded ordinary ARM64 Mach-O from the selected 20H392 restore identity.
