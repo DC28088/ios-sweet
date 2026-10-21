@@ -2,9 +2,19 @@
 
 ## Current local device state (2026-10-21, read first)
 
+- **Topaz source comparison detail:** reconstructed current SweetSurface.cpp:
+  sweet only0046+0068; lacks IOSurfaceAddress, client wrapping6/7 and real
+  values9..11/bulk27; release trap immediately drops maps. Topaz0131..0139
+  supplies these operations and detach-view lifetime handling. Concrete future
+  integration source identified; do not import Topaz scanout-pool addresses.
+  Public radio ready-hook declared/invoked but no consumer or IO80211 class
+  found in pinned tree. README reports working Settings Wi-Fi, but public
+  radio patches alone do not establish a complete iOS-facing interface.
+  Audit updated;0113 kernel still building. Phone remains running0112.
+
 - **Topaz reference refreshed /0113 source correction (2026-10-21):** fetched
-  origin/topaz89451b811a4e6cc5cdcf734c45887163d92c599e (local reference HEAD
-  remainsf999958; use git show origin/topaz). Public0113..0130 Wi-Fi code exists;
+  origin/topaz89451b811a4e6cc5cdcf734c45887163d92c599e; clean local reference
+  checkout now detached at that exact revision. Public0113..0130 Wi-Fi code exists;
   author README reports WPA2/HTTPS. Reported Topaz GPU uses private HackiOS
   GLES patches; README explicitly excludes GPU source and lists Metal later.
   Public0131..0139 are IOSurface support,0138 empty discovery service. Audit:
@@ -13,7 +23,8 @@
   by0113: downstream vendor a6xx_start only touches0x534 whenchannel==8;
   sweet has no such override. Skip this optional access, preserve reset state.
   Required registers now explicitly reject0xdeafbead before masked comparison.
-  No tests run; patch staging/CI pending. Existing Metal ABI unchanged.
+  No tests run; patch staging passed. CI39630488384 builds source133087dc748a2f3f9bb2b71df2b465ce7832e123.
+  finish-0113.py watches/downloads/packages; existing Metal ABI unchanged.
 
 - **0112 TEMPORARY BOOT / LIVE USB WORKING (2026-10-21):** user explicitly
   authorized ADB/fastboot commands. adb reboot bootloader succeeded from
