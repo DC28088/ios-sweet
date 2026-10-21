@@ -935,13 +935,14 @@ diff --git a/iokit/Kernel/arm/SweetNativeAdrenoClient.cpp b/iokit/Kernel/arm/Swe
 new file mode 100644
 --- /dev/null
 +++ b/iokit/Kernel/arm/SweetNativeAdrenoClient.cpp
-@@ -0,0 +1,206 @@
+@@ -0,0 +1,207 @@
 +/* SPDX-License-Identifier: MIT
 + * IOKit transport for the real NativeAdreno ABI. One compositor connection,
 + * one resource gate, synchronous quiescence before VM edits/cache publication.
 + */
 +#include <IOKit/IOLib.h>
 +#include <IOKit/IOBufferMemoryDescriptor.h>
++#include <IOKit/IOPlatformExpert.h>
 +#include <IOKit/IOService.h>
 +#include <IOKit/IOUserClient.h>
 +#include <kern/task.h>
