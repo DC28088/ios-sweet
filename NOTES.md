@@ -2,6 +2,26 @@
 
 ## Current local device state (2026-10-21, read first)
 
+- **0110 paired boot still slow; USB live logging NOW VERIFIED:** user says
+  installed bundle +0110 boots with unchanged performance. Current device iOS,
+  enumerated1209:0001, USB Ethernet MAC02:00:5e:77:ee:01. Host enp0s20f0u3 had
+  onlyIPv6, no UDP5140 receiver. sudo requires password, but nmcli device modify
+  succeeded as desktop user; assigned192.168.7.1/24 and ping192.168.7.2 answered.
+  Received actual console into logs/live-0110-usb.txt; now captures daemon execs,
+  FB timing and USB counters. Observed1200callbacks/10s but present_calls=0;
+  this is scheduler evidence, NOT GPU rendering proof or measured frame rate.
+  Created dedicated persistent NM profile sweet-usb-log, matches only phoneMAC,
+  manualIPv4/no default route/IPv6 disabled/autoconnect priority100. Replaced
+  sudo+nc shell helper with Python UDP receiver binding BEFORE configuring NM,
+  source-filtering phoneIP, append log, optional --duration and reconnect wait.
+  Current capture launched with300s duration; original90s capture also received
+  data. No kernel/root writes/reboot this turn. Startup already missed before
+  address setup; requested user manually enter OrangeFox withPower+VolUp to
+  pull full persistent0110 startup trace. Awaiting reply. Do not assume provider
+  published/Metal loaded from boot success, and do not build another speculative
+  driver image before reading startup result. NSLog is not automatically in
+  kernel stream; frontend diagnostic routing remains an instrumentation gap.
+
 - **METAL BUNDLE INSTALLED into phone userdata (2026-10-21):** user manually
   entered OrangeFox with Power+VolUp after software recovery boot returned to
   FASTBOOT. ADB recovery root now works. User explicitly authorized copying the

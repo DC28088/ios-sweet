@@ -19,15 +19,22 @@ mkdir -p logs
 bash tools/sweet-usbnet.sh logs/live-renderer.txt
 ```
 
-The helper waits for host MAC `02:00:5e:77:ee:01`, assigns 192.168.7.1/24
-using sudo, and listens on UDP5140. It requires iproute, NetworkManager's nmcli
-(optional), and netcat. The phone uses 192.168.7.2. Interface configuration
+The helper binds UDP5140 before configuring the link. It waits for host MAC
+`02:00:5e:77:ee:01` and uses a dedicated NetworkManager profile `sweet-usb-log`
+to assign192.168.7.1/24, with no default route or DNS changes. It requires
+Python3, iproute and nmcli. Host sudo is unnecessary when the desktop
+NetworkManager policy permits connection changes (confirmed on this Fedora
+host). The phone uses192.168.7.2. `--duration SECONDS` bounds a capture. Interface configuration
 may need adjustment if Fedora's firewall blocks incoming UDP5140; restrict
 any exception to this USB interface. No ttyACM node is expected for CDC-ECM.
 
-The old project notes record working USB enumeration and ping on0076. That
-does not qualify USB operation with the current GPU kernel. Nothing was booted
-or connected to USB while preparing this document.
+On2026-10-21, kernel0110 enumerated as1209:0001, created USB Ethernet,
+answered ping, and streamed live console messages into logs/live-0110-usb.txt.
+Initially the host had only IPv6 and no UDP receiver. Setting its IPv4 address
+and starting the receiver enabled live output without rebooting the phone.
+The dedicated profile now autoconnects for this MAC. Kernel startup bytes sent
+before host setup may already have been lost; use the persistent recovery log
+for that boot. This is a kernel console transport, not an iOS ADB/debug shell.
 
 Look for the real startup sequence in the saved file:
 
