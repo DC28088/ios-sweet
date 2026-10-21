@@ -2,6 +2,23 @@
 
 ## Current direction and last known device state (2026-10-22, read first)
 
+- **0114 GPU IMAGE BUILD PREPARATION (2026-10-22):** user requested a new
+  GPU image. Mesa documentation confirms Gallium freedreno supports Adreno
+  6xx GLES and Turnip supports 6xx Vulkan. Neither replaces our XNU hardware
+  transport. New patch0114 corrects RPMh completion polling: enable the
+  selected RSC completion source, require a fresh latch plus idle/command
+  completion, and preserve timeout quarantine. Verify GIC INTID37 is disabled
+  and inactive before enabling the RSC source; make no GIC writes. Addresses
+  verified against saved live FDT: apps_rsc SPI5, distributor0x17a00000.
+  This addresses the observed race hypothesis where masked IRQ_STATUS stays
+  zero and a short busy transition is missed; hardware success not proven.
+  Exact ordered patch application reproduces intended source. CI marker
+  added, portable tests will be disabled. Packaging helper prepared at
+  research/gpu/package-0114.py, retains stage9/120Hz/liveUSB and existing
+  ADT/firmware/shim. Existing installed Metal bundle ABI unchanged. This
+  kernel image does NOT include a ported GLES userland; do not claim GLES
+  or UI acceleration. No tests or device commands run; CI build pending.
+
 - **PLAN CHANGED BACK: DIRECT SHIM + iOS16 + GLES (2026-10-22):** user
   explicitly returned to main/adreno-power-audit and supplied the Pixel1
   sailfish GPU reference. Active branch is `codex/adreno-power-audit`,
