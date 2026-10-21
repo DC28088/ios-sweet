@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Darwin22 device override: build xnu-8796.141.3 with the iOS 16 SDK floor.
+# The extra line keeps this file a different size from UniXNU's Darwin23 script,
+# because the tree copier skips same-size device overrides whose mtime is older
+# than the copy it already made from the UniXNU checkout.
 set -euo pipefail
 # Many checks are bare `test -f`; name the one that stops the build.
 trap 'echo "build-xnu-4k-baseline.sh: line $LINENO: $BASH_COMMAND failed" >&2' ERR
