@@ -2,6 +2,24 @@
 
 ## Current direction and last known device state (2026-10-22, read first)
 
+- **0114 LOG RECOVERED / GLES BUILD SUCCESS (2026-10-22):** user entered
+  OrangeFox with USB. Read-only recovery pull logs/gpu-0114-before-gles.txt
+  proves RPMh correction passed, GMU/HFI/SQE startup passed, CP29/29 and
+  fence0x618c0de completed. Actual provider blocker now UCHE_CLIENT_PF0xe19:
+  expected0x81, read1. Driver refused publication; zero improvement explained
+  by that log, not an inferred userspace-only fault. Pinned downstream
+  vendor-adreno_a6xx.c:943 writes1; XML names this8-bit field PERFSEL.
+  Patch0116 programs vendor selector1 and validates all8 field bits, retaining
+  the rest of the profile gates.0115 also gets an argument-space bounds check
+  after env-string copy. New companion build pending (will be image0116).
+  GLES CI39688037690 succeeded on4e701be. Artifact downloading to
+  userspace/out/0115-gles-4e701be. First companion kernel39687265147 passed
+  on266325e; packaged0115 image exists but is superseded by0116 before boot.
+  No phone writes/reboots performed. Current phone is OrangeFox; userdata
+  unmounted, HFS+ volume17179869184bytes in114970046464byte partition.
+  Fresh installer staging research/gles-install-0115; never reuse the older
+  Metal installer block cache for writes against this later filesystem.
+
 - GLES first build39687042106 compiled all Mesa static libraries and the
   EAGL/dispatch frontend, then failed on sweet_native.cpp's IOSurface.h
   include (iOS SDK provides IOSurfaceRef.h). Corrected. Source review also

@@ -1,6 +1,6 @@
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
-@@ -444,6 +444,27 @@
+@@ -444,6 +444,28 @@
  
  	return error;
  }
@@ -19,6 +19,7 @@
 +    static const char env[]="DYLD_INSERT_LIBRARIES=/usr/lib/sweetgl.dylib";
 +    int error=exec_add_user_string(imgp,CAST_USER_ADDR_T(env),UIO_SYSSPACE,TRUE);
 +    if (error) return error;
++    if (imgp->ip_argspace<ptr_size) return E2BIG;
 +    imgp->ip_argspace-=ptr_size;
 +    imgp->ip_envc++;
 +    printf("SWEET GLES: backboardd will load /usr/lib/sweetgl.dylib\n");
@@ -28,7 +29,7 @@
  
  /*
   * dyld is now passed the executable path as a getenv-like variable
-@@ -5759,6 +5780,11 @@
+@@ -5759,6 +5781,11 @@
  		imgp->ip_envc++;
  	}
  
