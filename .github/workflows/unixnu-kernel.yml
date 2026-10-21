@@ -35,13 +35,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Fetch the pinned Apple XNU source
         run: |
-          git init -q xnu
-          git -C xnu fetch --depth 1 "$XNU_REPO" "$XNU_SHA"
-          git -C xnu checkout --detach FETCH_HEAD
+          git init -q apple-xnu
+          git -C apple-xnu fetch --depth 1 "$XNU_REPO" "$XNU_SHA"
+          git -C apple-xnu checkout --detach FETCH_HEAD
       - name: Apply the staged Darwin22 queue to pristine XNU
         run: |
           python3 tools/unixnu-kernel-port.py \
-            --source xnu \
+            --source apple-xnu \
             --patches ports/UniXNU-sweet/patches/xnu \
             --replacements ports/UniXNU-sweet/kernel-port \
             --check \
@@ -73,7 +73,9 @@ jobs:
         run: |
           sudo xcode-select -s /Applications/Xcode.app
           xcodebuild -version
-          xcrun --find iig
+          # XNU installhdrs looks iig up through xcrun for DriverKit headers.
+          # Report it without failing here; a missing tool shows up in the build log.
+          xcrun --find iig || echo "warning: iig not found by xcrun"
           brew install cmake ninja unifdef
       - name: Fetch pinned UniXNU and submodules
         run: |
