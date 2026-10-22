@@ -2,6 +2,23 @@
 
 ## Current direction and last known device state (2026-10-22, read first)
 
+- **USER CHANGED PROJECT TO HACKiOS (2026-10-22):** user reports0116 booted
+  with zero improvement, initially stopped, then explicitly requested a new
+  HackiOS-based Sweet repository and compiled boot image. Original branch
+  and installed userdata preserved; no further device command performed.
+  New project /home/dan/hackios-sweet, https://github.com/DC28088/hackios-sweet.
+  Kernel/loader CI39773636216 succeeded on659167c; Sweet UEFI firmware job
+  CI39773154339 succeeded; HackiOS Mesa/EAGL CI39772020663 succeeded.
+  Package CI39774118533 succeeded. Image newrepo/out/boot-39774118533/
+  hackios-sweet-boot.img,7833600bytes,
+  SHA25614ab4eb6d16d503eabe3a67d037f24b83d3b6bc7b8a81d6c1dff176c74d83072.
+  This is the resident HackiOS USB loader + compiled XNU, not an iOS root.
+  Requires separate iOS16.5 APFS system/helper images. Current16.7.16 HFS+
+  userdata and its sweetgl library are not compatible with HackiOS ABI.
+  Root extraction not started (needs~8GB working space, host~4.7GB free).
+  Hardware boot/GPU acceleration NOT verified; no tests/device writes.
+  New repo NOTES.md and ports/sweet/README.md contain the current handoff.
+
 - **GLES LIBRARY INSTALLED AND READBACK VERIFIED (2026-10-22):** user
   explicitly approved the staged userdata write. apply-delta.py freshly
   matched ALL67 original chunks before the first write, applied22740992bytes
