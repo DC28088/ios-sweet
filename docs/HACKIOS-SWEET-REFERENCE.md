@@ -72,7 +72,8 @@ with a data producer. Wi-Fi/audio/battery/haptic runtime ports are unfinished.
 Source preparation completed locally. The first dispatch failed with HTTP422,
 then the user requested a retry. The macOS14 run39981853003 was queued during
 its scheduled brownout and canceled. Replacement run39982823642 on4f144ff
-uses macOS15 and is awaiting a runner; no new library artifact is available yet.
+uses macOS15 and succeeded. Artifact12515411703 has been downloaded and its
+archive/API digest, CRC and file hashes verified.
 
 The user confirmed manually restoring userdata after the black-screen boot.
 Fresh read-only inspection and an HFS+ mount in a local overlay confirm that
@@ -84,5 +85,11 @@ the local qcow2 overlay. No phone blocks have been changed.
 Matching image: `shim/out/shim-boot-0117-gles-srgb-120hz.img`, SHA256
 `225203f037160ce67f549a1d11104eab97b22f86d58bfa73eff802184a8a8b17`.
 It uses the compiled0116 kernel and corrected sRGB ADT, and requires the new
-GLES library once built. Do not describe this pair as complete until the
-library is built and installed. Boot and rendering remain unverified.
+GLES library once built. The library is built at `userspace/out/0117-gles-4f144ff-range/sweetgl.dylib`
+(18790896bytes), SHA256
+`2eb01550cbddc2619c7feaf36485935052c934acd577ee55eccaeedfafd83b09`.
+Installation is staged as48 chunks totaling21233664bytes (20.25MiB), with
+all original bytes retained for rollback and all current phone blocks matched
+by fresh preflight. The local overlay passed filesystem and library hash
+checks. The phone has not been written. AGENTS.md requires confirmation for
+the raw userdata update. Boot and rendering remain unverified.
