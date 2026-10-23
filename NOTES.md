@@ -18,6 +18,19 @@
   selection, BO submission and fence retirement in that order. ADB absent
   on initial read-only check. No device writes/boot or source change made.
 
+- **Recovery log retrieved 2026-10-23:** read-only userdata-tail pull saved
+  logs/gpu-0116-return-20261023.txt(.bin), total1308564bytes flush4664.
+  Filename describes the collection intent, NOT proven kernel identity.
+  This trace's boot-args omit sweetgles=1 and sweetnull=backboardd (line274).
+  GPU GMU/HFI/SQE and CP29/29 fence0x618c0de pass (line2412), but render
+  gate still expects UCHE0xe19=0x81/read1 (line2414); provider stays ready0.
+  Thus this is a pre0116 configuration, not evidence the corrected0116
+  GLES pair failed. No sweetgl startup marker. Verified local0116 image
+  SHA2569ac29bf16277d7b41eb28690f6181832feabcb80def8d66b1cbb337c70f981c3
+  against saved manifest; its cmdline contains sweetgles=1. Need a fresh
+  temporary boot of this exact image and recovery/live log. Phone left in
+  OrangeFox; no writes, reboot, or new tests performed.
+
 ### Historical HackiOS detour and earlier installation records
 
 - **USER CHANGED PROJECT TO HACKiOS (2026-10-22):** user reports0116 booted
