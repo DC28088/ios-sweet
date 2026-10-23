@@ -59,7 +59,7 @@ sweet_drm_bo_size(int fd, uint32_t handle)
     struct sbo *b=sbo(handle);
     uint64_t size=b?b->size:0;
     static unsigned reports;
-    bool report=reports++<8;
+    int report=reports++<8;
     pthread_mutex_unlock(&lock);
     if (report) sweet_drm_log("sweetgl: imported BO %u allocation %llu bytes",handle,(unsigned long long)size);
     return size;
