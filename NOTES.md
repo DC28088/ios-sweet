@@ -22,6 +22,13 @@
   obtain the required destructive-write approval, then install and observe.
   Wi-Fi, audio, calibrated battery and Metal remain unfinished ports.
 
+- **Runner correction:** run39981853003 was queued on macos-14 during its
+  scheduled2026-10-23 14:00–00:00 UTC brownout (actions/runner-images#13518).
+  Move the GLES job to macos-15, preserve the pinned sources and iOS16 minimum,
+  cancel the queued run and dispatch its replacement. Fresh root snapshot and
+  local-overlay HFS check completed; no installed GLES library after user's
+  manual userdata restore. No device writes.
+
 - **Recovery log retrieved 2026-10-23:** read-only userdata-tail pull saved
   logs/gpu-0116-return-20261023.txt(.bin), total1308564bytes flush4664.
   Filename describes the collection intent, NOT proven kernel identity.
