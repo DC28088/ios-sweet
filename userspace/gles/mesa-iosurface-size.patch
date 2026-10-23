@@ -1,0 +1,22 @@
+--- a/src/gallium/drivers/freedreno/freedreno_screen.c
++++ b/src/gallium/drivers/freedreno/freedreno_screen.c
+@@ -878,7 +878,19 @@
+    if (whandle->type == WINSYS_HANDLE_TYPE_SHARED) {
+       bo = fd_bo_from_name(screen->dev, whandle->handle);
+    } else if (whandle->type == WINSYS_HANDLE_TYPE_KMS) {
++#ifdef __APPLE__
++      /* IOSurface imports are local GEM handles rather than dma-buf FDs.
++       * Unlike Linux's GEM ioctl, our transport knows the allocation size;
++       * pass it to Mesa so a6xx can validate the explicit image layout.
++       */
++      extern uint64_t sweet_drm_bo_size(int fd, uint32_t handle);
++      uint64_t size = sweet_drm_bo_size(fd_device_fd(screen->dev), whandle->handle);
++      if (!size || size > UINT32_MAX)
++         return NULL;
++      bo = fd_bo_from_handle(screen->dev, whandle->handle, (uint32_t)size);
++#else
+       bo = fd_bo_from_handle(screen->dev, whandle->handle, 0);
++#endif
+    } else if (whandle->type == WINSYS_HANDLE_TYPE_FD) {
+       bo = fd_bo_from_dmabuf(screen->dev, whandle->handle);
+    } else {

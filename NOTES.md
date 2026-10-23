@@ -2,33 +2,30 @@
 
 ## Current direction and last known device state (2026-10-23, read first)
 
-- **ACTIVE:0117 GLES pair built and installation staged, awaiting approval.**
-  Branch `codex/adreno-power-audit`; original iOS16.7.16 HFS+, direct shim,
-  NativeAdreno ABI1.0116 proved provider ready1 and Mesa/EAGL loaded but failed
-  on b3a8 surfaces/zero plane pitch and later fence timeouts. Source00f535a
-  adapts HackiOS sRGB identity and non-planar IOSurface getters. User manually
-  restored userdata; fresh inspection confirms no GLES library/record.
-  GLES CI39982823642 SUCCESS on4f144ff5cc8f3ba5ae6991ceb83dc9dececf2852.
-  Artifact12515411703 downloaded by ZIP-range fallback after gh timed out;
-  archive CRC/API digest and all SHA256SUMS verified. Library:
-  userspace/out/0117-gles-4f144ff-range/sweetgl.dylib (18790896bytes), SHA256
-  2eb01550cbddc2619c7feaf36485935052c934acd577ee55eccaeedfafd83b09.
-  Actual ARM64/iOS platform2/minimum16.0/signature command verified; cache UUID
-  8f970452c9e33e88b114feb1864bc9e0 matches the restored root.
-  Matching image shim/out/shim-boot-0117-gles-srgb-120hz.img, SHA256
-  225203f037160ce67f549a1d11104eab97b22f86d58bfa73eff802184a8a8b17.
-  It reuses compiled0116 kernel, changes only product gamut in firmware ADT,
-  and includes sweetbuild=117 in boot args. Runtime rendering unverified.
-  Fresh staging research/gles-install-0117: local qcow2 filesystem check and
-  read-only mounted library hash passed, guest-success VERIFIED_UNMOUNTED.
-  delta.json state staged-not-written:48 chunks/21233664bytes (20.25MiB),
-  every original/modified byte retained under delta/. Preflight freshly read
-  ALL48 original phone chunks and matched hashes; no phone writes or reboot.
-  Root/edited read-only NBD sockets: /tmp/sweet-gles117-{root,edited}.sock.
-  Next: obtain required raw-write approval under AGENTS.md, run apply-delta.py
-  (rechecks all blocks before writing and verifies each by readback), then
-  temporarily boot0117 if authorized. Never reuse0115 cache/delta after restore.
-  Wi-Fi, audio, calibrated battery and full Metal remain unfinished ports.
+- **ACTIVE:0117 installed and booted to userspace, still black UI;0118 fix staged.**
+  Original ios-sweet branch codex/adreno-power-audit, iOS16.7.16 HFS+.
+  User approved raw0117 install and temporary boot. All48 chunks/21233664bytes
+  matched before writing and passed readback after writing; delta state is
+  installed-readback-verified, originals retained in research/gles-install-0117.
+  Library SHA2562eb01550cbddc2619c7feaf36485935052c934acd577ee55eccaeedfafd83b09.
+  Boot image SHA256225203f037160ce67f549a1d11104eab97b22f86d58bfa73eff802184a8a8b17.
+  adb reboot bootloader, product sweetin, temporary fastboot boot sent16992KB
+  OKAY0.514s and BootingOKAY0.130s. No boot/recovery/GPT flashing.
+  Live USB capture now WORKS: logs/live-0117-usb.txt,312416bytes in210s.
+  Provider ready1, CP fence passes, Mesa FD618/EAGL loaded. Formats corrected
+  to BGRA1125x2436, pitch4608. Actual error now "mesa layout failed" on
+  surface2/3; user confirms black screen. No acceleration claim.
+  Pinned Mesa source confirms fd_screen_bo_from_handle passes0 size for KMS
+  handle imports; a6xx layout_resource_for_handle rejects layout.size greater
+  than fd_bo_size. Our new IOSurface handles were never Mesa BOs before import,
+  so need their real allocation size from the transport BO table. New Darwin
+  patch passes that extent into fd_bo_from_handle, with zero/UINT32 checks;
+  retain Mesa layout bounds checks. Prepared research/gles-0118-prepared.
+  Build pending; this is a source correction, not hardware-verified rendering.
+  Phone remains running0117 with black UI. Need recover/read trace as needed,
+  build/verify replacement library, stage fresh delta against current root
+  (do not reuse0117 before-state), obtain new raw-write approval before update.
+  Full Metal, Wi-Fi, audio and calibrated battery remain unfinished ports.
 
 - **Runner correction:** run39981853003 was queued on macos-14 during its
   scheduled2026-10-23 14:00–00:00 UTC brownout (actions/runner-images#13518).
