@@ -20,9 +20,8 @@ Wi-Fi or audio drivers. The features need hardware adaptation on Sweet.
 
 Fresh0116 log: `logs/gpu-0116-failed-20261023.txt`.
 NativeAdreno ready1, Mesa screen and EAGL installed. Rendering then fails
-on b3a8 surfaces with zero plane pitch; later fences time out. The existing
-library is installed in userdata. The proposed original-root restore was
-never executed, so no restoration of that library was necessary.
+on b3a8 surfaces with zero plane pitch; later fences time out. The library was installed for0116. The user later confirmed manually restoring
+userdata, and a fresh0117 library installation was staged against that root.
 
 1. HackiOS `xnuloader/loader.c:dt_identity` advertises sRGB for its8-bit BGRA
    framebuffer. Its comment explains that P3 causes unsupported b3a8/w30r
@@ -88,8 +87,24 @@ It uses the compiled0116 kernel and corrected sRGB ADT, and requires the new
 GLES library once built. The library is built at `userspace/out/0117-gles-4f144ff-range/sweetgl.dylib`
 (18790896bytes), SHA256
 `2eb01550cbddc2619c7feaf36485935052c934acd577ee55eccaeedfafd83b09`.
-Installation is staged as48 chunks totaling21233664bytes (20.25MiB), with
-all original bytes retained for rollback and all current phone blocks matched
-by fresh preflight. The local overlay passed filesystem and library hash
-checks. The phone has not been written. AGENTS.md requires confirmation for
-the raw userdata update. Boot and rendering remain unverified.
+The user approved the48-chunk installation (21233664bytes/20.25MiB) and a
+temporary0117 boot. All original blocks matched, and every written chunk passed
+readback SHA256. Originals remain available for rollback. Temporary boot was
+accepted, and live USB captured312416bytes: iOS userspace, A618 provider and
+Mesa/EAGL started. Formats are now BGRA1125x2436 with pitch4608. The UI remains
+black because Mesa rejects the imported framebuffer layout. No accelerated
+presentation has been established.
+
+## Follow-up: A6xx import extent
+
+The pinned Mesa `freedreno_screen.c:fd_screen_bo_from_handle` passes size0 to
+`fd_bo_from_handle` for KMS handles. These IOSurface imports have not previously
+been registered as Mesa BOs. `fd6_resource.cc:layout_resource_for_handle`
+rejects `layout.size > fd_bo_size(bo)`, so their zero extent prevents import.
+
+The new Darwin-only patch `userspace/gles/mesa-iosurface-size.patch` obtains
+the actual allocation extent from the transport BO table, validates the32-bit
+size range and passes it into Mesa's import. Mesa's layout/buffer bounds checks
+remain intact. Source b2cd6ea is the intended follow-up; compilation and new
+hardware results are still pending. Do not repeat an0117 before-state block
+delta against its now-modified root.
