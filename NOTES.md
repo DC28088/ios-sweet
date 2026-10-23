@@ -21,8 +21,9 @@
   so need their real allocation size from the transport BO table. New Darwin
   patch passes that extent into fd_bo_from_handle, with zero/UINT32 checks;
   retain Mesa layout bounds checks. Prepared research/gles-0118-prepared.
-  Build pending; use the follow-up C-compatible logging source. This is a
-  source correction, not hardware-verified rendering.
+  Follow-up CI39988038341 dispatched onb2cd6ea (C-compatible size logging);
+  it supersedes canceled39987963423. This is a source correction, not
+  hardware-verified rendering.
   Phone remains running0117 with black UI. Need recover/read trace as needed,
   build/verify replacement library, stage fresh delta against current root
   (do not reuse0117 before-state), obtain new raw-write approval before update.
