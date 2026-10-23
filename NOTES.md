@@ -31,6 +31,13 @@
   temporary boot of this exact image and recovery/live log. Phone left in
   OrangeFox; no writes, reboot, or new tests performed.
 
+- **0116 temporary boot explicitly authorized 2026-10-23:** verified image
+  SHA2569ac29bf16277d7b41eb28690f6181832feabcb80def8d66b1cbb337c70f981c3,
+  adb reboot bootloader from recovery, fastboot product sweetin. Temporary
+  fastboot boot sent16992KB OKAY0.530s, BootingOKAY0.130s. No flashing.
+  Await actual iOS startup and new GPU/GLES trace; transport success is not
+  proof of boot completion or acceleration.
+
 ### Historical HackiOS detour and earlier installation records
 
 - **USER CHANGED PROJECT TO HACKiOS (2026-10-22):** user reports0116 booted
