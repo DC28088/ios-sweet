@@ -48,7 +48,24 @@ connect_dev(void)
  s=once(s,'case DRM_MSM_SUBMITQUEUE_CLOSE:\n\t\treturn 0;', '}\n    case DRM_MSM_SUBMITQUEUE_CLOSE: {\n        uint32_t id=*(uint32_t *)data;\n        if (!id || id>=8) return -EINVAL;\n        pthread_mutex_lock(&lock);\n        int active=(queues&(1u<<id))!=0;\n        queues&=~(1u<<id);\n        pthread_mutex_unlock(&lock);\n        return active?0:-EINVAL;\n    }')
  s=once(s,'*(uint32_t *)(uintptr_t)q->data = 0;', 'uint64_t faults=0,suspends=0;\n        if (sweet_gpu_status(&faults,&suspends)) return -EIO;\n        *(uint32_t *)(uintptr_t)q->data = faults>UINT32_MAX?UINT32_MAX:(uint32_t)faults;')
  s=once(s,'if (!r->nr_cmds || r->nr_cmds > 4096 || !r->nr_bos || r->nr_bos > 1024) return -EINVAL;', 'if (!r->nr_cmds || r->nr_cmds > 4096 || !r->nr_bos || r->nr_bos > 1024 || !r->queueid || r->queueid>=8) return -EINVAL;')
- # Cache invalidation and frame presentation use the same base that the kernel pins.
+ # a6xx resource import validates the layout against the actual BO extent.
+ anchor='void *\nsweet_drm_bo_map('
+ index=s.index(anchor)
+ s=s[:index]+'''uint64_t
+sweet_drm_bo_size(int fd, uint32_t handle)
+{
+    (void)fd;
+    pthread_mutex_lock(&lock);
+    struct sbo *b=sbo(handle);
+    uint64_t size=b?b->size:0;
+    static unsigned reports;
+    bool report=reports++<8;
+    pthread_mutex_unlock(&lock);
+    if (report) sweet_drm_log("sweetgl: imported BO %u allocation %llu bytes",handle,(unsigned long long)size);
+    return size;
+}
+
+'''+s[index:]
  return s
 edit('sweet_drm.c',drm)
 profile=json.loads((ROOT/'userspace/gles/cache-profile.json').read_text())
