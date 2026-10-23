@@ -2,25 +2,33 @@
 
 ## Current direction and last known device state (2026-10-23, read first)
 
-- **ACTIVE: original ios-sweet GPU integration.** Branch
-  `codex/adreno-power-audit`; iOS16.7.16 HFS+, direct shim, NativeAdreno ABI1.
-  The fresh0116 trace proved provider ready1 and Mesa/EAGL loaded, followed by
-  unsupported b3a8 surfaces, zero plane pitch and fence timeouts. Source
-  00f535a adapts HackiOS's sRGB identity and non-planar IOSurface metadata.
-  User subsequently confirmed manually restoring userdata. Fresh read-only
-  inspection matches16.7.16/20H392 and cache UUID8f970452c9e33e88b114feb1864bc9e0,
-  with no sweetgl library; the next operation is a fresh installation.
-  GitHub accepted the retry: GLES run39982823642 on4f144ff, currently waiting
-  for a macOS15 runner. It supersedes the canceled macOS14 run39981853003. No replacement library is built yet. Matching sRGB
-  image shim/out/shim-boot-0117-gles-srgb-120hz.img is packaged from the unchanged
-  0116 kernel, SHA256225203f037160ce67f549a1d11104eab97b22f86d58bfa73eff802184a8a8b17.
-  It requires the replacement library; do not boot as a complete fix alone.
-  Fresh read-only root proxy /tmp/sweet-gles117-root.sock and local qcow2 staging
-  under research/gles-install-0117; no phone writes. Never reuse the0115 cache
-  or block delta after this restore. Next: compile/download/verify the GLES
-  artifact, stage a fresh validated root delta with original blocks for rollback,
-  obtain the required destructive-write approval, then install and observe.
-  Wi-Fi, audio, calibrated battery and Metal remain unfinished ports.
+- **ACTIVE:0117 GLES pair built and installation staged, awaiting approval.**
+  Branch `codex/adreno-power-audit`; original iOS16.7.16 HFS+, direct shim,
+  NativeAdreno ABI1.0116 proved provider ready1 and Mesa/EAGL loaded but failed
+  on b3a8 surfaces/zero plane pitch and later fence timeouts. Source00f535a
+  adapts HackiOS sRGB identity and non-planar IOSurface getters. User manually
+  restored userdata; fresh inspection confirms no GLES library/record.
+  GLES CI39982823642 SUCCESS on4f144ff5cc8f3ba5ae6991ceb83dc9dececf2852.
+  Artifact12515411703 downloaded by ZIP-range fallback after gh timed out;
+  archive CRC/API digest and all SHA256SUMS verified. Library:
+  userspace/out/0117-gles-4f144ff-range/sweetgl.dylib (18790896bytes), SHA256
+  2eb01550cbddc2619c7feaf36485935052c934acd577ee55eccaeedfafd83b09.
+  Actual ARM64/iOS platform2/minimum16.0/signature command verified; cache UUID
+  8f970452c9e33e88b114feb1864bc9e0 matches the restored root.
+  Matching image shim/out/shim-boot-0117-gles-srgb-120hz.img, SHA256
+  225203f037160ce67f549a1d11104eab97b22f86d58bfa73eff802184a8a8b17.
+  It reuses compiled0116 kernel, changes only product gamut in firmware ADT,
+  and includes sweetbuild=117 in boot args. Runtime rendering unverified.
+  Fresh staging research/gles-install-0117: local qcow2 filesystem check and
+  read-only mounted library hash passed, guest-success VERIFIED_UNMOUNTED.
+  delta.json state staged-not-written:48 chunks/21233664bytes (20.25MiB),
+  every original/modified byte retained under delta/. Preflight freshly read
+  ALL48 original phone chunks and matched hashes; no phone writes or reboot.
+  Root/edited read-only NBD sockets: /tmp/sweet-gles117-{root,edited}.sock.
+  Next: obtain required raw-write approval under AGENTS.md, run apply-delta.py
+  (rechecks all blocks before writing and verifies each by readback), then
+  temporarily boot0117 if authorized. Never reuse0115 cache/delta after restore.
+  Wi-Fi, audio, calibrated battery and full Metal remain unfinished ports.
 
 - **Runner correction:** run39981853003 was queued on macos-14 during its
   scheduled2026-10-23 14:00–00:00 UTC brownout (actions/runner-images#13518).
