@@ -70,6 +70,21 @@
   Redwood usesPMICGLINK battery,WCN6750/WPSS,AW8697. Do notcopythoseaddresses
   or a660 blobs toSweet. No phone writes, firmwareexecution or reboot.
 
+- **Firmware/port milestone2026-10-23:**103 files/88008754bytes pulled and
+  remote/hostSHA256verified toignoredresearch/sweet-firmware-20261023
+  (GPU7/audio31/WLAN34/modem29/haptic2). GPUidenticaltoearliercollection.
+  Temporaryread-onlymodemVFAT/vendorEROFS mounts unmounted. NoWLANMAC,
+  credentials,EFS/persist copied. PublicPMOSDTS confirmsWCN3990/ath10k,
+  notRedwoodWCN6750/ath11k. Batteryrecoverydriverqcom,qpnp-qg; PMOSampsAW88263S.
+  See docs/HACKIOS-SWEET-REFERENCE.md. Source00f535a pushed; generated
+  research/gles-0117-prepared andfirmware-bearingADT
+  shim/out/sweet-0117-gles-srgb.adt. GLESbuildNOTstarted:directgles.yml404
+  becauseworkflowisbranch-only,correctxnu.ymlgles_onlydispatchthen422
+  "Actions has been disabled for this repository". PermissionsAPIenabledtrue.
+  AskeduserforActionsUInotice; do notreportqueuedorsuccess. ExistingGPUlibrary
+  remainsinstalled, earlieroriginalrootrestorewasneverapproved/executed.
+  WiFi/audio/batteryhardwareportsremainunfinished; noMetalcompletionclaim.
+
 ### Historical HackiOS detour and earlier installation records
 
 - **USER CHANGED PROJECT TO HACKiOS (2026-10-22):** user reports0116 booted
