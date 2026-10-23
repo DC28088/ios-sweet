@@ -2,18 +2,25 @@
 
 ## Current direction and last known device state (2026-10-23, read first)
 
-- **ACTIVE: originalios-sweet GPU integration.** Branch
-  codex/adreno-power-audit; preserveiOS16.7.16HFS+/directshim/NativeAdrenoABI1.
-  Fresh0116 log now proves providerready1, sweetgl/Mesa/EAGL loaded; blackUI
-  is accompaniedbyunsupportedb3a8/zeroplane-pitchandfencetimeouts. Newsource
-  00f535a adaptsHackiOSsRGBidentityandnonplanarIOSurfacemetadata. Existing
-  GPUlibrarywasneverremoved; nooriginalrootrestoreoccurred. All103Sweet
-  firmwarefilesverifiedlocally. Latestmilestone279b56d/document
-  docs/HACKIOS-SWEET-REFERENCE.md. NewGLEScompileblockedbyGitHubActions422
-  despitepermissionsAPIenabledtrue; useraskedtoinspectActionsnotice.
-  Next:onceActionsavailable,dispatchxnu.ymlgles_only=true/run_tests=false,
-  verifynewlibraryartifact,stagepairedsRGBimageandrootdeltaforapproval,
-  collectactualcompositor/fenceresults. NoWiFi/audio/batteryportcompletion.
+- **ACTIVE: original ios-sweet GPU integration.** Branch
+  `codex/adreno-power-audit`; iOS16.7.16 HFS+, direct shim, NativeAdreno ABI1.
+  The fresh0116 trace proved provider ready1 and Mesa/EAGL loaded, followed by
+  unsupported b3a8 surfaces, zero plane pitch and fence timeouts. Source
+  00f535a adapts HackiOS's sRGB identity and non-planar IOSurface metadata.
+  User subsequently confirmed manually restoring userdata. Fresh read-only
+  inspection matches16.7.16/20H392 and cache UUID8f970452c9e33e88b114feb1864bc9e0,
+  with no sweetgl library; the next operation is a fresh installation.
+  GitHub accepted the retry: GLES run39981853003 on87f1915, currently waiting
+  for a macOS runner. No replacement library is built yet. Matching sRGB
+  image shim/out/shim-boot-0117-gles-srgb-120hz.img is packaged from the unchanged
+  0116 kernel, SHA256225203f037160ce67f549a1d11104eab97b22f86d58bfa73eff802184a8a8b17.
+  It requires the replacement library; do not boot as a complete fix alone.
+  Fresh read-only root proxy /tmp/sweet-gles117-root.sock and local qcow2 staging
+  under research/gles-install-0117; no phone writes. Never reuse the0115 cache
+  or block delta after this restore. Next: compile/download/verify the GLES
+  artifact, stage a fresh validated root delta with original blocks for rollback,
+  obtain the required destructive-write approval, then install and observe.
+  Wi-Fi, audio, calibrated battery and Metal remain unfinished ports.
 
 - **Recovery log retrieved 2026-10-23:** read-only userdata-tail pull saved
   logs/gpu-0116-return-20261023.txt(.bin), total1308564bytes flush4664.
