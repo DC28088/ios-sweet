@@ -105,6 +105,11 @@ rejects `layout.size > fd_bo_size(bo)`, so their zero extent prevents import.
 The new Darwin-only patch `userspace/gles/mesa-iosurface-size.patch` obtains
 the actual allocation extent from the transport BO table, validates the32-bit
 size range and passes it into Mesa's import. Mesa's layout/buffer bounds checks
-remain intact. Source b2cd6ea is the intended follow-up; compilation and new
-hardware results are still pending. Do not repeat an0117 before-state block
+remain intact. Source b2cd6ea compiled successfully in CI39988038341. Library SHA256:
+`c1af3c165dda6249b1125b3d9a65ee2e5790faaa3521ae32ab52f141149d1fcd`.
+The fresh0118 update is staged as35 chunks/20119552bytes, with before/after
+bytes retained and all current phone blocks matched by preflight. Mounted
+filesystem checks verified the current0117 library and record before local
+replacement, and the new library afterward. No0118 phone writes or boot yet;
+raw update awaits approval. New hardware results remain pending. Do not repeat an0117 before-state block
 delta against its now-modified root.
