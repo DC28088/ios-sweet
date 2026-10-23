@@ -2,6 +2,36 @@
 
 ## Current direction and last known device state (2026-10-23, read first)
 
+- **ACTIVE:0118 built and installation staged; awaiting raw-write approval.**
+  Branch codex/adreno-power-audit, original iOS16.7.16 HFS+ / NativeAdreno ABI1.
+  CI39988038341 SUCCESS onb2cd6ea4b60eb151cd10a56b801a2337d21a4542.
+  Artifact12517400420 downloaded to userspace/out/0118-gles-b2cd6ea;
+  every SHA256SUMS entry passed. ARM64/iOS16.0/signature load command and
+  matching dyld-cache UUID verified. Library18791008bytes SHA256
+  c1af3c165dda6249b1125b3d9a65ee2e5790faaa3521ae32ab52f141149d1fcd.
+  Image shim/out/shim-boot-0118-gles-bo-size-120hz.img, SHA256
+  f35775f444e62765daabfa4041aad24032713c0920bc969d0ed8e03e645f99b5.
+  Same compiled0116 kernel and sRGB ADT; boot tag sweetbuild=118.
+  User reported FASTBOOT; product sweetin verified. Temporarily booted existing
+  OrangeFox recovery image, sendOKAY3.846s/bootOKAY0.130s; no recovery flashing.
+  Saved persistent0117 trace to logs/gpu-0117-after-20261023.txt(.bin), confirming
+  BGRA/pitch4608 plus Mesa layout failure and later fence timeouts.
+  Fresh staging research/gles-install-0118 uses new read-only ADB proxy/cache
+  /tmp/sweet-gles118-root.sock. Basic HFS reader could not hash the fragmented
+  old dylib (overflow extents); mounted guest verified actual0117 library and
+  record SHA256 before replacement. New library staged only in local qcow2,
+  final filesystem check/read-only remount/hash/executable checks passed.
+  guest-success VERIFIED_UNMOUNTED. delta.json staged-not-written:
+  35 chunks/20119552bytes (19.1875MiB), ALL original and modified bytes retained.
+  Fresh preflight matched every current phone chunk. NO0118 phone writes/boot.
+  Edited read-only socket /tmp/sweet-gles118-edited.sock. Next: obtain explicit
+  approval per AGENTS.md, apply-delta.py rechecks then writes/readback-verifies,
+  temporarily boot matching0118 and capture live USB if approved.
+  Immediate rollback data restores0117 only while changed blocks still match;
+  original stock-before-GLES marker remains previous_sha256=null in the record.
+  Boot/rendering of0118 and full acceleration remain unverified.
+
+###0117 runtime and source diagnosis (historical)
 - **ACTIVE:0117 installed and booted to userspace, still black UI;0118 fix staged.**
   Original ios-sweet branch codex/adreno-power-audit, iOS16.7.16 HFS+.
   User approved raw0117 install and temporary boot. All48 chunks/21233664bytes
