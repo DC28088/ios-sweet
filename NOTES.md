@@ -1,6 +1,24 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
-## Current direction and last known device state (2026-10-22, read first)
+## Current direction and last known device state (2026-10-23, read first)
+
+- **RETURN TO ORIGINAL IOS-SWEET:** user explicitly stopped the HackiOS
+  direction after repeated resets and requested GPU porting in this original
+  repository. Active branch remains codex/adreno-power-audit; clean before
+  this handoff update. Keep original iOS16.7.16 HFS+ / NativeAdreno ABI1 /
+  Sailfish Mesa-EAGL integration. HackiOS16.5 APFS artifacts are separate.
+  User already booted0116 and reported no performance improvement; earlier
+  "not booted" entries below are historical. Latest recovered log is only
+  gpu-0114-before-gles.txt, showing CP29/29 and fence0x618c0de, followed by
+  provider rejection at UCHE PERFSEL.0116 corrected that check, but its
+  provider/userspace/submission results were never recovered. Do not infer
+  acceleration or a userspace-only failure from the older0114 trace.
+  Next: recover persistent0116 log if still present, or collect a new0116
+  boot trace, then diagnose provider publication, sweetgl loading, EAGL
+  selection, BO submission and fence retirement in that order. ADB absent
+  on initial read-only check. No device writes/boot or source change made.
+
+### Historical HackiOS detour and earlier installation records
 
 - **USER CHANGED PROJECT TO HACKiOS (2026-10-22):** user reports0116 booted
   with zero improvement, initially stopped, then explicitly requested a new
