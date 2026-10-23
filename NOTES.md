@@ -2,7 +2,7 @@
 
 ## Current direction and last known device state (2026-10-23, read first)
 
-- **ACTIVE:0118 built and installation staged; awaiting raw-write approval.**
+- **ACTIVE: 0118 installed and booted; user reports significantly WORSE performance.**
   Branch codex/adreno-power-audit, original iOS16.7.16 HFS+ / NativeAdreno ABI1.
   CI39988038341 SUCCESS onb2cd6ea4b60eb151cd10a56b801a2337d21a4542.
   Artifact12517400420 downloaded to userspace/out/0118-gles-b2cd6ea;
@@ -21,17 +21,35 @@
   old dylib (overflow extents); mounted guest verified actual0117 library and
   record SHA256 before replacement. New library staged only in local qcow2,
   final filesystem check/read-only remount/hash/executable checks passed.
-  guest-success VERIFIED_UNMOUNTED. delta.json staged-not-written:
-  35 chunks/20119552bytes (19.1875MiB), ALL original and modified bytes retained.
-  Fresh preflight matched every current phone chunk. NO0118 phone writes/boot.
-  Edited read-only socket /tmp/sweet-gles118-edited.sock. Next: obtain explicit
-  approval per AGENTS.md, apply-delta.py rechecks then writes/readback-verifies,
-  temporarily boot matching0118 and capture live USB if approved.
-  Immediate rollback data restores0117 only while changed blocks still match;
-  original stock-before-GLES marker remains previous_sha256=null in the record.
-  Boot/rendering of0118 and full acceleration remain unverified.
+  User explicitly chose "Apply and temporarily boot0118". apply-delta.py
+  freshly matched all35 original chunks before writing20119552bytes and
+  verified ALL35 written chunks by readback SHA256. delta.json now
+  installed-readback-verified; before/after bytes remain under delta/.
+  adb reboot bootloader; product sweetin; temporary fastboot boot sent16992KB
+  OKAY0.515s and BootingOKAY0.130s. No boot/recovery/GPT flashing.
+  Live receiver logs/live-0118-usb.txt captured 456029 bytes in 240 seconds.
+  USB reconnection replayed startup messages, so do not count duplicate sections
+  as separate boots. A618 startup CP fence passed29/29; Mesa/EAGL starts and
+  main1125x2436 BGRA/pitch4608 buffers import with extent11239424bytes. This
+  resolves the main framebuffer size rejection, not the whole renderer.
+  Later method6 returns0xe00002d6 (fence timeout), GL finish blocks for hundreds
+  of milliseconds (maximum1804172us), and281x609/pitch1152 imports still fail
+  layout validation. Flush counts are NOT measured display FPS.
+  User explicitly reports significantly worse performance, no Wi-Fi, no haptic,
+  no sound. Treat0118 as a regression; do not call it an acceleration fix.
+  Those peripheral drivers remain unfinished, not enabled by this library.
+  Prepared shim/out/shim-boot-0118-cpu-fallback-120hz.img, SHA256
+  84c745e436a3095da8eb4821d557c00c4970cac5f7ab1c1433ea1f34a49e9a1f.
+  Same verified kernel/ADT/shim/DTB; sweetgles=0 and sweetgpu=0 disable injection
+  and the GPU worker. This fallback has NOT been booted; phone remains in0118
+  iOS. It requires only a temporary fastboot boot, no userdata rewrite.
+  Next GPU work must address submission/fence stalls and small-surface layout
+  separately. Do not remove glFinish without a real presentation fence or bypass
+  Mesa's allocation bounds checks. Preserve current live trace before changes.
+  Immediate raw rollback to0117 requires changed blocks still matching; no old
+  block delta may be replayed blindly after iOS has modified the filesystem.
 
-###0117 runtime and source diagnosis (historical)
+### 0117 runtime and source diagnosis (historical)
 - **ACTIVE:0117 installed and booted to userspace, still black UI;0118 fix staged.**
   Original ios-sweet branch codex/adreno-power-audit, iOS16.7.16 HFS+.
   User approved raw0117 install and temporary boot. All48 chunks/21233664bytes

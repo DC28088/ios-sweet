@@ -107,9 +107,22 @@ the actual allocation extent from the transport BO table, validates the32-bit
 size range and passes it into Mesa's import. Mesa's layout/buffer bounds checks
 remain intact. Source b2cd6ea compiled successfully in CI39988038341. Library SHA256:
 `c1af3c165dda6249b1125b3d9a65ee2e5790faaa3521ae32ab52f141149d1fcd`.
-The fresh0118 update is staged as35 chunks/20119552bytes, with before/after
-bytes retained and all current phone blocks matched by preflight. Mounted
-filesystem checks verified the current0117 library and record before local
-replacement, and the new library afterward. No0118 phone writes or boot yet;
-raw update awaits approval. New hardware results remain pending. Do not repeat an0117 before-state block
-delta against its now-modified root.
+The user approved the fresh 0118 update: 35 chunks / 20119552 bytes. All
+original blocks matched immediately before writing, and all written chunks
+passed readback SHA256. The temporary boot reached iOS userspace. Live USB
+captured 456029 bytes in `logs/live-0118-usb.txt`; reconnect replay duplicated
+some startup output.
+
+The main 1125×2436 BGRA framebuffer imports now pass with pitch 4608 and a
+11239424-byte allocation. Later rendering still has method 6 fence timeouts
+(`0xe00002d6`), long GL finish waits, and layout failures for 281×609 surfaces.
+The user reports significantly worse performance. **0118 is a regression, not
+a completed GPU acceleration fix.** Wi-Fi, haptics and audio remain unported.
+
+A CPU fallback was packaged at
+`shim/out/shim-boot-0118-cpu-fallback-120hz.img` (SHA256
+`84c745e436a3095da8eb4821d557c00c4970cac5f7ab1c1433ea1f34a49e9a1f`).
+It disables GLES injection and the GPU worker with `sweetgles=0 sweetgpu=0`,
+retaining the installed library on disk. It has not been booted. This provides
+a temporary-boot recovery path without replaying old userdata deltas against
+a filesystem that iOS has since modified.
