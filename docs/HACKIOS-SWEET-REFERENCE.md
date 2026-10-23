@@ -69,10 +69,19 @@ with a data producer. Wi-Fi/audio/battery/haptic runtime ports are unfinished.
 
 ## Build and installation status
 
-Source preparation completed locally. GitHub rejected the GLES dispatch with
-HTTP422 "Actions has been disabled for this repository" despite the repository
-permissions API returning enabled=true. No new library build has started.
-Existing0116 library remains installed; no userdata changes or phone boot were
-performed during this adaptation. A compiled replacement must be staged and
-verified before any approved raw-root update. Firmware files alone do not
-make Wi-Fi/audio or Metal available.
+Source preparation completed locally. The first dispatch failed with HTTP422,
+then the user requested a retry and GitHub accepted run39981853003 on87f1915.
+The macOS job is queued; no new library artifact is available yet.
+
+The user confirmed manually restoring userdata after the black-screen boot.
+Fresh read-only inspection and an HFS+ mount in a local overlay confirm that
+sweetgl.dylib and its installation record are absent. A fresh staging area is
+`research/gles-install-0117/`; the previous0115 block cache/delta must never be
+reused after that restore. Filesystem repairs made during staging affect only
+the local qcow2 overlay. No phone blocks have been changed.
+
+Matching image: `shim/out/shim-boot-0117-gles-srgb-120hz.img`, SHA256
+`225203f037160ce67f549a1d11104eab97b22f86d58bfa73eff802184a8a8b17`.
+It uses the compiled0116 kernel and corrected sRGB ADT, and requires the new
+GLES library once built. Do not describe this pair as complete until the
+library is built and installed. Boot and rendering remain unverified.
