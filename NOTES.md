@@ -38,6 +38,20 @@
   Await actual iOS startup and new GPU/GLES trace; transport success is not
   proof of boot completion or acceleration.
 
+- **Fresh0116 black-screen evidence2026-10-23:** user reported no boot/black
+  screen. Host detected stockFASTBOOT; temporarily booted existing OrangeFox
+  recovery.img (send3.891s/boot0.130s), ADB recovery returned. Read-only saved
+  logs/gpu-0116-failed-20261023.txt(.bin),236720bytes flush34; different from
+  prior log. This DOES reach iOS userspace: SpringBoard/HID running. Cmdline
+  has sweetgles=1. PERFSEL selector1 accepted, NativeAdreno ready1, ABI1 opened,
+  Mesa screen ready and EAGL shim installed (lines2567–2596). Compositor fails
+  attaching surface2/3 b3a8 1125x2436 pitch0 (line2802+); framebuffer reports
+  same surfaces bpr4544 (line3040+). Later method6 returns0xe00002d6 and texture
+  copies reportGL0x506. No visible UI; this is userspace/render-path failure,
+  not evidence XNU failed to boot. Inspect IOSurface plane0 metadata retrieval
+  in Sailfish eagl.c bind_surface versus Sweet IOSurface implementation; do
+  not simply ignore format/fence errors. Phone left OrangeFox, no flashing.
+
 ### Historical HackiOS detour and earlier installation records
 
 - **USER CHANGED PROJECT TO HACKiOS (2026-10-22):** user reports0116 booted
