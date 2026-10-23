@@ -2,7 +2,7 @@
 
 ## Current direction and last known device state (2026-10-23, read first)
 
-- **ACTIVE: 0118 GPU regression; approved CPU fallback temporary boot accepted.**
+- **ACTIVE: CPU fallback reaches home screen; user confirms previous speed restored.**
   Branch codex/adreno-power-audit, original iOS16.7.16 HFS+ / NativeAdreno ABI1.
   CI39988038341 SUCCESS onb2cd6ea4b60eb151cd10a56b801a2337d21a4542.
   Artifact12517400420 downloaded to userspace/out/0118-gles-b2cd6ea;
@@ -46,8 +46,10 @@
   BootingOKAY0.130s. No partition flashing or raw userdata writes. Receiver
   logs/live-0118-cpu-fallback-usb.txt started before boot (150s capture).
   Live USB confirms correct sweetgpu=0/sweetgles=0 boot args, GPU worker
-  disabled, and launchd/SpringBoard exec. Actual screen/performance result
-  still pending. Installed0118 library remains on disk, inactive.
+  disabled, and launchd/SpringBoard exec; capture finished183787bytes. User
+  confirms "Home screen; back to previous speed". This establishes the fallback
+  as a working recovery option, not GPU acceleration. Phone remains in this
+  temporary CPU-rendering boot. Installed0118 library remains on disk, inactive.
   Next GPU work must address submission/fence stalls and small-surface layout
   separately. Do not remove glFinish without a real presentation fence or bypass
   Mesa's allocation bounds checks. Preserve current live trace before changes.
