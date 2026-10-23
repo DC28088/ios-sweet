@@ -210,6 +210,11 @@ def build(seed=None, qemu=False, highmem=False):
     ])
 
     product_props = d22ap_product()
+    # Match the8-bit BGRA framebuffer/GLES path, as HackiOS dt_identity does.
+    # P3 makes CoreAnimation request unsupported b3a8/w30r render targets.
+    if product_props:
+        product_props = [(k, cstr('sRGB') if k in ('artwork-display-gamut', 'display-gamut') else v)
+                         for k, v in product_props]
     product = [node('product', [ph()] + product_props)] if product_props else []
 
     # Identity of the iPhone X whose userland runs here: compatible[0] is

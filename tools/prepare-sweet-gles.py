@@ -71,7 +71,16 @@ sweetgl_eagl_install(void)
         return;
     }
 '''.replace('{UUID}', '{'+uuid+'}')
- return once(s,needle,gate)
+ s=once(s,needle,gate)
+ # HackiOS eagl.c uses ordinary getters when IOSurface has no plane array.
+ # On our16.7 cache OfPlane(s,0) returns zero pitch/BPE for those surfaces.
+ old='\tsize_t w = IOSurfaceGetWidthOfPlane(s, plane), h = IOSurfaceGetHeightOfPlane(s, plane);\n\tsize_t pitch = IOSurfaceGetBytesPerRowOfPlane(s, plane);'
+ new='\tbool planar = IOSurfaceGetPlaneCount(s) != 0;\n\tif ((!planar && plane != 0) || (planar && plane >= IOSurfaceGetPlaneCount(s))) return false;\n\tsize_t w = planar ? IOSurfaceGetWidthOfPlane(s, plane) : IOSurfaceGetWidth(s);\n\tsize_t h = planar ? IOSurfaceGetHeightOfPlane(s, plane) : IOSurfaceGetHeight(s);\n\tsize_t pitch = planar ? IOSurfaceGetBytesPerRowOfPlane(s, plane) : IOSurfaceGetBytesPerRow(s);\n\tsize_t bpe = planar ? IOSurfaceGetBytesPerElementOfPlane(s, plane) : IOSurfaceGetBytesPerElement(s);\n\tvoid *base = planar ? IOSurfaceGetBaseAddressOfPlane(s, plane) : IOSurfaceGetBaseAddress(s);\n\tif (!w || !h || !pitch || !bpe || !base || w > SIZE_MAX / bpe || pitch < w * bpe) return false;'
+ s=once(s,old,new)
+ s=once(s,'surface_format(fourcc, IOSurfaceGetBytesPerElementOfPlane(s, plane), &img.internalformat)', 'surface_format(fourcc, bpe, &img.internalformat)')
+ # Both the resource key and its first-page offset use this plane's validated base.
+ s=s.replace('(uintptr_t)IOSurfaceGetBaseAddressOfPlane(s, plane)', '(uintptr_t)base')
+ return s
 edit('eagl.c',eagl)
 def frontend(s):
  start=s.index('__attribute__((constructor)) static void\nsweetgl_load(void)')
