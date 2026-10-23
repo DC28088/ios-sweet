@@ -125,6 +125,7 @@ A CPU fallback was packaged at
 It disables GLES injection and the GPU worker with `sweetgles=0 sweetgpu=0`,
 retaining the installed library on disk. The user authorized its temporary boot, accepted by fastboot
 (send 0.518 s, boot 0.130 s). Live USB confirms the disabled GPU worker, correct
-boot arguments and iOS userspace/SpringBoard startup. Visible screen and
-performance are still awaiting user confirmation. No partition flashing or
-userdata rewrite was performed.
+boot arguments and iOS userspace/SpringBoard startup. The 150-second capture
+finished with 183787 bytes. The user confirms the home screen and previous
+speed restored. The phone remains in this temporary CPU-rendering boot.
+No partition flashing or userdata rewrite was performed.
