@@ -70,8 +70,9 @@ with a data producer. Wi-Fi/audio/battery/haptic runtime ports are unfinished.
 ## Build and installation status
 
 Source preparation completed locally. The first dispatch failed with HTTP422,
-then the user requested a retry and GitHub accepted run39981853003 on87f1915.
-The macOS job is queued; no new library artifact is available yet.
+then the user requested a retry. The macOS14 run39981853003 was queued during
+its scheduled brownout and canceled. Replacement run39982823642 on4f144ff
+uses macOS15 and is awaiting a runner; no new library artifact is available yet.
 
 The user confirmed manually restoring userdata after the black-screen boot.
 Fresh read-only inspection and an HFS+ mount in a local overlay confirm that

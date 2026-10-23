@@ -10,8 +10,8 @@
   User subsequently confirmed manually restoring userdata. Fresh read-only
   inspection matches16.7.16/20H392 and cache UUID8f970452c9e33e88b114feb1864bc9e0,
   with no sweetgl library; the next operation is a fresh installation.
-  GitHub accepted the retry: GLES run39981853003 on87f1915, currently waiting
-  for a macOS runner. No replacement library is built yet. Matching sRGB
+  GitHub accepted the retry: GLES run39982823642 on4f144ff, currently waiting
+  for a macOS15 runner. It supersedes the canceled macOS14 run39981853003. No replacement library is built yet. Matching sRGB
   image shim/out/shim-boot-0117-gles-srgb-120hz.img is packaged from the unchanged
   0116 kernel, SHA256225203f037160ce67f549a1d11104eab97b22f86d58bfa73eff802184a8a8b17.
   It requires the replacement library; do not boot as a complete fix alone.
@@ -28,6 +28,18 @@
   cancel the queued run and dispatch its replacement. Fresh root snapshot and
   local-overlay HFS check completed; no installed GLES library after user's
   manual userdata restore. No device writes.
+
+- **0117 local staging:** fresh proxy and overlay inspected the restored root;
+  guest HFS+ check repaired its metadata in the local overlay and mounted it
+  read-only, confirming NO_GLES_LIBRARY and NO_GLES_RECORD. Guest exited with
+  VERIFIED_UNMOUNTED. Phone userdata remains unchanged. The first guest startup
+  had local initramfs ownership wrong; regenerated archive with owner0:0 and
+  reran successfully. Image integrity comparison confirms exact shim, DTB and
+  payload; firmware-bearing ADT differs only at product/artwork-display-gamut.
+  Last GitHub check: replacement run39982823642 queued, no runner assigned;
+  no library compilation/artifact yet. Watch transcript:
+  research/gpu/gles-0117-build-watch-macos15.log. Do not install old0116 library
+  as though it included the new non-planar metadata correction.
 
 - **Recovery log retrieved 2026-10-23:** read-only userdata-tail pull saved
   logs/gpu-0116-return-20261023.txt(.bin), total1308564bytes flush4664.
