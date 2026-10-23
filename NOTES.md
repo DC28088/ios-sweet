@@ -52,6 +52,24 @@
   in Sailfish eagl.c bind_surface versus Sweet IOSurface implementation; do
   not simply ignore format/fence errors. Phone left OrangeFox, no flashing.
 
+- **HackiOS reference port requested2026-10-23:** keep originalios-sweet
+  iOS16.7.16/HFS+/NativeAdreno; user asks GPU, battery, Wi-Fi, audio reference
+  adaptation and firmware collection. No original-root restore occurred (the
+  earlier erase request never confirmed). Existing sweetgl remains installed.
+  Current HackiOS kernel d82c64a3a31cd27a0a0afbf6e213e467e44b1b4c and
+  userland a79ff0772a3454fd1ef127e181e5b3bce6c9ce18. README still says GLES
+  compositor, Metal apps incomplete. Kernel changes since previous8e61187
+  onlycommon/setup.sh and xnuloader/loader.c, no new hardware drivers.
+  ConcreteGPU corrections taken from its loader/eagl: advertise sRGB for the
+  actual8-bitBGRA path (P3 requested unsupportedb3a8/w30r), and use ordinary
+  IOSurface metadata/base getters for non-planar images. Existing bridge
+  usedOfPlane0 and gotpitch/BPEzero. Preserve allfirmwareADT properties while
+  editinggamut withtools/sweet-gles-adt.py. NewGLES build pending; no hardware
+  rendering result yet. Recoverymodem/vendor mounted read-only forfirmware.
+  Sweet observesqcom,qpnp-qg gauge,ICNSS18800000,AW8624haptic/AW882xxamps;
+  Redwood usesPMICGLINK battery,WCN6750/WPSS,AW8697. Do notcopythoseaddresses
+  or a660 blobs toSweet. No phone writes, firmwareexecution or reboot.
+
 ### Historical HackiOS detour and earlier installation records
 
 - **USER CHANGED PROJECT TO HACKiOS (2026-10-22):** user reports0116 booted
