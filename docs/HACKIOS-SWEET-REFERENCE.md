@@ -123,6 +123,8 @@ A CPU fallback was packaged at
 `shim/out/shim-boot-0118-cpu-fallback-120hz.img` (SHA256
 `84c745e436a3095da8eb4821d557c00c4970cac5f7ab1c1433ea1f34a49e9a1f`).
 It disables GLES injection and the GPU worker with `sweetgles=0 sweetgpu=0`,
-retaining the installed library on disk. It has not been booted. This provides
-a temporary-boot recovery path without replaying old userdata deltas against
-a filesystem that iOS has since modified.
+retaining the installed library on disk. The user authorized its temporary boot, accepted by fastboot
+(send 0.518 s, boot 0.130 s). Live USB confirms the disabled GPU worker, correct
+boot arguments and iOS userspace/SpringBoard startup. Visible screen and
+performance are still awaiting user confirmation. No partition flashing or
+userdata rewrite was performed.
