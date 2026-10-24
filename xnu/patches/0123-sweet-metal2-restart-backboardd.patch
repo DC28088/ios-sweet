@@ -6,8 +6,8 @@ index 4d4e43f..e292ce243cbb2ca7d5da395d690e3d51b0536c5f 100644
  #include <IOKit/IOUserClient.h>
  #include <kern/task.h>
  #include <kern/thread.h>
-+#include <sys/proc_internal.h>
-+#include <sys/signalvar.h>
++#include <sys/proc.h>
++#include <sys/signal.h>
  #include "unixnu/NativeAdrenoUserClient.h"
  extern "C" void proc_selfname(char *,int);
  extern "C" volatile uint32_t native_adreno_wc_enabled;
@@ -24,8 +24,8 @@ index 4d4e43f..e292ce243cbb2ca7d5da395d690e3d51b0536c5f 100644
 +  for(int pid=1;pid<99999;pid++) {
 +   proc_t p=proc_find(pid);
 +   if(!p)continue;
-+   const bool match=!strcmp(p->p_comm,"backboardd");
-+   if(match)psignal(p,SIGKILL);
++   const bool match=!strcmp(proc_best_name(p),"backboardd");
++   if(match)proc_signal(pid,SIGKILL);
 +   proc_rele(p);
 +   if(match) {
 +    IOLog("SWEET RENDER: restarted backboardd for Metal discovery\n");

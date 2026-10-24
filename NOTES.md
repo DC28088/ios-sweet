@@ -3,6 +3,20 @@
 ## Current direction and last known device state (2026-10-25, read first)
 
 
+- **Restart kernel failed; remove BSD-private signal dependency before rebuilding.**
+  CI40123710586 on203d781 failed during Build; no new boot image was used.
+  GitHub failure-log downloads repeatedly disconnect/TLS timeout; small API
+  annotation confirmed only exit2. Network-switch question pending. Local
+  source audit shows signalvar.h hides psignal behind BSD_KERNEL_PRIVATE;
+  IOKit should use sys/proc.h process KPIs. Revised patch0123 now includes
+  sys/proc.h + sys/signal.h and uses proc_best_name/proc_signal while holding
+  proc_find reference; avoids direct p_comm layout and private psignal.
+  Both plugin selection and revised restart patches apply to current source
+  in order. This is not a successful compilation or hardware result yet.
+  Phone remains FASTBOOT; current installed Metal2 bundle unchanged.
+
+
+
 - **Continuation after DeepSeek: 0124 is CPU UI; discovery follow-up pending.**
   User reports currently iOS, unchanged performance; subsequently moved to
   FASTBOOT as requested, product sweetin verified. New commits a9a2c8a through
