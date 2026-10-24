@@ -270,9 +270,11 @@ def assemble(turnip, bridge_lib, env):
     bundle = out / 'SweetMetal2.bundle'
     if bundle.exists():
         raise SystemExit('Refusing to overwrite a prior bundle: ' + str(bundle))
-    bundle.mkdir(parents=True)
     sdk = sdk_tool(env, '--show-sdk-path')
-    exe = bundle / 'SweetMetal2'
+    # Build and symbolicate outside the bundle: macOS dsymutil also drops a copy
+    # next to its input, and a 186 MB dSYM must never be sealed into the bundle
+    # that gets installed on the phone.
+    exe = out / 'SweetMetal2.bin'
     run('xcrun', 'clang++', '-target', DEPLOYMENT, '-isysroot', sdk, '-O2', '-g',
         '-std=c++17', '-fobjc-arc', '-bundle',
         '-Wno-deprecated-declarations', '-Wno-unused-function',
@@ -288,6 +290,8 @@ def assemble(turnip, bridge_lib, env):
         print('dsymutil failed; continuing without symbols', flush=True)
     run('strip', '-x', exe, env=env)
 
+    bundle.mkdir(parents=True)
+    shutil.copy2(exe, bundle / 'SweetMetal2')
     shutil.copy2(turnip, bundle / 'libvulkan_freedreno.dylib')
     run('strip', '-x', bundle / 'libvulkan_freedreno.dylib', env=env)
     (bundle / 'Info.plist').write_bytes(plistlib.dumps(dict(
@@ -319,6 +323,7 @@ def assemble(turnip, bridge_lib, env):
     run('codesign', '--force', '--sign', '-', bundle / 'libvulkan_freedreno.dylib', env=env)
     run('codesign', '--force', '--sign', '-', bundle, env=env)
     run('codesign', '--verify', '--strict', bundle, env=env)
+    assert not list(bundle.rglob('*.dSYM')), 'dSYM sealed inside the bundle'
     return bundle
 
 

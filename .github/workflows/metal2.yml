@@ -21,7 +21,10 @@ jobs:
         if: success()
         with:
           name: sweet-metal2-ios16
-          path: userspace/out/
+          path: |
+            userspace/out/SweetMetal2.bundle
+            userspace/out/metal2-build.json
+            userspace/out/NativeAdrenoABI.h
       - name: Save build diagnostics
         if: failure()
         run: |
