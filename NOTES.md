@@ -39,7 +39,14 @@
   Core VM/UserClient/Submit C++ syntax compilation passed with IOKit type shims;
   frontend generation and all four Mesa patches apply to the pinned sources.
   Kernel patch applies to the post0119 source. No tests added/run.
-  Next: push and build matching0120 pair; fresh
+  Pushed source380691712dca8a8c19854164ffffcbd96eb6e8fe; matching CI
+  kernel40062657768 and GLES40062657825 running with run_tests=false.
+  Additional60s live capture saved1061bytes to logs/live-0119-after-regression.txt;
+  USB is alive, framebuffer callbacks continue, no new GPU/present evidence.
+  User asked to open OrangeFox for fresh staging; answer pending.
+  Fresh research/gles-install-0120 scripts/cache/initrd prepared; no old cached
+  blocks, overlay or delta copied. Package helper research/gpu/package-0120.py.
+  Next: finish CI/download/package matching0120 pair; fresh
   staging/explicit approval required for any new raw userdata installation.
 
 
