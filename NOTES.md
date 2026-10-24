@@ -59,8 +59,22 @@
   research/gles-install-0120/delta; fresh preflight matches all35 phone chunks.
   State staged-not-written. Read-only NBD sockets /tmp/sweet-gles120-root.sock
   and /tmp/sweet-gles120-edited.sock. No phone writes or reboot this turn.
-  Kernel40062657768 still compiling. Next: finish kernel download/package,
-  then explicit approval required for this new raw userdata installation.
+  Kernel40062657768 SUCCESS on same3806917 source as GLES. Full gh artifact
+  download stalled; kernel member+SHA256SUMS fetched by ZIP ranges to
+  xnu/out-0120-range, CRC and published SHA256 verified. Required scoped-submit
+  and expanded-map-budget strings present. Kernel17369776bytes SHA256
+  dd226ee21e6aa583296a34780620a33dacffdc079e182f8c276388520b2c44a5.
+  Packaged shim/out/shim-boot-0120-buffer-gmem-gles-120hz.img17403904bytes,
+  SHA256a93e7f8264d17dc41828c13936825abdbdba32fc3df65ecba23bcd5f80ab6dd9.
+  Base shim/DTB/sRGB ADT unchanged and checked against0119 manifest. Boot
+  tag sweetbuild=120. Unpacked kernel/DTB/ramdisk match; independent deterministic
+  mkpayload regeneration matches. Manifest research/gpu/0120-boot-manifest.json.
+  Redundant stalled whole-artifact gh downloader stopped after member verification.
+  Both builds passed with run_tests=false; no hardware boot/performance result.
+  Phone remains in OrangeFox. Explicit approval required before writing this
+  35chunk/18.9375MiB userdata delta and temporarily booting matching0120.
+  CPU fallback remains available with sweetgles=0. GMEM rendering is unqualified;
+  successful compilation is not evidence of a lag fix or full acceleration.
 
 
 - **ACTIVE: 0119 kernel and GLES builds succeeded; downloads/staging pending.**
