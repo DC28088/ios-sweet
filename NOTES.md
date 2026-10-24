@@ -3,6 +3,29 @@
 ## Current direction and last known device state (2026-10-25, read first)
 
 
+- **Continuation after DeepSeek: 0124 is CPU UI; discovery follow-up pending.**
+  User reports currently iOS, unchanged performance; subsequently moved to
+  FASTBOOT as requested, product sweetin verified. New commits a9a2c8a through
+  203d781 reviewed. Actual recovery delta research/metal2-install-0124/delta.json
+  is installed-readback-verified (40108032 bytes), although the older installation
+  manifest/NOTES were not updated. Bundle CI40121858239 built e2ca25c successfully.
+  Live logs/live-0124-metal2.txt has sweetgles=0 sweetmtl=2 sweetbuild=124;
+  SweetMetal2 discovery is published, Safari/WebKit load the bundle but are
+  intentionally denied by its client policy. No BackBoard MTL2 initialization,
+  no scoped submits and no legacy method5 submits in this capture. The unchanged
+  performance is therefore not a successful Metal UI measurement.
+  Kernel CI40123710586 on203d781 is still building. Its patch0123 restarts
+  BackBoard once after service publication (unless sweetm2restart=0 or GLES1),
+  allowing a fresh Metal-framework discovery after asynchronous GPU bring-up.
+  Next: verify/download/package as0125, temporarily boot with installed0124
+  bundle and live logs, inspect initialization/real work before another root edit.
+  Turnip source audit: donor backend still submits legacy method5 and does not
+  use sweet method17/resource capability despite compiling against its header.
+  Legacy kernel path remains supported but maintains all mapped BOs; full scoped
+  integration remains work. Do not claim ABI-header parity alone solves this.
+
+
+
 - **Metal2 bundle built; kernel and temporary boot image ready; install pipeline
   mock-tested.** metal2 CI 40119323375 failed only in the license-copy step
   (`Path + str` TypeError, Turnip and the Rust bridge had already built); fixed
