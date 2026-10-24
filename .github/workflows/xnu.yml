@@ -117,7 +117,11 @@ jobs:
           grep -aFq 'SWEET GPU: ARC gfx raise v1 starting' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
           grep -aFq 'SWEET ADRENO: CX controller v2 starting' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
           grep -aFq 'SWEET ADRENO: postmarketOS SM7150 GMU clocks v1 starting' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
-          grep -aFq 'SWEET FB: scheduler v2 requested=' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
+          grep -aFq 'SWEET FB: scheduler v3 requested=' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
+          grep -aFq 'SWEET CPUFREQ: domain %u selected lut' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
+          grep -aFq 'SWEET ADRENO: DCVS perf index %u' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
+          grep -aFq 'SWEET RENDER: submission pipelining %s' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
+          grep -aFq 'SWEET RENDER: %s client connected ABI=%u slot=%u' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
 
           grep -aFq 'SWEET ADRENO: GMU TCM staging errno=' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
           grep -aFq 'SWEET ADRENO: SMMU map errno=' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
