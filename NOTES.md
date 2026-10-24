@@ -3,6 +3,17 @@
 ## Current direction and last known device state (2026-10-25, read first)
 
 
+- **0126 CI dispatched on e92bce0148f2745c33c23ab2bcf3c9f52a974626.**
+  Kernel40127896529 (run_tests=false, keep_going=false) and Metal2 40127901139
+  running. Superseded Metal2 40127402906 cancellation requested; it lacks0002.
+  User returnedFASTBOOT; verifiedOrangeFox temporaryboot accepted (send4.036s,
+  boot0.130s), ADBrecovery sweetin nowconfirmed, userdataunmounted/correctsize.
+  Persistent GPUring saved logs/gpu-0125-metal2-cache-fixed-recovery.txt,
+  571125bytes, flush90. Fresh126 NBD server76102 root socket
+  /tmp/sweet-metal20126-root.sock; catalog/log extraction31696 inprogress.
+  Original125 snapshot isstale;126 cache starts empty. No126phonewrites yet.
+
+
 - **0126 prepared: synchronize CPU presentation with real GPU work.**
   User describes0125 defects as missing regions/trails/cutoffs. Existing display
   path memcpy reads IOSurfaces without a GPU fence/cache acquire; frontendcommit
