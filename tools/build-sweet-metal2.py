@@ -356,6 +356,11 @@ def main():
         'kernel_plugin_name': 'SweetMetal2',
         'kernel_abi_header': 'userspace/out/NativeAdrenoABI.h',
         'kernel_abi_sha256': sha256(abi),
+        'root_prerequisites': {
+            'shader_cache': '/private/var/local/m2v-cache/backboardd',
+            'owner_uid': 501, 'owner_gid': 501, 'mode': '0700',
+            'provision_tool': 'tools/prepare-sweet-metal2-cache.sh',
+        },
         'mesa_patches': mesa_patches,
         'bridge_patches': bridge_patches,
         'runtime_qualified': False,

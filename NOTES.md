@@ -3,6 +3,26 @@
 ## Current direction and last known device state (2026-10-25, read first)
 
 
+- **0125 reaches BackBoard Metal initialization; shader-cache permissions block it.**
+  Live logs/live-0125-metal2-discovery.txt confirms sweetbuild125, Metal service
+  publication, and exactly the expected BackBoard restart. BackBoard274 enters
+  SweetMetal2, but native_bridge_metal_open refuses in30ms: ShaderCache path
+  /var/local/m2v-cache/backboardd PermissionDenied(os error13). Turnip image base
+  remains0: failure occurs before Vulkan load/GPU submissions. This is a new
+  concrete filesystem prerequisite; not successful Metal UI yet.
+  Asked user to open OrangeFox for recovery access (physical step, no new approval
+  needed under standing boot/install authorization). No ADB yet; phone last iOS.
+  Prepared fresh research/metal2-cache-repair-0125 (empty cache, new NBD sockets
+  /tmp/sweet-metal2-cache125-{root,edited}.sock; scripts/guest not run yet).
+  New tools/prepare-sweet-metal2-cache.sh provisions root-owned0755 parent and
+  mobile501:5010700 BackBoard cache, refuses symlinks/wrong iOSbuild/hostroot.
+  Guest will hash-check the entire unchanged bundle before/after; inspect fresh
+  directory metadata first, then local overlay/fsck/read-only owner verification,
+  delta/preflight/apply/readback. Reboot same verified0125 image afterwards.
+  No cache-repair phone write yet. Receiver44182 still captures for600seconds.
+
+
+
 - **0125 verified and temporarily booted; Metal startup trace pending.**
   Kernel CI40125083266 source9a6399559a41 succeeded; CRC and published kernel
   SHA9176e88e2be978603e2f278133f5dafe6f045a4158e6b880ab1388508a69b048 match.

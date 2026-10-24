@@ -98,7 +98,14 @@ fresh Metal discovery can find the service. `sweetm2restart=0` disables this;
 GLES boots do not restart it. The initial restart patch (203d781, build40123710586)
 failed to compile. The revised patch uses the IOKit-visible process KPIs in
 `sys/proc.h`, avoiding BSD-private `psignal` and direct process-structure fields.
-Build40125083266 on9a63995 is pending; this correction is not hardware verified.
+Build40125083266 on9a63995 succeeded. The 0125 live trace confirms the restart
+and BackBoard entering SweetMetal2. Device creation then refuses with
+`ShaderCache ... /var/local/m2v-cache/backboardd ... PermissionDenied` before
+Turnip loads. The shader cache must be provisioned in the mounted root using
+`tools/prepare-sweet-metal2-cache.sh`: root-owned0755 parent, mobile501:5010700
+child. The plugin's unchecked mkdir/fallback does not create it successfully on
+this root. The prepared directory repair has not yet been installed; UI Metal
+rendering remains unverified.
 
 Compiling against the extended ABI header does not implement its new methods.
 The donor Turnip backend still calls legacy Submit (method5), which remains
