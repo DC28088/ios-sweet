@@ -19,7 +19,9 @@
   Sailfish root tweaks also enable ExtensionKit catalog and app-extension
   registration; our older root skips migration. Inspect active FeatureFlags,
   migration prefs/sentinel and LaunchServices before choosing registration repair.
-  Asked user to open OrangeFox for fresh read-only staging; no ADB at last check.
+  Asked user to open OrangeFox for fresh read-only staging; reply pending.
+  Latest inventory: phone absent from USB, ADB and fastboot (only host devices
+  in lsusb). Reconnect USB in OrangeFox before active-root inspection/staging.
   No stale NBD caches may be used for an active root after0120 iOS has written it.
   New GPU kernel0121 built SUCCESS: CI40064123544 oncd67bc40835d67cbfd36604193b997fbba912ac3,
   no tests requested/run. CRC+publishedSHA verified xnu/out-0121-range kernel
