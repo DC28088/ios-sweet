@@ -106,7 +106,12 @@ Turnip loads. The shader cache must be provisioned in the mounted root using
 child. The plugin's unchecked mkdir/fallback does not create it successfully on
 this root. The directory repair was installed as an eight-chunk, 576 KiB userdata delta;
 every chunk passed readback verification. The unchanged0125 kernel was
-rebooted with a fresh live trace. UI Metal rendering remains unverified.
+rebooted with a fresh live trace. BackBoard then created a Turnip Adreno618 device
+in2095ms and submitted real GPU work, with successful sampled fence retirements
+through1440. The user reports similar speed and significant missing regions,
+trails and cutoffs. Repeated MTLFunction protocol-validation warnings and explicit
+layout refusals remain. This establishes device creation and GPU execution,
+not correct, smooth UI rendering.
 
 Compiling against the extended ABI header does not implement its new methods.
 The donor Turnip backend still calls legacy Submit (method5), which remains
