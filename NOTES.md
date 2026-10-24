@@ -2,6 +2,21 @@
 
 ## Current direction and last known device state (2026-10-24, read first)
 
+- **0121 startup correction approved/applied; isolated boot in progress.**
+  User explicitly approved "Apply startup correction and boot0121". Fresh apply
+  matched all5 original chunks before writing1179648bytes, readback-verified all5.
+  research/wallpaper-recover-0121/{delta,plan}.json installed-readback-verified;
+  original bytes retained. Only merged/standalone wallpaper job configuration
+  changed (Disabled=true,RunAtLoad=false); PNG/CAML/ExtensionKit/GLES retained.
+  Product sweetin verified. Temporary same0121 image accepted; exact fastboot
+  timing in research/wallpaper-recover-0121/fastboot-boot.log. No partition flashing.
+  Live receiver started before reboot: logs/live-0121-no-registrar-usb.txt,
+  capture session77516 for300seconds. UI startup/causal confirmation pending.
+  Guarded query-only helper source c32d26e CI40108106711 SUCCESS is NOT deployed;
+  old helper binary retained but disabled. Do not auto-register plugins at boot.
+  Do not reuse preboot userdata caches if more recovery inspection is needed.
+
+
 - **0121 regressed startup: user reports stuck Apple logo (2026-10-24).**
   User moved to fastboot; product sweetin verified. Temporary OrangeFox image
   recovery/recovery.img hash4efe9045... accepted send3.827s/boot0.130s; recovery
