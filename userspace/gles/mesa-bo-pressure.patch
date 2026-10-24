@@ -1,0 +1,66 @@
+diff --git a/src/freedreno/drm/freedreno_bo.c b/src/freedreno/drm/freedreno_bo.c
+--- a/src/freedreno/drm/freedreno_bo.c
++++ b/src/freedreno/drm/freedreno_bo.c
+@@ -142,6 +142,16 @@
+       return bo;
+ 
+    bo = dev->funcs->bo_new(dev, size, flags);
++#ifdef __APPLE__
++   if (!bo) {
++      /* NativeAdreno has a bounded live mapping budget. Give up unused
++       * cached objects before reporting OOM; closing them still waits for
++       * their real kernel fences. Retry only once, never drop live refs. */
++      fd_bo_cache_cleanup(&dev->bo_cache, 0);
++      fd_bo_cache_cleanup(&dev->ring_cache, 0);
++      bo = dev->funcs->bo_new(dev, size, flags);
++   }
++#endif
+    if (!bo)
+       return NULL;
+ 
+diff --git a/src/freedreno/drm/freedreno_bo_heap.c b/src/freedreno/drm/freedreno_bo_heap.c
+--- a/src/freedreno/drm/freedreno_bo_heap.c
++++ b/src/freedreno/drm/freedreno_bo_heap.c
+@@ -221,6 +221,11 @@
+    }
+ 
+    struct sa_bo *s = calloc(1, sizeof(*s));
++   if (!s) {
++      util_vma_heap_free(&heap->heap, offset, size);
++      simple_mtx_unlock(&heap->lock);
++      return NULL;
++   }
+ 
+    s->heap = heap;
+    s->offset = offset;
+@@ -233,6 +238,12 @@
+       heap->blocks[idx] = fd_bo_new(
+             heap->dev, FD_BO_HEAP_BLOCK_SIZE, heap->flags | _FD_BO_HINT_HEAP,
+             "heap-%x-block-%u", heap->flags, idx);
++      if (!heap->blocks[idx]) {
++         util_vma_heap_free(&heap->heap, offset, size);
++         simple_mtx_unlock(&heap->lock);
++         free(s);
++         return NULL;
++      }
+       if (heap->flags == RING_FLAGS)
+          fd_bo_mark_for_dump(heap->blocks[idx]);
+    }
+@@ -248,7 +259,16 @@
+    bo->alloc_flags = flags;
+ 
+    /* Pre-initialize mmap ptr, to avoid trying to os_mmap() */
+-   bo->map = ((uint8_t *)fd_bo_map(heap->blocks[idx])) + block_offset(s);
++   void *mapping = fd_bo_map(heap->blocks[idx]);
++   if (!mapping) {
++      simple_mtx_lock(&heap->lock);
++      util_vma_heap_free(&heap->heap, offset, size);
++      fd_bo_del(heap->blocks[idx]); /* drop only this suballocation's ref */
++      simple_mtx_unlock(&heap->lock);
++      free(s);
++      return NULL;
++   }
++   bo->map = ((uint8_t *)mapping) + block_offset(s);
+ 
+    fd_bo_init_common(bo, heap->dev);
+ 

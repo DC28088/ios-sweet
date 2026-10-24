@@ -2,48 +2,45 @@
 
 ## Current direction and last known device state (2026-10-24, read first)
 
-- **ACTIVE: 0119 installed/readback verified; temporary boot accepted, live capture running.**
-  User switched networks and returned phone to FASTBOOT. Product sweetin;
-  temporary boot recovery/recovery.img accepted send3.813s/boot0.130s,
-  recovery SHA2564efe904506a021f2853d756d19b97f113f991b64f5531bd4228b3293131f7e54.
-  Phone now OrangeFox, userdata/dev/block/sda34 unmounted,114970046464bytes.
-  Both23a1fc8 builds SUCCESS: kernel40058371440 and GLES40058371530.
-  Network switch allowed downloads to finish. Library artifact's whole ZIP
-  SHA/API digest + CRC verified; every SHA256SUMS entry passed. Actual arm64,
-  iOS16.0 LC_BUILD_VERSION/signature command and cache UUID verified.
-  Library userspace/out/0119-gles-23a1fc8-range/sweetgl.dylib (18791184bytes),
-  SHA256f21332e828b8da34130d46880c8f5e6d18d2b1d63c184383b74bef98ea0cea28.
-  Kernel xnu/out-0119/kernel.development.sweet (17386032bytes), CRC and
-  published SHA256554684a99a1489d8b9cff266a98bdfc670a5afa46ffdcc3a07e072bd84a5d282.
-  Packaged shim/out/shim-boot-0119-scoped-gles-120hz.img (17403904bytes),
-  SHA2562646376c31502337a2fcac8b659d596d134a6aaae5e9c0b267fbefbdc61d13d5.
-  Unpacked shim/DTB/payload and cmdline match inputs; tag sweetbuild=119.
-  Same firmware-bearing sRGB ADT, matching new scoped-submit kernel/library.
-  Fresh research/gles-install-0119 read-only proxy/cache uses
-  /tmp/sweet-gles119-root.sock; no old block snapshot reused. Initial proxy
-  size.txt had an extra newline, corrected before reading any filesystem.
-  Fresh iOS16.7.16/20H392/cache/record inspection matches0118 library. Mounted
-  local qcow2 guest verified actual old library and record hashes before update,
-  new library hash afterward, executable mode and full HFS checks/read-only
-  remount; guest finished VERIFIED_UNMOUNTED. Phone remained unchanged.
-  Staged delta36 chunks/20185088bytes=19.25MiB, all before/after bytes retained
-  under research/gles-install-0119/delta. Fresh preflight matched every current
-  phone chunk. State staged-not-written. Edited read-only export socket
-  /tmp/sweet-gles119-edited.sock. Manifest research/gpu/0119-boot-manifest.json.
-  User explicitly approved "Apply and temporarily boot0119", then asked "boot it?".
-  apply-delta.py freshly matched all36 chunks, wrote20185088bytes and readback
-  SHA256 verified all36. State installed-readback-verified; originals retained.
-  adb reboot bootloader; product sweetin; temporary boot matching0119 sent
-  16996KB OKAY0.507s, BootingOKAY0.130s. Receiver started before reboot,
-  logs/live-0119-usb.txt (240s). Live USB confirms sweetbuild=119, iOS userspace
-  and GLES frontend loaded. A618 startup fence29/29 passes; MesaFD618/EAGL
-  loads; method17 scoped submits1..8 all result0, kernel times2002..5047us,
-  BOsets5..25. BGRA1125x2436/pitch4608 framebuffer swaps observed. First
-  timing window: GL finish avg16825us/max25236us (startup, not FPS or proven
-  improvement). No small-surface layout rejection observed at this point.
-  User asked to compare page swipes/Control Center with the CPU fallback;
-  screen/performance response pending. Capture continues; no full-GPU claim.
-  No boot/recovery/GPT flashing. Transport success is not acceleration proof.
+- **ACTIVE: 0119 regresses performance; 0120 fixes in preparation, phone left in iOS.**
+  User says "home screen. Significantly worse." Completed240s live capture
+  logs/live-0119-usb.txt is429837bytes. Replayed startup is the same boot.
+  Scoped method17 submissions complete(result0), normally~2..5ms per call;
+  observed GLfinish windows avg48.7..77.5ms,max375.8ms. These are not FPS.
+  No remaining Mesa layout failure in this capture, but backboardd[56] later
+  SIGSEGVs(far0x1c), immediately after BoMap method3 returns0xe00002be
+  (NoResources), BO_NEW16384 fails, last logged imported BO1004.
+  Shared VM limit1024 includes kernel allocations; client limit1024 likewise.
+  This fits object exhaustion but old log has no count to exclude span pressure.
+  Do not claim the exact exhausted limit is proven. 0119 rendering is a regression.
+  Source f26a9f8; kernel40058371440/GLES40058371530, both23a1fc8 builds succeeded.
+  Installed/readback-verified36chunks/20185088bytes; originals in
+  research/gles-install-0119/delta. Temp image
+  shim/out/shim-boot-0119-scoped-gles-120hz.img SHA256
+  2646376c31502337a2fcac8b659d596d134a6aaae5e9c0b267fbefbdc61d13d5.
+  Kernel xnu/out-0119/kernel.development.sweet SHA256
+  554684a99a1489d8b9cff266a98bdfc670a5afa46ffdcc3a07e072bd84a5d282;
+  library userspace/out/0119-gles-23a1fc8-range/sweetgl.dylib SHA256
+  f21332e828b8da34130d46880c8f5e6d18d2b1d63c184383b74bef98ea0cea28.
+  CPU fallback remains available, same installed library inactive with sweetgles=0:
+  shim/out/shim-boot-0118-cpu-fallback-120hz.img SHA256
+  84c745e436a3095da8eb4821d557c00c4970cac5f7ab1c1433ea1f34a49e9a1f.
+  No phone reboot/write performed after user's regression report.
+  0120 source separates live BO budget4096(+32 shared kernel reserve) from
+  unchanged per-submit1024 residency limit, capability-gated to reject old kernels;
+  logs actual VM objects/spans on pressure. Mesa retries allocation once after
+  releasing unused caches and guards failed heap metadata/backing/maps.
+  Reuses copy-upload texture storage on same-layout seed refresh. Removes
+  inherited A530 forced-sysmem workaround: A6xx fd6_gmem set_blit_scissor rounds
+  height4/width16, owned surfaces have patch0117 backing and imports keep Mesa
+  size/pitch validation. IR3 nofp16 retained. GMEM selection is unqualified.
+  Do not skip glFinish presentation waits: object completion queries currently
+  also block, but their actual call frequency/ownership semantics remain unaudited.
+  Core VM/UserClient/Submit C++ syntax compilation passed with IOKit type shims;
+  frontend generation and all four Mesa patches apply to the pinned sources.
+  Kernel patch applies to the post0119 source. No tests added/run.
+  Next: push and build matching0120 pair; fresh
+  staging/explicit approval required for any new raw userdata installation.
 
 
 - **ACTIVE: 0119 kernel and GLES builds succeeded; downloads/staging pending.**

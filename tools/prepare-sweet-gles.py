@@ -116,9 +116,21 @@ sweetgl_eagl_install(void)
         if (format) return copy_surface(s,target,format,type,w,h,pitch,why);
     }
 '''+anchor)
+ # Reuse upload texture storage when its seed changes but layout does not.
+ # glTexSubImage keeps GL ordering; it does not skip a writer or a fence.
+ old='\tglTexImage2D(target, 0, ifmt, (GLsizei)w, (GLsizei)h, 0, format, type, base);'
+ new='    GLuint bound = unit_held[active_unit()];\n    struct copied *old = bound < TEXSZ_MAX ? &copies[bound] : NULL;\n    if (old && old->surface && old->format == format && old->type == type &&\n        tex_w[bound] == w && tex_h[bound] == h)\n        glTexSubImage2D(target,0,0,0,(GLsizei)w,(GLsizei)h,format,type,base);\n    else\n        glTexImage2D(target,0,ifmt,(GLsizei)w,(GLsizei)h,0,format,type,base);'
+ s=once(s,old,new)
  return s
 edit('eagl.c',eagl)
 def frontend(s):
+ # The A530 reference forces sysmem because its GMEM resolve used 32-row
+ # blocks. A6xx's fd6_gmem set_blit_scissor uses 4 rows and 16 columns;
+ # patch0117 pads owned surfaces for those rows and validates imported sizes.
+ # Let Mesa select GMEM/sysmem on A618. Keep IR3 nofp16 for CA shaders.
+ a=s.index('\t\t\t/*\n\t\t\t * Render straight to memory, no GMEM tiles:')
+ b=s.index('\n\t\t\t/*',a+4)
+ s=s[:a]+'\t\t\tsweet_drm_log("sweetgl: A618 automatic GMEM/sysmem selection; bounded4096 BOs");'+s[b:]
  start=s.index('__attribute__((constructor)) static void\nsweetgl_load(void)')
  return s[:start]+'''__attribute__((constructor)) static void
 sweetgl_load(void)
