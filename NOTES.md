@@ -2,6 +2,25 @@
 
 ## Current direction and last known device state (2026-10-24, read first)
 
+
+- **0123 builds passed; fresh OrangeFox stage verified, installation authorized.**
+  User now explicitly says no need to ask permission to boot/install; proceed
+  with these prepared updates under that standing authorization. This supersedes
+  per-update approval prompts for this work; preserve backups and temporary boots.
+  Kernel CI40111479897 SUCCESS, helper CI40111462084 SUCCESS, source30bad3279c06.
+  Helper SHA230d394747fe802125a48d8a561a56750318354e68f2b993ca2667a9663fa491.
+  Phone in OrangeFox, sweetin, userdata unmounted,114970046464bytes. Fresh snapshot
+  research/wallpaper-install-0123; local overlay HFS checks OK before/after, all
+  installed payload hashes match read-only remount, VERIFIED_UNMOUNTED.
+  Four files887429bytes: updated helper, distinct delayed one-time rebuild job,
+  merged BackBoard CA_FORCE_TIMER=1 config, installation record. Old per-plugin
+  registrar remains disabled; GLES0120 and wallpaper PNG/CAML retained.
+  Delta12chunks1769472bytes (1.6875MiB), originals saved; fresh preflight matched
+  all12 before chunks. No0123 phone writes yet. Kernel artifact12566654090
+  downloading via ZIP ranges; must verify published SHA/package/unpack before
+  applying and temporarily booting. New Metal userland is still NOT ported.
+
+
 - **New user references: A618 sunfish + updated Chlorophyll; prerequisites prepared.**
   User supplied Yofuness/ios-flame sunfish, closest sameA618/iOS16 donor. Pinned
   f09fdb58a2c074d131072947b247240532b7d97d under research/ios-sunfish-reference.
