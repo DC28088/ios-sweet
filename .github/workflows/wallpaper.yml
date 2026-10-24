@@ -1,6 +1,9 @@
 name: sweet-wallpaper
 on:
   workflow_dispatch:
+  push:
+    branches: [codex/adreno-power-audit]
+    paths: [userspace/wallpaper/**, .github/workflows/wallpaper.yml]
 jobs:
   build:
     runs-on: macos-15
