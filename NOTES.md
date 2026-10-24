@@ -11,7 +11,7 @@
   Network switch allowed downloads to finish. Library artifact's whole ZIP
   SHA/API digest + CRC verified; every SHA256SUMS entry passed. Actual arm64,
   iOS16.0 LC_BUILD_VERSION/signature command and cache UUID verified.
-  Library userspace/out/0119-gles-23a1fc8-range/sweetgl.dylib (18791824bytes),
+  Library userspace/out/0119-gles-23a1fc8-range/sweetgl.dylib (18791184bytes),
   SHA256f21332e828b8da34130d46880c8f5e6d18d2b1d63c184383b74bef98ea0cea28.
   Kernel xnu/out-0119/kernel.development.sweet (17386032bytes), CRC and
   published SHA256554684a99a1489d8b9cff266a98bdfc670a5afa46ffdcc3a07e072bd84a5d282.
