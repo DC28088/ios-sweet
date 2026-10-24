@@ -3,6 +3,22 @@
 ## Current direction and last known device state (2026-10-25, read first)
 
 
+- **0125 full Metal telemetry recovered via fresh126 guest.**
+  Extraction guest37065 cleanly unmounted/poweredoff after41s; old installed
+  bundle hashes allOK. Files research/metal2-install-0126/share/boot-0125-telemetry:
+  mtl2.log183KiB, pipelines.log370KiB. SmallHFSparser hit overflowextents;
+  guest handles them. Lastsummary893commits/0failed/893completed,140pipelines,
+  meancommit-to-complete78263us max397ms,893scheduledwaits,9completedwaits.
+  Thus CA ALREADY waits scheduled in this capture; frontend0002 is defensive
+  ordering, not proof of a missing caller wait. GPU-to-CPU kernel gate stillnew.
+  Texture refusalcount0 despite explicitlayoutwarnings: runtime can shadowcopy
+  incompatiblelayouts; alignment aims toavoidcopies and isnot proof those
+  warnings causedmissingpixels. 20.47GBusersurfacecache maintenance total1.98s,
+  pipeline creation20.16s including firstuse. Neither metric isdisplayFPS.
+  LastphoneOrangeFox; fresh126overlay includesonly localHFScheckchanges and
+  extraction; no phonewrite. Mustkeepphoneuserdataunmounted untilpreflight.
+
+
 - **0126 CI dispatched on e92bce0148f2745c33c23ab2bcf3c9f52a974626.**
   Kernel40127896529 (run_tests=false, keep_going=false) and Metal2 40127901139
   running. Superseded Metal2 40127402906 cancellation requested; it lacks0002.
