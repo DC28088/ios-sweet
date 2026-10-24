@@ -2,6 +2,32 @@
 
 ## Current direction and last known device state (2026-10-24, read first)
 
+- **0121 regressed startup: user reports stuck Apple logo (2026-10-24).**
+  User moved to fastboot; product sweetin verified. Temporary OrangeFox image
+  recovery/recovery.img hash4efe9045... accepted send3.827s/boot0.130s; recovery
+  ADB ready, userdata unmounted/114970046464bytes. Fresh read-only snapshot
+  research/wallpaper-debug-0121 (no old caches reused). Saved persistent log
+  logs/boot-0121-wallpaper-recovery.txt215241bytes, ring flush68.
+  Helper /private/var/mobile/Library/Logs/sweet-wallpaper.log122bytes:
+  start uid501; query0 collections0 legacy0; PaperBoard registration1; stops
+  before first registerPlugin returns (sorted first target LegacyPoster).
+  This is a new suspect, not yet proof of the UI wait cause. No new current-boot
+  helper/PosterBoard crash in logs; saved historical crash files also extracted.
+  Symbolication against matching original cache maps SpringBoard t0/t3 to
+  CoreServices lock waits, t1 to synchronous XPC through Foundation/CoreServices.
+  BackBoard t0 is in CoreFoundation run loop; no captured GPU error. Local
+  symbols are redacted, so exact private methods not identified. Registration
+  implicated, causal confirmation still requires isolated boot.
+  Staged local correction in research/wallpaper-recover-0121: only disable
+  automatic wallpaper job in merged/standalone plists, retain PNG/CAML/flags/GLES.
+  Both fsck passes OK, read-only-remount hashes match, VERIFIED_UNMOUNTED.
+  Delta and fresh phone preflight being prepared; new approval required.
+  Source helper now defaults query-only, explicit --register needed for mutation;
+  updated helper source is not deployed. Original binary remains on phone, so
+  disabling the job is necessary. Alarm cannot cancel server-side SPI work.
+  No new phone writes after approved0121 update; remains in OrangeFox.
+
+
 - **0121 wallpaper installation approved and verified (2026-10-24).**
   User explicitly approved "Apply wallpaper repair and temporarily boot0121".
   Fresh apply preflight matched all88 original chunks before writing any bytes;
