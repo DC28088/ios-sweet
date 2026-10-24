@@ -3,6 +3,29 @@
 ## Current direction and last known device state (2026-10-25, read first)
 
 
+- **0126 installed/booted: user says glitches improved, performance unchanged.**
+  FinalbundleCI40128850465 source3e219db, frontendSHA470cbb93cdeba870db47ce7b53ff348458e2191b91246c6beacbc391286aab80,
+  TurnipSHA7c391fb0da42766aac17b0a725b6a95347967faa86490763497d09729b244b02.
+  Guest60928 HFSchecks/fullnewhashes/cleanunmount passed; editedcatalog cache
+  ownership501:501/0700 preserved. Delta50chunks39911424bytes, ALLbeforebytes
+  saved, freshlymatched theneverywritereadbackverified (apply81289). Metadata
+  research/metal2-install-0126/{delta,installation-manifest}.json updated.
+  Temporarybootaccepted send0.530s/boot0.131s; imageSHA5b3ec7eb... unchanged.
+  Currentphone iOS; liveUSBreceiver13880 startedpreboot for3600seconds,
+  logs/live-0126-metal2-presentation.txt isgrowing. Initial283450byteprefix:
+  Adreno618devicecreated3247ms, MTLFunctionadopted, ownedrows64, CPUgateenabled,
+  gatefirst4/sample120result0; sourceacquirerefusals0/functionwarnings0,
+  layoutrefusals74 (shadowfallbackpossible). Fenceretire240gpuwait72698us/
+  cache10410us/result0; notFPS. No fullperformance/correctness successclaimed.
+  UserrequestsClaudehandoffnow; docs/CLAUDE-CODE-CONTINUE-0126.md contains full
+  prompt, exactartifacts/live+previouslogs/rollback/references and Wi-Fi/audio/
+  BT/haptics/brightness/wallpaper tasks. NativeWiFi URLnowredirectsAth12kWifi,
+  notadropinSweetWCN3990driver. TopazlatestREADMEreportsnewGPU/audio work;
+  olderlocalreviewsarehistorical, refreshactualsource/contradictoryREADME.
+  All126snapshot/NBDbase/overlaycachedblocks nowSTALE afteriOSboot: neveruse
+  themfornextwrite; preserveoriginaldeltaforrollback. No additionalbootsplanned.
+
+
 - **0126 waiting finalbundle; graphicsenvironment checked read-only.**
   Freshroot mergedBackBoard graphicsenv onlyCA_FORCE_TIMER=1; noTU_/MESA_/M2V_
   debugoverride present. Log research/metal2-install-0126/graphics-env.log saved.
