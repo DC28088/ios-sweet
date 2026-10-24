@@ -3,6 +3,17 @@
 ## Current direction and last known device state (2026-10-25, read first)
 
 
+- **0126 kernel/library CI bothSUCCESS on exacte92bce0.**
+  Kernel40127896529, bundle40127901139. Kernel17395128bytes SHA256
+  9aad4df66dcd3e15abc7dc7312f4bf3bc2ef5f73fb2373e9d83380ca32d2cffe,
+  rangedZIPmemberCRC and publishedSHA checked; markers ownedrows/presentgate/
+  acquire-refusal present. Bundleartifact12542461bytes stilldownloading (gh9718
+  and independent ranged15159, separatedirs). Fresh126guest oldbundlehashesOK;
+  preparedreplacementguest requires oldhashes before writes, retainsm2vcache.
+  No phonewrites/newboot yet; phoneOrangeFox. Package research/gpu/package-0126.py
+  will add sweetpresentwait=1 and sweetbuild126, sameverifiedshim/DTB/firmwareADT.
+
+
 - **0125 full Metal telemetry recovered via fresh126 guest.**
   Extraction guest37065 cleanly unmounted/poweredoff after41s; old installed
   bundle hashes allOK. Files research/metal2-install-0126/share/boot-0125-telemetry:
