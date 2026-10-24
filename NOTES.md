@@ -2,7 +2,7 @@
 
 ## Current direction and last known device state (2026-10-24, read first)
 
-- **ACTIVE: 0119 source correction prepared; kernel and GLES builds pending.**
+- **ACTIVE: 0119 kernel and GLES builds succeeded; downloads/staging pending.**
   User asked to fix the GPU regression and provided BLUETOOTH-SUMMARY.md.
   Phone stays in the confirmed working CPU fallback; no new device writes.
   New patch0117-sweet-gles-residency-cache-and-surface-padding adds an optional
@@ -27,7 +27,25 @@
   CI buildtree. Initial kernel run40058111623 on6733e9d dispatched after API TLS
   failures. Follow-up adds OOL descriptor prepare/complete before copying and
   independent GLES/kernel workflow concurrency groups. New source/build pair
-  will supersede that initial run. Hardware rendering remains unverified.
+  superseded that initial run. Both replacements use23a1fc821e561c52d61279feda8920a1c7d977d6:
+  kernel40058371440 build jobSUCCESS (artifact12546134862,60572112bytes,
+  ZIP SHA256759ca7a3181cb5e6124cac3019f1fb056e14e83b7503665acd317a7566d07ba5),
+  GLES40058371530 SUCCESS (artifact12546685371,4553091bytes,
+  ZIP SHA25691573d9c7f978a420a211574cb945415a222481e76b4afe17f468a20ad05721f).
+  Normal gh artifact download timed out; first GLES range download failed at
+  offset1048576 after retries. Resumable64KiB GLES downloader now running,
+  saves verified-length chunks in research/gpu/gles-0119-download-ranges;
+  helper research/gpu/fetch-gles-0119-resume.py, output when fully verified
+  userspace/out/0119-gles-23a1fc8-range. Kernel member-only range helper
+  research/gpu/fetch-kernel-0119.py downloads kernel+SHA256SUMS to xnu/out-0119.
+  No downloaded artifact is accepted without final CRC/hash validation.
+  API TLS failures are intermittent; alternate process-local US API routing
+  retains TLS/SNI verification (research/gpu/github-read-us.py), no system DNS
+  changes. User asked to switch networks; reply pending.
+  Fresh research/gles-install-0119 directory prepared, no old block cache,
+  overlay or delta reused. User asked to enter OrangeFox for read-only staging;
+  no ADB device at last check. No0119 userdata writes or hardware boot.
+  Hardware rendering remains unverified.
 
 - **ACTIVE: CPU fallback reaches home screen; user confirms previous speed restored.**
   Branch codex/adreno-power-audit, original iOS16.7.16 HFS+ / NativeAdreno ABI1.

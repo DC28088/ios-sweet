@@ -5,7 +5,17 @@
 The user supplied `BLUETOOTH-SUMMARY.md`, describing an iOS 16.7 Bluetooth port
 for vince. It reports pairing and daemon operation, with Bluetooth audio,
 low energy and reboot persistence still unfinished. The supplied document is
-a report, not the source patch or hook library. Those have been requested.
+a report, not the source patch or hook library.
+
+Following the user's request to find the URL, GitHub repository search found
+[arabaci0711-ux/ios-vince](https://github.com/arabaci0711-ux/ios-vince). It was
+cloned for inspection at `01a9aaf5cc049a90ec282bface0875ca1486dd91`. Its current
+source tree ends at patch `0091-vince-hfs-emmc-root.patch`; it contains neither
+Bluetooth patch 0180 nor the hook/bring-up sources named in the summary. A
+remote branch listing reports only `main`. This is a matching device project,
+but does not supply the described Bluetooth implementation at that revision.
+The summary may refer to unpublished work or a different repository. Public
+code search was also attempted, but its API request timed out.
 
 Sweet's saved live device tree identifies `/soc/bt_wcn3990`, compatible
 `qca,wcn3990`, with separate IO/core/PA/crystal power supplies. A separate
