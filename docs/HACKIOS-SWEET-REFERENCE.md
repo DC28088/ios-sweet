@@ -129,3 +129,34 @@ boot arguments and iOS userspace/SpringBoard startup. The 150-second capture
 finished with 183787 bytes. The user confirms the home screen and previous
 speed restored. The phone remains in this temporary CPU-rendering boot.
 No partition flashing or userdata rewrite was performed.
+
+## 0119 source correction (2026-10-24)
+
+0118's method 6 timeout messages alone do not prove stuck GPU commands: the
+frontend polls fences with a zero timeout. Its `glFinish` measurements include
+CPU submission/cache work as well as waiting for the device. The earlier
+interpretation of every timeout as a hang was too strong.
+
+The old submit path cleans **every mapped BO** and acquires every writable
+import after each job, even if the job does not reference it. The replacement
+adds an optional ABI1 `SubmitResources` capability and method 17. Mesa's
+complete BO list, including nested IBs and data, is validated, retained to the
+actual CP fence, and used to restrict cache ownership transfers. Only buffers
+marked GPU-write are acquired after completion. No cache operation is simply
+omitted from a referenced non-coherent buffer. Legacy submissions retain their
+original conservative path. Userspace requires the new capability.
+
+The fixed-size larger request is copied from an IOKit out-of-line descriptor
+into kernel storage, with prepare/complete and exact-length validation. Buffer
+ownership, access bits, duplicate handles and command membership are checked
+before submission. Uncertain commits retain their BO references.
+
+Owned, single-plane IOSurfaces now allocate the final four-row block required
+by A6xx linear GMEM transfers. For example, 281×609 at pitch 1152 needs 705024
+bytes before page rounding; rounding only the logical image to 16 KiB yields
+704512 bytes, which is too short. Logical dimensions do not change. Caller
+memory is not extended; tightly sized sampled images use the existing texture
+upload path. Mesa bounds validation remains enabled.
+
+Source corrections and syntax compilation are not hardware performance results.
+The phone remains in the user-confirmed CPU fallback while the pair is built.

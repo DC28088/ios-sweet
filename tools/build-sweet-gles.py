@@ -90,7 +90,8 @@ shutil.copy2(ROOT/'tools/install-sweet-gles-root.py',out/'install-sweet-gles-roo
 for name in ['docs/license.rst','COPYING','LICENSE']:
  if (mesa/name).exists():shutil.copy2(mesa/name,out/('Mesa-'+Path(name).name))
 report={'reference':INPUTS['commit'],'mesa':INPUTS['mesa_commit'],'deployment_target':'16.0','architecture':'arm64',
- 'kernel_abi':'NativeAdreno1','kernel_boot_mode':'sweetgles=1','cache_uuid':json.loads((out/'cache-profile.json').read_text())['cache_uuid'],
+ 'kernel_abi':'NativeAdreno1','kernel_capabilities_required':['HostImport','SubmitResources'],
+ 'kernel_boot_mode':'sweetgles=1','cache_uuid':json.loads((out/'cache-profile.json').read_text())['cache_uuid'],
  'built':True,'installed':False,'hardware_qualified':False,'runtime_tests_run':False,
  'files':{str(p.relative_to(out)):hashlib.sha256(p.read_bytes()).hexdigest() for p in out.iterdir() if p.is_file()}}
 (out/'build.json').write_text(json.dumps(report,indent=2)+'\n')
