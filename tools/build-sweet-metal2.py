@@ -141,6 +141,8 @@ def build_turnip(unixnu, sunfish, mesa, abi, env):
     applied = patch_series(mesa, [unixnu / name for name in compiler['patches']])
     applied.update(patch_series(mesa, sorted((sunfish / 'phone/turnip/patches').glob('*.patch'))))
 
+    if not shutil.which('glslangValidator', path=env.get('PATH')):
+        raise SystemExit('glslangValidator is required (brew install glslang; add it to PATH)')
     sdk = sdk_tool(env, '--show-sdk-path')
     clang = sdk_tool(env, '--find', 'clang')
     clangxx = sdk_tool(env, '--find', 'clang++')
