@@ -2,7 +2,22 @@
 
 ## Current direction and last known device state (2026-10-24, read first)
 
-- **ACTIVE: 0119 regresses performance; 0120 fixes in preparation, phone left in iOS.**
+- **ACTIVE: 0120 installed/readback verified and temporarily booted; runtime pending.**
+  User explicitly approved "Apply and temporarily boot0120". Revalidated all
+  image/library/manifest hashes and sweetin identity. apply-delta.py freshly
+  matched all35 original phone chunks, wrote19857408bytes, readback verified
+  all35; delta.json installed-readback-verified. Every original byte retained
+  under research/gles-install-0120/delta; apply.log records complete operation.
+  adb reboot bootloader; product sweetin confirmed. fastboot boot
+  shim/out/shim-boot-0120-buffer-gmem-gles-120hz.img accepted:
+  send16996KB OKAY0.519s, BootingOKAY0.130s. No boot/recovery/GPT flashing.
+  Receiver started before reboot, logs/live-0120-usb.txt duration240s;
+  capture session40204. Manifest research/gpu/0120-boot-manifest.json updated.
+  Source3806917, kernel40062657768/GLES40062657825; both SUCCESS.
+  This confirms transport only. Wait for boot/GPU log and user screen report
+  before claiming rendering, stability or performance improvement.
+
+- **0119 regression and 0120 build/staging history (superseded by current state above).**
   User says "home screen. Significantly worse." Completed240s live capture
   logs/live-0119-usb.txt is429837bytes. Replayed startup is the same boot.
   Scoped method17 submissions complete(result0), normally~2..5ms per call;
