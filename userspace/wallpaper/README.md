@@ -55,3 +55,22 @@ that wallpaper is visible.
 For raw userdata installation, retain every changed original block, verify a
 local filesystem overlay, freshly compare device blocks, obtain the approval
 required by AGENTS.md, and verify every written chunk by reading it back.
+
+## New prerequisite-gated rebuild mode (not installed or hardware verified)
+
+`--rebuild-once` runs as root and first requires the AMFI IOService and all three
+chosen MAC identities. If providers already exist, it returns without rebuilding.
+Otherwise it calls the same one-time LaunchServices database rebuild documented
+by the sunfish port, then requires both provider records and a nonempty EXQuery.
+This does not call the old per-plugin registration loop.
+
+A persistent attempt record in /private/var/db/sweet-wallpaper-rebuild-attempt.json
+is written before the call. An incomplete attempt is not automatically repeated,
+including across boots. Success is recorded only after provider queries pass.
+The process alarm still cannot cancel an operation already running inside lsd.
+
+Deployment must retain the old registration job disabled and use a distinct
+root job with StartInterval=180, RunAtLoad=false and no KeepAlive. This schedules
+the one-time rebuild after initial UI bootstrap. It needs the new kernel's
+`sweetamfi=1` compatibility service and updated ADT; without either it refuses
+mutation. Source preparation/build checks are not on-device validation.

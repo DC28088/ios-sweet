@@ -1,0 +1,48 @@
+{
+  "repository": "https://github.com/Yofuness/ios-flame",
+  "revision": "f09fdb58a2c074d131072947b247240532b7d97d",
+  "branch": "sunfish",
+  "license": "MIT",
+  "files": [
+    {
+      "path": "LICENSE",
+      "sha256": "a9637567bb24266ca6c44ce759eadfc804ff02edbe2a293f67b4f65417792d1e"
+    },
+    {
+      "path": "docs/sunfish/status.md",
+      "sha256": "646cbc0a1f97dd64ed9eb81ee429742223c8d43d0080b99c5cf1514d0ce7886a"
+    },
+    {
+      "path": "docs/sunfish/display-perf.md",
+      "sha256": "94df1d343c4074ac0886a50fbe95e78477f20d8b055f51a0d6236f50e67ccb0b"
+    },
+    {
+      "path": "HANDOFF.md",
+      "sha256": "2231ab6feb27340a875d6cd213649a4a79581af51def424a4f9e0ef8bbdc91fe"
+    },
+    {
+      "path": "xnu/patches/0103-flame-amfi-trust-query.patch",
+      "sha256": "c6a26a3aa73664ea6ad8f9acba1d819d4295b54c2388eaffd0bf3598f237a2bd"
+    },
+    {
+      "path": "xnu/patches/0148-sunfish-a618-gpu-levels-825.patch",
+      "sha256": "c54d1f2c01de359de4850c0ac6dadba23c38eaf11af4eb790677999921523ea7"
+    },
+    {
+      "path": "xnu/patches/0159-sunfish-surface-row-align-64.patch",
+      "sha256": "fe86aee96bd2300bc2f60a2928f462452e863c31fa803cb0b20b57ed5da0b1b4"
+    },
+    {
+      "path": "phone/turnip/NativeAdrenoABI.h",
+      "sha256": "b5574e34ee3a368616f722f9fa40ea2c87bbc5c03989a299d9d4f954c9f8be70"
+    },
+    {
+      "path": "phone/turnip/patches/0104-sweet-host-images-not-dedicated.patch",
+      "sha256": "b845e6d66d03749aa6d92979aa72106208911cb1742a8e356774946c1ad97f4f"
+    },
+    {
+      "path": "phone/metal2/bridge/patches/0102-sweet-read-only-alias-past-rows.patch",
+      "sha256": "bce6f1ac907779a1f28a8bb5ff1e45a6d451f7058bb538cf50f7e85dbf07ab95"
+    }
+  ]
+}

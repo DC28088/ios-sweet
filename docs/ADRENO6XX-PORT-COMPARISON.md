@@ -8,7 +8,8 @@ complete Metal API coverage are different claims.
 
 | Project | Hardware / OS | Published graphics path | Networking status and relevance |
 | --- | --- | --- | --- |
-| [ios-flame](https://github.com/NWylynko/ios-flame) | Pixel 4, SD855 / A640, iOS 16 | SweetMetal2 → metal2vulkan → Turnip; project reports UI/app rendering and about 20–26 fps on home swipes | WCN3990 Wi-Fi through `wland`, Settings and DHCP; Bluetooth listed unfinished. Closest published combination for our OS, GPU generation and radio. |
+| [ios-flame/sunfish](https://github.com/Yofuness/ios-flame/tree/sunfish) | Pixel4a, A618, iOS16 | SweetMetal2 → metal2vulkan → Turnip; branch reports565MHz/~21 panel updates/s, pacing/BO leaks remain | Closest same-GPU donor; branch Wi-Fi current status reports joins/DHCP but retains older failure notes. See [detailed source comparison](SUNFISH-A618-PORT.md). |
+| [ios-flame](https://github.com/NWylynko/ios-flame) | Pixel 4, SD855 / A640, iOS 16 | SweetMetal2 → metal2vulkan → Turnip; project reports UI/app rendering and about 20–26 fps on home swipes | WCN3990 Wi-Fi through `wland`, Settings and DHCP; Bluetooth listed unfinished. Useful OS/radio donor; sunfish is now the closer GPU match. |
 | [HackiOS](https://github.com/oosexgang/hackios-xnu-kernel) | Redmi Note 12 Pro Speed / redwood, A642L, iOS 16 | Published README identifies the working UI path as Mesa GLES; app Metal remains in progress | Working WCN6750/ath11k Wi-Fi; Bluetooth unfinished. Its radio and EFI/APFS architecture differ from sweet. |
 | [ios-topaz](https://github.com/MakrSas/ios-topaz/tree/topaz) | Redmi Note 12 4G, A610, iOS 16 | Published branch documents CPU rendering; GPU work on the phone is reported but absent from this branch | Published modem/WLAN transport, Settings and WPA2. Useful protocol/reference code; board and radio setup differ. |
 | [Chlorophyll](https://github.com/ry-diffusion/Chlorophyll) / [Bergamota](https://github.com/ry-diffusion/Bergamota) | Poco F1, A630, iOS 18 | Published AIR → NIR → ir3 and Metal API over Gallium | Useful alternative shader/runtime implementation. Bergamota's inspected README still lists GPU/networking as unfinished; do not infer complete hardware support from Chlorophyll's description. iOS 18/arm64e integration needs adaptation. |
@@ -132,3 +133,7 @@ being disabled for an isolated boot, while PNG layers and the ExtensionKit flag
 are retained. This is a regression investigation, not successful wallpaper
 restoration. The helper source now defaults to query-only and requires an explicit
 `--register` argument for mutation; that mode is not validated for early boot.
+
+Latest user-provided references were audited at sunfish f09fdb58 and Chlorophyll
+2a463aed. See [A618 port notes](SUNFISH-A618-PORT.md) for actual branch status,
+wallpaper cache prerequisites, vsync gating and the remaining Native ABI work.

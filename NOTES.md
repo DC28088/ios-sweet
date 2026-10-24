@@ -2,6 +2,50 @@
 
 ## Current direction and last known device state (2026-10-24, read first)
 
+- **New user references: A618 sunfish + updated Chlorophyll; prerequisites prepared.**
+  User supplied Yofuness/ios-flame sunfish, closest sameA618/iOS16 donor. Pinned
+  f09fdb58a2c074d131072947b247240532b7d97d under research/ios-sunfish-reference.
+  docs/sunfish reports Metal→m2v→Turnip at565MHz/~21 panel updates/s; pacing,
+  aliases and leaks remain work. Inherited README is A640, use branch docs.
+  Detailed findings docs/SUNFISH-A618-PORT.md, source hashes sunfish-adreno618-reference.json.
+  HANDOFF documents exact PosterBoard assertion fixed via chosenMACs + AMFI
+  trust-cache query IOService + one-time LS rebuild. Current root lacks first2.
+  Prepared mkadt chosenMACs and tools/sweet-mg-adt.py preserving existingfirmware
+  ADT/identities. shim/out/sweet-0123-mg-gles-srgb.adt SHA88aa6092... preserves
+  firmware; sourceSHA331ce035... sidecar research/gpu/0123-adt-manifest.json.
+  Patch0121-sweet-extension-cache-trust-service adds opt-in sweetamfi=1 service;
+  validates selector6 hash20/32 + optionalscalar1; other selectors unsupported.
+  MIT attribution included. Patch applicability passes; full local compile
+  unavailable (/home/dan/swift clang absent), need realCI compile.
+  Prepared tools/prepare-backboard-vsync.py: BackBoard CA_FORCE_TIMER=1 in a NEW
+  merged plist. Current phone lacks this; donor fixes syntheticA11 VBL gate.
+  Local prepared research/gpu/0123-backboard-vsync-launchd.plist only, not staged
+  against fresh phone blocks and NOT installed. Wallpaper job stays disabled.
+  Chlorophyll updated2a463aed (3 commits newer): system bundle,targetDeviceInfo,
+  empty colour-slot clears/CoreImage graph workaround; still iOS18/arm64e build.
+  NativeMetal userland port is NOT yet done: donor ABI1 lacks ourmethod17/scoped
+  residency and4096 budget; preserve16KiB hostpages/cache/fences when adapting.
+
+  Kernel0122 CI40109685834 SUCCESS on781b4ed, tests disabled; ranged ZIPmemberCRC
+  and publishedSHA verified xnu/out-0122-range/kernel SHA256
+  8b2fbbe87f90d75e59d7e9e51b4385c769f83d2f0a67eb4c545adcc994a048f7.
+  Packaged shim/out/shim-boot-0122-low-svs-gles-120hz.img17403904bytes SHA256
+  159d54217d091ea59c3b2e308c0f47b1abd8e6db6875e8f4f7f450098967860f.
+  Unpacked shim/DTB/payload verified, tag122; current0120GLES compatible.
+  Clock267 at already-present raw64 per pinnedPMOS table, newfence/cache timings.
+  NOT booted. It does not include newerMAC/AMFI/VBL prerequisites or Metal port.
+  Sunfish uses more conservative voltage-to-frequency pairs; preserve sweet's
+  pinned board OPP source rather than copying its rawlevel assumptions.
+  New helper --rebuild-once source requires root, AMFI service and chosenMACs.
+  Uses documented one-time LS rebuild, records attempt before mutation, refuses
+  automatic retry after incomplete attempt, verifies providers before success.
+  Intended distinct delayed job StartInterval180; old registration job stays
+  disabled. Source/build only, NOT installed/hardware-verified; no root stageyet.
+  No new phone writes after approved startup correction; current0121 reaches
+  home, sluggish userfeedback/blur good/no wallpaper. FollowupUSB180s capture
+  logs/live-0121-after-home-usb.txt session81516, status file has completion count.
+
+
 - **0121 isolated boot reaches home; wallpaper unresolved; next clock audit build.**
   User confirms same overall slowness: recents scrolling relatively smooth,
   app open/close and notification shade very sluggish, blur good, no wallpaper.
