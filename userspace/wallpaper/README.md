@@ -1,11 +1,30 @@
 # iOS16 wallpaper registration
 
-`register.m` repairs only PosterKit provider registration, using checked Objective-C
+## 0121 startup regression: disable automatic registration
+
+The initial helper was deployed on 2026-10-24. The phone remained at the Apple
+logo. Its saved log shows query=0, CollectionsPoster=0, LegacyPoster=0, successful
+PaperBoard app registration, then no return from the first plugin registration.
+SpringBoard samples show CoreServices lock waits and a synchronous XPC request;
+BackBoard is idle in its event loop. This implicates startup registration, but
+disabling the job and booting again is needed to establish causality.
+
+Keep the launch job **Disabled=true, RunAtLoad=false** in both its standalone
+plist and the merged launchd dictionary. A staged recovery change does exactly
+that while retaining the image conversion and ExtensionKit flag. The installed
+helper binary remains the original build; disabling the job is essential.
+
+The updated source defaults to query-only. Mutating registration requires the
+explicit `--register` argument and remains unsuitable for automatic early boot.
+The alarm bounds the helper process only; it cannot cancel work already running
+inside LaunchServices/installd. Do not claim the registration path is validated.
+
+`register.m` attempts targeted PosterKit provider registration, using checked Objective-C
 selectors from the iOS16 LaunchServices/ExtensionFoundation interfaces. The API
 reference is [ios-flame's phone tools](https://github.com/NWylynko/ios-flame/tree/745c4341af86089efb0df851fa8a27fb8face624/phone/tools).
 It does not use that reference's hardcoded instruction-offset call.
 
-The mobile-context launch job runs once per boot, with a 90-second alarm and
+The intended mobile-context diagnostic mode has a 90-second alarm and
 at most eight registration attempts. It registers PaperBoard and the installed
 `com.apple.posterkit.provider` bundles supplied in
 `/usr/local/share/sweet-wallpaper/providers.plist`. It checks that both
@@ -15,8 +34,8 @@ count as success. Diagnostics append to
 `/private/var/mobile/Library/Logs/sweet-wallpaper.log`.
 
 Build with the `sweet-wallpaper` GitHub workflow. Deploy the signed executable
-as `/usr/local/libexec/sweet-wallpaper-register` (root:wheel,0755). The launch job
-uses `UserName=mobile`, `GroupName=mobile`, `RunAtLoad=true`, `ProcessType=Background`,
+as `/usr/local/libexec/sweet-wallpaper-register` (root:wheel,0755). The disabled launch job
+uses `UserName=mobile`, `GroupName=mobile`, `RunAtLoad=false`, `Disabled=true`, `ProcessType=Background`,
 and no `KeepAlive` or launchd stdout/stderr paths. Add the same job to the merged
 `/System/Library/xpc/launchd.plist` LaunchDaemons dictionary as well as its standalone
 plist. iOS16 uses the merged dictionary during bootstrap.

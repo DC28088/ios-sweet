@@ -120,3 +120,15 @@ were freshly compared before writing and verified by readback afterward.
 Fastboot accepted0121; live USB confirms its boot tag, wallpaper helper launch
 and initial real GPU command completion. The helper's registration result,
 wallpaper visibility and performance comparison are still unverified.
+
+### 0121 failed to reach the home screen
+
+The user reports a persistent Apple logo. Recovery inspection recovered the
+helper log: no providers, PaperBoard app registration succeeds, then the first
+plugin registration does not return before logging. SpringBoard samples show
+CoreServices lock waits/synchronous XPC; BackBoard's main thread is in its run
+loop, with no captured GPU submission error. Automatic registration is therefore
+being disabled for an isolated boot, while PNG layers and the ExtensionKit flag
+are retained. This is a regression investigation, not successful wallpaper
+restoration. The helper source now defaults to query-only and requires an explicit
+`--register` argument for mutation; that mode is not validated for early boot.

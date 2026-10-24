@@ -5,6 +5,7 @@
 #import <Foundation/Foundation.h>
 #include <dlfcn.h>
 #include <stdio.h>
+#include <string.h>
 #include <unistd.h>
 
 @interface NSObject (SweetWallpaperSPI)
@@ -42,9 +43,16 @@ static BOOL registered(NSArray *results) {
     return results.count > 0 && collections && legacy;
 }
 
-int main(void) {
+int main(int argc, char **argv) {
     @autoreleasepool {
-        /* The launch job runs as mobile: inspect the same LS context as the UI. */
+        /* Registration can block LaunchServices during early bootstrap. Never
+         * mutate its database merely because this executable was launched.
+         * --register is reserved for an explicitly controlled diagnostic run;
+         * the installed launch job must remain Disabled after the 0121 stall.
+         */
+        BOOL repair = argc == 2 && strcmp(argv[1], "--register") == 0;
+        if (argc > 1 && !repair) return 1;
+        /* Inspect the same LS context as the UI. */
         if (getuid() != 501) return 2;
         alarm(90);
         freopen("/private/var/mobile/Library/Logs/sweet-wallpaper.log", "a", stdout);
@@ -53,6 +61,16 @@ int main(void) {
         if (!dlopen("/System/Library/Frameworks/CoreServices.framework/CoreServices", RTLD_NOW) ||
             !dlopen("/System/Library/Frameworks/ExtensionFoundation.framework/ExtensionFoundation", RTLD_NOW)) {
             puts("SWEET WALLPAPER: required framework unavailable"); return 3;
+        }
+        if (!repair) {
+            @try {
+                BOOL ok = registered(queryProviders());
+                puts("SWEET WALLPAPER: query-only; no registration requested");
+                return ok ? 0 : 7;
+            } @catch (NSException *error) {
+                printf("SWEET WALLPAPER: query exception %s\n", error.description.UTF8String);
+                return 7;
+            }
         }
         NSArray *paths = [NSArray arrayWithContentsOfFile:@"/usr/local/share/sweet-wallpaper/providers.plist"];
         if (!paths.count || paths.count > 64) return 4;
