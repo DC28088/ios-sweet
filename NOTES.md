@@ -14,9 +14,12 @@
 
 - **Restart kernel failed; remove BSD-private signal dependency before rebuilding.**
   CI40123710586 on203d781 failed during Build; no new boot image was used.
-  GitHub failure-log downloads repeatedly disconnect/TLS timeout; small API
-  annotation confirmed only exit2. Network-switch question pending. Local
-  source audit shows signalvar.h hides psignal behind BSD_KERNEL_PRIVATE;
+  GitHub downloads repeatedly disconnected, but the first3.9MiB of the compressed
+  run log yielded a partial build log with the exact compiler errors:
+  SweetNativeAdrenoClient.cpp:281 psignal undeclared, plus invalid proc*→int
+  from compiler suggesting signal(). Diagnostic excerpt saved locally at
+  research/gpu/0125-restart-compile-errors.txt. This confirms the source audit:
+  signalvar.h hides psignal behind BSD_KERNEL_PRIVATE;
   IOKit should use sys/proc.h process KPIs. Revised patch0123 now includes
   sys/proc.h + sys/signal.h and uses proc_best_name/proc_signal while holding
   proc_find reference; avoids direct p_comm layout and private psignal.
