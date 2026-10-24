@@ -1,6 +1,6 @@
 --- a/phone/metal2/NativeBridgeMetalFrontend.mm
 +++ b/phone/metal2/NativeBridgeMetalFrontend.mm
-@@ -937,7 +937,20 @@
+@@ -937,7 +937,21 @@
    // Completion owns this reference; the runtime orders the non-owning scheduled callback before it.
    void *context=(__bridge_retained void *)self;
    if(nmb_command_buffer_on_completed(_handle,completed,context) &&
@@ -10,10 +10,11 @@
 +   // before CA can issue SwapEnd; the matching kernel waits their CP fences
 +   // and acquires source cache lines under the submission gate. Scheduling is
 +   // not completion. Preserve the runtime's deadlock checks and error report.
-+   // SWEET_CPU_PRESENT_WAIT=0 restores donor asynchronous-commit behaviour.
++   // Opt in only with SWEET_CPU_PRESENT_WAIT=1; CA already waits scheduled
++   // in the captured893-buffer trace. Keep donor commit behaviour by default.
 +   static const bool cpuPresent=[] {
 +    const char *setting=getenv("SWEET_CPU_PRESENT_WAIT");
-+    return (!setting || strcmp(setting,"0")) &&
++    return setting && !strcmp(setting,"1") &&
 +      [[NSProcessInfo processInfo].processName isEqualToString:@"backboardd"];
 +   }();
 +   if(cpuPresent)[self waitUntilScheduled];

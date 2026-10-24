@@ -3,6 +3,17 @@
 ## Current direction and last known device state (2026-10-25, read first)
 
 
+- **0126 final frontend adjustment after recovered timing evidence.**
+  Do NOT install initialbundleCI40127901139: frontend0002 forcedwait insidecommit
+  is unnecessary for observed893/893 caller scheduledwaits and could change
+  callerlock/callback ordering. Set optionalguard OFF bydefault; explicit
+  SWEET_CPU_PRESENT_WAIT=1 opts in, noenvchangeplanned. Kernel fence/cache gate
+  remains enabled in verified0126 image and waits actualGPUcompletion. Initial
+  localguest71825 verified/unmounted but NOphonewrites occurred. Rebuildbundle,
+  fresh localoverlay from sameunmountedphonebase before staging finaldelta;
+  initialimage bytes/kernelneednotchange (bundleCI metadata will beupdated).
+
+
 - **0126 packaged/verified; local replacement guest71825 running.**
   Image shim/out/shim-boot-0126-metal2-presentation.img17412096bytes SHA256
   5b3ec7eb7b36691c9f4ae4150e71a30e83b331da9f1b2b2afe66665c0c9c5736.
