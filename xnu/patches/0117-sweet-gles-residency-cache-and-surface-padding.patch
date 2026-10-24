@@ -8,7 +8,7 @@
  #include <pexpert/pexpert.h>
  #include <IOKit/IOBufferMemoryDescriptor.h>
  #include <IOKit/IOPlatformExpert.h>
-@@ -124,9 +125,23 @@
+@@ -124,9 +125,28 @@
  IOReturn AGXDeviceUserClient::externalMethod(uint32_t selector,IOExternalMethodArguments *args,
      IOExternalMethodDispatch *,OSObject *,void *)
  {
@@ -27,14 +27,19 @@
 +     args->structureInputDescriptor->getLength()!=sizeof(NativeAdrenoAbiSubmitResources))return kIOReturnBadArgument;
 +  copy.bytes=sizeof(NativeAdrenoAbiSubmitResources);copy.data=IOMalloc(copy.bytes);
 +  if(!copy.data)return kIOReturnNoMemory;
-+  if(args->structureInputDescriptor->readBytes(0,copy.data,copy.bytes)!=copy.bytes)return kIOReturnVMError;
++  IOReturn prepare=args->structureInputDescriptor->prepare(kIODirectionOut);
++  if(prepare)return prepare;
++  const bool copied=args->structureInputDescriptor->readBytes(0,copy.data,copy.bytes)==copy.bytes;
++  IOReturn completed=args->structureInputDescriptor->complete(kIODirectionOut);
++  if(!copied)return kIOReturnVMError;
++  if(completed)return completed;
 +  forwarded.structureInput=copy.data;forwarded.structureInputSize=copy.bytes;
 +  forwarded.structureInputDescriptor=nullptr;args=&forwarded;
 + }
   if(args->structureInput && args->structureInputSize>=8) {
    uint32_t tunnel[2];memcpy(tunnel,args->structureInput,sizeof tunnel);
    if(tunnel[0]==0x4e544e4c) {
-@@ -141,16 +156,17 @@
+@@ -141,16 +161,17 @@
     forwarded.structureInputSize-=8;args=&forwarded;
    }
   }
@@ -54,7 +59,7 @@
    result=quiesce();
   if(!result && selector==NativeAdrenoMethodBoImport) {
    NativeAdrenoAbiBoImport request{};NativeAdrenoAbiBoAllocReply reply{};
-@@ -159,7 +175,22 @@
+@@ -159,7 +180,22 @@
    if(!result)memcpy(args->structureOutput,&reply,sizeof reply);
   } else if(!result)result=core_->dispatch(selector,args->structureInput,input,args->structureOutput,output,&backend.clock);
   if(!result)args->structureOutputSize=output;

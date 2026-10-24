@@ -22,7 +22,12 @@
   are confirmed in the old source, not timed independently by0118's log.
   macos-14 scheduled brownout has ended; use normal kernel runner, no IIG
   substitution. Previous generated-file reuse experiment was discarded.
-  Build and hardware rendering of this correction remain unverified.
+  Core Submit/VM/UserClient C++ syntax compilation passed with host IOKit
+  type/allocation shims (no runtime tests). New patch applies to the actual0116
+  CI buildtree. Initial kernel run40058111623 on6733e9d dispatched after API TLS
+  failures. Follow-up adds OOL descriptor prepare/complete before copying and
+  independent GLES/kernel workflow concurrency groups. New source/build pair
+  will supersede that initial run. Hardware rendering remains unverified.
 
 - **ACTIVE: CPU fallback reaches home screen; user confirms previous speed restored.**
   Branch codex/adreno-power-audit, original iOS16.7.16 HFS+ / NativeAdreno ABI1.
