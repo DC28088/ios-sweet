@@ -2,61 +2,50 @@
 
 ## Current direction and last known device state (2026-10-24, read first)
 
-- **Wallpaper active-root inspection (2026-10-24):** OrangeFox/recovery sweetin,
-  userdata unmounted, partition114970046464bytes. Fresh empty ADB/NBD cache
-  research/wallpaper-install-0121; all66 source hashes match the prepared PNG
-  bundle. ExtensionKit flag and datamigrator sentinel absent; migration skip
-  remains20H392. Both LS csstores lack CollectionsPoster/LegacyPoster strings
-  (not a runtime registration proof). Nine PosterBoard reports show repeated
-  SIGTRAP in _stateLock_setupSwitcherConfigurationForFirstTime+2040.
-  Building bounded mobile-context registration helper using runtime-checked
-  LS SPI/ExtensionFoundation query, no instruction offsets. Only wallpaper
-  providers targeted; PNG+ExtensionKit override+helper staging pending.
-  No new phone writes/reboots. Kernel0121 remains built/not booted.
-
-
-- **ACTIVE: wallpaper repair prepared; Adreno6xx source cross-check complete; recovery pending.**
-  Latest user request: fix missing wallpaper and cross-check public iOS ports for
-  Adreno6xx/Metal/Wi-Fi/Bluetooth. User clarifies wallpaper was always absent;
- 0120 remains slow, clear visible improvement is blur. No new phone writes/reboots.
-  Wallpaper tool tools/prepare-sweet-wallpapers.py prepares a separate bundle,
-  preserves HEICs, decodes via libheif, validates PNG CRC/alpha, rewrites CAML
-  image src only, records source/target hashes and never writes input root.
-  Original local root static files extracted to research/wallpaper-0120/original-tree.
-  Prepared research/wallpaper-0120/png-bundle:48 PNG+18 CAML=66files,
-  46983592bytes,16 unique decodes; all66 payload SHA256 values verified.
-  Original177 wallpaper catalog files include48 HEIC/0PNG/36CAML. Current
-  phone files/extension registration not yet inspected. Provider bundle list
-  research/wallpaper-0120/provider-bundles.json includes WallpaperKit's
-  CollectionsPoster.appex, PaperBoard LegacyPoster, GradientPoster, Photos etc.
-  Sailfish root tweaks also enable ExtensionKit catalog and app-extension
-  registration; our older root skips migration. Inspect active FeatureFlags,
-  migration prefs/sentinel and LaunchServices before choosing registration repair.
-  Asked user to open OrangeFox for fresh read-only staging; reply pending.
-  Latest inventory: phone absent from USB, ADB and fastboot (only host devices
-  in lsusb). Reconnect USB in OrangeFox before active-root inspection/staging.
-  No stale NBD caches may be used for an active root after0120 iOS has written it.
-  New GPU kernel0121 built SUCCESS: CI40064123544 oncd67bc40835d67cbfd36604193b997fbba912ac3,
-  no tests requested/run. CRC+publishedSHA verified xnu/out-0121-range kernel
-  SHA256f74cf8c0660d7e7d70734e968a3b2ae20b28f1e61dcbeaad52af6326efc5bbbd.
-  Packaged shim/out/shim-boot-0121-immutable-gles-120hz.img17403904bytes,
-  SHA256e38f7c84e944f68d8c665a63c38169afac09fea0e74908270cd854107ffbb7f1.
-  Unpacked base shim/DTB/payload match; tag sweetbuild=121. Same installed0120
-  GLES library, no userdata rewrite needed for this kernel change. Not booted.
-  Manifest research/gpu/0121-boot-manifest.json; hardware confirmation still needed
-  for the suspected read-only residency mismatch. Current0120 logged real crashes.
-  Public reference audit recorded docs/ADRENO6XX-PORT-COMPARISON.md. Strongest donor:
-  NWylynko/ios-flame745c4341af86089efb0df851fa8a27fb8face624, actual iOS16
-  Metal2→metal2vulkan→Turnip code and WCN3990 wland. Source under ignored
-  research/ios-flame-reference; no code/scripts from it executed.
-  HackiOS README still says working UI GLES; app Metal partial; WCN6750 ath11k.
-  Topaz published branch CPU/noGPU, workingWiFi. Chlorophyll has AIR→NIR→ir3
-  Metal code forA630/iOS18/arm64e, but inspectedBergamotaREADME still GPU WIP.
-  A71/SM7150 andToygoon/POCO X3 README explicitlyCPU/noGPU/noWiFiBT.
-  MC-XiaoXiao/ios_sagit WCN3990 Bluetooth docs explicitly offline/unqualified,
-  vendor model unfinished; vince main5abe1899 contains no namedBT patch/hooks.
-  Do not equate "Metal source exists" with full Metal compatibility or measured
-  sweet performance. Do not copy A640 firmware/registers or WCN6750 driver offsets.
+- **ACTIVE: wallpaper repair staged, approval pending; kernel0121 built/not booted.**
+  OrangeFox confirmed sweetin, userdata unmounted, partition114970046464bytes.
+  Fresh research/wallpaper-install-0121 cache/NBD: all66 wallpaper source hashes
+  match prepared PNG/CAML bundle. Current installedGLES is0120 SHA72375e...
+  ExtensionKit flag and migration sentinel absent. Nine PosterBoard reports
+  SIGTRAP _stateLock_setupSwitcherConfigurationForFirstTime+2040; both LS csstores
+  lack CollectionsPoster/LegacyPoster strings (supporting evidence only, not a
+  runtime registration query). Targeted provider repair replaces full migration.
+  Added userspace/wallpaper/register.m, entitlements and wallpaper CI. Uses
+  runtime-checked LS registerApplication/registerPlugin selectors, enumerates LS
+  extension records and checks ExtensionFoundation provider query; no hardcoded
+  IMP offsets, no whole database rebuild, no KeepAlive. Alarm90s bounds job;
+  retries8 times. Mobile-context diagnostics Library/Logs/sweet-wallpaper.log.
+  Registers10 active PosterKit providers; reports success only on both required
+  LS records plus nonempty ExtensionFoundation query. On-device success unverified.
+  Source ba14dd89ea9f40e6cd76e2fb0cef15aa3647f6ad; helperCI40101724073 SUCCESS
+  (strict compiler/codesign checks); publishedSHA, arm64/iOS16 platform and embedded
+  signature bounds verified locally. No tests added/run.
+  Local qcow2 guest installed71 files:48PNG+18CAML+helper+provider list+ExtensionKit
+  flag+standalone/merged launch job. Original HEICs and migration-skip preferences
+  retained. Both fsck passes OK; clean unmount/read-only remount matched71 hashes;
+  share/guest-success VERIFIED_UNMOUNTED. Payload47870099bytes.
+  Saved88 changed original/edited chunks totaling50855936bytes=48.5MiB in
+  research/wallpaper-install-0121/delta; delta.json staged-not-written.
+  Fresh phone preflight matched all88 original chunks; no writes/reboot. New raw-write approval
+  needed before applying this wallpaper delta and temporary0121 boot.
+  Read-only sockets /tmp/sweet-wallpaper121-{root,edited}.sock.
+  New GPU kernel0121 CI40064123544 SUCCESS oncd67bc40835d67cbfd36604193b997fbba912ac3.
+  xnu/out-0121-range/kernel.development.sweet SHA256
+  f74cf8c0660d7e7d70734e968a3b2ae20b28f1e61dcbeaad52af6326efc5bbbd.
+  shim/out/shim-boot-0121-immutable-gles-120hz.img17403904bytes SHA256
+  e38f7c84e944f68d8c665a63c38169afac09fea0e74908270cd854107ffbb7f1.
+  Compatible with installed0120 GLES; no new library delta needed. Corrects likely
+  immutable IOSurface conservative READ|WRITE residency rejection while retaining
+  SMMU read-only protection. Actual0120 faulted BO not logged: root-cause hypothesis
+  still needs0121 hardware confirmation. Not booted. Manifest research/gpu/0121-boot-manifest.json.
+  Research complete docs/ADRENO6XX-PORT-COMPARISON.md. Best donor ios-flame/Pixel4
+  A640 iOS16 actual Metal2→metal2vulkan→Turnip and WCN3990 wland; pinned745c4341.
+  HackiOS currentREADME workingGLES/appMetalpartial,WCN6750WiFi,BTunfinished.
+  Topaz publishedCPU/noGPUbranch/WiFi working. Chlorophyll actualAIR→NIR→ir3 for
+  A630/iOS18/arm64e; Bergamota inspectedREADME stillGPU/networkWIP. SameSM7150
+  A71/POCOX3 repos CPU/noGPU. SagitWCN3990BT code explicitly offline/unqualified;
+  vince namedBT patch/hooks remain unlocated. Source report distinguishes code
+  presence from hardware authors' reports and independent qualification.
 
 - **ACTIVE: 0120 blur improves; UI still slow, wallpaper always absent; later crashes captured.**
   User says initially "Kinda better...blur...much better", then clarifies only
