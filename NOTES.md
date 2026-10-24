@@ -3,6 +3,28 @@
 ## Current direction and last known device state (2026-10-24, read first)
 
 
+- **0123 installed and temporarily booted; startup observation pending.**
+  Standing user authorization covers these boot/install updates, so no further
+  per-update permission prompt was issued. Source 30bad3279c06; kernel CI
+  40111479897 and helper CI 40111462084 both succeeded. Ranged ZIP member CRC
+  and published kernel SHA match: d43605b4e0b8738a90aae5539b016482c200f94ebab51cf31f7caf08b55de15f.
+  Boot image shim/out/shim-boot-0123-cache-prereqs-gles-120hz.img, 17412096 bytes,
+  SHA 0654555a61306452478c807ac77c6ca7fbef22d88848ceae02b402c6d750e577.
+  Unpacked shim/DTB match known-working base, payload/ADT/cmdline match inputs.
+  Fresh all-before-block check passed immediately before install; all 12 chunks
+  (1769472 bytes) written/readback verified, header last. Originals and restore
+  script retained in research/wallpaper-install-0123. Only userdata delta written;
+  no boot/recovery/GPT/modem/persist flashing. Old per-plugin job stays disabled.
+  ADB rebooted OrangeFox to fastboot; product sweetin verified; fastboot boot
+  accepted send0.497s/boot0.130s. Logs in same directory/fastboot-boot.log.
+  Live receiver logs/live-0123-sunfish-prereqs-usb.txt, session84259, duration600s,
+  started before reboot. Boot acceptance is not UI/wallpaper success.
+  New root BackBoard CA_FORCE_TIMER=1 and delayed one-time LS rebuild (180s)
+  pair with sweetamfi=1 and chosen MAC identity placeholders. Current GLES is
+  unchanged 0120; full Metal frontend/Turnip port remains unfinished.
+
+
+
 - **0123 builds passed; fresh OrangeFox stage verified, installation authorized.**
   User now explicitly says no need to ask permission to boot/install; proceed
   with these prepared updates under that standing authorization. This supersedes
