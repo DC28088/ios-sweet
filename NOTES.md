@@ -3,6 +3,13 @@
 ## Current direction and last known device state (2026-10-25, read first)
 
 
+- **0126 waiting finalbundle; graphicsenvironment checked read-only.**
+  Freshroot mergedBackBoard graphicsenv onlyCA_FORCE_TIMER=1; noTU_/MESA_/M2V_
+  debugoverride present. Log research/metal2-install-0126/graphics-env.log saved.
+  Finalbundle40128850465 stillbuilding; prepared separatefinal rangedfetch
+  cache toavoid reusing preliminaryartifactchunks. 7.3GBhostfree. No phonewrite.
+
+
 - **Final0126 bundleCI40128850465 on3e219db; kernel/image unchanged.**
   Frontend optionalwait now requires SWEET_CPU_PRESENT_WAIT=1; noenvoptin will
   beinstalled. Originalasynccommitretainedbydefault. InitialCI40127901139 build
