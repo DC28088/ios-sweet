@@ -114,3 +114,9 @@ hashes matched after a read-only remount, and the filesystem was unmounted.
 The staged delta saves every original/edited byte in 88 chunks (48.5 MiB).
 A fresh recovery read matched all original chunks. Phone writes and the 0121
 boot remain pending explicit approval; visual restoration is unverified.
+
+The user approved installation and temporary0121 boot. All88 userdata chunks
+were freshly compared before writing and verified by readback afterward.
+Fastboot accepted0121; live USB confirms its boot tag, wallpaper helper launch
+and initial real GPU command completion. The helper's registration result,
+wallpaper visibility and performance comparison are still unverified.
