@@ -43,6 +43,7 @@ struct NativeAdrenoAbiParams {
     uint64_t max_bo_bytes;
 };
 enum {
+    NativeAdrenoParamsCompositor4096 = 4, /* 4096 client BOs; residency set stays 1024 */
     NativeAdrenoParamsSubmitResources = 2, /* complete per-submit BO read/write set */
     NativeAdrenoParamsHostImport = 1  /* BoImport pins the caller's own pages (an IOSurface's) as a BO */
 };

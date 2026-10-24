@@ -15,7 +15,9 @@ extern "C" void sweet_drm_log(const char *, ...);
 namespace {
 pthread_mutex_t gate=PTHREAD_MUTEX_INITIALIZER;
 struct Guard { Guard(){pthread_mutex_lock(&gate);} ~Guard(){pthread_mutex_unlock(&gate);} };
-constexpr size_t MaxBos=1024;
+// The ABI residency-list limit is per job, not the compositor's live BO budget.
+constexpr size_t MaxBos=4096;
+constexpr size_t MaxResources=NativeAdrenoAbiMaxResources;
 struct Bo {
     uint64_t handle=0, va=0, bytes=0, cpu=0, mapped_bytes=0, fence=0;
     uint32_t token=0;
@@ -127,7 +129,12 @@ kern_return_t make_bo(uint64_t bytes,IOSurfaceRef surface,uint64_t *out) {
     NativeAdrenoAbiBoMap map{b.handle,va,3,0,2,0};NativeAdrenoAbiBoMapReply mapped{};
     kr=call(NativeAdrenoMethodBoMap,&map,sizeof map,&mapped,sizeof mapped);
     if (!kr && mapped.iova!=va) kr=kIOReturnBadArgument;
-    if (kr) {kern_return_t cleanup=destroy(b);return cleanup?cleanup:kr;}
+    if (kr) {
+        size_t live=0;uint64_t resident=0;
+        for(const Bo &entry:bos)if(entry.handle){++live;resident+=entry.bytes;}
+        sweet_drm_log("sweetgl: map failure %#x live=%zu bytes=%llu requested=%llu",kr,live,resident,bytes);
+        kern_return_t cleanup=destroy(b);return cleanup?cleanup:kr;
+    }
     b.va=va;out[0]=index+1;out[1]=va;out[2]=b.cpu;
     return KERN_SUCCESS;
 }
@@ -147,7 +154,8 @@ extern "C" kern_return_t sweet_gpu_open(io_connect_t *out,uint64_t info[5]) {
         unsigned gpu=((device.chip_id>>24)&255)*100+((device.chip_id>>16)&255)*10+((device.chip_id>>8)&255);
         if (!kr && (params.abi_version!=NativeAdrenoAbiVersion || gpu!=618 ||
                     !device.gmem_bytes || !device.va_size || !(params.flags&NativeAdrenoParamsHostImport) ||
-                    !(params.flags&NativeAdrenoParamsSubmitResources)))
+                    !(params.flags&NativeAdrenoParamsSubmitResources) ||
+                    !(params.flags&NativeAdrenoParamsCompositor4096)))
             kr=kIOReturnUnsupported;
         if (kr) {IOServiceClose(connection);connection=0;return kr;}
         sweet_drm_log("sweetgl: NativeAdreno ABI%u A%u chip=%#x GMEM=%u VA=%#llx+%#llx",
@@ -208,10 +216,10 @@ extern "C" kern_return_t sweet_gpu_method(io_connect_t c,uint32_t selector,const
     const auto *buf=static_cast<const unsigned char *>(data);
     uint32_t counts[2];memcpy(counts,buf,8);
     const size_t n=counts[0],nb=counts[1];
-    if (!n || n>4096 || !nb || nb>MaxBos || bytes!=8+n*16+nb*8) return kIOReturnBadArgument;
+    if (!n || n>4096 || !nb || nb>MaxResources || bytes!=8+n*16+nb*8) return kIOReturnBadArgument;
     auto kr=wait(last_fence,5000000000ull);
     if (kr) {lost=true;return kr;}
-    Bo *resources[MaxBos]{};
+    Bo *resources[MaxResources]{};
     for (size_t i=0;i<nb;++i) {
         uint32_t handle,access;
         memcpy(&handle,buf+8+n*16+i*8,4);memcpy(&access,buf+12+n*16+i*8,4);

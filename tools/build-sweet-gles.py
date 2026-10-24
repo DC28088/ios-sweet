@@ -24,6 +24,7 @@ run(sys.executable,ROOT/'tools/prepare-sweet-gles.py',ref,front)
 run('git','apply',front/'mesa.patch',cwd=mesa)
 run('git','apply',ROOT/'userspace/gles/mesa-platform.patch',cwd=mesa)
 run('git','apply',ROOT/'userspace/gles/mesa-iosurface-size.patch',cwd=mesa)
+run('git','apply',ROOT/'userspace/gles/mesa-bo-pressure.patch',cwd=mesa)
 sdk=output('xcrun','--sdk','iphoneos','--show-sdk-path')
 clang=output('xcrun','--sdk','iphoneos','--find','clang')
 clangxx=output('xcrun','--sdk','iphoneos','--find','clang++')
@@ -90,7 +91,7 @@ shutil.copy2(ROOT/'tools/install-sweet-gles-root.py',out/'install-sweet-gles-roo
 for name in ['docs/license.rst','COPYING','LICENSE']:
  if (mesa/name).exists():shutil.copy2(mesa/name,out/('Mesa-'+Path(name).name))
 report={'reference':INPUTS['commit'],'mesa':INPUTS['mesa_commit'],'deployment_target':'16.0','architecture':'arm64',
- 'kernel_abi':'NativeAdreno1','kernel_capabilities_required':['HostImport','SubmitResources'],
+ 'kernel_abi':'NativeAdreno1','kernel_capabilities_required':['HostImport','SubmitResources','Compositor4096'],
  'kernel_boot_mode':'sweetgles=1','cache_uuid':json.loads((out/'cache-profile.json').read_text())['cache_uuid'],
  'built':True,'installed':False,'hardware_qualified':False,'runtime_tests_run':False,
  'files':{str(p.relative_to(out)):hashlib.sha256(p.read_bytes()).hexdigest() for p in out.iterdir() if p.is_file()}}
