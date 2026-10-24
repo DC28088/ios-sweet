@@ -2,6 +2,30 @@
 
 ## Current direction and last known device state (2026-10-24, read first)
 
+- **0121 isolated boot reaches home; wallpaper unresolved; next clock audit build.**
+  User confirms same overall slowness: recents scrolling relatively smooth,
+  app open/close and notification shade very sluggish, blur good, no wallpaper.
+  Disabling only automatic registration restored progress to home with same0121
+  kernel, strongly implicating the early LaunchServices registration job.
+  Completed300s live-0121-no-registrar-usb.txt270619bytes: >6000 scoped submits,
+  read-only normalization handle2090 exercised8 times, no observed BackBoard
+  crash or renderer-submit rejection. PosterBoard still SIGTRAP during initial
+  configuration. Thus provider registration/wallpaper repair remains incomplete.
+  GLfinish windows ~50..140ms averages, maxima >1second; those are not FPS.
+  Kernel submit calls often~2..5ms, but exclude userspace's previous-fence wait.
+  Source audit: HFI table and CP DCVS configure a single180MHz active level.
+  Pinned PMOS DT fd78d179 GPU267MHz requires rawLOW_SVS64, all bins0x1f;
+  live existing vote0x400202 already uses raw64 (MIN48 rounded up). New patch
+  0120-sweet-low-svs-clock-profile chooses267MHz only if existing raw vote>=64,
+  otherwise180; no additional voltage vote, no higher corners. Logs configured
+  frequency, explicitly not a measured clock. Adds real fence-wait vs cache-retire
+  timing, without dropping waits or cache maintenance. Source references remain
+  docs/adreno-port-sources.json and research/gpu/pmos-pinned/manifest.json.
+  HFI C compilation passed -Wall/-Wextra/-Werror; no tests added/run.
+  Preparing kernel0122 build. No further device write/reboot after approved
+  startup correction. Wallpaper job remains disabled; do not auto-enable it.
+
+
 - **0121 startup correction approved/applied; isolated boot in progress.**
   User explicitly approved "Apply startup correction and boot0121". Fresh apply
   matched all5 original chunks before writing1179648bytes, readback-verified all5.
