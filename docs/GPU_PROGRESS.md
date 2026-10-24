@@ -1,13 +1,21 @@
 # GPU progress and architecture (2026-10-19)
 
-## Active direction (2026-10-22)
+## Active direction (2026-10-25)
 
-Returned to `codex/adreno-power-audit` and the original direct-shim/iOS16
-boot path at the user's request. New graphics reference is the public Pixel1
-Mesa/GLES/EAGL port. See [source comparison and implementation order](sailfish-gles-port.md)
-and the current entry in `NOTES.md`. The stage0092 description below is
-historical; saved0112 reached CP fence completion, while saved0113 failed
-earlier at RPMh CX transaction completion. GPU UI acceleration is unverified.
+The direct-shim iOS16 port now runs the Sunfish-derived SweetMetal2 frontend,
+metal2vulkan runtime and Turnip Darwin backend on the live Adreno618 context.
+After repairing the BackBoard shader-cache directory, the 0125 trace recorded
+893 commits and 893 completions, with zero failed commits. The user reports
+similar speed and missing regions, trails and cutoffs. This is rendering on the
+GPU with unresolved correctness and performance problems.
+
+0126 adds driver-owned IOSurface row alignment and an opt-in kernel fence/cache
+acquire around CPU framebuffer presentation. It preserves caller-owned layouts.
+The frontend adopts the public MTLFunction protocol; an optional submission wait
+is disabled by default because the recovered CA trace already waits scheduled.
+The CPU copy must still wait for actual GPU completion. Build and installation
+status, exact artifacts and the latest hardware observations are in `NOTES.md`.
+The historical bring-up sections below are retained as earlier milestones.
 
 This document is the resumable record of the Adreno 618 work on `sweet`
 (Redmi Note 10 Pro, SM7150). It separates **verified observations** from
