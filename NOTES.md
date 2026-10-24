@@ -1,7 +1,32 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
-## Current direction and last known device state (2026-10-24, read first)
+## Current direction and last known device state (2026-10-25, read first)
 
+
+- **Metal2 bundle built; kernel and temporary boot image ready; install pipeline
+  mock-tested.** metal2 CI 40119323375 failed only in the license-copy step
+  (`Path + str` TypeError, Turnip and the Rust bridge had already built); fixed
+  in edd176c and CI 40120074218 succeeded (artifact 100 MB with dSYM). Kernel
+  CI 40118808385 (head a9a2c8a, patches 0123 + 0122 only) succeeded; artifact
+  SHA256 matches the published 5b55f39444838ccbb86199acfdada2992470f5018a9091f04966a4d9d78aae3f,
+  strings contain `SWEET RENDER: Metal plugin %s selected (%s)`,
+  `SweetMetal2`, `SweetMTL2Device`, `MetalPluginClassName`. Payload and boot
+  image built from the same ADT/DTB/shim as 0123:
+  shim/out/payload-0124-metal2-sweet.bin and
+  shim/out/shim-boot-0124-metal2.img, 17412096 bytes SHA256
+  519b45aef67329d9582ab22bfd4f3618d4a977b8ca729ced218c85c426c303b0;
+  unpacked ramdisk==payload, dtb and shim byte-identical to 0123; cmdline is
+  0123's with `sweetgles=0 sweetmtl=2 sweetbuild=124`. New install pipeline
+  research/metal2-install-0124 (prepare-guest.py + init-template + the 0123
+  inspect/stage/preflight/apply/restore scripts, sockets sweet-metal20124-*,
+  RUNBOOK.md). A full mock run (synthetic 16 GiB HFS+ base + NBD root,
+  qcow2 overlay, QEMU guest install, edited NBD, stage-delta) passed:
+  guest VERIFIED_UNMOUNTED and 4 chunks/1703936 bytes staged. The guest init
+  no longer uses grep (absent from the initrd); it reads SystemVersion.plist
+  with cat/case. Pending: download artifact, prepare the real payload, reboot
+  the phone to OrangeFox (user action), inspect, overlay, guest, stage,
+  preflight, apply, then `fastboot boot` this image. Not yet observed: any
+  device-side Metal behavior, AMFI accepting the ad-hoc bundle, wallpaper.
 
 - **0123 observed; Sunfish metal2 userland port started.** User feedback on
   0123: reaches home, wallpaper still absent; performance "kinda better" but
