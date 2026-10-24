@@ -3,6 +3,22 @@
 ## Current direction and last known device state (2026-10-25, read first)
 
 
+- **0126 prepared: synchronize CPU presentation with real GPU work.**
+  User describes0125 defects as missing regions/trails/cutoffs. Existing display
+  path memcpy reads IOSurfaces without a GPU fence/cache acquire; frontendcommit
+  returns before asynchronous runtime submission. New kernel0125 patch exports
+  a release/acquire-published backend gate: sweetpresentwait=1 + sweetmtl=2 waits
+  real CP fences and holds submission/VM gate across physical cache acquire and
+  source copy. Faults retain previous frame; no fabricated completion. Matching
+  frontend0002 waitsUntilScheduled after successfulBackBoardcommit (notcomplete,
+  runtime deadlock refusal retained; SWEET_CPU_PRESENT_WAIT=0 opts out). Both
+  frontend patches and kernel patch apply to pinned/current sources. This may
+  increase waiting; correctness/performance need device evidence. Prior Metal2
+  CI40127402906 lacks frontend0002; dispatch replacement and matchingkernel.
+  No new phone write/boot. Last device iOS; ADB/fastboot absent, FASTBOOT request
+  pending for recovery telemetry/freshroot. No tests added/run.
+
+
 - **0125 after cache repair creates real Metal device; visual defects remain.**
   logs/live-0125-metal2-cache-fixed.txt: BackBoard276 creates TurnipAdreno618 in
   2095ms; Turnip image0x10cd28000 loaded, ABI compositor opens/queries succeed,
