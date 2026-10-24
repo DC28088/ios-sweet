@@ -13,5 +13,6 @@ logs/
 
 # Generated graphics userspace binaries and private build checkouts.
 userspace/out/
+userspace/out-*/
 userspace/diagnostics/
 research/native-metal-build/
