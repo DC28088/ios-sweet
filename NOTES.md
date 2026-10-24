@@ -22,7 +22,9 @@
   timing, without dropping waits or cache maintenance. Source references remain
   docs/adreno-port-sources.json and research/gpu/pmos-pinned/manifest.json.
   HFI C compilation passed -Wall/-Wextra/-Werror; no tests added/run.
-  Preparing kernel0122 build. No further device write/reboot after approved
+  Kernel0122 CI40109685834 queued on781b4ed13ab81f1215df8ddf8a9987cee31aa35e,
+  run_tests=false. Package helper research/gpu/package-0122.py prepared.
+  No further device write/reboot after approved
   startup correction. Wallpaper job remains disabled; do not auto-enable it.
 
 
