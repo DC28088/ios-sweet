@@ -2,6 +2,47 @@
 
 ## Current direction and last known device state (2026-10-24, read first)
 
+- **ACTIVE: wallpaper repair prepared; Adreno6xx source cross-check complete; recovery pending.**
+  Latest user request: fix missing wallpaper and cross-check public iOS ports for
+  Adreno6xx/Metal/Wi-Fi/Bluetooth. User clarifies wallpaper was always absent;
+ 0120 remains slow, clear visible improvement is blur. No new phone writes/reboots.
+  Wallpaper tool tools/prepare-sweet-wallpapers.py prepares a separate bundle,
+  preserves HEICs, decodes via libheif, validates PNG CRC/alpha, rewrites CAML
+  image src only, records source/target hashes and never writes input root.
+  Original local root static files extracted to research/wallpaper-0120/original-tree.
+  Prepared research/wallpaper-0120/png-bundle:48 PNG+18 CAML=66files,
+  46983592bytes,16 unique decodes; all66 payload SHA256 values verified.
+  Original177 wallpaper catalog files include48 HEIC/0PNG/36CAML. Current
+  phone files/extension registration not yet inspected. Provider bundle list
+  research/wallpaper-0120/provider-bundles.json includes WallpaperKit's
+  CollectionsPoster.appex, PaperBoard LegacyPoster, GradientPoster, Photos etc.
+  Sailfish root tweaks also enable ExtensionKit catalog and app-extension
+  registration; our older root skips migration. Inspect active FeatureFlags,
+  migration prefs/sentinel and LaunchServices before choosing registration repair.
+  Asked user to open OrangeFox for fresh read-only staging; no ADB at last check.
+  No stale NBD caches may be used for an active root after0120 iOS has written it.
+  New GPU kernel0121 built SUCCESS: CI40064123544 oncd67bc40835d67cbfd36604193b997fbba912ac3,
+  no tests requested/run. CRC+publishedSHA verified xnu/out-0121-range kernel
+  SHA256f74cf8c0660d7e7d70734e968a3b2ae20b28f1e61dcbeaad52af6326efc5bbbd.
+  Packaged shim/out/shim-boot-0121-immutable-gles-120hz.img17403904bytes,
+  SHA256e38f7c84e944f68d8c665a63c38169afac09fea0e74908270cd854107ffbb7f1.
+  Unpacked base shim/DTB/payload match; tag sweetbuild=121. Same installed0120
+  GLES library, no userdata rewrite needed for this kernel change. Not booted.
+  Manifest research/gpu/0121-boot-manifest.json; hardware confirmation still needed
+  for the suspected read-only residency mismatch. Current0120 logged real crashes.
+  Public reference audit recorded docs/ADRENO6XX-PORT-COMPARISON.md. Strongest donor:
+  NWylynko/ios-flame745c4341af86089efb0df851fa8a27fb8face624, actual iOS16
+  Metal2→metal2vulkan→Turnip code and WCN3990 wland. Source under ignored
+  research/ios-flame-reference; no code/scripts from it executed.
+  HackiOS README still says working UI GLES; app Metal partial; WCN6750 ath11k.
+  Topaz published branch CPU/noGPU, workingWiFi. Chlorophyll has AIR→NIR→ir3
+  Metal code forA630/iOS18/arm64e, but inspectedBergamotaREADME still GPU WIP.
+  A71/SM7150 andToygoon/POCO X3 README explicitlyCPU/noGPU/noWiFiBT.
+  MC-XiaoXiao/ios_sagit WCN3990 Bluetooth docs explicitly offline/unqualified,
+  vendor model unfinished; vince main5abe1899 contains no namedBT patch/hooks.
+  Do not equate "Metal source exists" with full Metal compatibility or measured
+  sweet performance. Do not copy A640 firmware/registers or WCN6750 driver offsets.
+
 - **ACTIVE: 0120 blur improves; UI still slow, wallpaper always absent; later crashes captured.**
   User says initially "Kinda better...blur...much better", then clarifies only
   clear improvement is working blur; still slow; wallpaper absent even before0120.
