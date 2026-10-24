@@ -3,6 +3,34 @@
 ## Current direction and last known device state (2026-10-25, read first)
 
 
+- **0125 verified and temporarily booted; Metal startup trace pending.**
+  Kernel CI40125083266 source9a6399559a41 succeeded; CRC and published kernel
+  SHA9176e88e2be978603e2f278133f5dafe6f045a4158e6b880ab1388508a69b048 match.
+  Image shim/out/shim-boot-0125-metal2-discovery.img17412096bytes SHA256
+  6f8dbe8fdfb7fccfa099ecba7850e078b8174800d893d1d18c1880703589811f.
+  package-0125.py verifies unpacked shim/DTB/payload/ADT/cmdline and bundle hashes;
+  manifest research/gpu/0125-boot-manifest.json. Same root installed0124 bundle.
+  No new userdata write; temporary fastboot boot accepted send0.519s/boot0.130s,
+  product sweetin confirmed. Capture started preboot for600s:
+  logs/live-0125-metal2-discovery.txt, receiver session44182. Expected single
+  BackBoard restart after Metal service publishes; check MTL2 device creation
+  and actual NativeAdreno submits before claiming UI acceleration/performance.
+
+
+
+- **0125 corrected build succeeded; artifact download in progress.**
+  CI40125083266 SUCCESS on9a6399559a41cf479b8372b9e6c78255a0bc84dd;
+  tests disabled. This confirms the proc_signal/proc_best_name replacement
+  compiles and links. Kernel artifact12572601846,60650252bytes, zip digest
+  65ad643ab5854077f5cbb6cd8e27ccdfa4237744a36c896b7cd638d6e88659ff.
+  Ranged download research/gpu/fetch-kernel-0125.py session22607, output
+  xnu/out-0125-range. Must verify CRC/published SHA, run package-0125.py,
+  then start live receiver and fastboot boot verified image. Phone FASTBOOT.
+  Same installed0124 bundle; no new userdata delta. Actual Metal initialization
+  and UI GPU work remain unverified; 0124 had neither in the captured trace.
+
+
+
 - **Corrected 0125 CI40125083266 running on9a6399559a41.**
   Uses IOKit-visible process KPIs for restart; run_tests=false, keep_going=false.
   Phone in FASTBOOT; no image from failed203d781 build was packaged or booted.
