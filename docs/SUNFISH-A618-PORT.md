@@ -51,10 +51,15 @@ Prepared sweet adaptations:
   wallpaper registrar. Their source says this selects the IOMFB notification
   path for synthetic A11 identity; setting it in a late-loaded dylib is too late.
 
-These files are prepared locally; active phone has none of these new
-prerequisites yet. The old plugin-registration job remains disabled. Do not
-re-enable it or claim wallpaper repaired before observing provider discovery and
-actual rendering. A fresh recovery snapshot/approval is needed for a root update.
+0123 includes these prerequisites. Kernel build40111479897 and helper build
+40111462084 passed on source30bad3279c06. A fresh OrangeFox snapshot was edited
+in a local overlay; HFS checks and read-only payload hashes passed. The 12-chunk,
+1.6875 MiB userdata update was installed and readback verified under the user's
+standing installation authorization. The old plugin-registration job remains
+disabled. A separate root job attempts a one-time LaunchServices rebuild after
+180seconds, records the attempt first, and refuses automatic retry after an
+incomplete attempt. The matching image was temporarily booted; wallpaper
+visibility and performance remain unverified pending this boot's observations.
 
 ## Metal integration to adapt
 
