@@ -8,9 +8,13 @@
 	<true/>
 	<key>com.apple.private.mobileinstall.allowedSPI</key>
 	<array>
+		<string>UninstallForLaunchServices</string>
 		<string>Lookup</string>
-		<string>LookupForLaunchServices</string>
+		<string>Install</string>
 		<string>InstallForLaunchServices</string>
+		<string>Uninstall</string>
+		<string>LookupForLaunchServices</string>
+		<string>InstallLocalProvisioned</string>
 	</array>
 	<key>platform-application</key>
 	<true/>
