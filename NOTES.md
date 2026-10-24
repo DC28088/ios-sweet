@@ -14,7 +14,15 @@
   startup and first8 real scoped submissions result0 (~1.9..2.6ms kernelcall).
   Kernel quiesce10..12us excludes userspace waiting. Helper registration result,
   wallpaper visibility and long-run stability unverified. Asked user to compare.
-  Capture session78815 continues for300seconds.
+  Capture logs/live-0121-wallpaper-usb.txt finished300seconds, 192430bytes.
+  Only8 initial submit log lines and4 framebuffer swap log lines observed, then
+  no sustained UI activity (timer/USB/other daemon messages continue). No captured
+  BackBoard/PosterBoard/helper crash or scoped-submit error/readonly normalization.
+  These startup commands do not establish home-screen rendering or stability.
+  User screen/wallpaper reply pending; helper diagnostic remains on-device.
+  If UI stuck/missing wallpaper, obtain recovery and a FRESH block snapshot to
+  inspect /private/var/mobile/Library/Logs/sweet-wallpaper.log and updated LS state.
+  Do not reuse any preboot cached userdata blocks after this boot.
 
 
 - **Wallpaper staging history (approved install/boot results above).**
