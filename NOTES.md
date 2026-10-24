@@ -3,7 +3,36 @@
 ## Current direction and last known device state (2026-10-24, read first)
 
 
-- **0123 installed and temporarily booted; startup observation pending.**
+- **0123 observed; Sunfish metal2 userland port started.** User feedback on
+  0123: reaches home, wallpaper still absent; performance "kinda better" but
+  not significant, blurs present, app-open animation improved, recents
+  similar, notification pull-down "very very sluggish". 0123 booted the 0120
+  GLES library (`sweetgles=1`; boot-args line361 of the first capture).
+  Idle600s capture logs/live-0123-sunfish-prereqs-usb.txt337443bytes,
+  session84259, started pre-reboot: sweetbuild=123, sweetamfi=1, ABI/Metal
+  publication about60s, "SWEET ADRENO: HFI active OPP configured=267000 kHz"
+  at existing raw_corner64, only19 scoped submits while idle. CRASH lsd[98]
+  sig9 at line4408, 135 lines after exec sweet-wallpaper-register line4273:
+  "Too many corpses being created." AegirPoster(283/286/311),
+  GradientPosterEx267 and EmojiPoster abort sig6 with identical
+  pc0x1d766f198; backboardd56 SIGSEGV at3451 and backboardd restarts as289.
+  Observed, not proven: these are extension-host/poster failures, separate
+  from the missing Metal device. Second300s capture
+  logs/live-0123-after-boot-usb.txt64328bytes during user interaction: scoped
+  submits16920..22560, sweetgl0.4..9.3 flushes/s, finish avg75..171ms
+  (max929ms), present_calls0..86 per10s, one window missed_deadlines293, map
+  table up to1341/4128 objects and30356/65536 spans. The 180s rebuild job
+  execs twice without another lsd crash; the one-time marker refuses mutation.
+  Port started from Sunfish phone/metal2 + phone/turnip: our ABI1 adds
+  method17/4096 but is otherwise identical, and Turnip's darwin backend needs
+  only methods1..16 (Submit/BoImport/...); the kernel already matches
+  IOAcceleratorES and open type0x4147 for backboardd. Plan: plugin-name patch
+  (SweetMetal2 by default, sweetmtl=1 keeps old NativeAdrenoMetal), macOS CI
+  bundle build, userdata stage and temporary boot. Keep the old untested 0110
+  NativeAdrenoMetal.bundle; install SweetMetal2 alongside it.
+
+
+- **0123 installed and temporarily booted; observation is in the entry above.**
   Standing user authorization covers these boot/install updates, so no further
   per-update permission prompt was issued. Source 30bad3279c06; kernel CI
   40111479897 and helper CI 40111462084 both succeeded. Ranged ZIP member CRC
