@@ -21,7 +21,11 @@
   Staged local correction in research/wallpaper-recover-0121: only disable
   automatic wallpaper job in merged/standalone plists, retain PNG/CAML/flags/GLES.
   Both fsck passes OK, read-only-remount hashes match, VERIFIED_UNMOUNTED.
-  Delta and fresh phone preflight being prepared; new approval required.
+  Delta saved5 chunks1179648bytes=1.125MiB, all original/edited bytes retained.
+  Fresh preflight matched all5 phone chunks; no writes. New approval required
+  to apply startup correction and temporarily boot same0121 for isolation.
+  plan.json/delta.json staged-not-written; /tmp/sweet-wallpaper121-debug.sock
+  and /tmp/sweet-wallpaper121-recover-edited.sock read-only backing exports.
   Source helper now defaults query-only, explicit --register needed for mutation;
   updated helper source is not deployed. Original binary remains on phone, so
   disabling the job is necessary. Alarm cannot cancel server-side SPI work.
