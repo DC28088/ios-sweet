@@ -46,8 +46,21 @@
   User asked to open OrangeFox for fresh staging; answer pending.
   Fresh research/gles-install-0120 scripts/cache/initrd prepared; no old cached
   blocks, overlay or delta copied. Package helper research/gpu/package-0120.py.
-  Next: finish CI/download/package matching0120 pair; fresh
-  staging/explicit approval required for any new raw userdata installation.
+  User opened OrangeFox; ADB confirms sweetin and unmounted userdata,
+  partition114970046464bytes. GLES40062657825 SUCCESS; downloaded via gh to
+  userspace/out/0120-gles-3806917; all SHA256SUMS entries pass. Actual arm64,
+  iOS16.0 platform and embedded-signature bounds verified (CI codesign strict
+  passed). Dylib18791216bytes SHA256
+  72375ea0bd85df78984c5f40eaf9aacbcee87bf024f9341527afbb00f5349fef.
+  Fresh active-root inspection confirms20H392/cache UUID and0119 install record.
+  Local qcow2 guest verifies actual prior library+record hashes, copies0120,
+  checks permissions, fsck, read-only remount and hash; VERIFIED_UNMOUNTED.
+  Fresh delta35chunks19857408bytes=18.9375MiB; all before/after chunks saved
+  research/gles-install-0120/delta; fresh preflight matches all35 phone chunks.
+  State staged-not-written. Read-only NBD sockets /tmp/sweet-gles120-root.sock
+  and /tmp/sweet-gles120-edited.sock. No phone writes or reboot this turn.
+  Kernel40062657768 still compiling. Next: finish kernel download/package,
+  then explicit approval required for this new raw userdata installation.
 
 
 - **ACTIVE: 0119 kernel and GLES builds succeeded; downloads/staging pending.**
