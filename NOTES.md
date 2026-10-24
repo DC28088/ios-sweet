@@ -2,7 +2,22 @@
 
 ## Current direction and last known device state (2026-10-24, read first)
 
-- **ACTIVE: wallpaper repair staged, approval pending; kernel0121 built/not booted.**
+- **0121 wallpaper installation approved and verified (2026-10-24).**
+  User explicitly approved "Apply wallpaper repair and temporarily boot0121".
+  Fresh apply preflight matched all88 original chunks before writing any bytes;
+  wrote50855936bytes/48.5MiB, readback-verified all88 including volume headers last.
+  delta.json installed-readback-verified; originals retained. Device sweetin in
+  OrangeFox, userdata unmounted. No boot/recovery/GPT/modem/persist flashing.
+  logs/live-0121-wallpaper-usb.txt receiver started before reboot (300seconds).
+  Boot/artifact hashes reverified against0121 manifest. Temporary0121 boot accepted: send16996KB OKAY0.500s, BootingOKAY0.130s.
+  Live USB confirms sweetbuild=121, exec sweet-wallpaper-register, A618 Mesa
+  startup and first8 real scoped submissions result0 (~1.9..2.6ms kernelcall).
+  Kernel quiesce10..12us excludes userspace waiting. Helper registration result,
+  wallpaper visibility and long-run stability unverified. Asked user to compare.
+  Capture session78815 continues for300seconds.
+
+
+- **Wallpaper staging history (approved install/boot results above).**
   OrangeFox confirmed sweetin, userdata unmounted, partition114970046464bytes.
   Fresh research/wallpaper-install-0121 cache/NBD: all66 wallpaper source hashes
   match prepared PNG/CAML bundle. Current installedGLES is0120 SHA72375e...
