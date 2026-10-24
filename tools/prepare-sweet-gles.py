@@ -66,6 +66,14 @@ sweet_drm_bo_size(int fd, uint32_t handle)
 }
 
 '''+s[index:]
+ # Preserve Mesa's complete per-submit BO read/write set. NativeAdreno uses
+ # it both for residency pinning and scoped non-coherent cache ownership.
+ s=once(s,'r->nr_cmds * 16 + r->nr_bos * 4','r->nr_cmds * 16 + r->nr_bos * 8')
+ s=once(s,'\t\thandles[i] = sb[i].handle;', '''        uint32_t access=sb[i].flags & (MSM_SUBMIT_BO_READ | MSM_SUBMIT_BO_WRITE);
+        if (!access || (sb[i].flags & ~(MSM_SUBMIT_BO_READ | MSM_SUBMIT_BO_WRITE | MSM_SUBMIT_BO_DUMP))) ret=-EINVAL;
+        handles[2*i] = sb[i].handle;
+        handles[2*i+1] = access;''')
+ s=once(s,'8 + nib * 16 + r->nr_bos * 4','8 + nib * 16 + r->nr_bos * 8')
  return s
 edit('sweet_drm.c',drm)
 profile=json.loads((ROOT/'userspace/gles/cache-profile.json').read_text())
@@ -97,6 +105,17 @@ sweetgl_eagl_install(void)
  s=once(s,'surface_format(fourcc, IOSurfaceGetBytesPerElementOfPlane(s, plane), &img.internalformat)', 'surface_format(fourcc, bpe, &img.internalformat)')
  # Both the resource key and its first-page offset use this plane's validated base.
  s=s.replace('(uintptr_t)IOSurfaceGetBaseAddressOfPlane(s, plane)', '(uintptr_t)base')
+ # A6xx linear layouts include the final 4-row GMEM store block. A caller's
+ # tightly sized immutable image cannot be enlarged by the IOSurface driver;
+ # upload it to Mesa-owned storage when it is used as a sampled texture.
+ anchor='\tuint32_t handle = 0;\n\tuint64_t size = 0;'
+ s=once(s,anchor,'''    if (!multi && !strcmp(why,"texImageIOSurface") && h <= SIZE_MAX-3 &&
+        pitch <= (SIZE_MAX-((uintptr_t)base & vm_page_mask))/((h+3)&~(size_t)3) &&
+        IOSurfaceGetAllocSize(s) < ((uintptr_t)base & vm_page_mask) + pitch*((h+3)&~(size_t)3)) {
+        if (!format) upload_format(fourcc,bpe,&format,&type);
+        if (format) return copy_surface(s,target,format,type,w,h,pitch,why);
+    }
+'''+anchor)
  return s
 edit('eagl.c',eagl)
 def frontend(s):

@@ -30,6 +30,8 @@ enum {
     NativeAdrenoMethodBoCpuUnmap = 14,
     NativeAdrenoMethodGetDeviceInfo = 15,
     NativeAdrenoMethodBoImport = 16,
+    NativeAdrenoMethodSubmitResources = 17,
+    NativeAdrenoAbiMaxResources = 1024,
     NativeAdrenoAbiMetadataBytes = 64,
     NativeAdrenoAbiMaxQueues = 8
 };
@@ -41,6 +43,7 @@ struct NativeAdrenoAbiParams {
     uint64_t max_bo_bytes;
 };
 enum {
+    NativeAdrenoParamsSubmitResources = 2, /* complete per-submit BO read/write set */
     NativeAdrenoParamsHostImport = 1  /* BoImport pins the caller's own pages (an IOSurface's) as a BO */
 };
 struct NativeAdrenoAbiBoAlloc {
@@ -84,6 +87,20 @@ struct NativeAdrenoAbiSubmit {
     uint64_t wait_fence;          /* zero or an earlier fence of this client */
     uint64_t wait_timeout_ns;     /* used only when wait_fence is nonzero */
     NativeAdrenoAbiSubmitBuffer buffers[NativeAdrenoAbiMaxBuffers];
+};
+/* A complete residency/access set, including nested IBs and all GPU data.
+ * Extension of ABI1: clients must check NativeAdrenoParamsSubmitResources.
+ * Fixed size; IOKit transports this larger-than-inline request out of line. */
+struct NativeAdrenoAbiResource {
+    uint64_t handle;
+    uint32_t access;             /* bit0 GPU read, bit1 GPU write; nonzero */
+    uint32_t reserved;
+};
+struct NativeAdrenoAbiSubmitResources {
+    NativeAdrenoAbiSubmit commands;
+    uint32_t resource_count;
+    uint32_t reserved;
+    NativeAdrenoAbiResource resources[NativeAdrenoAbiMaxResources];
 };
 struct NativeAdrenoAbiMetadata {
     uint64_t handle;              /* object identity */
@@ -145,6 +162,7 @@ struct NativeAdrenoAbiDeviceInfo {
     uint32_t reserved;            /* zero */
 };
 #if defined(__cplusplus)
+static_assert(sizeof(NativeAdrenoAbiSubmitResources) == 16808, "ABI scoped submit layout");
 static_assert(sizeof(NativeAdrenoAbiDeviceInfo) == 64, "ABI device info layout");
 static_assert(sizeof(NativeAdrenoAbiParams) == 24, "ABI params layout");
 static_assert(sizeof(NativeAdrenoAbiBoAlloc) == 16, "ABI alloc layout");
