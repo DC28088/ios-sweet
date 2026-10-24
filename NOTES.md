@@ -3,6 +3,18 @@
 ## Current direction and last known device state (2026-10-25, read first)
 
 
+- **0126 packaged/verified; local replacement guest71825 running.**
+  Image shim/out/shim-boot-0126-metal2-presentation.img17412096bytes SHA256
+  5b3ec7eb7b36691c9f4ae4150e71a30e83b331da9f1b2b2afe66665c0c9c5736.
+  Unpack confirms shim/DTB/firmwareADT/payload/cmdline; sweetpresentwait1/build126.
+  Bundlegh download and independent ZIP-digest/CRC download match everyfile;
+  allfiles/ABI/frontendpatches match report. FrontendSHA751dc87b9fdb3f929d4e407ab1f4ad6b494c786cd7b7fd447a09e143d5313903,
+  TurnipSHA42498b88bc666f26b981b31aa064acdb0baaa6c502ef116d05c3803e77970570.
+  Local payload15files38921382bytes, includesfreshlogmarkers/installrecord,
+  keepsshadercache. Guest requires oldbundlehashes beforecopy and newafter,
+  HFSchecks before/after/cleanunmount. PhoneOrangeFox; no126writesyet.
+
+
 - **0126 kernel/library CI bothSUCCESS on exacte92bce0.**
   Kernel40127896529, bundle40127901139. Kernel17395128bytes SHA256
   9aad4df66dcd3e15abc7dc7312f4bf3bc2ef5f73fb2373e9d83380ca32d2cffe,
