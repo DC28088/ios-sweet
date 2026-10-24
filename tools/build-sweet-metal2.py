@@ -311,7 +311,7 @@ def assemble(turnip, bridge_lib, env):
             shutil.copy2(source, licenses / ('metal2vulkan-' + source.name))
     for source in (WORK / 'donor/unixnu/LICENSE', WORK / 'mesa/docs/license.rst'):
         if source.is_file():
-            shutil.copy2(source, licenses / ('Mesa-' if source.name == 'license.rst' else 'UniXNU-') + source.name)
+            shutil.copy2(source, licenses / (('Mesa-' if source.name == 'license.rst' else 'UniXNU-') + source.name))
     for source in (WORK / 'mesa/COPYING', WORK / 'mesa/LICENSE'):
         if source.is_file():
             shutil.copy2(source, licenses / ('Mesa-' + source.name))
