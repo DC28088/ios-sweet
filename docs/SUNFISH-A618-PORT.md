@@ -104,8 +104,9 @@ and BackBoard entering SweetMetal2. Device creation then refuses with
 Turnip loads. The shader cache must be provisioned in the mounted root using
 `tools/prepare-sweet-metal2-cache.sh`: root-owned0755 parent, mobile501:5010700
 child. The plugin's unchecked mkdir/fallback does not create it successfully on
-this root. The prepared directory repair has not yet been installed; UI Metal
-rendering remains unverified.
+this root. The directory repair was installed as an eight-chunk, 576 KiB userdata delta;
+every chunk passed readback verification. The unchanged0125 kernel was
+rebooted with a fresh live trace. UI Metal rendering remains unverified.
 
 Compiling against the extended ABI header does not implement its new methods.
 The donor Turnip backend still calls legacy Submit (method5), which remains
