@@ -2,6 +2,19 @@
 
 ## Current direction and last known device state (2026-10-24, read first)
 
+- **Wallpaper active-root inspection (2026-10-24):** OrangeFox/recovery sweetin,
+  userdata unmounted, partition114970046464bytes. Fresh empty ADB/NBD cache
+  research/wallpaper-install-0121; all66 source hashes match the prepared PNG
+  bundle. ExtensionKit flag and datamigrator sentinel absent; migration skip
+  remains20H392. Both LS csstores lack CollectionsPoster/LegacyPoster strings
+  (not a runtime registration proof). Nine PosterBoard reports show repeated
+  SIGTRAP in _stateLock_setupSwitcherConfigurationForFirstTime+2040.
+  Building bounded mobile-context registration helper using runtime-checked
+  LS SPI/ExtensionFoundation query, no instruction offsets. Only wallpaper
+  providers targeted; PNG+ExtensionKit override+helper staging pending.
+  No new phone writes/reboots. Kernel0121 remains built/not booted.
+
+
 - **ACTIVE: wallpaper repair prepared; Adreno6xx source cross-check complete; recovery pending.**
   Latest user request: fix missing wallpaper and cross-check public iOS ports for
   Adreno6xx/Metal/Wi-Fi/Bluetooth. User clarifies wallpaper was always absent;
