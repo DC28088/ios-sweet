@@ -3,6 +3,38 @@
 ## Current direction and last known device state (2026-10-25, read first)
 
 
+- **0125 shader-cache directory repair installed; same kernel rebooted.**
+  Fresh read confirmed absent cache under root-owned0755 /private/var/local.
+  Local guest56727 completed HFS checks before/after, full bundle SHA checks
+  before/after, clean unmount. Read-only edited catalog verifies parent0:0/0755,
+  backboardd501:501/0700. Delta8 chunks589824bytes (576KiB) saved with all originals
+  in research/metal2-cache-repair-0125; apply preflight freshly matched every
+  before chunk, wrote only this delta, readback verified every after chunk.
+  Host installation-manifest.json and delta.json record installed-readback-verified.
+  No bundle/kernel code replacement; same verified0125 image SHA6f8dbe8f... .
+  ADB rebootbootloader, fastboot product sweetin, temporary boot accepted
+  send0.517s/boot0.130s. logs/live-0125-metal2-cache-fixed.txt receiver59530,
+  duration600s, started before reboot. Metal initialization and rendering result
+  pending. Existing cache snapshots are now stale after this iOS boot.
+
+
+
+- **0125 cache repair: OrangeFox booted, fresh root inspected, overlay guest running.**
+  User reports0125 home screen/similar performance and returned toFASTBOOT.
+  Temporary recovery/recovery.img SHA4efe9045... boot accepted send3.893s/
+  boot0.130s. ADB recovery product sweetin; userdata unmounted114970046464bytes.
+  Fresh research/metal2-cache-repair-0125 snapshot confirms /private/var/local
+  root0:0/0755 and BOTH m2v-cache/backboardd directories absent. Persistent
+  mtl2.log5420bytes confirms same ShaderCachePermissionDenied beforeTurnip load.
+  One-time wallpaper marker remains attempting; helper log sees LScollections1/
+  legacy1 but EXquery0 and refusesautomaticretry. Do not reset it blindly.
+  Local qcow2 overlay created; guest56727 performing HFS checks then cache
+  provisioning and full installed-bundle hash checks. No repair phone writes yet.
+  Read-only root NBD76861 socket /tmp/sweet-metal2-cache125-root.sock; cache is
+  fresh for this OrangeFox interval, must not reuse after iOS writes again.
+
+
+
 - **0125 reaches BackBoard Metal initialization; shader-cache permissions block it.**
   Live logs/live-0125-metal2-discovery.txt confirms sweetbuild125, Metal service
   publication, and exactly the expected BackBoard restart. BackBoard274 enters
