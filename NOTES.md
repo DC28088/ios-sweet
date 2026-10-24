@@ -2,7 +2,7 @@
 
 ## Current direction and last known device state (2026-10-24, read first)
 
-- **ACTIVE: 0120 installed/readback verified and temporarily booted; runtime pending.**
+- **ACTIVE: 0120 installed/booted; GPU submits/swaps observed, performance pending.**
   User explicitly approved "Apply and temporarily boot0120". Revalidated all
   image/library/manifest hashes and sweetin identity. apply-delta.py freshly
   matched all35 original phone chunks, wrote19857408bytes, readback verified
@@ -14,8 +14,18 @@
   Receiver started before reboot, logs/live-0120-usb.txt duration240s;
   capture session40204. Manifest research/gpu/0120-boot-manifest.json updated.
   Source3806917, kernel40062657768/GLES40062657825; both SUCCESS.
-  This confirms transport only. Wait for boot/GPU log and user screen report
-  before claiming rendering, stability or performance improvement.
+  Live USB confirms bootargs sweetbuild=120, ABI1/FD618 EAGL frontend and
+  automatic GMEM/sysmem policy marker. First8 scoped submissions result0,
+  total_us1971,1908,4317,2363,2115,2034,2322,5272; kernel quiesce10..12us.
+  The userspace transport also waits before the kernel call, so those kernel
+  quiesce times do not measure total GPU execution/wait. Main BGRA1125x2436
+  pitch4608 framebuffer swaps observed. Initial GLfinish avg30372us/max82267us
+  in an idle/startup window; not FPS and not a controlled performance comparison.
+  First map: objects4/spans4 (3 shared kernel mappings before the first user BO).
+  Thus the old near1004 failure could be span pressure, not proved object limit;
+  await later0120 map counters. No allocation failure/CRASH observed yet.
+  Asked user to compare page swipes/Control Center with CPU fallback and keep USB
+  connected. Capture still running; no stability/performance qualification.
 
 - **0119 regression and 0120 build/staging history (superseded by current state above).**
   User says "home screen. Significantly worse." Completed240s live capture
