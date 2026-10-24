@@ -1,6 +1,28 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
-## Current direction and last known device state (2026-10-23, read first)
+## Current direction and last known device state (2026-10-24, read first)
+
+- **ACTIVE: 0119 source correction prepared; kernel and GLES builds pending.**
+  User asked to fix the GPU regression and provided BLUETOOTH-SUMMARY.md.
+  Phone stays in the confirmed working CPU fallback; no new device writes.
+  New patch0117-sweet-gles-residency-cache-and-surface-padding adds an optional
+  ABI1 capability/method17 carrying the complete Mesa BO residency/access set.
+  It validates ownership/access and IB membership, pins every listed BO until
+  a real fence, publishes only that set, acquires only GPU-written BOs, and
+  retains resources on uncertain completion. Legacy submit stays supported.
+  Large requests are copied from IOKit's out-of-line descriptor before use.
+  Owned, nonplanar IOSurfaces get backing for A6xx's final4-row block; caller
+  memory is not extended. Userspace preserves READ/WRITE flags (DUMP is only
+  diagnostic) and requires the new capability, so the pair must be installed
+  together. Tight caller-owned sampled images use the existing upload path.
+  CORRECTION to earlier timeout diagnosis: method6 timeout on a zero-duration
+  poll is normal pending work, not proof of a GPU hang. New trace suppresses
+  those poll messages. Long glFinish calls remain observed, but they include
+  CPU submission/cache work, not just GPU execution. Entire-VM cache scans
+  are confirmed in the old source, not timed independently by0118's log.
+  macos-14 scheduled brownout has ended; use normal kernel runner, no IIG
+  substitution. Previous generated-file reuse experiment was discarded.
+  Build and hardware rendering of this correction remain unverified.
 
 - **ACTIVE: CPU fallback reaches home screen; user confirms previous speed restored.**
   Branch codex/adreno-power-audit, original iOS16.7.16 HFS+ / NativeAdreno ABI1.

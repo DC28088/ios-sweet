@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstring>
 #include <limits>
+#include <new>
 
 extern "C" void sweet_drm_log(const char *, ...);
 namespace {
@@ -145,7 +146,8 @@ extern "C" kern_return_t sweet_gpu_open(io_connect_t *out,uint64_t info[5]) {
         if (!kr) kr=call(NativeAdrenoMethodGetDeviceInfo,nullptr,0,&device,sizeof device);
         unsigned gpu=((device.chip_id>>24)&255)*100+((device.chip_id>>16)&255)*10+((device.chip_id>>8)&255);
         if (!kr && (params.abi_version!=NativeAdrenoAbiVersion || gpu!=618 ||
-                    !device.gmem_bytes || !device.va_size || !(params.flags&NativeAdrenoParamsHostImport)))
+                    !device.gmem_bytes || !device.va_size || !(params.flags&NativeAdrenoParamsHostImport) ||
+                    !(params.flags&NativeAdrenoParamsSubmitResources)))
             kr=kIOReturnUnsupported;
         if (kr) {IOServiceClose(connection);connection=0;return kr;}
         sweet_drm_log("sweetgl: NativeAdreno ABI%u A%u chip=%#x GMEM=%u VA=%#llx+%#llx",
@@ -202,18 +204,20 @@ extern "C" kern_return_t sweet_gpu_method(io_connect_t c,uint32_t selector,const
     if (!c || c!=connection || lost) return kIOReturnNotReady;
     if (selector!=13 || scalars || !data || bytes<8 || !out || !capacity || *capacity!=1)
         return kIOReturnBadArgument;
-    // Sailfish format: {u32 IB count, u32 BO count}, IB{u64 VA,u32 dwords,u32 reserved}, BO handles.
+    // Private frontend format: counts, IB records, then {u32 BO,u32 GPU access}.
     const auto *buf=static_cast<const unsigned char *>(data);
     uint32_t counts[2];memcpy(counts,buf,8);
     const size_t n=counts[0],nb=counts[1];
-    if (!n || n>4096 || !nb || nb>MaxBos || bytes!=8+n*16+nb*4) return kIOReturnBadArgument;
+    if (!n || n>4096 || !nb || nb>MaxBos || bytes!=8+n*16+nb*8) return kIOReturnBadArgument;
     auto kr=wait(last_fence,5000000000ull);
     if (kr) {lost=true;return kr;}
     Bo *resources[MaxBos]{};
     for (size_t i=0;i<nb;++i) {
-        uint32_t handle;memcpy(&handle,buf+8+n*16+i*4,4);
+        uint32_t handle,access;
+        memcpy(&handle,buf+8+n*16+i*8,4);memcpy(&access,buf+12+n*16+i*8,4);
         resources[i]=bo(handle);
-        if (!resources[i] || resources[i]->quarantined) return kIOReturnBadArgument;
+        if (!resources[i] || resources[i]->quarantined || !access || (access&~3u)) return kIOReturnBadArgument;
+        for(size_t j=0;j<i;++j)if(resources[j]==resources[i])return kIOReturnBadArgument;
     }
     // Validate every IB before submitting any; all must lie in a listed BO.
     NativeAdrenoAbiSubmitBuffer commands[4096]{};
@@ -229,23 +233,30 @@ extern "C" kern_return_t sweet_gpu_method(io_connect_t c,uint32_t selector,const
         }
         if (!commands[i].handle) return kIOReturnBadArgument;
     }
-    // NativeAdrenoSubmit publishes all mapped BOs by physical page before
-    // ringing CP and acquires every imported BO on real fence retirement.
+    // The kernel holds the complete residency set, cleans those BOs before
+    // ringing CP, and acquires only GPU-written BOs on real fence retirement.
     __atomic_thread_fence(__ATOMIC_SEQ_CST);
     uint64_t fence=0;
     // Preserve order across Native ABI's 16-IB batches. The kernel quiesces
     // its shared context before each submit; never truncate a Mesa command list.
+    auto request=new(std::nothrow) NativeAdrenoAbiSubmitResources{};
+    if(!request)return kIOReturnNoMemory;
+    request->resource_count=static_cast<uint32_t>(nb);
+    for(size_t j=0;j<nb;++j) {
+        uint32_t access;memcpy(&access,buf+12+n*16+j*8,4);
+        request->resources[j]={resources[j]->handle,access,0};
+    }
     for (size_t at=0;at<n;at+=NativeAdrenoAbiMaxBuffers) {
-        NativeAdrenoAbiSubmit request{};
-        request.buffer_count=static_cast<uint32_t>(std::min<size_t>(NativeAdrenoAbiMaxBuffers,n-at));
-        for (size_t j=0;j<request.buffer_count;++j) request.buffers[j]=commands[at+j];
+        request->commands.buffer_count=static_cast<uint32_t>(std::min<size_t>(NativeAdrenoAbiMaxBuffers,n-at));
+        for (size_t j=0;j<request->commands.buffer_count;++j) request->commands.buffers[j]=commands[at+j];
         NativeAdrenoAbiSubmitReply reply{};
-        kr=call(NativeAdrenoMethodSubmit,&request,sizeof request,&reply,sizeof reply);
-        if (kr || !reply.fence) {lost=true;return kr?kr:kIOReturnIOError;}
+        kr=call(NativeAdrenoMethodSubmitResources,request,sizeof *request,&reply,sizeof reply);
+        if (kr || !reply.fence) {delete request;lost=true;return kr?kr:kIOReturnIOError;}
         fence=reply.fence;
         for (size_t j=0;j<nb;++j) resources[j]->fence=fence;
         last_fence=fence;
     }
+    delete request;
     *out=fence;return KERN_SUCCESS;
 }
 
