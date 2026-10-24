@@ -27,7 +27,8 @@
   plan.json/delta.json staged-not-written; /tmp/sweet-wallpaper121-debug.sock
   and /tmp/sweet-wallpaper121-recover-edited.sock read-only backing exports.
   Source helper now defaults query-only, explicit --register needed for mutation;
-  updated helper source is not deployed. Original binary remains on phone, so
+  guarded helper source c32d26e CI40108106711 SUCCESS; not deployed.
+  Original binary remains on phone, so
   disabling the job is necessary. Alarm cannot cancel server-side SPI work.
   No new phone writes after approved0121 update; remains in OrangeFox.
 
