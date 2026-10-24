@@ -340,6 +340,9 @@ def main():
              MESA_COMMIT, WORK / 'mesa')
     checkout('https://github.com/steelbrain/metal2vulkan', M2V_COMMIT, WORK / 'metal2vulkan')
 
+    frontend_patches = patch_series(
+        donor / 'sunfish', sorted((ROOT / 'userspace/metal2/patches').glob('*.patch')))
+
     env = python_env(donor / 'unixnu')
     abi = kernel_abi_header()
     out = ROOT / 'userspace/out'
@@ -363,6 +366,7 @@ def main():
         },
         'mesa_patches': mesa_patches,
         'bridge_patches': bridge_patches,
+        'frontend_patches': frontend_patches,
         'runtime_qualified': False,
         'installed': False,
         'hardware_tested': False,

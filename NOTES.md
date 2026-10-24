@@ -3,6 +3,28 @@
 ## Current direction and last known device state (2026-10-25, read first)
 
 
+- **0125 after cache repair creates real Metal device; visual defects remain.**
+  logs/live-0125-metal2-cache-fixed.txt: BackBoard276 creates TurnipAdreno618 in
+  2095ms; Turnip image0x10cd28000 loaded, ABI compositor opens/queries succeed,
+  method5 submissions and real fence retirements result0 (sampled through1440).
+  User: similar speed, significant missing regions/trails/cutoffs. No captured
+  BackBoard crash in first533665bytes. There are280 MTLFunction validation
+  warnings and196 explicit-layout refusals in that prefix; not full GPU success.
+  Prepared kernel0124-sweet-metal-owned-surface-rows.patch from donor0159:
+  Metal2-only64byte owned single-plane rows (128 for8B texels), guarded by
+  sweetsurfalign; preserves caller IOSurfaceAddress and plane layouts/bounds.
+  Prepared userspace/metal2/patches/0001-sweet-function-protocol.patch adopting
+  real NBFunction objects into MTLFunction; build records local frontend patches.
+  Both patches apply to pinned/current sources; no tests added/run.
+  Framebuffer currently CPU-copies swaps without explicit GPU-completion gate:
+  investigating presentation ownership as another possible cause of trails.
+  User asked to returnFASTBOOT for telemetry pull/fresh next-stage snapshot.
+  Same-GPU donor branch now4c67bd5911703550f45c838fd9de6c10f04ee79b (fetched only,
+  pinned build stillf09fdb58). Delta adds optional drawlog/dead-draw culling, off
+  by default, no new kernel/Turnip patches; not blindly replacing our pin.
+
+
+
 - **0125 shader-cache directory repair installed; same kernel rebooted.**
   Fresh read confirmed absent cache under root-owned0755 /private/var/local.
   Local guest56727 completed HFS checks before/after, full bundle SHA checks
