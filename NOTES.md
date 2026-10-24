@@ -3,6 +3,16 @@
 ## Current direction and last known device state (2026-10-25, read first)
 
 
+- **Final0126 bundleCI40128850465 on3e219db; kernel/image unchanged.**
+  Frontend optionalwait now requires SWEET_CPU_PRESENT_WAIT=1; noenvoptin will
+  beinstalled. Originalasynccommitretainedbydefault. InitialCI40127901139 build
+  is archived userspace/out-0126-preliminary (notinstalled). Itsverifiedlocal
+  guest/overlay/payload archived as preliminary in research/metal2-install-0126.
+  Createdfreshlocaloverlay fromsamefreshunmountedphonebase; cachedblocks still
+  validbecauseNOphonewrites/boots sinceOrangeFox. No delta staged/applied yet.
+  Finalprepare/verify scripts reference40128850465; useexisting0126image/kernel.
+
+
 - **0126 final frontend adjustment after recovered timing evidence.**
   Do NOT install initialbundleCI40127901139: frontend0002 forcedwait insidecommit
   is unnecessary for observed893/893 caller scheduledwaits and could change
