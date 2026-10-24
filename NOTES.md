@@ -3,6 +3,15 @@
 ## Current direction and last known device state (2026-10-25, read first)
 
 
+- **Corrected 0125 CI40125083266 running on9a6399559a41.**
+  Uses IOKit-visible process KPIs for restart; run_tests=false, keep_going=false.
+  Phone in FASTBOOT; no image from failed203d781 build was packaged or booted.
+  research/gpu/{fetch-kernel-0125,package-0125}.py prepared, updated to this run.
+  Uses same installed0124 bundle and verified0123 firmware-bearing ADT/shim/DTB;
+  no new userdata delta planned. Pending compile/download/package/temporaryboot.
+
+
+
 - **Restart kernel failed; remove BSD-private signal dependency before rebuilding.**
   CI40123710586 on203d781 failed during Build; no new boot image was used.
   GitHub failure-log downloads repeatedly disconnect/TLS timeout; small API

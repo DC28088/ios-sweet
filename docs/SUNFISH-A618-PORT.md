@@ -76,6 +76,37 @@ Retain sweet's A618 firmware, GPUCC/SMMU initialization, video-mode display,
 bootloader/PMIC addresses are not interchangeable. This is the strongest current
 same-GPU/iOS16 donor, but its source is not installed merely by checking it out.
 
+## SweetMetal2 build and first device attempt
+
+The Sunfish frontend, Rust bridge and Turnip now build through
+`tools/build-sweet-metal2.py` and the `sweet-metal2` workflow. Bundle build
+40121858239 succeeded on e2ca25c; the 0124 installation record shows all
+54 userdata chunks (40,108,032 bytes) installed and readback verified.
+The build uses the pinned source revisions above and reconstructs the kernel ABI
+header from the patch series. The original GLES library is retained.
+
+The 0124 live trace shows `sweetgles=0 sweetmtl=2`, publication of
+`MetalPluginName=SweetMetal2`, and Safari/WebKit loading the plugin and receiving
+its intentional client-policy refusal. It shows **no BackBoard plugin startup
+and no GPU submission calls**. The user's unchanged UI performance therefore
+does not establish either working or slow Metal rendering: this boot's UI never
+reached the new renderer.
+
+BackBoard starts before the asynchronous GPU initialization publishes the
+accelerator. The next kernel restarts BackBoard once after publication so its
+fresh Metal discovery can find the service. `sweetm2restart=0` disables this;
+GLES boots do not restart it. The initial restart patch (203d781, build40123710586)
+failed to compile. The revised patch uses the IOKit-visible process KPIs in
+`sys/proc.h`, avoiding BSD-private `psignal` and direct process-structure fields.
+Build40125083266 on9a63995 is pending; this correction is not hardware verified.
+
+Compiling against the extended ABI header does not implement its new methods.
+The donor Turnip backend still calls legacy Submit (method5), which remains
+supported but publishes and retires caches across the mapped VM. It does not
+construct a complete method17 resource set. Preserve that distinction when
+interpreting subsequent performance, and retain real completion, SMMU bounds
+and cache ownership when implementing the scoped path.
+
 ## Chlorophyll update
 
 [Chlorophyll 2a463aed](https://github.com/ry-diffusion/Chlorophyll/tree/2a463aedd8c761d6b9c3868c5f2b5299f12437b3)
