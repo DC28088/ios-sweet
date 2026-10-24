@@ -2,6 +2,39 @@
 
 ## Current direction and last known device state (2026-10-24, read first)
 
+- **ACTIVE: 0119 verified and staged; awaiting new raw-write approval.**
+  User switched networks and returned phone to FASTBOOT. Product sweetin;
+  temporary boot recovery/recovery.img accepted send3.813s/boot0.130s,
+  recovery SHA2564efe904506a021f2853d756d19b97f113f991b64f5531bd4228b3293131f7e54.
+  Phone now OrangeFox, userdata/dev/block/sda34 unmounted,114970046464bytes.
+  Both23a1fc8 builds SUCCESS: kernel40058371440 and GLES40058371530.
+  Network switch allowed downloads to finish. Library artifact's whole ZIP
+  SHA/API digest + CRC verified; every SHA256SUMS entry passed. Actual arm64,
+  iOS16.0 LC_BUILD_VERSION/signature command and cache UUID verified.
+  Library userspace/out/0119-gles-23a1fc8-range/sweetgl.dylib (18791824bytes),
+  SHA256f21332e828b8da34130d46880c8f5e6d18d2b1d63c184383b74bef98ea0cea28.
+  Kernel xnu/out-0119/kernel.development.sweet (17386032bytes), CRC and
+  published SHA256554684a99a1489d8b9cff266a98bdfc670a5afa46ffdcc3a07e072bd84a5d282.
+  Packaged shim/out/shim-boot-0119-scoped-gles-120hz.img (17403904bytes),
+  SHA2562646376c31502337a2fcac8b659d596d134a6aaae5e9c0b267fbefbdc61d13d5.
+  Unpacked shim/DTB/payload and cmdline match inputs; tag sweetbuild=119.
+  Same firmware-bearing sRGB ADT, matching new scoped-submit kernel/library.
+  Fresh research/gles-install-0119 read-only proxy/cache uses
+  /tmp/sweet-gles119-root.sock; no old block snapshot reused. Initial proxy
+  size.txt had an extra newline, corrected before reading any filesystem.
+  Fresh iOS16.7.16/20H392/cache/record inspection matches0118 library. Mounted
+  local qcow2 guest verified actual old library and record hashes before update,
+  new library hash afterward, executable mode and full HFS checks/read-only
+  remount; guest finished VERIFIED_UNMOUNTED. Phone remained unchanged.
+  Staged delta36 chunks/20185088bytes=19.25MiB, all before/after bytes retained
+  under research/gles-install-0119/delta. Fresh preflight matched every current
+  phone chunk. State staged-not-written. Edited read-only export socket
+  /tmp/sweet-gles119-edited.sock. Manifest research/gpu/0119-boot-manifest.json.
+  Next: obtain explicit approval per AGENTS.md, then apply-delta.py rechecks,
+  writes and readback-verifies all chunks, adb reboot bootloader and temporary
+  boot matching0119 with live USB receiver started first. No0119 phone write
+  or hardware boot yet. Do not claim the regression is fixed before evidence.
+
 - **ACTIVE: 0119 kernel and GLES builds succeeded; downloads/staging pending.**
   User asked to fix the GPU regression and provided BLUETOOTH-SUMMARY.md.
   Phone stays in the confirmed working CPU fallback; no new device writes.

@@ -159,4 +159,12 @@ memory is not extended; tightly sized sampled images use the existing texture
 upload path. Mesa bounds validation remains enabled.
 
 Source corrections and syntax compilation are not hardware performance results.
-The phone remains in the user-confirmed CPU fallback while the pair is built.
+Both builds on `23a1fc8` succeeded: kernel run40058371440 and GLES
+run40058371530. The verified pair is packaged as
+`shim/out/shim-boot-0119-scoped-gles-120hz.img`, SHA256
+`2646376c31502337a2fcac8b659d596d134a6aaae5e9c0b267fbefbdc61d13d5`.
+A fresh local overlay of the active root verified the old and replacement
+libraries and passed HFS checks. The staged update is 36 chunks / 19.25 MiB,
+with all original bytes saved and current phone blocks freshly matched.
+The phone is in OrangeFox; no 0119 userdata write or boot has occurred.
+AGENTS.md requires a new explicit confirmation before this raw update.
