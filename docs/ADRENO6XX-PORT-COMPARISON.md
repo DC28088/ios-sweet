@@ -76,9 +76,41 @@ hashes. It rewrites only image `src` attributes. Example on a mounted local root
 python3 tools/prepare-sweet-wallpapers.py --root /path/to/mounted-ios-root --output /path/to/new-wallpaper-bundle
 ```
 
-Current private output: `research/wallpaper-0120/png-bundle`:
+Prepared private image output: `research/wallpaper-0120/png-bundle`:
 48 PNG files and 18 modified CAML files, 46,983,592 bytes, 16 unique HEIC decodes.
 All payload hashes pass. This bundle is **not installed**. Source hashes must be
 checked against the active phone root in recovery. Also inspect ExtensionKit
 feature flags, migration state and LaunchServices registration before assuming
 image conversion alone restores wallpaper. No whole-root reflash is required.
+
+### Active-root findings and registration build
+
+OrangeFox inspection on 2026-10-24 matched all 66 wallpaper source hashes against
+that bundle. Both CollectionsPoster and LegacyPoster are present on disk. The
+ExtensionKit override and migration sentinel are absent. Both LaunchServices
+csstores lack their identifier strings; this is supporting evidence, not a
+runtime registration count. Nine PosterBoard crash reports show SIGTRAP in
+`_stateLock_setupSwitcherConfigurationForFirstTime+2040` during initial setup.
+
+`userspace/wallpaper/register.m` supplies targeted registration under mobile's
+LaunchServices context. It checks SPI selectors at runtime, registers installed
+PosterKit bundles, and requires the CollectionsPoster/LegacyPoster LS records
+plus a nonempty ExtensionFoundation query before reporting success. It uses no
+instruction-offset calls, no database rebuild, and no full DataMigration run.
+A 90-second alarm bounds the job; it does not KeepAlive/restart-loop. Diagnostics
+persist in mobile's Library/Logs/sweet-wallpaper.log.
+
+The helper build passed on source `ba14dd89ea9f40e6cd76e2fb0cef15aa3647f6ad`,
+[CI 40101724073](https://github.com/DC28088/ios-sweet/actions/runs/40101724073),
+including strict compilation and code-signature verification. Active-root staging
+is under ignored `research/wallpaper-install-0121`, with a fresh block cache.
+The 71-file payload includes the 66 PNG/CAML files, helper, provider list,
+ExtensionKit override and launch job in both standalone and merged launchd plists.
+Existing migration skip preferences and HEIC originals are retained. Installation
+and visible wallpaper restoration remain pending.
+
+Local overlay installation completed: both HFS+ checks were clean, all 71 payload
+hashes matched after a read-only remount, and the filesystem was unmounted.
+The staged delta saves every original/edited byte in 88 chunks (48.5 MiB).
+A fresh recovery read matched all original chunks. Phone writes and the 0121
+boot remain pending explicit approval; visual restoration is unverified.
