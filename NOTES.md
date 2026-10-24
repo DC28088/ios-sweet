@@ -2,7 +2,7 @@
 
 ## Current direction and last known device state (2026-10-24, read first)
 
-- **ACTIVE: 0119 verified and staged; awaiting new raw-write approval.**
+- **ACTIVE: 0119 installed/readback verified; temporary boot accepted, live capture running.**
   User switched networks and returned phone to FASTBOOT. Product sweetin;
   temporary boot recovery/recovery.img accepted send3.813s/boot0.130s,
   recovery SHA2564efe904506a021f2853d756d19b97f113f991b64f5531bd4228b3293131f7e54.
@@ -30,10 +30,21 @@
   under research/gles-install-0119/delta. Fresh preflight matched every current
   phone chunk. State staged-not-written. Edited read-only export socket
   /tmp/sweet-gles119-edited.sock. Manifest research/gpu/0119-boot-manifest.json.
-  Next: obtain explicit approval per AGENTS.md, then apply-delta.py rechecks,
-  writes and readback-verifies all chunks, adb reboot bootloader and temporary
-  boot matching0119 with live USB receiver started first. No0119 phone write
-  or hardware boot yet. Do not claim the regression is fixed before evidence.
+  User explicitly approved "Apply and temporarily boot0119", then asked "boot it?".
+  apply-delta.py freshly matched all36 chunks, wrote20185088bytes and readback
+  SHA256 verified all36. State installed-readback-verified; originals retained.
+  adb reboot bootloader; product sweetin; temporary boot matching0119 sent
+  16996KB OKAY0.507s, BootingOKAY0.130s. Receiver started before reboot,
+  logs/live-0119-usb.txt (240s). Live USB confirms sweetbuild=119, iOS userspace
+  and GLES frontend loaded. A618 startup fence29/29 passes; MesaFD618/EAGL
+  loads; method17 scoped submits1..8 all result0, kernel times2002..5047us,
+  BOsets5..25. BGRA1125x2436/pitch4608 framebuffer swaps observed. First
+  timing window: GL finish avg16825us/max25236us (startup, not FPS or proven
+  improvement). No small-surface layout rejection observed at this point.
+  User asked to compare page swipes/Control Center with the CPU fallback;
+  screen/performance response pending. Capture continues; no full-GPU claim.
+  No boot/recovery/GPT flashing. Transport success is not acceleration proof.
+
 
 - **ACTIVE: 0119 kernel and GLES builds succeeded; downloads/staging pending.**
   User asked to fix the GPU regression and provided BLUETOOTH-SUMMARY.md.

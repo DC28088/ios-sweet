@@ -166,5 +166,13 @@ run40058371530. The verified pair is packaged as
 A fresh local overlay of the active root verified the old and replacement
 libraries and passed HFS checks. The staged update is 36 chunks / 19.25 MiB,
 with all original bytes saved and current phone blocks freshly matched.
-The phone is in OrangeFox; no 0119 userdata write or boot has occurred.
-AGENTS.md requires a new explicit confirmation before this raw update.
+The user explicitly approved the update and temporary boot. All 36 original
+chunks matched again before writing, and every written chunk passed readback
+SHA256. Fastboot accepted the matching image (send 0.507 s, boot 0.130 s).
+Live capture started before boot. It confirms A618 startup, Mesa/EAGL, the
+new scoped-submit method and framebuffer swaps. The first eight submissions
+returned success in 2002–5047 µs of kernel time. The first `glFinish` window
+averaged 16825 µs, with a 25236 µs maximum. These startup samples are not a
+frame-rate measurement or proof of better interactive performance. User-visible
+screen/performance confirmation and the longer capture are still pending.
+No boot/recovery/GPT flashing was performed.
