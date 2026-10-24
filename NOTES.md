@@ -2,7 +2,36 @@
 
 ## Current direction and last known device state (2026-10-24, read first)
 
-- **ACTIVE: 0120 installed/booted; GPU submits/swaps observed, performance pending.**
+- **ACTIVE: 0120 blur improves; UI still slow, wallpaper always absent; later crashes captured.**
+  User says initially "Kinda better...blur...much better", then clarifies only
+  clear improvement is working blur; still slow; wallpaper absent even before0120.
+  Initial240s capture finished210052bytes. Fresh live capture
+  logs/live-0120-interaction.txt(session34788,240s) recovered later interaction:
+  >7080 real scoped submissions, but method17 returns0xe00002c2(BadArgument)
+  twice, each followed by user transport latching lost, BO_NEW NotReady and
+  backboardd SIGSEGV(far0x1c), PIDs56 and326. Process restart recovers GPU client.
+  First failure near map2304 objects1005/4128 spans14631/65536: ample memory
+  metadata capacity; no observed0120 NoResources. Some old allocator pressure
+  is resolved, but not stable. Typical submits~2..3ms; GLfinish observed16..117ms
+  averages, active window maxima405..655ms. No FPS/benchmark claim.
+  Likely rejection cause: Mesa FD_RELOC_FLAGS_INIT=READ|WRITE for every BO,
+  including immutable IOSurface imports that NativeAdreno correctly pins/maps
+  read-only. Submit core currently rejects access3 against SMMU permission1.
+  New patch0119-sweet-immutable-gles-residency narrows these conservative
+  residency flags toREAD for memory.readOnly(), retains the SMMU RO mapping,
+  refuses write-only access, logs normalization and exact core validation failure.
+  Actual GPU stores still fault; no page protection upgrade or fake completion.
+  This mechanism is source-proven; exact rejected BO not in old trace, so
+  hardware root-cause confirmation still required. Same0120 library/ABI works;
+  next kernel0121 need not rewrite userdata for GPU change alone.
+  Wallpaper audit: Sailfish tools/wallpaper-heic2png.sh converts HEIC layers toPNG
+  and rewrites main.caml; README says no HW HEVC decode. Our original local root
+  contains48 HEIC/0 PNG and36 CAML files; many reference HEIC. Also Sailfish
+  root tweaks register extensions via DataMigration/ExtensionKit; our older root
+  tweaks skip migration. Current phone assets/registration not inspected yet.
+  Preparing Linux-compatible conversion locally; no phone write/reboot this turn.
+
+- **0120 installation and initial startup (historical; later failures above).**
   User explicitly approved "Apply and temporarily boot0120". Revalidated all
   image/library/manifest hashes and sweetin identity. apply-delta.py freshly
   matched all35 original phone chunks, wrote19857408bytes, readback verified
