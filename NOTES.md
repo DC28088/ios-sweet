@@ -2,6 +2,31 @@
 
 ## Current direction and last known device state (2026-10-25, read first)
 
+- **0132 booted (kernel CI40173049234 ecd870b, SHA 72c1d784...; image
+  shim/out/shim-boot-0132-present-split-small-imports.img 06180c25...;
+  sweetwifi=0). USER: buttons WORK again (confirms wland's hang), 2
+  notification-panel icons + lock-screen camera icon still missing, still
+  sluggish, Bluetooth unavailable, Wi-Fi toggle stuck.**
+  wland root cause: /var/local/wland.log has only "wland auto: boot 38 ..."
+  - it hung in smmu_wlan_identity() reading apps SMMU 0x15000020 via
+  /dev/pmem; downstream apps-smmu needs msm-bus APPS(161)->TCU(627) vote
+  (qcom,msm-bus,vectors-KBps) and TBU vdd; an unvoted TCU read stalls the CPU
+  (keys poller stopped). Keep sweetwifi=0 until a TCU/BCM vote or a guarded
+  kernel-side SMMU stream setup exists. 0141 PMEM_RPMH whitelist is built.
+  0132 present split (interaction): swaps==presents 34-109/10s (~290ms frames),
+  gate 15-46ms, acquire ~1.2ms, copy ~2.7ms, submits ~2ms -> CoreAnimation's
+  own frame production is the cap, not the kernel present or GPU clock.
+  Next image 0133 (kernel CI40174803466, 0142 dense sampler, SHA 73481baa...;
+  shim/out/shim-boot-0133-sampler-presentfence.img 9edb7877...): boot-args add
+  sweetpresentfence=1 sweetsample=backboardd sweetsamplefirst=150
+  sweetsamplems=300 sweetsamplecount=600. Root diag research/m2v-diag-0133
+  (prepared, NOT installed): copies out mtl2.log/backboardd pipelines.log/
+  wland.log, adds /var/local/mtl2-env SWEET_M2V_MESSAGES=/var/local/m2v-msg.log
+  + m2v-msg.log 0666. Missing icons suspect: A8 (VK 1000470001) textures with
+  "explicit layout refused" (422 on 0131). Symbolicating SMP samples needs the
+  ipsw CLI (downloaded to research/tools-ipsw, checksum OK) - running it was
+  blocked pending user permission.
+
 - **0131 hardware results (user + logs/live-0131-wc-wifi.txt).**
   GPU CLOCK MEASURED for the first time (0137 GPUCC readback): PLL0 L=27
   (VCO~518MHz, gfx3d~259MHz via CRC/2) before DCVS, L=58 (VCO~1114MHz,
