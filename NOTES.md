@@ -2,6 +2,36 @@
 
 ## Current direction and last known device state (2026-10-25, read first)
 
+- **0131 image + Wi-Fi root install (booted; results pending).** Kernel
+  CI40156111990 on fa22c25 (patches through 0138), SHA 4083ad5f...,
+  image shim/out/shim-boot-0131-wc-wifi-kernel.img SHA ba2a5d6d..., cmdline
+  0130 + sweetbuild=131 sweetm2extra=0 sweetpmem=1. New since 0130:
+  0135 write-combined Turnip-owned BOs (sweetwc=0 restores) - 0130 showed the
+  owned-BO publish growing to 8.5-9.1ms/115-134MiB/530-770 objects per submit;
+  0136 GPU LOST report on quiesce/close failure; 0137 GPUCC PLL/RCG readback;
+  0138 ios-flame Wi-Fi kernel side (/dev/pmem off unless sweetpmem=1; en0 +
+  Apple80211 + IOKit-quiet fix + AKS wrap/unwrap for keychain).
+  0130 results: recents OK (user), perf "same"; wallpaper customize hung the UI:
+  AegirPoster still killed "extension check-in timeout" (device open
+  0.85-2s + cold shaders), then the backend was lost silently in quiesce()
+  and backboardd SIGSEGV after "no-copy buffer refused: HostMemory
+  NotRepresentable" -> hence sweetm2extra=0 until GPU hang recovery exists.
+  Wi-Fi userland CI40156101166 (userspace/wifi/patches/0001 on ios-flame
+  f09fdb58): wland SHA 4373d001..., netsvc 005e61f8...; Sweet rails L9A 640,
+  L1C 1800, L2C 1304, L10C 3312 (NOT L11C = touch), MPSS 0x8b000000+0x8400000,
+  MSA 0x97d00000/1MB, bdwlan.bXX/.XXX by board id; XNU uses only high DDR
+  (ADT dram-base 0x1_00000000) so wland's 0xE0000000+ buffers are free.
+  Read-only dumps (sha256 matched on-phone) in research/sweet-wifi-fw-0131:
+  modem 320MiB (FAT, 1140 files), modemst1/modemst2/fsg 8MiB, fsc 256KiB.
+  Root install research/wifi-install-0131: /var/local/bin/{wland,netsvc},
+  /var/local/fw/modem (321 files: modem.*, wlanmdsp.mbn, bdwlan.*, *.jsn,
+  modem_pr), /var/local/fw/rmtfs/*.img 0600 (copies; wland never writes the
+  partitions), launchd.plist + org.ios-sweet.wland (533 jobs; guarded by old
+  hash d7fd1507...). Guest VERIFIED_UNMOUNTED (659 checks), 113 chunks
+  88932352 bytes, preflight matched, all readback-verified. wland logs to
+  /var/local/wland.log (not the console); off: /var/local/wland.off or
+  sweetwifi=0. Live log logs/live-0131-wc-wifi.txt.
+
 - **0130 = kernel 0133+0134 (CI40152237332 eb47373, kernel SHA 717e103c...,
   image shim/out/shim-boot-0130-import-sync-faultlog.img SHA 3f2f8dc7...)
   + bundle CI40152843590 (5cc1a54: frontend 0001-0003, bridge
