@@ -2,6 +2,24 @@
 
 ## Current direction and last known device state (2026-10-25, read first)
 
+- **0128 booted (kernel CI40150202949 f0388cf, SHA 9857e626...; image
+  shim/out/shim-boot-0128-aegir-window-backlight.img SHA 27beb7f2...).
+  USER CONFIRMED: brightness slider changes real panel brightness.**
+  backboardd/CoreBrightness sets IODisplayParameters "brightness" 0..65536
+  (e.g. 32222 -> DCS level 1010); every DCS 0x51 via DSI0 TPG FIFO reports
+  DMA done, ack_err=0, timeout=0 (0.3-6ms). Wallpaper still BLACK: on 0128
+  AegirPoster never launched; PosterBoard launches CollectionsPoster,
+  Emoji/Gradient/Extragalactic/Legacy/Photos/Pride/Unity posters (twice,
+  around the backboardd restart); none requests Metal, none crashes. So the
+  black wallpaper is not a Metal-device problem now. Next: OrangeFox read-only
+  pull of /var/mobile/Library/Logs/CrashReporter Aegir/Poster reports (abort
+  reasons) and PosterBoard configuration. User: performance "feels the same"
+  although presents/10s rose 95 (0126) -> 140 (0127) -> 189 (0128); present
+  avg 11-29ms, legacy submit avg ~16ms (inside lock, not lock wait).
+  0132 (unlocked fence-targeted present gate + publishMapped timing) CI
+  40151308398 on de6d224. pmap dirty-tracking for publish REJECTED: clearing
+  PP_ATTR_MODIFIED loses VM dirty state of pageable imported memory.
+
 - **0127 booted (live log logs/live-0127-cpufreq-opp-pipeline.txt). Observed:**
   CPU: OSM had A76 cluster at LUT0 = **300MHz** (measured 299989kHz on cpu6),
   A55 at LUT6 1497.6MHz (measured 1496893). Now LUT13 2304MHz (measured
