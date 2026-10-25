@@ -32,7 +32,25 @@
     kernel + same cmdline (sweetbuild=152). After the buzzes work: a
     /dev/sweet-haptic node plus a CoreAudio HAL "Actuator" plug-in (HackiOS
     audio_plugin.c and redwood_haptic.c as reference).
-  - Log receiver: tools/sweet-usb-log.py holds UDP 5140. Stop the previous
+  - **0152 BOOTED (2026-10-26, logs/live-0152-haptic.txt)**: image
+    shim/out/shim-boot-0152-haptic.img 110e2dd1... = kernel CI 40228520033
+    (0158+0159+0160, ea579832...) + ADT shim/out/sweet-0152-haptics.adt
+    3fdc5b6c... (tools/adt-add-haptics.py: /product/haptics closed-loop=1,
+    supports-3rd-party-haptics=1) + sweethaptic=3, sweetbuild=152. Root:
+    research/audio-install-0160 installed /System/Library/Audio/Plug-Ins/HAL/
+    SweetAudio.driver (userspace/audio, HackiOS audio_plugin.c port, CI
+    40228338000, SweetAudio dd524fc1...; 12 chunks readback-verified; rollback
+    restore-delta.py). Result: /dev/sweet-haptic major 20; three test buzzes
+    each ended with SYSINT 0x01 (done), no fault; "serving /dev/sweet-haptic";
+    mediaserverd exec'd once (no crash loop). User feel-test of the buzzes and
+    of iOS haptics pending. 0161 (battery: hold the last reading through up to
+    12 failed polls; exact 0 mA is not a valid current) is committed but NOT
+    BUILT: the xnu workflow's concurrency cancels the older run on a new
+    dispatch (that is how 0159-only run 40227980643 got cancelled). The user's
+    "not charging" on plug/unplug matches the failed-read fallback lines.
+  - Log receiver: tools/sweet-usb-log.py holds UDP 5140. Do not use
+    `pgrep -f sweet-usb-log` in the same shell command: it matches the shell
+    itself and kills it (exit 144); anchor it as pkill -f "^python3 tools/...". Stop the previous
     receiver before a new boot, otherwise the new boot keeps logging into the
     old file.
 
