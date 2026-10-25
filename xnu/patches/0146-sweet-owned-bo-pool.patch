@@ -55,7 +55,7 @@ index 789a5f6..88557d9 100644
   if(!provider || !provider->init() || !provider->attach(IOService::getPlatform())) {
    if(provider)provider->release();return 1;
 diff --git a/iokit/Kernel/arm/unixnu/NativeAdrenoMemory.cpp b/iokit/Kernel/arm/unixnu/NativeAdrenoMemory.cpp
-index d0f4a18..042aa4c 100644
+index d0f4a18..18b92dd 100644
 --- a/iokit/Kernel/arm/unixnu/NativeAdrenoMemory.cpp
 +++ b/iokit/Kernel/arm/unixnu/NativeAdrenoMemory.cpp
 @@ -3,6 +3,7 @@
@@ -66,7 +66,16 @@ index d0f4a18..042aa4c 100644
  #include <IOKit/IOLib.h>
  #include <kern/task.h>
  #include <mach/vm_param.h>
-@@ -133,6 +134,9 @@ IOReturn NativeAdrenoMemory::allocate(size_t bytes,unsigned bits,bool contiguous
+@@ -69,6 +70,8 @@ void poolGive(size_t offset,size_t bytes) {
+ }
+ }
+ size_t NativeAdrenoMemory::poolBytes() {return pool.bytes;}
++IOMemoryDescriptor *NativeAdrenoMemory::userDescriptor() const
++{return descriptor_?static_cast<IOMemoryDescriptor *>(descriptor_):pool_view_;}
+ /* int-152: a user BO's pages changed attribute one pmap_set_cache_attributes call at a time (each walks the page's mappings, flushes the
+  * TLB and cleans the page), on allocation and again on release, under the connection lock: 3 ms a BO on average and 90-130 ms for a
+  * surface-sized one, while every other GPU call of every client waited. The pool is the BOs' own block and nothing else maps it, so
+@@ -133,6 +136,9 @@ IOReturn NativeAdrenoMemory::allocate(size_t bytes,unsigned bits,bool contiguous
                  owned_capacity_=owned_count_=1;owned_spans_[0]={0,physical,capacity};
                  span_capacity_=1;span_count_=1;spans_[0]={0,physical,bytes};
                  mapping_=pool.virt+offset;bytes_=bytes;allocated_bytes_=capacity;pooled_=true;pool_offset_=offset;prepared_=true;write_combined_=pool.write_combined;
@@ -76,7 +85,7 @@ index d0f4a18..042aa4c 100644
                  zeroOwned(mapping_,capacity,pool.write_combined);
                  /* Through a write-combined pool's own mapping the zeros go to DRAM; the barrier completes them. */
                  if(pool.write_combined)__asm__ volatile("dsb sy":::"memory");
-@@ -273,6 +277,11 @@ IOReturn NativeAdrenoMemory::release()
+@@ -273,6 +279,11 @@ IOReturn NativeAdrenoMemory::release()
  {
      native_adreno_trace_stage=30;
      if(device_references_ || quarantined_)return kIOReturnBusy;
@@ -89,7 +98,7 @@ index d0f4a18..042aa4c 100644
      if(write_combined_) {
          /* The pages go back to the VM cacheable, as they came. */
 diff --git a/iokit/Kernel/arm/unixnu/NativeAdrenoMemory.h b/iokit/Kernel/arm/unixnu/NativeAdrenoMemory.h
-index 474ecbc..d6417c4 100644
+index 474ecbc..7e9675a 100644
 --- a/iokit/Kernel/arm/unixnu/NativeAdrenoMemory.h
 +++ b/iokit/Kernel/arm/unixnu/NativeAdrenoMemory.h
 @@ -45,6 +45,7 @@ class NativeAdrenoMemory final {
@@ -105,7 +114,7 @@ index 474ecbc..d6417c4 100644
       * through clientMemoryForType. Sharing requires a separate owner/task ABI. */
      IOBufferMemoryDescriptor *descriptor() const {return descriptor_;}
 +    /* What clientMemoryForType hands out: the BO's own descriptor, or its view of the pool. */
-+    IOMemoryDescriptor *userDescriptor() const {return descriptor_?static_cast<IOMemoryDescriptor *>(descriptor_):pool_view_;}
++    IOMemoryDescriptor *userDescriptor() const;
  };
  #endif
 diff --git a/iokit/Kernel/arm/unixnu/NativeAdrenoUserClient.cpp b/iokit/Kernel/arm/unixnu/NativeAdrenoUserClient.cpp
