@@ -2,6 +2,22 @@
 
 ## Current direction and last known device state (2026-10-25, read first)
 
+- **Wallpaper root cause from on-device crash reports (OrangeFox read-only,
+  research/wallpaper-inspect-0129: poster-paths.txt 606 entries,
+  crashreporter-list.txt 214 reports, files/*.ips).** AegirPoster aborts with
+  NSInvalidArgument in -[NUNIAegirRenderer
+  getOrCreateUniformBufferforFrameBufferIndex:] -> -[__NSArrayM
+  insertObject:atIndex:] (nil MTLBuffer): no usable Metal device (0126 "not
+  listed", 0127 Turnip OutOfMemory from the 0x70000000 window overlap).
+  Live logs: Aegir crashes 0126=60, 0127=62, 0128=0 (never launched on 0128).
+  PosterBoard's 9 SIGTRAP reports (-[PBFPosterExtensionDataStore
+  _stateLock_setupSwitcherConfigurationForFirstTime]) are from OLDER boots;
+  no PosterBoard crash on 0126/0127/0128. GradientPosterExtension 3 old
+  aborts. Persistent 0128 log logs/gpu-0128-aegir-window-backlight-recovery.txt.
+  0129 image (kernel 0132, CI40151308398 de6d224, kernel SHA 12d6816f...,
+  image shim/out/shim-boot-0129-unlocked-present.img SHA 3df098b1...)
+  temporarily booted send0.508s/boot0.130s; live logs/live-0129-unlocked-present.txt.
+
 - **0128 booted (kernel CI40150202949 f0388cf, SHA 9857e626...; image
   shim/out/shim-boot-0128-aegir-window-backlight.img SHA 27beb7f2...).
   USER CONFIRMED: brightness slider changes real panel brightness.**
