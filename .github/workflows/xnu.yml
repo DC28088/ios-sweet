@@ -128,6 +128,7 @@ jobs:
           grep -aFq 'SWEET FB: beam-raced copy %s:' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
           grep -aFq 'SWEET RENDER: owned BO pool reserved %u of %u MiB in %u blocks' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
           grep -aFq 'SWEET SMMU: votes SN15=%d CN0=%d' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
+          grep -aFq 'SWEET SMMU: WLAN %#x/%#x -> CB%d via SMR%d' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
 
           grep -aFq 'SWEET ADRENO: GMU TCM staging errno=' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
           grep -aFq 'SWEET ADRENO: SMMU map errno=' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
