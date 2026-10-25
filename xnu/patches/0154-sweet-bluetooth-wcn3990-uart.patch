@@ -13,10 +13,10 @@ index fb64a9b..8603669 100644
  bsd/dev/sweet_adreno_clock.c		standard
 diff --git a/bsd/dev/sweet_bt.c b/bsd/dev/sweet_bt.c
 new file mode 100644
-index 0000000..e243f0b
+index 0000000..4669a65
 --- /dev/null
 +++ b/bsd/dev/sweet_bt.c
-@@ -0,0 +1,2370 @@
+@@ -0,0 +1,2372 @@
 +/*
 + * Sweet (Redmi Note 10 Pro, SM7150) Bluetooth: the Qualcomm WCN3990's BT core over the
 + * QUP0 SE3 GENI UART (hsuart0, 0x88c000), HCI in the kernel (power pulse, rampatch + NVM download,
@@ -282,6 +282,8 @@ index 0000000..e243f0b
 +/* the GENI UART and the HCI state of the stage: held by the RX loop per poll and by every TX */
 +static LCK_GRP_DECLARE(wl_hw_grp, "sweet_bt_uart");
 +static LCK_MTX_DECLARE(wl_hw_lock, &wl_hw_grp);
++
++static void wl_rx_stop(void);
 +
 +static uint32_t
 +wl_rd(vm_offset_t base, uint32_t off)
