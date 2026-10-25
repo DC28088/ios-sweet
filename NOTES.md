@@ -2,6 +2,7 @@
 
 ## Current direction and last known device state (2026-10-25, read first)
 
+- **0145c boot (after the BT-firmware install): Wi-Fi did NOT come up** - wland ran (SMEM reads) but no modem SMC/radio-up lines (logs/live-0145c.txt); previous three 0143-0145 boots brought the radio up. Read /var/local/wland.log first next session; a plain reboot may suffice.
 - **NEXT: Bluetooth port (in progress, nothing built yet).** User priorities after
   BT: battery/charge %/charger state, then video playback (YouTube page and
   thumbnails load over Wi-Fi, video does not play), then locked 60 fps, then 120 Hz.
