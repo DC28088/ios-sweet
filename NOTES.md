@@ -2,6 +2,31 @@
 
 ## Current direction and last known device state (2026-10-25, read first)
 
+- **Wi-Fi 0139-0143 (2026-10-25 night).** 0139 (CI 40202374751): with BCM
+  SN15+CN0 voted (sweet_rpmh_bcm_vote) the kernel reads the apps SMMU fine:
+  sCR0 0x250406, ID0 0x4c017e4f (79 SMRs), ID1 0x6000003d (61 CBs, 4K pages,
+  128-page GR space). 0140 (CI 40203325188, votes at bsd init, sweetwifi=0
+  removed): wland.log again only "wland auto: boot ..."; USB console died at
+  that moment, UI kept running. 0141 (CI 40205614605, 0151 pmem trace): wland
+  reads SMEM (0x861ff000.., 0x86001000) fine, then its load from 0x15000020
+  stalls inside pm_rw on the SAME cached mapping the kernel probe read through
+  at bsd init (pmem-path ID0=0x4c017e4f) -> a CPU stalls forever; per-CPU timers
+  queued there never fire (touch 45 s timer -> no L11C -> GPU CX precondition
+  EAGAIN -> no Metal -> Apple logo). 0142 (CI 40206634111, 0152 recast votes
+  before each apps-SMMU access): votes OK, load still stalls (CPU1); GPU
+  bring-up timer stuck -> CPU-only CA (red clock, no blur). So NOT lost votes;
+  early-boot reads work, later ones stall (cause unknown: hyp trap / power
+  state?). 0143 (shim/out/shim-boot-0143-kernel-smmu-wlan.img 60d505df..., CI
+  40207886158, 0153): kernel programs WLAN SID 0x240/1 -> free SMR + bank
+  (CBAR 0x1f000, SCTLR 0xe0) in the probe thread at bsd init (sweetsmmuwlan=1);
+  wland patch 0002 (CI 40207885501, wland 951a05a2...) skips its SMMU step when
+  the boot-arg is present. Install prepared: research/wifi-install-0143 (only
+  /var/local/bin/wland, old 4373d001... verified first). NEVER boot a wland-on
+  image with the old wland binary (any apps-SMMU access from userland stalls).
+  Frontend 0004 (IOSurface texture format log, bundle CI 40205832322)
+  INSTALLED (research/metal2-install-0141, 47 chunks readback-verified);
+  surface-texture lines go to /var/local/mtl2.log only.
+
 - **0137/0138 (later 2026-10-25). USER: tearing in recents GONE (0145 beam
   race confirmed); animation "slightly better, like 20-30 fps" on 0138;
   garbled Airplane/AirDrop/Hotspot glyphs remain; Wi-Fi/Bluetooth not
