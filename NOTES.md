@@ -2,6 +2,88 @@
 
 ## Current direction and last known device state (2026-10-25, read first)
 
+- **0127 booted (live log logs/live-0127-cpufreq-opp-pipeline.txt). Observed:**
+  CPU: OSM had A76 cluster at LUT0 = **300MHz** (measured 299989kHz on cpu6),
+  A55 at LUT6 1497.6MHz (measured 1496893). Now LUT13 2304MHz (measured
+  2303712kHz) / LUT9 1804.8MHz (measured 1803876). (current_vote decode in the
+  log line is wrong - ignore it.) GPU: 4-level HFI table accepted; APPS
+  gfx.lvl raise verified selector5 (NOM), mx already selector3; DCVS index4
+  (565MHz) errno0, BUT RBBM ALWAYS_COUNT read 0 kHz before/after (counter
+  does not advance at idle) -> GPU clock still UNMEASURED. Metal: backboardd
+  slot0 OK; pipelining on; legacy submits avg5169us max8485 in-flight avg1.0;
+  first 10s windows: 116 presents/10s, missed_deadlines 0 (was up to 306),
+  present avg 4.3-5.3ms max 30ms. No backboardd/SpringBoard crash.
+  AegirPoster now connects (slot1) but its first BoMap at 0x70000000 was
+  refused Busy: **0x70000000 is A618_CP_IOVA (kernel CP fw/ring/fence)** ->
+  Turnip OutOfMemory -> still aborts. Fixed in 0131 (windows at 0x80000000).
+  Backlight: CoreBrightness accepted AppleARMBacklight and sets
+  brightness-nits, brightness-nits-cap(65536), DisplayBrightness{},
+  DisplayBrightnessSliderPosition, CompensationTweak - 0130 parsed none, so
+  no DCS was sent. 0131 decodes brightness-nits as IOFixed (Bergamota 0249
+  confirms nits*65536 SInt32) and logs nested values. vm_page_find_contiguous
+  failures pre-exist (654 in 0126). User feedback on speed/wallpaper pending.
+  0131 CI: 40150023455 cancelled (fix), 40150202949 pending on f0388cf.
+  References added by user: ry-diffusion Chlorophyll (787338f) and Bergamota
+  (5d51b58, develop): Bergamota has SD845 cpufreq governor (0190/0192), GPU
+  DCVS/touch boost (0188/0189/0217), MDP page-flip + zero-copy scanout
+  (0096/0126/0127, docs/DISPLAY_HW.md) - next lever to remove our 10MB CPU
+  copy - and WCN3990 BT over UART/IBS (0117-0136, 0239, docs/BT_IOS_TRANSPORT.md).
+
+- **0127 (Claude) built, root delta installed, temporarily booted.**
+  Diagnosis from 0126 live+recovery logs (logs/gpu-0126-metal2-presentation-recovery.txt
+  613631 bytes) and /var/local/mtl2.log: interaction peaks ~95 presents/10s
+  (~9.5 fps), vsync timer missed up to 306 deadlines/10s because present()
+  (GPU gate wait up to 39ms + CIVAC + 10MB copy) ran INSIDE the vsync timer;
+  every Submit/BoMap drained the whole GPU under the global lock (no
+  pipelining); backboardd commits every 95-120ms with 8-18 render passes,
+  42-92 draws, ~8.2Mpx per commit, ctc 65-145ms; GPU had never left perf
+  index 1 (267MHz configured, never measured); cpufreq-hw (OSM) was never
+  programmed by XNU. AegirPoster crash-looped 60x ("not listed ... no Metal
+  device") feeding constant ReportCrash; bluetoothd/fairplayd respawn ~100x.
+  Donor (Pixel4a, docs/sunfish/display-perf.md) found GPU clock did NOT help
+  there and a present thread was WORSE (14.7 vs 21 updates/s) - so both are
+  boot-arg switchable here and must be measured, not assumed.
+  Kernel patches (source tree = xnu-8796.141.3 + all patches, reconstructed in
+  scratch; patches reproduce it byte-identically):
+  0126 cpufreq-hw: logs OSM LUT, selects highest non-boost row, measured
+       before/after per cluster (dependent-add loop on bound cpu0/cpu6).
+       sweetcpufreq=0 = log only.
+  0127 measured OPP: HFI perf table 267/355/430/565MHz (Linux arc votes from
+       cmd-db), after CP fence: APPS raise-only mx/gfx floors, DCVS index 4,
+       GX clock measured via RBBM ALWAYS_COUNT before/after. sweetgpukhz=267000
+       = old single level.
+  0128 Submit/BoMap no full drain (BoFree/close still drain; sweetpipeline=0
+       restores); present thread off the vsync timer (sweetfb_thread=0 =
+       inline as before); per-window present_avg/max_us + coalesced counters;
+       legacy-submit avg/max us and in-flight stats every 120 submits.
+  0129 AegirPoster gets one of 3 separate 256MiB GPU VA windows at
+       0x70000000+ with its own queue range (sweetm2extra=0 disables).
+  0130 DSI DCS brightness: AppleARMBacklight (backlight-control,
+       IODisplayParameters/brightness 0..65536) -> DCS 0x51 via DSI0 TPG DMA
+       FIFO (0xae94000, downstream kickoff_fifo_command), logs exact
+       setProperties keys; sweetbl=N test level; sweetbacklight=0 disables.
+  CI: 40131677852 FAILED (machProcessor protected), 40132388902 compiled but
+  failed marker step (scheduler v2 string), 40133792777 cancelled by
+  concurrency, **40134086144 SUCCESS on 660ca85f7025a76744d69ea42d10e57956fbfbdf**.
+  Kernel xnu/out-0127-range SHA256 324f892a7402200a7f23952cf1f3e6468c5a3810cedd1202f734dfdc8012b8f6
+  (matches SHA256SUMS, CRC verified). Image shim/out/shim-boot-0127-cpufreq-opp-pipeline.img
+  17416192 bytes SHA256 dd2933e10a718bbdc632ef9cd0282d3fed794d492837578ba54d429cd3563f1f,
+  cmdline = 0126 with sweetbuild=127; manifest research/gpu/0127-boot-manifest.json.
+  Userspace bundle unchanged (0126 final CI40128850465).
+  Root delta research/metal2-wallpaper-0127: fresh OrangeFox snapshot, guest
+  fsck clean before/after + 12 bundle hashes OK, writes
+  /private/var/local/mtl2-clients="AegirPoster" (0:0 0644) and
+  m2v-cache/AegirPoster (501:501 0700); 10 chunks 655360 bytes, preflight
+  matched all, every write readback-verified (installed-readback-verified).
+  Rollback: restore-delta.py. Snapshot cache now STALE after this iOS boot.
+  Temporary boot accepted send0.515s/boot0.130s. Live log
+  logs/live-0127-cpufreq-opp-pipeline.txt (receiver 3600s started pre-boot).
+  Not done this pass (honest): Wi-Fi (donor phone/wifi is a 5.7k-line /dev/pmem
+  userland stack: modem PAS, SMP2P, GLINK/QRTR/QMI WLFW, CE/WMI; needs Sweet
+  carveouts/IRQs/firmware + kernel pmem), audio (ADSP PIL/APR/AFE + 2x AW882xx
+  at i2c 0x890000 0x34/0x35, reset gpio64 irq gpio93), Bluetooth, haptics
+  (AW8624 at i2c 0xa8c000 addr 0x5A, reset tlmm4, irq pm6150l gpio10).
+
 
 - **0126 installed/booted: user says glitches improved, performance unchanged.**
   FinalbundleCI40128850465 source3e219db, frontendSHA470cbb93cdeba870db47ce7b53ff348458e2191b91246c6beacbc391286aab80,
