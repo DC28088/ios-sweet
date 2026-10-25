@@ -1,5 +1,5 @@
 diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
-index b7f0949..4e4ec57 100644
+index b7f0949..4bf04d3 100644
 --- a/iokit/Kernel/arm/SweetFramebuffer.cpp
 +++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
 @@ -388,6 +388,29 @@ sweet_bl_number(OSObject *object, uint64_t *out)
@@ -32,7 +32,7 @@ index b7f0949..4e4ec57 100644
  IOReturn
  AppleARMBacklight::setProperties(OSObject *properties)
  {
-@@ -395,23 +418,37 @@ AppleARMBacklight::setProperties(OSObject *properties)
+@@ -395,23 +418,41 @@ AppleARMBacklight::setProperties(OSObject *properties)
  	if (dict == NULL) {
  		return kIOReturnBadArgument;
  	}
@@ -60,8 +60,12 @@ index b7f0949..4e4ec57 100644
 +	 * DisplayBrightness{...}, DisplayBrightnessSliderPosition, CompensationTweak. */
 +	uint64_t nits = 0;
 +	if (sweet_bl_number(dict->getObject("brightness-nits"), &nits) && nits) {
-+		/* Integral nits, or 16.16 fixed point when above any panel's range. */
-+		const uint64_t mnits = nits > 4000 ? (nits * 1000) >> 16 : nits * 1000;
++		/* CoreBrightness sends nits * 65536 (IOFixed SInt32), as Bergamota 0249
++		 * also measured on iOS 18; a negative value means off. */
++		if (nits & 0x80000000ULL) {
++			nits = 0;
++		}
++		const uint64_t mnits = ((nits & 0xffffffffULL) * 1000) >> 16;
 +		const uint64_t clamped = mnits > SWEET_BL_PEAK_MNITS ? SWEET_BL_PEAK_MNITS : mnits;
 +		const uint32_t level = SWEET_BL_MIN + (uint32_t)((clamped * (SWEET_BL_MAX - SWEET_BL_MIN)) / SWEET_BL_PEAK_MNITS);
 +		request(level, (uint32_t)((clamped * SWEET_BL_SCALE) / SWEET_BL_PEAK_MNITS));
