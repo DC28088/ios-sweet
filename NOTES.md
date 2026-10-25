@@ -2,6 +2,27 @@
 
 ## Current direction and last known device state (2026-10-25, read first)
 
+- **0131 hardware results (user + logs/live-0131-wc-wifi.txt).**
+  GPU CLOCK MEASURED for the first time (0137 GPUCC readback): PLL0 L=27
+  (VCO~518MHz, gfx3d~259MHz via CRC/2) before DCVS, L=58 (VCO~1114MHz,
+  ~557MHz) after index 4 -> every boot before 0127 ran the A618 at ~259MHz.
+  0135 WC owned BOs: legacy submit 0.19-0.66ms early, ~2ms under load
+  (was 16ms 0129, 9ms 0130); publish 26-218us/80KiB/3 objects; no WC distrust.
+  Presents up to ~200/10s but present avg 15-66ms, max 100-247ms ->
+  the CPU present path is now the cap (0139 splits gate/acquire/copy).
+  User: performance "feels the same"; WALLPAPER SHOWS CORRECTLY (with
+  sweetm2extra=0); notification-panel icons flicker/missing; Wi-Fi toggle
+  stuck off; Bluetooth unavailable; POWER/VOLUME BUTTONS DEAD this boot.
+  Kernel logged zero "SWEET KEYS: key=" lines (9-25 on 0126-0130), no read
+  errors. wland: /dev/pmem + /dev/wlan up, wland exec'd at boot; its first
+  rail vote uses PMEM_RPMH which 0138 did not port (ios-flame 0102) -> modem
+  never booted. Before that it ran smmu_wlan_identity() (apps SMMU SMR/CB
+  for SID 0x240). Button root cause NOT proven; next recovery: read
+  /var/local/wland.log; consider sweetwifi=0 A/B. Fixes queued: 0140 small
+  imported BOs (<2MiB, no-copy host buffers) kernel-maintained again (flicker
+  candidate); 0141 PMEM_RPMH with Sweet whitelist. CI 40172435680 (0139+0140)
+  SUCCESS; 40173049234 (through 0141) building.
+
 - **0131 image + Wi-Fi root install (booted; results pending).** Kernel
   CI40156111990 on fa22c25 (patches through 0138), SHA 4083ad5f...,
   image shim/out/shim-boot-0131-wc-wifi-kernel.img SHA ba2a5d6d..., cmdline
