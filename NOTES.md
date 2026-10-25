@@ -2,6 +2,21 @@
 
 ## Current direction and last known device state (2026-10-25, read first)
 
+- **WI-FI WORKS: DHCP address on en0 (0145, 2026-10-25 late).** Image
+  shim/out/shim-boot-0145-net-trace.img 93d24536... (0143 kernel CI 40207886158,
+  ADT sweet-0144-wlan.adt, + net_trace=80). Root changes (all delta-backed,
+  readback-verified): wland 0002 (research/wifi-install-0143), bdwlan.b00 =
+  bdwlan.bin (research/wifi-bdf-0143), preferences.plist moved to .pre-wifi
+  (research/wifi-sc-0144) - configd rewrote it with HostNames only (saved as
+  preferences.plist.configd-0145) - then a standard Wi-Fi service (en0, AirPort,
+  IPv4 DHCP, IPv6 Automatic; research/wifi-sc-0145/preferences.plist 6630ee74...).
+  0145 trace: configd now manages en0; IPv6 RS/NS out, DHCP DISCOVER out, OFFER in
+  (10.242.x.x hotspot), REQUEST, "configd en0 add address 10.242.x.x", default
+  route via the hotspot gateway, mDNS out. Settings: changing "Configure IPv4"
+  crashed Preferences (sig 6, unsymbolicated) on 0144. Bluetooth next: port
+  Bergamota's iOS 16-era WCN3990 BT series (UART transport + firmware download +
+  IBS + com.apple.uart.bluetooth control, 0239 HCI compat, ADT bluetooth node).
+
 - **Wi-Fi JOINS (0144, 2026-10-25 late).** 0144 = 0143 kernel + ADT with
   /arm-io/wlan (tools/adt-add-wlan.py -> shim/out/sweet-0144-wlan.adt 07b0659b...;
   image shim/out/shim-boot-0144-wifid.img 874e0568...): wifid now starts;
