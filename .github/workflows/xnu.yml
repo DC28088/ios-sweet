@@ -123,6 +123,9 @@ jobs:
           grep -aFq 'SWEET RENDER: submission pipelining %s' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
           grep -aFq 'SWEET RENDER: %s client connected ABI=%u slot=%u' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
           grep -aFq 'SWEET BL: AppleARMBacklight published' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
+          grep -aFq 'SWEET RENDER: fence waits %s (sweetwaitlock=%d)' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
+          grep -aFq 'SWEET RENDER: window_ms=%llu gpu_busy_pct=%u' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
+          grep -aFq 'SWEET FB: beam-raced copy %s:' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
 
           grep -aFq 'SWEET ADRENO: GMU TCM staging errno=' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
           grep -aFq 'SWEET ADRENO: SMMU map errno=' "dxb/fakeroot/System/Library/Kernels/kernel.$CONFIG.sweet"
