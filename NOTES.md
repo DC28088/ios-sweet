@@ -2,6 +2,39 @@
 
 ## Current direction and last known device state (2026-10-25, read first)
 
+- **NEXT: Bluetooth port (in progress, nothing built yet).** User priorities after
+  BT: battery/charge %/charger state, then video playback (YouTube page and
+  thumbnails load over Wi-Fi, video does not play), then locked 60 fps, then 120 Hz.
+  Phone runs 0145 (Wi-Fi works, web pages load). Done for BT:
+  - Firmware dumped read-only: bluetooth partition (sde27, 1 MiB FAT, sha
+    5cfa6009...) -> research/sweet-bt-fw-0145/files/image/ (crbtfw21.tlv 230076 B,
+    crnv21.bin 4710 B, + 11/20 and ap* variants). Also INSTALLED on the root at
+    /usr/standalone/firmware/sweet/ (research/bt-fw-install-0145, 14 chunks verified).
+  - Bergamota BT sources assembled (patches-11215 0104,0117,0118,0124,0125,0128,0132,
+    0133,0136,0239 applied to an empty tree): scratchpad btsrc/bsd/dev/
+    beryllium_wlan.c (2858 lines; BT = wl_bt() + wl_bt_fw + wl_xport_*) and
+    beryllium_bt_hci.c (761; com.apple.uart[.sk].bluetooth kernel control + HCI
+    compat). Regenerate with `git apply --include=bsd/dev/beryllium_wlan.c
+    --include=bsd/dev/beryllium_bt_hci.c` from origin/wifi-bt18 xnu/patches-11215.
+  - Sweet hardware (downstream DT + Linux gcc-sm7150/pinctrl-sm7150, verified):
+    UART = QUP0 SE3 0x88c000 (hsuart0), SPI 604, wrapper 0x8c0000; GCC identical to
+    SDM845 layout: wrap0 s3 CBCR 0x173c0, RCG 0x173c4, vote 0x5200c bit 13 (m/s ahb
+    bits 6/7, CBCR 0x17004/0x17008), same ftbl/parent map, GPLL0 even. TLMM SOUTH tile
+    0x03d00000 (west 0x3500000, north 0x3900000); GPIO38 CTS, 39 RFR, 40 TX, 41 RX,
+    function qup03 = 1; wake gpio41. Rails (bt_wcn3990): vdd-io LDOA10 1.8 V, core
+    LDOC2 ~1.3 V, pa LDOC10 3.3 V, xtal LDOC1 1.8 V (Bergamota: ldoa7/17/25).
+  - Port plan: sweet_bt.c from beryllium_wlan.c with ONLY gcc/tlmm/se/wrapper mapped
+    (their wl_map/wl_probe read the apps SMMU + SMEM: apps-SMMU loads from a running
+    system stall a CPU on sweet - do NOT call wl_probe/wl_dump_smmu); constants above;
+    add sweet_rpmh_vreg_set() limited to the 4 BT rails (sweet_rpmh_vreg_enable allows
+    only ldoc11); firmware via ADT props under /arm-io/bluetooth (as GPU fw) instead
+    of sweet_a630_fw_get; stub sweet_ufs_read_part; init from sweet_ufs_init with
+    Bergamota boot-args (sweetwlan=2 sweetbt=1 sweetbtfast=1 sweetbtibs=1). Then ADT
+    bluetooth node (Bergamota tools/adt-bluetooth.py: transport-encoding 3,
+    transport-speed 3000000, local-mac-address), BlueTool stub + bluetoothd
+    BT_HCI_TRANSPORT=H4BC:POSIX:com.apple.uart.bluetooth,3000000 (Bergamota
+    root_tweaks18 bluetooth()); see Bergamota docs/WIFI_BT_IOS18.md, BT_IOS_TRANSPORT.md.
+
 - **WI-FI WORKS: DHCP address on en0 (0145, 2026-10-25 late).** Image
   shim/out/shim-boot-0145-net-trace.img 93d24536... (0143 kernel CI 40207886158,
   ADT sweet-0144-wlan.adt, + net_trace=80). Root changes (all delta-backed,
