@@ -207,6 +207,8 @@ objc_link_args = [%s]
 def build_bridge(metal2vulkan, env):
     sunfish = WORK / 'donor/sunfish'
     patches = sorted((sunfish / 'phone/metal2/bridge/patches').glob('*.patch'))
+    # Sweet's own metal2vulkan fixes apply after the donor series.
+    patches += sorted((ROOT / 'userspace/metal2/bridge-patches').glob('*.patch'))
     applied = patch_series(metal2vulkan, patches)
 
     llvm_as = shutil.which('llvm-as', path=env.get('PATH'))
