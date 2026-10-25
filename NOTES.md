@@ -2,6 +2,27 @@
 
 ## Current direction and last known device state (2026-10-25, read first)
 
+- **0130 = kernel 0133+0134 (CI40152237332 eb47373, kernel SHA 717e103c...,
+  image shim/out/shim-boot-0130-import-sync-faultlog.img SHA 3f2f8dc7...)
+  + bundle CI40152843590 (5cc1a54: frontend 0001-0003, bridge
+  userspace/metal2/bridge-patches/0200; frontend SHA ed571c06..., Turnip
+  03844ca8...; ABI 0f5a0900 unchanged). Installed research/metal2-install-0130:
+  fresh snapshot, guest VERIFIED_UNMOUNTED (fsck OK x2, 42 hash checks),
+  47 chunks 39518208 bytes, preflight matched, all readback-verified; 0129
+  mtl2.log saved share/mtl2-before-0130.log. Booted send0.504s/boot0.130s,
+  live logs/live-0130-import-sync-faultlog.txt.**
+  Wallpaper root cause chain (AegirPoster pipelines.log via OrangeFox):
+  aegir_star/luna/earth refused Unsupported(ExtendedRangeBlend(SrgbForm))
+  = source-over blend into BGR10_XR_sRGB under fast math -> nil pipeline ->
+  frontend "foreign render pipeline" -> killed. With bridge 0200 on 0130:
+  no refusals; device opens (853-1956ms) but every instance is killed
+  "extension check-in timeout" (9x) - device open + cold shader compile on
+  the extension's startup path exceed ExtensionKit's check-in limit. Next:
+  measure/shorten device open (Turnip dlopen/instance/device, bridge priming)
+  or make first-frame pipelines warm.
+  0130 import sync: publish 3076us/39MiB/51 objects per submit at boot
+  (owned cacheable BOs only; 0129 was 15.7ms/204MiB/620 objects).
+
 - **0129 measured the submit cost and then lost the GPU (user: crashed opening
   recents, black screen).** legacy submit windows: publishMapped 5315us/61MB/
   75 objects early, then 15390-15660us of a ~16.1ms submit, ~204-208MiB in
