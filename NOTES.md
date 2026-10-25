@@ -1,6 +1,42 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
-## Current direction and last known device state (2026-10-25, read first)
+## Current direction and last known device state (2026-10-26, read first)
+
+- **LATEST (2026-10-26 01:20 IST): Bluetooth, battery and haptic probe.** Order
+  agreed with the user: haptics now, then GPU (smoothness, glyph glitches,
+  locked 60 fps, then 120 Hz, 825/950 MHz), video playback, sound, sleep,
+  modem, Apple ID, cameras.
+  - Bluetooth (0154/0155 kernel; ADT sweet-0146-bt.adt de459fbc...; root
+    bt-install-0147: launchd.plist with BT_HCI_TRANSPORT and the BlueTool stub,
+    original kept as BlueTool.orig). User: pairs with a laptop and headphones;
+    no headphone audio. Wi-Fi scans find networks only with BT off (coexistence
+    is still open).
+  - Battery 0156 (image 0150-battery2, 498f3eb2...; kernel CI of commit
+    7aef4b0): real PM6150 QG voltage/current, current-compensated seed, charge
+    counting, 5 s poll. User (2026-10-26): "current percentage is stable", plug
+    and unplug are detected. In logs/live-0150-battery2.txt the voltage curve
+    swung 40-61% under load while the counted value held 59-61%. 0158 (commit
+    48b7a28, not yet booted) drifts toward the curve only at a measured rest
+    (|I| < 100 mA, 2% per poll); previously an invalid current sample also
+    triggered the drift.
+  - Haptics 0157 (image shim/out/shim-boot-0151-haptic.img a4eb16e1...; kernel
+    CI 40226831888 d66ad746...; 0150 cmdline + sweethaptic=2,
+    sweetbuild=151). BOOTED 2026-10-26 (logs/live-0151-haptic.txt): QUP1 SE9
+    fw 0x303 proto 3 (I2C); "AW8624 chip ID read -> 0, id 0x24"; after reset
+    SYSST 0x30 SYSINT 0x30 GLB_STATE 0. The 0157 fault mask 0x2c wrongly
+    treated UVLO (bit 5, latched at power-up and live in standby, which the
+    vendor driver masks) and FIFO-almost-full (bit 3) as faults, so it put the
+    chip back into reset WITHOUT buzzing. 0159 stops only on OV/OCD/OT (0x46)
+    and clears SYSINT after going active (as aw8624_haptic_active does). CI
+    40227980643 (0158+0159) was building at handoff; next image 0152 = that
+    kernel + same cmdline (sweetbuild=152). After the buzzes work: a
+    /dev/sweet-haptic node plus a CoreAudio HAL "Actuator" plug-in (HackiOS
+    audio_plugin.c and redwood_haptic.c as reference).
+  - Log receiver: tools/sweet-usb-log.py holds UDP 5140. Stop the previous
+    receiver before a new boot, otherwise the new boot keeps logging into the
+    old file.
+
+- (2026-10-25 entries follow.)
 
 - **0145c boot (after the BT-firmware install): Wi-Fi did NOT come up** - wland ran (SMEM reads) but no modem SMC/radio-up lines (logs/live-0145c.txt); previous three 0143-0145 boots brought the radio up. Read /var/local/wland.log first next session; a plain reboot may suffice.
 - **NEXT: Bluetooth port (in progress, nothing built yet).** User priorities after
