@@ -2,6 +2,27 @@
 
 ## Current direction and last known device state (2026-10-25, read first)
 
+- **0129 measured the submit cost and then lost the GPU (user: crashed opening
+  recents, black screen).** legacy submit windows: publishMapped 5315us/61MB/
+  75 objects early, then 15390-15660us of a ~16.1ms submit, ~204-208MiB in
+  490-719 imported objects PER SUBMIT. Unlocked present gate worked
+  (fence-targeted waits 14us-9.6ms). AegirPoster got a real Turnip device
+  (window 0x80000000) but frontend refused its command buffer "foreign render
+  pipeline" (that check also fires for nil = failed pipeline creation); it was
+  SIGKILLed (extension check-in timeout). After its slot closed, the next
+  AegirPoster open hit VK_ERROR_INITIALIZATION_FAILED and backboardd's device
+  became DeviceLost at the same moment: healthy() marked backend.lost silently
+  (faulted(): CP int/hw fault/SMMU FSR/GMU OOB/RBBM) with no log and no
+  recovery -> black UI. Cause NOT yet proven (second client fault suspected).
+  Next kernel (CI40152237332 on eb47373): 0133 imported BOs client-maintained
+  (sweetimportsync=0 default; =1 restores kernel full publish/acquire) per the
+  Sunfish donor contract and SweetMetal2 flushSurfaces(); 0134 one-time
+  "GPU LOST (...)" register/last-submitter report. Frontend 0003 (bundle CI
+  40152398536 on 3daebe6): async pipeline constructors + refusal names class
+  or "nil render pipeline". Next recovery: read
+  /var/local/m2v-cache/AegirPoster/pipelines.log for the failed pipeline.
+  If the GPU is lost again with extras on, boot with sweetm2extra=0.
+
 - **Wallpaper root cause from on-device crash reports (OrangeFox read-only,
   research/wallpaper-inspect-0129: poster-paths.txt 606 entries,
   crashreporter-list.txt 214 reports, files/*.ips).** AegirPoster aborts with
