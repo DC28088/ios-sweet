@@ -2,6 +2,22 @@
 
 ## Current direction and last known device state (2026-10-25, read first)
 
+- **0137/0138 (later 2026-10-25). USER: tearing in recents GONE (0145 beam
+  race confirmed); animation "slightly better, like 20-30 fps" on 0138;
+  garbled Airplane/AirDrop/Hotspot glyphs remain; Wi-Fi/Bluetooth not
+  working.** 0137 (CI 40199299205, 0147 early reserve): XNU still gave only one
+  48 MiB contiguous block. 0138 (shim/out/shim-boot-0138-pool-blocks.img
+  ccd18c38..., CI 40201144666, 0148 multi-block pool): "owned BO pool reserved
+  384 of 384 MiB in 6 blocks", write-combined in 72 ms; fallback=0, peak 287
+  MiB / 2596 BOs; kernel lock time per 10 s window 4.5 s -> 0.84 s; gpu_busy
+  ~19%; present gate still ~23 ms (frame's GPU fence after SwapEnd) - next
+  perf thread is CA pacing / per-frame GPU latency, not lock or clock.
+  Allocations of big BOs still 1.4-2.5 ms (zeroOwned 32-bit volatile stores on
+  WC). Wi-Fi: downstream apps-smmu vote = msm-bus 161->627 = BCM SN15 + CN0
+  (active-only); 0149 (CI 40202374751) adds sweet_rpmh_bcm_vote (SN15/CN0
+  only) and opt-in sweetsmmuprobe=1 thread that votes and reads sCR0/ID0-2 20 s
+  after boot with a log line before each read (wland stays off: sweetwifi=0).
+
 - **0134-0136 (2026-10-25 evening): the GPU is NOT the bottleneck; the kernel
   GPU lock is.** 0134 (kernel CI40175753907, 800 MHz, PLL0 L=83 ~797 MHz
   verified): user "feels the same", tearing scrolling recents. Session stats
