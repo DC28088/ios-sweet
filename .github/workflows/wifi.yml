@@ -4,6 +4,9 @@ name: sweet-wifi
 # with Sweet's board patches from userspace/wifi/patches. Kernel side: xnu/patches/0138.
 on:
   workflow_dispatch:
+  push:
+    branches: [codex/adreno-power-audit]
+    paths: [userspace/wifi/**, .github/workflows/wifi.yml]
 env:
   DONOR_REPO: https://github.com/Yofuness/ios-flame.git
   DONOR_COMMIT: f09fdb58a2c074d131072947b247240532b7d97d
