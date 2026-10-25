@@ -2,6 +2,44 @@
 
 ## Current direction and last known device state (2026-10-25, read first)
 
+- **0134-0136 (2026-10-25 evening): the GPU is NOT the bottleneck; the kernel
+  GPU lock is.** 0134 (kernel CI40175753907, 800 MHz, PLL0 L=83 ~797 MHz
+  verified): user "feels the same", tearing scrolling recents. Session stats
+  (persist log logs/persist-0134.txt): ~11 fps in use (peak 23), gate ~19 ms,
+  acquire 1.2 ms, copy 2.6 ms, submit 2.2 ms. Dense sampler only caught idle.
+  0135 (image shim/out/shim-boot-0135-unlocked-wait-beam.img 0fdc41f9..., CI
+  40183460702 = 0144+0145): 0144 Turnip's 1 ms WaitFence slices no longer spin
+  under the lock (poll + IODelay(20) between checks; sweetwaitlock=1 = old) and
+  a 10 s "SWEET RENDER: window_ms=... gpu_busy_pct=..." line (busy sampled at
+  120 Hz by trylock, per-method calls/avg_us, lock wait). 0145 beam-raced copy:
+  INTF_1 @0xae6b800 timing engine, 2432 lines, active 12-2412, 8.333 ms (120 Hz
+  measured), line 3426 ns; copy starts only where it cannot overtake the scan
+  (sweetfbbeam=0 = off); waits 0-2 ms. MEASURED on 0135 in use: gpu_busy
+  17-44%, but per 10 s BoAlloc 349x5.6 ms, BoMap 488x2.1 ms, BoFree 275x2.8 ms,
+  Submit 243x3 ms = ~4.5 s of lock time; BoAlloc spikes 22-57 ms
+  (vm_page_find_contiguous scanning 255k pages and failing, then per-page
+  pmap_set_cache_attributes for write-combine). Root cause: UniXNU's owned-BO
+  pool (NativeAdrenoMemory::reservePool/writeCombinePool) was never reserved on
+  sweet, and pooled BOs had no descriptor for clientMemoryForType.
+  0136 (shim/out/shim-boot-0136-bo-pool.img 8737dc65..., CI 40198161016, 0146):
+  pool reserved at publish got only 48 of 192 MiB, full within seconds (peak 97
+  BOs, 466-1119 fallbacks/10 s); submits dropped to 1.0-1.4 ms. 0147 (CI
+  40199299205 building) reserves 384 MiB from sweet_ufs_init (bsd init, before
+  root mount); sweetbopool=MiB, 0 = off.
+  ICONS (user video ~/Videos/VID_20261025_184706286.mp4): Airplane, AirDrop,
+  Personal Hotspot glyphs are not missing but GARBLED (glyph repeated
+  horizontally, squashed vertically = row-pitch/layout mismatch); Wi-Fi and
+  Bluetooth (vector) are fine. These are A8 masks: Turnip refuses their explicit
+  linear layout (pitch 224/544/608/672 not 64-aligned, "pitchalign 6") so
+  metal2vulkan shadows them (copy before use). 0134 mtl2.log shows no refusals
+  (x0). Candidate experiment: bridge patch preferring R8_UNORM + (0,0,0,R)
+  swizzle for sample-only A8 (metal2vulkan format/mod.rs make_repr A8Unorm).
+  Video also shows two thin vertical white lines at ~40% width on every screen
+  (Safari, dialer, settings): likely panel hardware (cracks visible) - ask.
+  AegirPoster crash-loops (62 aborts, no device with sweetm2extra=0) keep
+  ReportCrash busy. Reading fragmented HFS+ files: research/logs-inspect-0134/
+  read2.py (extents-overflow aware) over the nbdkit ADB export.
+
 - **0132 booted (kernel CI40173049234 ecd870b, SHA 72c1d784...; image
   shim/out/shim-boot-0132-present-split-small-imports.img 06180c25...;
   sweetwifi=0). USER: buttons WORK again (confirms wland's hang), 2
