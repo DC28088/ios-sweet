@@ -2,6 +2,18 @@
 
 ## Current direction and last known device state (2026-10-25, read first)
 
+- **Wi-Fi JOINS (0144, 2026-10-25 late).** 0144 = 0143 kernel + ADT with
+  /arm-io/wlan (tools/adt-add-wlan.py -> shim/out/sweet-0144-wlan.adt 07b0659b...;
+  image shim/out/shim-boot-0144-wifid.img 874e0568...): wifid now starts;
+  Settings lists networks; joining 'Redmi Note 10 Pro_6146' (ch36 WPA2/3 hotspot):
+  auth 0, assoc 0 aid 6, WPA2 4-way done, keys installed, link up, station state 4.
+  But iOS sent only 2 frames in 4.5 min (wland: tx 2 sent, rx 8) and left: no
+  DHCP. Same as flame's "configd had no network services": preferences.plist
+  held only HostNames. Moved it aside (research/wifi-sc-0144: preferences.plist
+  -> preferences.plist.pre-wifi, sha bb80fba3..., 6 chunks verified) so configd
+  builds a default Wi-Fi service for en0. Rebooted 0144: result pending.
+  wland.log 0144: research/logs-inspect-0144/files/wland.log.
+
 - **WI-FI RADIO UP on 0143 (2026-10-25 ~22:00).** With 0153 (kernel WLAN SMMU
   stream: SID 0x240 -> CB4 via SMR6, ok) + wland 0002 installed, wland.log
   (research/logs-inspect-0143/files/wland.log): rails/rfclk/cx[6]/mss[7] votes,
