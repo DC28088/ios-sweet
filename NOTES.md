@@ -2,6 +2,26 @@
 
 ## Current direction and last known device state (2026-10-25, read first)
 
+- **WI-FI RADIO UP on 0143 (2026-10-25 ~22:00).** With 0153 (kernel WLAN SMMU
+  stream: SID 0x240 -> CB4 via SMR6, ok) + wland 0002 installed, wland.log
+  (research/logs-inspect-0143/files/wland.log): rails/rfclk/cx[6]/mss[7] votes,
+  PAS init/mem-setup/auth-and-reset 0, modem ready after 100 ms, GLINK/QRTR,
+  rmtfs (modemst1/2, fsg), pd-mapper, tftp (wlanmdsp.mbn 3.8 MB), WLFW at
+  ~18.6 s, MSA 0x97d00000 hyp-assigned, chip 0x140 family 0x4002 board 0 fw
+  WLAN.HL.3.0.1.c3-00162, then "no bdwlan.b00" (sweet ships bdwlan.bin + .bXX
+  variants, none for board 0). Fixed by installing bdwlan.b00 = copy of
+  bdwlan.bin (b740afea...; research/wifi-bdf-0143, 9 chunks verified). Reboot:
+  "flame wlan: the radio is up (02:50:49:58:45:4c): en0 for wifid",
+  "net: en0 attached on wcn3990", "apple80211: the station says: power, 1".
+  Scan/join not yet observed (user to test Settings). TODO: wland fallback
+  bdwlan.bin when bXX missing (instead of the copied file).
+  Research 2026-10-25: Bergamota (Poco F1, WCN3990) wifi-bt18 has BLUETOOTH
+  WORKING on iOS 18 (UART transport + HCI compat 0238/0239, Skywalk 0250) -
+  port candidate; its Wi-Fi (wlan26) is paused at MSS/MBA boot (we are past
+  that). Bergamota 0240 GPU 2D-engine scan-out copy: built, not booted.
+  ios-flame (Pixel 4, A640) README: 20-26 fps swiping; no public port claims
+  60/120 Hz. Sweet now 24-30 fps (user).
+
 - **Wi-Fi 0139-0143 (2026-10-25 night).** 0139 (CI 40202374751): with BCM
   SN15+CN0 voted (sweet_rpmh_bcm_vote) the kernel reads the apps SMMU fine:
   sCR0 0x250406, ID0 0x4c017e4f (79 SMRs), ID1 0x6000003d (61 CBs, 4K pages,
