@@ -48,6 +48,32 @@
     BUILT: the xnu workflow's concurrency cancels the older run on a new
     dispatch (that is how 0159-only run 40227980643 got cancelled). The user's
     "not charging" on plug/unplug matches the failed-read fallback lines.
+  - **0153 BOOTED (2026-10-26 ~03:00, logs/live-0153-mini.txt)**: image
+    shim/out/shim-boot-0153-mini.img 178e6f97... = kernel CI 40231786817
+    (0158-0163, 03bfc29a...) + ADT shim/out/sweet-0163-mini.adt 7be3b7fd...
+    (tools/adt-set-screen.py mini: disp0 canvas 1080x2340, /product
+    artwork-device-subtype 2340) + sweetimportmin=8192 (kernel cleans
+    imports < 8 MiB: glyph cache-coherency TEST), sweetbuild=153.
+    "presented as 1080x2340", swaps 1080x2340, SpringBoard/backboardd once.
+    User photos before (0152): keyboard/App Library index/"Cancel" cut at
+    both edges = 1125->1080 crop (fixed by 0163); CC glyphs garbled
+    (airplane, AirDrop, bottom row). Battery seeded from the OCV table (55%)
+    because sweet_spmi_read refused peripheral 0xb6: fixed in 0164 (NOT
+    BUILT). OrangeFox said 25% at that time; check SDAM seed next build.
+    Haptics: user felt nothing on 0152 (no buzz at 40 s, no long-press buzz)
+    although the chip reported done; parked by the user.
+  - **ROOT WRITES NEED A JOURNAL REPLAY FIRST.** research/mg-reset-0163: the
+    root was left with 4.3 MB of unreplayed HFS+ journal (iOS stopped by a
+    forced reboot); fsck.hfsplus (no replay) saw a broken catalog and
+    segfaulted rebuilding it (overlay only, nothing written). Use
+    tools/hfs-journal-replay.py PLUGIN OVERLAY on a fresh overlay before the
+    guest (dry run with --dry-run), then a read-only fsck -fn: after the
+    replay only "volume header needs minor repair" (unclean flag) remained.
+    Applied: journal replay + MobileGestalt cache moved to
+    .../com.apple.MobileGestalt.plist.pre-0163 (it cached
+    ArtworkDeviceSubType 2436 and, probably, no closed-loop haptics; cache is
+    keyed by build+UUID only), 18 chunks readback-verified; copies in
+    research/mg-reset-0163/share/out (MobileGestalt.plist, mtl2.log).
   - Log receiver: tools/sweet-usb-log.py holds UDP 5140. Do not use
     `pgrep -f sweet-usb-log` in the same shell command: it matches the shell
     itself and kills it (exit 144); anchor it as pkill -f "^python3 tools/...". Stop the previous
