@@ -48,6 +48,8 @@ jobs:
         continue-on-error: true
         run: |
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          brew install gnu-sed >/dev/null
+          export PATH="$(brew --prefix gnu-sed)/libexec/gnubin:$PATH"
           cd src/$TOYBOX
           make macos_defconfig
           make -j4 HOSTCC=cc CC="$(xcrun --sdk iphoneos --find clang)" \
@@ -61,7 +63,7 @@ jobs:
             codesign --force --sign - --pagesize 4096 --entitlements ../userspace/ssh/tools.entitlements $b
             codesign --verify --strict $b
           done
-          shasum -a 256 dropbearmulti dash toybox 2>/dev/null > SHA256SUMS
+          for b in dropbearmulti dash toybox; do [ -f $b ] && shasum -a 256 $b; done > SHA256SUMS
           cat SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
