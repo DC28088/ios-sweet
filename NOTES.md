@@ -111,6 +111,22 @@
     SWEET_M2V_EXACT_HALF=1 restores) holds half in f32 between ops; Metal
     bundle CI 40263476644; install with tools/sweet-install-metal2.sh
     (backup, unlink, write, readback, restart backboardd; no reboot).
+  - **CPU HOGS FOUND (spindump over SSH, 20 s while the user scrolled;
+    research/ssh/spin-bb.txt)**: vmd (VisualVoicemail, no cellular) 18.4 s,
+    ReportCrash 8.3 s, launchd 6.4 s, AegirPoster x4 7.5 s (crash loop: 1226
+    "device refused: Vulkan -3" since extra GPU clients are off, sweetm2extra=0),
+    kernel_task 3.9 s; backboardd itself 0.1 s. Same as sunfish (dropping vmd,
+    ReportCrash, axassetsd took them from 4 to 17 fps). DONE (live, effective next
+    boot): launchd.plist 4414a8b1 -> 531 jobs without com.apple.voicemail.vmd,
+    com.apple.ReportCrash, com.apple.accessibility.axassetsd (original:
+    /System/Library/xpc/launchd.plist.pre-perf, research/ssh/launchd.plist.pre-perf);
+    AegirPoster.appex moved from AegirProxyApp.app/PlugIns to
+    /var/local/disabled/AegirPoster.appex (mv back to undo).
+    Also tested: bridge 0201 (half in f32) - no per-pixel change (3.0 -> 3.15
+    ms/Mpx), kept; TU_DEBUG=sysmem via /var/local/mtl2-tu-debug - full-screen
+    pass 7.4 -> 6.6 ms, user "slightly better", left ON. Per-draw trace
+    (research/ssh/tr2.txt): draws are only 1.7 s of 7.0 s draw_ib_gmem.
+    toybox 0.8.11 installed (/var/local/bin, CI 40267503920; sys/disk.h stub).
   - **WI-FI ROOT CAUSE (2026-10-26)**: wland auto_up() stores kern.boottime in
     /var/local/wland.boot and exits "already started in this boot" when it matches.
     No RTC: the calendar starts at the epoch, boottime ~40 s EVERY boot, so a repeat
