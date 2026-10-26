@@ -4,9 +4,10 @@
     tools/adt-set-screen.py IN.adt OUT.adt mini|x
 
 The kernel's sweetfb_mode must match (SweetFramebuffer.cpp sweet_fb_logical_size()):
-  mini  iPhone 12/13 mini, 1080x2340 @3x, subtype 2340 (sweetfb_mode=2, the kernel default from 0163):
+  mini  iPhone 12/13 mini, 1080x2340 @3x, subtype 2340 (sweetfb_mode=2; 0153 hardware: UIKit red status bar):
         the panel's full width pixel for pixel, 30 black rows above and below
-  x     iPhone X, 1125x2436 @3x, subtype 2436 (sweetfb_mode=1): 23 px cut off left and right
+  x     iPhone X, 1125x2436 @3x, subtype 2436: sweetfb_mode=3 (default from 0165) scales it onto
+        the whole panel; sweetfb_mode=1 shows its centered 1080x2400 (23 px cut off left and right)
 """
 import hashlib
 import os
