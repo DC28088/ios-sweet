@@ -68,6 +68,14 @@
     USER: display normal, no borders, status bar right; battery 25% = OrangeFox
     (0164 SDAM seed works; curve said 37%); Wi-Fi off; glyphs still garbled;
     performance unchanged. 0153 (mini 1080x2340) had UIKit's red rdar://45025538 bar.
+  - **0155 BOOTED = CONFIRMED (logs/live-0155-rtc.txt)**: image
+    shim/out/shim-boot-0155-scaled.img b6fd322e... (kernel CI 40259446560 up to
+    0166, efa02c70...; 40258507338 failed to compile: return type split). "SWEET
+    RTC: calendar set from the PM6150 RTC: 147540383 s" (an arbitrary counter,
+    ~1974, unique per boot), "seed 25% from QG SDAM", radio up, en0 attached.
+    USER: Wi-Fi works, Bluetooth works, time accurate (network time), battery
+    accurate; performance still sluggish. Next: 0167 (A76 preference, CI
+    40260189402) as image 0156 (research/gpu/package-0156.py).
   - **WI-FI ROOT CAUSE (2026-10-26)**: wland auto_up() stores kern.boottime in
     /var/local/wland.boot and exits "already started in this boot" when it matches.
     No RTC: the calendar starts at the epoch, boottime ~40 s EVERY boot, so a repeat
