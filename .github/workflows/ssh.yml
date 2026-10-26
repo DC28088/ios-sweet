@@ -55,7 +55,7 @@ jobs:
           cd src/$TOYBOX
           make macos_defconfig
           make -j4 HOSTCC=cc CC="$(xcrun --sdk iphoneos --find clang)" \
-            CFLAGS="-arch arm64 -isysroot $SDK -miphoneos-version-min=16.0" LDFLAGS="-arch arm64 -isysroot $SDK" toybox
+            CFLAGS="-arch arm64 -isysroot $SDK -miphoneos-version-min=16.0 -I$GITHUB_WORKSPACE/userspace/ssh/ios-include" LDFLAGS="-arch arm64 -isysroot $SDK" toybox 2>&1 | tee ../../out/toybox-build.log
           cp toybox ../../out/
       - name: Sign
         run: |
