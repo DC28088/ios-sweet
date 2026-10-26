@@ -37,11 +37,13 @@ jobs:
           make -j4 PROGRAMS="dropbear dropbearkey scp dbclient" MULTI=1
           cp dropbearmulti ../../out/
       - name: dash
+        # strchrnul exists only from iOS 18: detected on the macOS 15 host it became a weak import that is
+        # NULL on iOS 16 (0157 hardware: dash crashed at pc 0 on every SSH login)
         run: |
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
           cd src/$DASH
           ./configure --host=aarch64-apple-darwin CC="$(xcrun --sdk iphoneos --find clang) -arch arm64 -isysroot $SDK -miphoneos-version-min=16.0" \
-            CC_FOR_BUILD=cc CFLAGS_FOR_BUILD=-O2
+            CC_FOR_BUILD=cc CFLAGS_FOR_BUILD=-O2 ac_cv_func_strchrnul=no
           make -j4
           cp src/dash ../../out/
       - name: toybox (best effort)
