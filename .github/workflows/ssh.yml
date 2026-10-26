@@ -1,0 +1,69 @@
+name: sweet-ssh
+# SSH for the running phone over the USB cable (as ios-flame/sunfish tools/sunfish-install-ssh.sh does):
+# dropbear (public-key login only), dash as /bin/sh, toybox for the usual tools. Installed with
+# tools/sweet-install-ssh.sh through the kernel file server (xnu 0168, sweetfiles=1).
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/adreno-power-audit]
+    paths: [userspace/ssh/**, .github/workflows/ssh.yml]
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      DROPBEAR: dropbear-2024.86
+      DASH: dash-0.5.12
+      TOYBOX: toybox-0.8.11
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch sources
+        run: |
+          mkdir -p src out
+          cd src
+          curl -fsSLO https://matt.ucc.asn.au/dropbear/releases/$DROPBEAR.tar.bz2
+          curl -fsSLO http://gondor.apana.org.au/~herbert/dash/files/$DASH.tar.gz
+          curl -fsSLO https://landley.net/toybox/downloads/$TOYBOX.tar.gz
+          shasum -a 256 *.tar.* | tee ../out/SOURCES.sha256
+          tar xjf $DROPBEAR.tar.bz2 && tar xzf $DASH.tar.gz && tar xzf $TOYBOX.tar.gz
+      - name: dropbear (multi binary, public-key login only)
+        run: |
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          export CC="$(xcrun --sdk iphoneos --find clang) -arch arm64 -isysroot $SDK -miphoneos-version-min=16.0"
+          cd src/$DROPBEAR
+          cp ../../userspace/ssh/dropbear-localoptions.h localoptions.h
+          ./configure --host=aarch64-apple-darwin --disable-zlib --disable-syslog --disable-lastlog \
+            --disable-utmp --disable-utmpx --disable-wtmp --disable-wtmpx --disable-pututline --disable-pututxline
+          make -j4 PROGRAMS="dropbear dropbearkey scp dbclient" MULTI=1
+          cp dropbearmulti ../../out/
+      - name: dash
+        run: |
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          cd src/$DASH
+          ./configure --host=aarch64-apple-darwin CC="$(xcrun --sdk iphoneos --find clang) -arch arm64 -isysroot $SDK -miphoneos-version-min=16.0" \
+            CC_FOR_BUILD=cc CFLAGS_FOR_BUILD=-O2
+          make -j4
+          cp src/dash ../../out/
+      - name: toybox (best effort)
+        continue-on-error: true
+        run: |
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          cd src/$TOYBOX
+          make macos_defconfig
+          make -j4 HOSTCC=cc CC="$(xcrun --sdk iphoneos --find clang)" \
+            CFLAGS="-arch arm64 -isysroot $SDK -miphoneos-version-min=16.0" LDFLAGS="-arch arm64 -isysroot $SDK" toybox
+          cp toybox ../../out/
+      - name: Sign
+        run: |
+          cd out
+          for b in dropbearmulti dash toybox; do
+            [ -f $b ] || continue
+            codesign --force --sign - --pagesize 4096 --entitlements ../userspace/ssh/tools.entitlements $b
+            codesign --verify --strict $b
+          done
+          shasum -a 256 dropbearmulti dash toybox 2>/dev/null > SHA256SUMS
+          cat SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sweet-ssh-ios16
+          path: out/
