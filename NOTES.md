@@ -94,6 +94,23 @@
     blending / sysmem vs GMEM to be traced (MESA_GPU_TRACES per pass over SSH).
     Also: 78 VkPipeline creations in one 10 s window (372 ms, max 60 ms stall:
     first-open jank) and "surface cache" 0.5 s CPU per 10 s (max 101 ms).
+  - **SSH WORKS (0157, 2026-10-26)**: `ssh -i research/ssh/id_ed25519 -o
+    UserKnownHostsFile=research/ssh/known_hosts root@192.168.7.2`. dash had to be
+    rebuilt without strchrnul (iOS 18 only: a NULL weak import crashed it at pc 0;
+    CI 40262874809, dash 11d9f7ab...). No toybox yet; iOS has ps, spindump,
+    tailspin, taskinfo, ioreg, vm_stat, df. Restart backboardd:
+    ps -A -o pid,comm | while read p c; do case "$c" in */backboardd) kill $p;; esac; done
+  - **GPU TRACE (MESA_GPU_TRACES=print via /var/local/mtl2-env, 20 s use;
+    research/ssh/tr1.txt, tools/gputrace-sum.py)**: render passes 6.94 s, of which
+    draw_ib_gmem 6.69 s (GMEM mode everywhere), gmem_store 0.64, gmem_load 0.39,
+    copy_buffer_to_image 0.70 s (the shadowed A8/RGBA8 buffer textures). By pass:
+    1125x2436 att2 load+store 44 bins (288x224): 670 passes, mean 7.9 ms = 76%;
+    1125x2436 clear passes 13.6 ms mean = 11%. => shading cost per pixel.
+    metal2vulkan holds `half` in f32 re-rounded after EVERY op (native route:
+    f32->f16->f32 conversion behind a barrier). Bridge 0201 (env
+    SWEET_M2V_EXACT_HALF=1 restores) holds half in f32 between ops; Metal
+    bundle CI 40263476644; install with tools/sweet-install-metal2.sh
+    (backup, unlink, write, readback, restart backboardd; no reboot).
   - **WI-FI ROOT CAUSE (2026-10-26)**: wland auto_up() stores kern.boottime in
     /var/local/wland.boot and exits "already started in this boot" when it matches.
     No RTC: the calendar starts at the epoch, boottime ~40 s EVERY boot, so a repeat
