@@ -62,6 +62,36 @@
     BUILT). OrangeFox said 25% at that time; check SDAM seed next build.
     Haptics: user felt nothing on 0152 (no buzz at 40 s, no long-press buzz)
     although the chip reported done; parked by the user.
+  - **0154 BOOTED (logs/live-0154-scaled.txt)**: 0165 (iPhone X 1125x2436 scaled
+    onto 1080x2400, sweetfb_mode=3) + ADT sweet-0152-haptics.adt (X), MG cache reset
+    again (research/mg-reset-0165: journal 17 txns replayed, cache had subtype 2340).
+    USER: display normal, no borders, status bar right; battery 25% = OrangeFox
+    (0164 SDAM seed works; curve said 37%); Wi-Fi off; glyphs still garbled;
+    performance unchanged. 0153 (mini 1080x2340) had UIKit's red rdar://45025538 bar.
+  - **WI-FI ROOT CAUSE (2026-10-26)**: wland auto_up() stores kern.boottime in
+    /var/local/wland.boot and exits "already started in this boot" when it matches.
+    No RTC: the calendar starts at the epoch, boottime ~40 s EVERY boot, so a repeat
+    silently skips Wi-Fi (0145c, 0153, 0154). Evidence: /dev/pmem traces stop after
+    43 SMEM reads (cap is 48) before the AOSS QMP write at 0x0c300000 that 0152 made;
+    the pulled wland.log was 0152's (log rotation happens after the check). Fix 0166:
+    SweetBattery sets the calendar from the PM6150 RTC (0x6046/0x6048) when before
+    2001. Kernel CI 40258507338; image 0155 = 0154 + 0166, sweetimportmin removed.
+  - **PERF (0154 in use)**: 12-17 fps; present avg ~25 ms of which gate (frame's GPU
+    fence) ~20 ms; copy 3.3 ms; acquire 1.3 ms; GPU 800 MHz (6-level OPP, index 6),
+    busy 30-45%; CPUs at 1.8/2.3 GHz. sweetimportmin=8192 tripled submit cost
+    (1.1 -> 3.5 ms) and did NOT fix the glyphs: keep it off. CA_FORCE_TIMER=1 and
+    64-byte surface rows (0124) are already in place (sunfish findings 1-2). Sunfish
+    (same A618 stack, research/ios-sunfish-reference docs/sunfish/display-perf.md,
+    plan.md) tops out at ~20 updates/s too: backboardd GPU 14-20 ms/frame (blur
+    passes, full-screen expensive draws), and GPU end -> swap p50 29 ms on the
+    CA/CPU side. Next: per-commit telemetry (touch /var/local/mtl2-telemetry),
+    MESA_GPU_TRACES via /var/local/mtl2-env, sweettrace-style timeline.
+  - **GLYPHS**: m2v-msg.log shows CA's A8 glyph masks are textures over no-copy
+    buffers (offset 64, rows 608/640) that Turnip refuses -> shadowed (copied in
+    before use, back after each GPU write). Not a cache problem (importmin test).
+    Better lead from flame (HANDOFF stage 11): garbled CC glyphs = CA's memoryless
+    attachment 1 never cleared (vibrant/MRT glyph pipelines); our garbled ones are
+    exactly the deselected (vibrant) CC buttons. Needs per-pass readback/trace.
   - **ROOT WRITES NEED A JOURNAL REPLAY FIRST.** research/mg-reset-0163: the
     root was left with 4.3 MB of unreplayed HFS+ journal (iOS stopped by a
     forced reboot); fsck.hfsplus (no replay) saw a broken catalog and
