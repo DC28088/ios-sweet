@@ -18,13 +18,13 @@ index 7417ece..f297a01 100644
  	}
  	IOLockLock(sp_lock);
 diff --git a/iokit/Kernel/arm/SweetBattery.cpp b/iokit/Kernel/arm/SweetBattery.cpp
-index 6a99363..f85801a 100644
+index 6a99363..942ba80 100644
 --- a/iokit/Kernel/arm/SweetBattery.cpp
 +++ b/iokit/Kernel/arm/SweetBattery.cpp
-@@ -343,6 +343,53 @@ SweetBattery::timerFired(OSObject *owner, IOTimerEventSource *sender)
+@@ -342,6 +342,53 @@ SweetBattery::timerFired(OSObject *owner, IOTimerEventSource *sender)
+ 	}
  }
  
- bool
 +/*
 + * 0166: set the calendar from the PM6150 RTC (Linux rtc-pm8xxx, pm8941 layout: control 0x6046 bit 7
 + * enabled, seconds 0x6048-0x604b little endian; re-read when the low byte moved). Without it every
@@ -72,9 +72,9 @@ index 6a99363..f85801a 100644
 +	IOLog("SWEET RTC: PM6150 RTC kept moving while read\n");
 +}
 +
+ bool
  SweetBattery::start(IOService *provider)
  {
- 	if (!IOPMPowerSource::start(provider)) {
 @@ -351,6 +398,9 @@ SweetBattery::start(IOService *provider)
  	int real = 1;   /* 0149 hardware: PM6150 QG/SMB5 reads work; sweetbattery=0 = static 100% */
  	(void)PE_parse_boot_argn("sweetbattery", &real, sizeof(real));
