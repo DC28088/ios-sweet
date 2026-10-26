@@ -63,7 +63,7 @@ jobs:
             codesign --force --sign - --pagesize 4096 --entitlements ../userspace/ssh/tools.entitlements $b
             codesign --verify --strict $b
           done
-          for b in dropbearmulti dash toybox; do [ -f $b ] && shasum -a 256 $b; done > SHA256SUMS
+          for b in dropbearmulti dash toybox; do if [ -f $b ]; then shasum -a 256 $b; fi; done > SHA256SUMS
           cat SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
