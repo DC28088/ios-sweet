@@ -76,6 +76,24 @@
     USER: Wi-Fi works, Bluetooth works, time accurate (network time), battery
     accurate; performance still sluggish. Next: 0167 (A76 preference, CI
     40260189402) as image 0156 (research/gpu/package-0156.py).
+  - **0156/0157 (2026-10-26)**: 0167 (UI threads prefer A76) = little change
+    (best 216 vs 195 presents/10 s, GPU busy 27-33% -> 38-49%); user: same.
+    0157 = + 0168 USB file server (sweetfiles=1, 192.168.7.2:2223 only, peers
+    192.168.7.0/24; tools/sweet-files.py get/put/mkdir/link/rm/chmod/sync) -
+    WORKS. SSH installed with user approval (tools/sweet-install-ssh.sh,
+    userspace/out-ssh from CI 40261978189: dropbear 2024.86 key-only + dash; toybox
+    build still fails): launchd job org.iossweet.dropbear on 192.168.7.2:22,
+    launchd.plist 91a36f36 -> new (796195 B), original kept as
+    /System/Library/xpc/launchd.plist.pre-ssh and research/ssh/launchd.plist.orig;
+    key research/ssh/id_ed25519 (git-ignored). Active after the next boot.
+    /var/local/mtl2-telemetry created (frontend K lines every 10 s).
+  - **GPU COST MEASURED (frontend telemetry, 0157)**: idle frames rp1 dr3 2.7 Mpx
+    ctc 1.7-2.5 ms; scrolling/CC rp8 dr65 8.2 Mpx ctc ~26 ms; heavier rp13 dr91
+    11 Mpx ctc ~38 ms => ~3.2 ms per Mpx (~300 Mpx/s) at a verified ~797 MHz
+    (PLL0 L=83). Per-pixel cost is ~10x what an A618 should do: shaders /
+    blending / sysmem vs GMEM to be traced (MESA_GPU_TRACES per pass over SSH).
+    Also: 78 VkPipeline creations in one 10 s window (372 ms, max 60 ms stall:
+    first-open jank) and "surface cache" 0.5 s CPU per 10 s (max 101 ms).
   - **WI-FI ROOT CAUSE (2026-10-26)**: wland auto_up() stores kern.boottime in
     /var/local/wland.boot and exits "already started in this boot" when it matches.
     No RTC: the calendar starts at the epoch, boottime ~40 s EVERY boot, so a repeat
