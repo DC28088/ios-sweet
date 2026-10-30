@@ -1,3 +1,27 @@
+## 2026-10-30: GPU fill-rate A/B on image 0159/0170 (returned to ios-sweet from the HackOS port)
+
+User's goal: >=30 fps like ios-sweet's best. HackiOS-based port (DC28088/hackios-sweet)
+abandoned for now at user's request (its A618 stage 9/10 results are in that repo's NOTES).
+Reference repo zeroninevibedslop/UniXNU-sweet has no GPU code (BSP only, GPU "in progress").
+BASELINE (image 0159-ddr = 0169 DRAM vote, scrolling 30 s, logs/live-0159-measure.txt,
+10 s windows): present_calls 154-260 (15-26/s), present_avg 25-37 ms of which gate (GPU fence)
+20-31 ms, GPU busy 50-56%. => GPU-bound; fill stayed ~300 Mpx/s whatever clock/tiling/
+shaders/DRAM vote (0169 did not change it).
+EXPERIMENT 0170 (xnu/patches/0170-sweet-gpu-smmu-cacheable-walk.patch, CI 40986191593 on
+macos-14; image shim/out/shim-boot-0170-smmuwalk.img 30bd6123...; cmdline = 0159 +
+sweetsmmuwalk=1, sweetbuild=170): CB0 table walks inner-WBWA (TCR 0x803520) instead of
+outer-NC (0x802020); default unchanged (boot-arg). Applied (TCR readback 0x803520), no
+faults. RESULT scrolling (logs/live-0170-smmuwalk.txt): presents 121-180 per 10 s, gate
+37-55 ms, busy 68-71% = NOT better, probably worse (different scroll content, so not a
+controlled A/B, but the GPU did more work per frame). Hypothesis "NC walks limit fill" is
+not supported; leave sweetsmmuwalk off.
+Workflow: xnu.yml now has a runner input (macos-14 had no capacity for ~1 h; a later
+re-dispatch got a runner). git push goes to myfork (origin dipa-studio returns 403).
+NEXT candidates (not started): (1) cached (writeback) buffer PTEs for Turnip BOs (ABI field
+writeback=1, MAIR attr1 = WB), (2) GPU perf counters per pass instead of guessing (UCHE/TP
+stalls), (3) GPU clock above ~800 MHz, (4) fewer/cheaper full-screen passes (blur) in
+frontend. Use the same scripted scroll for every A/B.
+
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
 ## Current direction and last known device state (2026-10-26, read first)
