@@ -1,5 +1,5 @@
 diff --git a/crates/metal2vulkan-runtime/src/render.rs b/crates/metal2vulkan-runtime/src/render.rs
-index 870bdb1..8ef7418 100644
+index 870bdb1..aa6a1b5 100644
 --- a/crates/metal2vulkan-runtime/src/render.rs
 +++ b/crates/metal2vulkan-runtime/src/render.rs
 @@ -3061,6 +3061,7 @@ impl RenderCommandEncoder {
@@ -10,7 +10,17 @@ index 870bdb1..8ef7418 100644
          if let Some(ds) = layout.depth_stencil.as_mut().filter(|ds| !ds.hidden) {
              let unknown = |aspect: Option<AspectTarget>| {
                  aspect.is_some_and(|a| a.store == StoreAction::Unknown)
-@@ -5668,6 +5669,7 @@ impl RenderCommandEncoder {
+@@ -5647,6 +5648,9 @@ impl RenderCommandEncoder {
+         buffers: DrawBuffers<'_>,
+         empty: bool,
+     ) -> Result<(), Error> {
++        if sweet_skip_draw(self.pipeline.as_ref()) {
++            return Ok(());
++        }
+         self.sync_heaps();
+         // And whether it rasterizes, without which its primitives reach no tile (EV RRS3-reach4c,
+         // `no_raster_t11`). And whether it chooses its viewport.
+@@ -5668,6 +5672,7 @@ impl RenderCommandEncoder {
              self.degrade_extended_range_blends();
          }
          self.draw_calls += 1;
@@ -18,7 +28,7 @@ index 870bdb1..8ef7418 100644
          self.command_encoded(reads);
          self.called = true;
          self.drew |= !empty && rasterizes;
-@@ -5684,6 +5686,7 @@ impl RenderCommandEncoder {
+@@ -5684,6 +5689,7 @@ impl RenderCommandEncoder {
                      let mut scissors = [vk::Rect2D::default(); MAX_VIEWPORTS];
                      let rects = self.state.vk_scissors_in(selects, &mut scissors);
                      self.drawn.add(rects);
@@ -26,7 +36,7 @@ index 870bdb1..8ef7418 100644
                      // What it writes of each color, and blends, inside its Vulkan scissors
                      // (`linear_attachment::Coverage`).
                      // Of each pass color its draws store into: a state color where its routing
-@@ -8536,3 +8539,146 @@ mod tests {
+@@ -8536,3 +8542,166 @@ mod tests {
          }
      }
  }
@@ -172,4 +182,24 @@ index 870bdb1..8ef7418 100644
 +        return SweetPassDetails::default();
 +    }
 +    SWEET_PASS.with(|pass| std::mem::take(&mut *pass.borrow_mut()))
++}
++
++/// Sweet experiment (env `SWEET_M2V_SKIP_FRAGMENT=name`): a draw whose fragment function is `name` is dropped. Off unless set.
++fn sweet_skip_draw(pipeline: Option<&RenderPipelineState>) -> bool {
++    use std::collections::HashMap;
++    use std::sync::{Mutex, OnceLock};
++    static NAME: OnceLock<Option<String>> = OnceLock::new();
++    static CACHE: OnceLock<Mutex<HashMap<u64, bool>>> = OnceLock::new();
++    let Some(name) = NAME.get_or_init(|| std::env::var("SWEET_M2V_SKIP_FRAGMENT").ok()).as_ref() else {
++        return false;
++    };
++    let Some(state) = pipeline else { return false };
++    let id = state.identifier_value();
++    let Ok(mut cache) = CACHE.get_or_init(|| Mutex::new(HashMap::new())).lock() else {
++        return false;
++    };
++    *cache.entry(id).or_insert_with(|| match state.kind() {
++        RenderStateKind::Graphics(graphics) => graphics.descriptor().draw_at(0).contains(&format!("`{}`", name)),
++        _ => false,
++    })
 +}
