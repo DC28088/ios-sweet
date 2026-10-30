@@ -1,0 +1,35 @@
+diff --git a/bsd/dev/sweet_rpmh.c b/bsd/dev/sweet_rpmh.c
+index e64474d..8507b95 100644
+--- a/bsd/dev/sweet_rpmh.c
++++ b/bsd/dev/sweet_rpmh.c
+@@ -877,7 +877,8 @@ int
+ sweet_rpmh_bcm_vote(const char *res, uint32_t x, uint32_t y)
+ {
+ 	/* SN15/CN0: the apps SMMU's path (0149, tiny votes); MC0/SH0/ACV: the memory (0169) */
+-	const bool memory = res && (!strcmp(res, "MC0") || !strcmp(res, "SH0") || !strcmp(res, "ACV"));
++	const bool memory = res && (!strcmp(res, "MC0") || !strcmp(res, "SH0") || !strcmp(res, "ACV") ||
++	    !strcmp(res, "SH2") || !strcmp(res, "SH3"));
+ 	if (!res || (strcmp(res, "SN15") && strcmp(res, "CN0") && !memory) ||
+ 	    x > (memory ? 0x3fffu : 16u) || y > (memory ? 0x3fffu : 16u) || (!x && !y)) {
+ 		return EPERM;
+@@ -1162,5 +1163,20 @@ sweet_rpmh_ddr_raise(void)
+ 	const int sh0 = sweet_rpmh_bcm_vote("SH0", vote, vote);
+ 	const int acv = sweet_rpmh_bcm_vote("ACV", 0, 8);
+ 	printf("SWEET DDR: memory bandwidth vote %u: MC0 %d, SH0 %d, ACV %d\n", vote, mc0, sh0, acv);
++	/*
++	 * 0173: the rest of the GPU master's path on this SoC family (drivers/interconnect/qcom/sm8150.c: qnm_gpu links
++	 * qns_llcc = SH0 and qns_gem_noc_snoc = SH2; the GPU's translation unit acm_gpu_tcu, where its page-table walks
++	 * travel, is SH3). Nothing voted for SH2 or SH3: sweetgpubus=0 keeps them as they were, sweetgpubusvote=N levels.
++	 */
++	uint32_t bus = 1, bus_vote = 0x3fff;
++	PE_parse_boot_argn("sweetgpubus", &bus, sizeof(bus));
++	PE_parse_boot_argn("sweetgpubusvote", &bus_vote, sizeof(bus_vote));
++	if (bus && bus_vote && bus_vote <= 0x3fff) {
++		const int sh2 = sweet_rpmh_bcm_vote("SH2", bus_vote, bus_vote);
++		const int sh3 = sweet_rpmh_bcm_vote("SH3", bus_vote, bus_vote);
++		printf("SWEET DDR: GPU bus vote %u: SH2 %d, SH3 %d\n", bus_vote, sh2, sh3);
++	} else {
++		printf("SWEET DDR: no GPU bus vote (sweetgpubus=%u, vote %u)\n", bus, bus_vote);
++	}
+ }
+ #endif
