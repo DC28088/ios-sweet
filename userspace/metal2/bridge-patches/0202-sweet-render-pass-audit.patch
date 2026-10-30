@@ -1,23 +1,23 @@
 diff --git a/crates/metal2vulkan-runtime/src/render.rs b/crates/metal2vulkan-runtime/src/render.rs
-index 870bdb1..d76582c 100644
+index 870bdb1..f9d255a 100644
 --- a/crates/metal2vulkan-runtime/src/render.rs
 +++ b/crates/metal2vulkan-runtime/src/render.rs
 @@ -3061,6 +3061,7 @@ impl RenderCommandEncoder {
                  color.copied_resolve = None;
              }
          }
-+        sweet_pass_audit(&layout, instances.len());
++        sweet_pass_audit(&layout, instances.len(), drawn.bounds());
          if let Some(ds) = layout.depth_stencil.as_mut().filter(|ds| !ds.hidden) {
              let unknown = |aspect: Option<AspectTarget>| {
                  aspect.is_some_and(|a| a.store == StoreAction::Unknown)
-@@ -8536,3 +8537,53 @@ mod tests {
+@@ -8536,3 +8537,63 @@ mod tests {
          }
      }
  }
 +
 +/// Sweet: what Metal asked of each render pass, summed over 10 s and appended to
 +/// `/var/local/m2v-pass-audit.log` when `SWEET_M2V_PASS_AUDIT` is set (a profile of the pass mix, not a trace).
-+fn sweet_pass_audit(layout: &PassLayout, instances: usize) {
++fn sweet_pass_audit(layout: &PassLayout, instances: usize, bounds: Option<[u32; 4]>) {
 +    use std::collections::HashMap;
 +    use std::io::Write;
 +    use std::sync::{Mutex, OnceLock};
@@ -45,6 +45,16 @@ index 870bdb1..d76582c 100644
 +        key += " hidden-ds";
 +    }
 +    let pixels = layout.extent[0] as u64 * layout.extent[1] as u64;
++    // How much of the pass the draws can reach (viewport within scissor, `DrawnArea::bounds`): the area a smaller render area would keep.
++    let reach = match bounds {
++        None => "reach-unbounded".to_string(),
++        Some([x0, y0, x1, y1]) => {
++            let area = x1.saturating_sub(x0) as u64 * y1.saturating_sub(y0) as u64;
++            let percent = if pixels == 0 { 0 } else { area * 100 / pixels };
++            format!("reach<={}%", ((percent + 9) / 10 * 10).min(100))
++        }
++    };
++    key += &format!(" {}", reach);
 +    let state = STATE.get_or_init(|| Mutex::new((Instant::now(), HashMap::new())));
 +    let Ok(mut state) = state.lock() else { return };
 +    let entry = state.1.entry(key).or_insert((0, 0));
