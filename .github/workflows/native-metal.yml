@@ -1,6 +1,8 @@
 name: sweet-native-metal
 on:
   workflow_dispatch:
+  push:
+    branches: [codex/native-adreno-metal]
 jobs:
   build:
     runs-on: macos-15
