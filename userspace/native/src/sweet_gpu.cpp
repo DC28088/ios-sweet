@@ -273,7 +273,9 @@ void *sweet_gpu_bo_cpu_map(SweetGpu *handle, uint64_t bo, uint64_t *bytes,
     kr = IOConnectMapMemory64(gpu->conn, reply.token, mach_task_self(), &address, &length,
                               kIOMapAnywhere | kIOMapWriteCombineCache);
     if (kr != KERN_SUCCESS || !address || length < reply.bytes) {
-        NativeAdrenoAbiBoCpuUnmap undo{bo, reply.token};
+        NativeAdrenoAbiBoCpuUnmap undo{};
+        undo.handle = bo;
+        undo.token = reply.token;
         call(gpu, NativeAdrenoMethodBoCpuUnmap, &undo, sizeof(undo), nullptr, 0);
         whyf(why, why_size, "IOConnectMapMemory64(0x%llx) failed: 0x%x",
              (unsigned long long)bo, kr);
@@ -305,7 +307,9 @@ int sweet_gpu_bo_cpu_unmap(SweetGpu *handle, uint64_t bo, void *mapping,
              (unsigned long long)bo, kr);
         return SweetGpuError;
     }
-    NativeAdrenoAbiBoCpuUnmap undo{bo, it->second.token};
+    NativeAdrenoAbiBoCpuUnmap undo{};
+    undo.handle = bo;
+    undo.token = it->second.token;
     call(gpu, NativeAdrenoMethodBoCpuUnmap, &undo, sizeof(undo), nullptr, 0);
     gpu->mappings.erase(it);
     return SweetGpuSuccess;
