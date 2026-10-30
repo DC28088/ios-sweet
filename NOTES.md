@@ -1,3 +1,22 @@
+## 2026-10-31: frame anatomy, luma_boost skip, GMEM vs sysmem (live, no reboot)
+
+Audit (bridge 0202, now with SWEET_M2V_SKIP_FRAGMENT): backboardd renders ~5 full-screen
+1125x2436 Load/Store passes per presented frame, each with 2-16 draws whose viewport+scissor is the
+full screen (sum 3-14x the screen): CoreAnimation's fixed layer shader fixed_frag_lph_cph (unblended
+copy + blended layers, One/OneMinusSourceAlpha) and a last full-screen luma_boost_lph draw.
+Reduce Transparency: no change in passes/Mpx/presents (blur is not the cost).
+EXPERIMENTS: (1) skip luma_boost_lph draws (/var/local/mtl2-env: SWEET_M2V_SKIP_FRAGMENT=
+luma_boost_lph; bundle CI 41002906716, installed userspace/out-0202e, backup research/metal2-
+backup-pre0202e): presents/10 s 171-187 (was 146-181), gate 22-23 ms (was 25-30): ~10% better, user
+"kinda better", colours/contrast identical -> KEPT ON. (2) GMEM instead of sysmem (cleared /var/local/
+mtl2-tu-debug): presents 137-201, gate 21-27 ms, VBIF 77-82% = same as sysmem; user "same"; restored
+sysmem. Memory-bandwidth theory rejected (VBIF ~78% either way).
+Undo skip: empty /var/local/mtl2-env and restart backboardd. Audit: SWEET_M2V_PASS_AUDIT=1 there plus
+a 0666 /var/local/m2v-pass-audit.log; it adds CPU work, keep it off when judging feel.
+STILL OPEN: user reports stutters and <30 fps (~16-19 presents/s measured). Suspects: first-use
+pipeline creation jank (mtl2.log "T pipeline n=156 total=8646ms max=211ms"; /var/local/m2v-cache dirs
+look empty = no persistent pipeline cache?), present_max_us 73-89 ms, surface cache CPU time.
+
 ## 2026-10-30 (night): render-pass audit (bridge 0202) - what Metal asks of the GPU
 
 Bridge patch userspace/metal2/bridge-patches/0202-sweet-render-pass-audit.patch (metal2vulkan
