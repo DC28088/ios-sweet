@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
   push:
     branches: [codex/adreno-power-audit]
-    paths: [userspace/ssh/**, .github/workflows/ssh.yml]
+    paths: [userspace/ssh/**, userspace/bench/**, .github/workflows/ssh.yml]
 jobs:
   build:
     runs-on: macos-15
@@ -57,15 +57,19 @@ jobs:
           make -j4 HOSTCC=cc CC="$(xcrun --sdk iphoneos --find clang)" \
             CFLAGS="-arch arm64 -isysroot $SDK -miphoneos-version-min=16.0 -I$GITHUB_WORKSPACE/userspace/ssh/ios-include" LDFLAGS="-arch arm64 -isysroot $SDK" toybox 2>&1 | tee ../../out/toybox-build.log
           cp toybox ../../out/
+      - name: membench (CPU streaming memory bandwidth)
+        run: |
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          $(xcrun --sdk iphoneos --find clang) -arch arm64 -isysroot $SDK -miphoneos-version-min=16.0 -O2 -o out/membench userspace/bench/membench.c
       - name: Sign
         run: |
           cd out
-          for b in dropbearmulti dash toybox; do
+          for b in dropbearmulti dash toybox membench; do
             [ -f $b ] || continue
             codesign --force --sign - --pagesize 4096 --entitlements ../userspace/ssh/tools.entitlements $b
             codesign --verify --strict $b
           done
-          for b in dropbearmulti dash toybox; do if [ -f $b ]; then shasum -a 256 $b; fi; done > SHA256SUMS
+          for b in dropbearmulti dash toybox membench; do if [ -f $b ]; then shasum -a 256 $b; fi; done > SHA256SUMS
           cat SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
