@@ -138,3 +138,14 @@ Turnip-based bundle must be retained outside the active extension path for
 rollback. The ordinary SweetMetal2 installer is unsuitable because it assumes
 a Vulkan dependency and a different fixed file list. Runtime qualification and
 the API coverage limits above still apply. Ask before booting any image.
+
+## First hardware trial
+
+The legacy bundle loads on 0172, but BackBoard repeatedly aborts while building
+an AIR pipeline containing a pointer store. Kernel touch reports continue;
+the unresponsive lock screen is observed during the compositor crash loop.
+The follow-up compiler promotes non-escaping pointer locals with direct,
+non-volatile loads/stores confined to the allocation block. It preserves the
+stored pointer resolution and rejects uninitialized loads, escaping locals and
+cross-block accesses. Compilation and the exact failing shader still need
+qualification; this is not a successful native UI rendering result.

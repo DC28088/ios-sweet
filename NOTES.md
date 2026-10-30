@@ -1,3 +1,22 @@
+## 2026-10-30: native trial FAILED compositor startup; input hardware alive
+
+User: reached lock screen, touch/buttons unresponsive. Fresh live USB logging
+resumed in existing original receiver. Saved snapshot to isolated
+research/native-install-0172/live-native-metal-observed.log. Repeated BackBoard
+crashes: "Metal failed to build render pipeline", immediately preceded by
+native AIR error "a store of a pointer into memory" at block0 instruction2
+opcode16. Kernel still logs fresh SWEET HID touch down/up; cannot classify this
+as a dead touch driver. GPU busy0/no presents during observed crash windows.
+Native plugin definitely loaded (SweetNativeMetal-prefixed pipeline logs).
+No recovery reboot or further image boot issued. Need permission before any
+additional image boot; original bundle/backing blocks remain available.
+Compiler change prepared: promote pointer locals only if count1 pointer alloca,
+all uses direct nonvolatile loads/stores in its allocation block; reject escapes,
+GEP/cast/call and cross-block state; reject uninitialized loads. Preserve pointer
+resolution and do not invent GPU pointer bytes. Fresh pinned source preparation
+passes; CI compilation/runtime still pending. This may cover the observed shape
+but actual offending module coverage is not yet established.
+
 ## 2026-10-30: native frontend INSTALLED and temporary 0172 boot issued
 
 User explicitly approved: "yes write it and boot the image". Fresh preflight
