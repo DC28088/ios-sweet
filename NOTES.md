@@ -1,3 +1,11 @@
+## 2026-10-30: user confirms interaction RECOVERED
+
+After restoring the original graphics bundle live, user confirms "yeah its
+working normally now." Touch/buttons usable again; no image boot was needed.
+Native frontend is inactive and remains unqualified. Keep this working state.
+Next native work must first reproduce the exact AIR shader rejection offline;
+do not reinstall the same restricted pointer-local fix as if it were complete.
+
 ## 2026-10-30: native hotfix still failed; ORIGINAL frontend restored live
 
 c734767 CI41095763883 PASSED; downloaded and verified legacy bundle. Used live
