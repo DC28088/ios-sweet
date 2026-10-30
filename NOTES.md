@@ -1,3 +1,26 @@
+## 2026-10-30 (night): render-pass audit (bridge 0202) - what Metal asks of the GPU
+
+Bridge patch userspace/metal2/bridge-patches/0202-sweet-render-pass-audit.patch (metal2vulkan
+render.rs end_pass): with SWEET_M2V_PASS_AUDIT=1 in /var/local/mtl2-env and a pre-created 0666
+/var/local/m2v-pass-audit.log (backboardd cannot create files in /var/local), sums passes per 10 s:
+extent, samples, instances, per-attachment load/store/resolve, DrawnArea reach. Metal bundle CI
+40993885758 then 40995990511 (macos-15), installed live with tools/sweet-install-metal2.sh
+(backups research/metal2-backup-pre0202, -pre0202b), no reboot (backboardd restart only).
+Phone was on shim-boot-0172-rbbm.img.
+FINDINGS (scroll, 10 s windows): a busy window = 1603 passes / 1465 Mpx, of which 463 passes /
+1268 Mpx (87%) are 1125x2436 s1 inst1 c0[Load/Store] c1[DontCare/DontCare]: ~46 full-screen
+Load/Store passes per second, ~3 per frame. Instances are always 1 (no pass splitting), c1 is
+free, no depth. Metal itself requests Load+Store, so the translation layer adds no loads/stores.
+The draws' viewport-within-scissor reach is ~100% for 98% of those pixels, so shrinking the
+Vulkan render area to DrawnArea::bounds() (render.rs builds render_area = full extent at ~3855;
+bounds are only used for shadow-copy planning) gives nothing; a real gain would need geometry-
+based reach (vertex shaders on the CPU/GPU), which is far heavier.
+Fits the RBBM profile: GPU never idle, VBIF 75-84%, ~6.6 ms per full-screen pass even in
+sysmem mode (TU_DEBUG=sysmem already on). Next measurement (no code): Reduce Transparency
+(Settings > Accessibility > Display & Text Size) removes blur; compare passes/Mpx and presents
+per 10 s to price the blur, then consider cheaper blur (lower resolution/fewer taps) keeping the
+look. Other levers: UBWC for render targets (CA surfaces are linear IOSurfaces), fewer passes.
+
 ## 2026-10-30 (later): 0171 block profile, 0172 forced write-back: neither helps
 
 0171 (xnu/patches/0171-sweet-gpu-rbbm-status-profile.patch): while a fence is outstanding,
