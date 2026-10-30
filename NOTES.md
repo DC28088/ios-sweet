@@ -1,3 +1,16 @@
+## 2026-10-30: staging boundary correction (no phone writes)
+
+Initial local VM filesystem verification passed and native files matched hashes,
+but delta preflight correctly rejected one chunk beyond the 16 GiB HFS volume.
+Cause: local qcow2 exposed the whole 114970046464-byte userdata partition;
+fsck wrote an alternate HFS header at its end. Old delta is retained ONLY as
+rejected diagnostics: research/native-install-0172/delta-unbounded{,.json}.
+Do NOT apply it. Local qcow2 was shrunk to 16 GiB; verification-only VM now
+session30207, guest-volume-check.log. Phone remains untouched in OrangeFox.
+Once verified, regenerate delta, require every chunk within volume_bytes and
+run preflight again. Complete original bundle is saved on host (12-file hash
+manifest) and retained inside overlay at private/var/db/sweet-native-backup-5d3b2bb.
+
 ## 2026-10-30: native legacy bundle downloaded, recovery staging underway
 
 CI 41090364656 PASSED at 5d3b2bb. Artifact downloaded to
