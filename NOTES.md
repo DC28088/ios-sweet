@@ -1,3 +1,20 @@
+## 2026-10-31 (later): CPU memory bandwidth vs the GPU's
+
+userspace/bench/membench.c (built by ssh.yml step; new workflow files are NOT registered off the
+default branch, so add steps to existing workflows; CI 41008023896, artifact sweet-ssh-ios16/membench,
+installed at /var/local/bin/membench, run over SSH). Result on image 0172 (0169 DRAM votes active):
+CPU streaming 1 thread read 5.2 / write 7.5 / copy 6.2 GB/s; 2-6 threads read ~9.5-10.6, write ~9.3-9.8,
+copy ~9.2-9.7 GB/s. => DRAM is clocked fine; the "DDR low" theory is rejected.
+GPU side: kernel K lines show a heavy commit = rp14 dr94 13.5 Mpx ctc ~40 ms (~3 ms/Mpx); a full-screen
+blended pass moves ~30 MB in ~7 ms = ~4-5 GB/s, with VBIF 75-84% busy. So the GPU's own memory
+path (GBIF/AXI bus interface clock, GPU->memnoc votes, UCHE/GBIF QoS) delivers about half of what
+the CPUs get and is saturated. NOT YET MEASURED: GPU bus clock (gcc gpu_memnoc_gfx / snoc_dvm
+branches), which BCM/ICC vote covers the GPU master, GBIF QoS registers. Candidate fixes: raise the
+GPU-master bus vote (HFI bandwidth table is a single "off" entry today: GMU sets no GPU bandwidth),
+check GBIF_* and RBBM_GBIF_CLIENT_QOS_CNTL (0170-era stage 10 wrote 3 as Linux does).
+Pipeline-creation jank is a separate open item: persistent cache dirs exist
+(/var/local/m2v-cache/*/v1, "V cache hit118 miss4" in mtl2.log) so first-use compiles are mostly cached.
+
 ## 2026-10-31: frame anatomy, luma_boost skip, GMEM vs sysmem (live, no reboot)
 
 Audit (bridge 0202, now with SWEET_M2V_SKIP_FRAGMENT): backboardd renders ~5 full-screen
