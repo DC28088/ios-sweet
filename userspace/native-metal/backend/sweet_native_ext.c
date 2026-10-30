@@ -70,6 +70,11 @@ static unsigned native_constants(struct rwa_device *d,unsigned stage,void *ctx,c
    }
    return count; // absent constants stay absent; never silently specialize to zero
 }
+int rwa_barrier(struct rwa_device *d,char *why,size_t n)
+{
+   if(!d || d->lost){say(why,n,"device lost while encoding memory barrier");return -1;}
+   d->pipe->memory_barrier(d->pipe,PIPE_BARRIER_ALL);return 0;
+}
 int rwa_command_begin(struct rwa_device *d,char *why,size_t n)
 {
    if(!d || d->lost || d->in_command){say(why,n,"device lost or command buffer already executing");return -1;}
