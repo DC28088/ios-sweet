@@ -1,5 +1,5 @@
 diff --git a/crates/metal2vulkan-runtime/src/render.rs b/crates/metal2vulkan-runtime/src/render.rs
-index 870bdb1..4653c4c 100644
+index 870bdb1..8ef7418 100644
 --- a/crates/metal2vulkan-runtime/src/render.rs
 +++ b/crates/metal2vulkan-runtime/src/render.rs
 @@ -3061,6 +3061,7 @@ impl RenderCommandEncoder {
@@ -14,7 +14,7 @@ index 870bdb1..4653c4c 100644
              self.degrade_extended_range_blends();
          }
          self.draw_calls += 1;
-+        sweet_audit_draw(self.pipeline.as_ref().map(|p| (p.identifier_value(), p.label().map(str::to_string))));
++        sweet_audit_draw(self.pipeline.as_ref());
          self.command_encoded(reads);
          self.called = true;
          self.drew |= !empty && rasterizes;
@@ -26,7 +26,7 @@ index 870bdb1..4653c4c 100644
                      // What it writes of each color, and blends, inside its Vulkan scissors
                      // (`linear_attachment::Coverage`).
                      // Of each pass color its draws store into: a state color where its routing
-@@ -8536,3 +8539,139 @@ mod tests {
+@@ -8536,3 +8539,146 @@ mod tests {
          }
      }
  }
@@ -76,12 +76,12 @@ index 870bdb1..4653c4c 100644
 +    let detail = if layout.extent[0] >= 1000 && details.draws > 0 {
 +        let mut pipes = details.pipes.clone();
 +        pipes.sort_by(|a, b| b.2.cmp(&a.2));
-+        let list: Vec<String> = pipes.iter().take(4).map(|(id, label, n)| format!("{:x}{}x{}", id, label.as_deref().map(|l| format!("({})", l)).unwrap_or_default(), n)).collect();
++        let list: Vec<String> = pipes.iter().take(6).map(|(id, label, n)| format!("{:x} x{} {}", id, n, label.as_deref().unwrap_or(""))).collect();
 +        Some(format!(
 +            "PASS {}x{} {} draws={} scissor-area-sum={:.2}x pipes={}/{} [{}]",
 +            layout.extent[0], layout.extent[1],
 +            layout.colors.first().and_then(|c| c.as_ref()).map_or(String::new(), |c| format!("{:?}/{:?}", c.load, c.store)),
-+            details.draws, details.pixels as f64 / pixels.max(1) as f64, pipes.len(), details.draws, list.join(" ")
++            details.draws, details.pixels as f64 / pixels.max(1) as f64, pipes.len(), details.draws, list.join(" | ")
 +        ))
 +    } else {
 +        None
@@ -133,18 +133,25 @@ index 870bdb1..4653c4c 100644
 +    static ON: OnceLock<bool> = OnceLock::new();
 +    *ON.get_or_init(|| std::env::var_os("SWEET_M2V_PASS_AUDIT").is_some())
 +}
-+fn sweet_audit_draw(pipeline: Option<(u64, Option<String>)>) {
++fn sweet_audit_draw(pipeline: Option<&RenderPipelineState>) {
 +    if !sweet_audit_on() {
 +        return;
 +    }
 +    SWEET_PASS.with(|pass| {
 +        let mut pass = pass.borrow_mut();
 +        pass.draws += 1;
-+        if let Some((id, label)) = pipeline {
++        if let Some(state) = pipeline {
++            let id = state.identifier_value();
 +            if let Some(entry) = pass.pipes.iter_mut().find(|p| p.0 == id) {
 +                entry.2 += 1;
 +            } else if pass.pipes.len() < 64 {
-+                pass.pipes.push((id, label, 1));
++                let what = match state.kind() {
++                    RenderStateKind::Graphics(graphics) => {
++                        graphics.descriptor().draw_at(0).trim_start_matches("a draw of ").to_string()
++                    }
++                    _ => "other".to_string(),
++                };
++                pass.pipes.push((id, Some(what), 1));
 +            }
 +        }
 +    });
