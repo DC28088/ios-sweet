@@ -1,3 +1,13 @@
+## 2026-10-30: requested SpringBoard restart sent over USB SSH
+
+User explicitly asked to restart SpringBoard. USB SSH works with original
+research/ssh key/known_hosts (read only). Sent TERM only to the dynamically
+located /System/Library/CoreServices/SpringBoard.app/SpringBoard, PID447.
+Command succeeded; did not kill BackBoard, reboot or boot another image.
+Existing repeated BackBoard AIR pipeline failure remains unresolved; restarting
+SpringBoard is not evidence of a rendering fix. Compiler correction c734767
+committed, git push still pending session48772 at this handoff.
+
 ## 2026-10-30: native trial FAILED compositor startup; input hardware alive
 
 User: reached lock screen, touch/buttons unresponsive. Fresh live USB logging
