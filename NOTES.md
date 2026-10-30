@@ -1,3 +1,23 @@
+## 2026-10-30 (later): 0171 block profile, 0172 forced write-back: neither helps
+
+0171 (xnu/patches/0171-sweet-gpu-rbbm-status-profile.patch): while a fence is outstanding,
+RBBM_STATUS is sampled (~40/s) and the busy blocks printed per 10 s ("SWEET RENDER: rbbm ...").
+CI 40990286076 (macos-14), kernel xnu/out-0172, images shim/out/shim-boot-0172-rbbm.img
+(b988abd8...) and ...-gpuwb.img (3cccb7ba..., + sweetgpuwb=1). Logs logs/live-0172-rbbm.txt,
+logs/live-0172-gpuwb.txt.
+PROFILE (scroll, 0172-rbbm): idle=0% in every window (GPU never idle with a fence out);
+CP 100, CXM 92-96, VBIF 75-84, TSE/RAS/RB 87-93, LRZ 91-93, CCU 68-71, DCOM 76-78, DCALL 77-88.
+Busy bits mean "any work in flight", so they locate work, not efficiency. Presents 100-288 per
+10 s (very noisy window to window), gate 6-30 ms.
+0172 sweetgpuwb=1 (every BO mapped write-back, MAIR attr 1; CPU maintenance unchanged):
+WORSE - presents 18-174, gate 34-63 ms, VBIF 86-94%. Hypothesis rejected; default off.
+Both memory-attribute experiments (0170 walks, 0172 buffers) made it slower. GPU clock: 800 MHz
+is already used; pinned table only adds 825 MHz (TURBO_L1, speedbins 0x11): ~3%, not worth it.
+Remaining lever = less GPU work per frame (76% of GPU time in 1125x2436 passes, ~3.2 ms/Mpx):
+count/skip/shrink full-screen passes in the Metal frontend (userland; backboardd restart only).
+Kernel changes always need a reboot (fastboot boot); only the graphics bundle can be swapped
+live (tools/sweet-install-metal2.sh).
+
 ## 2026-10-30: GPU fill-rate A/B on image 0159/0170 (returned to ios-sweet from the HackOS port)
 
 User's goal: >=30 fps like ios-sweet's best. HackiOS-based port (DC28088/hackios-sweet)
