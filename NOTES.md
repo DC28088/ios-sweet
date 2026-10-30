@@ -1,3 +1,21 @@
+## 2026-10-30: native frontend installation READY; awaiting approval
+
+Corrected 16 GiB overlay passed full fsck; six native bundle hashes passed from
+read-only mount; cleanly unmounted. Final delta research/native-install-0172/delta.json:
+24 chunks, 9,895,936 bytes (9.4375 MiB), all within 17,179,869,184-byte iOS volume.
+Fresh preflight PASSED against every original phone block. No phone write or
+boot. Whole old bundle saved share/original-bundle (12 files, hash manifest),
+also retained in overlay private/var/db/sweet-native-backup-5d3b2bb; complete
+original block data saved in delta/*.before for raw rollback. Discarded earlier
+out-of-bounds delta is diagnostic only. Corrected overlay export session76039;
+read-only root export session90495. No VM running now.
+Await user approval for this raw userdata delta (AGENTS requirement) and temporary
+boot of existing shim-boot-0172-rbbm.img (user boot permission requirement).
+After approval rerun preflight immediately, apply-delta.py with full readback,
+then adb reboot bootloader and fastboot boot the exact manifest image. Preserve
+kernel/image SHA256 b988abd8a03ce5cd75667a6e3dfb38e9121daf51533cf734ec023f73f343c5e2.
+No speed or successful rendering claim; this is first native frontend trial.
+
 ## 2026-10-30: staging boundary correction (no phone writes)
 
 Initial local VM filesystem verification passed and native files matched hashes,
