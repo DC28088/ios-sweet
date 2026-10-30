@@ -124,3 +124,17 @@ Hardware qualification must establish real draw/compute completion, resource
 visibility, surface format/row correctness, pass load/store and synchronization
 semantics, then compare frame times and visual output with the current baseline.
 No phone was accessed to develop this branch.
+
+## Existing kernel compatibility package
+
+The build also emits `userspace/out/native-legacy/SweetMetal2.bundle`.
+It contains the same native frontend/backend, with an Objective-C
+`SweetMTL2Device` subclass and the bundle name expected by pre-0173 kernels.
+Use `sweetmtl=2 sweetgles=0` with an ABI1 kernel supporting HostImport,
+SubmitResources and Compositor4096 (0172 has these paths). No kernel binary
+patching is involved. This package replaces the active SweetMetal2 userspace
+bundle only after backing it up; the build never installs it. The existing
+Turnip-based bundle must be retained outside the active extension path for
+rollback. The ordinary SweetMetal2 installer is unsuitable because it assumes
+a Vulkan dependency and a different fixed file list. Runtime qualification and
+the API coverage limits above still apply. Ask before booting any image.
