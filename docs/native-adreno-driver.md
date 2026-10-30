@@ -99,8 +99,8 @@ predication) and every correctness bug is ours. Realistically several months
 before a correct home screen.
 
 **Path B - Metal on Mesa's freedreno (recommended).** Keep Mesa's fd6 Gallium
-driver as the Adreno device layer (state + PM4 + GMEM + UBWC, the same code the
-GLES port already uses) and put a native Metal implementation above it. The
+driver as the Adreno device layer (state + PM4 + GMEM + UBWC, the same Mesa
+code the GLES port builds against) and put a native Metal implementation above it. The
 only new code is the Metal object graph and the seam to fd6; no Vulkan and no
 Turnip. Shaders go AIR -> NIR -> Gallium -> ir3, inside one process.
 
@@ -132,7 +132,8 @@ Vendor the pinned AIR frontend and Mesa patches under `third_party/air`, add a
 `libsweetair` target that exposes `sweet_air_compile(metallib, entry, stage,
 chip_id) -> NIR/ISA + interface metadata`, and a host CLI. Exit: the 135/141
 QuartzCore shaders translate and compile to ir3 disassembly on the build host;
-the result matches HackiOS's own numbers on the same file.
+the result matches the local sweep recorded in section 3 (135/141, with the six
+known failures named) and, on HackiOS's own corpus, its 321/456.
 
 **N2 - KMD shim and fd6 on sweet.**
 A libdrm-msm-shaped shim over the NativeAdreno ABI (BO new/import/map/info,
