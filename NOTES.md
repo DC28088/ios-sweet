@@ -11,8 +11,17 @@ command-buffer batching/lifetime, viewport/scissor and pass-clear corrections,
 separate build workflow and opt-in `sweetmtl=2` plugin selection (0173).
 See `userspace/native-metal/README.md` for actual capabilities and remaining gaps.
 
-Validation so far: pinned source export/preparation succeeded locally; Python
-build/preparation scripts compile. Full macOS build is the next checkpoint.
+Validation: pinned source export/preparation and Python compilation pass. Five
+host transport contract cases pass (split residency/fence mapping, whole-list
+validation, IOSurface offset/retention, timeout quarantine, partial-submit loss).
+These use mock IOKit/Mach and execute no GPU commands. GCC warning-clean syntax
+check also passed against Mesa DRM headers.
+
+CI 41083140933 was superseded while queued. Intel macOS run 41084159383 compiled
+the frontend and applied all Mesa patches, then failed on IOSurface.h, which the
+iOS SDK does not provide; changed to IOSurfaceRef.h. Run 41084956259 builds that
+correction. Further local queue lifetime/descriptor changes await the next CI.
+Full backend link is still pending.
 No hardware rendering/performance claim. Larger constants, texture views,
 blits/events/heaps/resolve and remaining CoreAnimation shader coverage need work.
 

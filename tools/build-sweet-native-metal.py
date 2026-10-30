@@ -31,6 +31,14 @@ def run(*args,**kw):
 def output(*args,**kw):
     return subprocess.check_output([str(v) for v in args],text=True,**kw).strip()
 
+def logged(path,*args,**kwargs):
+    with path.open('w') as log:
+        try:run(*args,stdout=log,stderr=subprocess.STDOUT,**kwargs)
+        except subprocess.CalledProcessError:
+            log.flush()
+            print('\n'.join(path.read_text(errors='replace').splitlines()[-100:]),flush=True)
+            raise
+
 def sha(path):
     digest=hashlib.sha256()
     with Path(path).open('rb') as stream:
@@ -160,8 +168,7 @@ cpp_std = 'c++17'
       '-Dvideo-codecs=','-Dtools=','-Dgallium-vdpau=disabled','-Dgallium-va=disabled',
       '-Dgallium-xa=disabled','-Dlmsensors=disabled','-Dbuild-tests=false',
       '-Dbuildtype=release','-Db_ndebug=true']
-    with (WORK/'configure.log').open('w') as log:
-        run(venv/'bin/meson','setup',build,mesa,'--cross-file',cross,'--wrap-mode=nodownload',*options,env=env,stdout=log,stderr=subprocess.STDOUT)
+    logged(WORK/'configure.log',venv/'bin/meson','setup',build,mesa,'--cross-file',cross,'--wrap-mode=nodownload',*options,env=env)
     # Capture source diagnostics early, before the full Mesa dependency graph.
     src=donor/'userland/src';air=mesa/'src/compiler/air'
     frontend=WORK/'SweetNativeMetal.o';drawable=WORK/'SweetNativeDrawable.o'
@@ -169,8 +176,7 @@ cpp_std = 'c++17'
             '-I'+str(air),'-I'+str(src)]
     run(clang,*common,'-c',src/'redwoodmetal.m','-o',frontend)
     run(clang,*common,'-c',src/'redwooddrawable.m','-o',drawable)
-    with (WORK/'ninja.log').open('w') as log:
-        run('ninja','-j','3','-C',build,'src/gallium/libSweetNativeBackend.dylib',env=env,stdout=log,stderr=subprocess.STDOUT)
+    logged(WORK/'ninja.log','ninja','-j','3','-C',build,'src/gallium/libSweetNativeBackend.dylib',env=env)
     out=ROOT/'userspace/out';out.mkdir(parents=True,exist_ok=True)
     bundle=out/'SweetNativeMetal.bundle'
     if bundle.exists():raise SystemExit('Refusing to overwrite prior bundle')

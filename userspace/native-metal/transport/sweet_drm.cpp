@@ -8,7 +8,6 @@
 #include <IOSurface/IOSurfaceRef.h>
 #include <IOKit/IOKitLib.h>
 #include <mach/mach.h>
-#include <mach/mach_vm.h>
 #include <pthread.h>
 #include <sys/mman.h>
 #include <time.h>
@@ -118,7 +117,7 @@ int release(Buffer &b) {
     NativeAdrenoAbiBoFree req{b.kernel};
     e=call(NativeAdrenoMethodBoFree,&req,sizeof req);
     if (e) { b.closing=true; return e; }
-    if (b.own) mach_vm_deallocate(mach_task_self(),b.cpu,b.size);
+    if (b.own) vm_deallocate(mach_task_self(),b.cpu,b.size);
     if (b.surface) CFRelease(b.surface);
     b=Buffer{};
     return 0;
@@ -138,11 +137,11 @@ int surface_description(uint32_t id, struct redwood_drm_surface *out, IOSurfaceR
         width>UINT32_MAX || height>UINT32_MAX || pitch>UINT32_MAX ||
         pixel-base>=bytes || (height && pitch>(bytes-(pixel-base))/height)) e=EINVAL;
     if (!e) {
-        mach_vm_address_t region=base; mach_vm_size_t length=0;
+        vm_address_t region=base; vm_size_t length=0;
         vm_region_basic_info_data_64_t info{};
         mach_msg_type_number_t count=VM_REGION_BASIC_INFO_COUNT_64;
         mach_port_t object=MACH_PORT_NULL;
-        kern_return_t kr=mach_vm_region(mach_task_self(),&region,&length,VM_REGION_BASIC_INFO_64,
+        kern_return_t kr=vm_region_64(mach_task_self(),&region,&length,VM_REGION_BASIC_INFO_64,
                              (vm_region_info_t)&info,&count,&object);
         if (object) mach_port_deallocate(mach_task_self(),object);
         if (kr || region>base || length<base-region || bytes>length-(base-region) ||
@@ -170,15 +169,15 @@ int allocate(uint64_t bytes,uint32_t flags,IOSurfaceRef s,uint32_t *handle) {
         b.cpu=(uintptr_t)IOSurfaceGetBaseAddress(s)&~(HostPage-1);
         b.surface=s;CFRetain(s);
     } else {
-        mach_vm_address_t address=0;
-        kr=mach_vm_allocate(mach_task_self(),&address,bytes,VM_FLAGS_ANYWHERE);
+        vm_address_t address=0;
+        kr=vm_allocate(mach_task_self(),&address,bytes,VM_FLAGS_ANYWHERE);
         b.cpu=address;b.own=true;
     }
     if(kr) {if(b.surface)CFRelease(b.surface);return error(kr);}
     NativeAdrenoAbiBoImport req{b.cpu,bytes};NativeAdrenoAbiBoAllocReply reply{};
     int e=call(NativeAdrenoMethodBoImport,&req,sizeof req,&reply,sizeof reply);
     if(!e && !reply.handle)e=EPROTO;
-    if(e) {if(b.own)mach_vm_deallocate(mach_task_self(),b.cpu,b.size);if(b.surface)CFRelease(b.surface);return e;}
+    if(e) {if(b.own)vm_deallocate(mach_task_self(),b.cpu,b.size);if(b.surface)CFRelease(b.surface);return e;}
     b.kernel=reply.handle;state.buffers[index]=std::move(b);
     Buffer &live=state.buffers[index];
     NativeAdrenoAbiBoMap map{live.kernel,va,3,0,2,0};NativeAdrenoAbiBoMapReply mapped{};
@@ -232,7 +231,9 @@ int get_param(drm_msm_param *p) {
     case MSM_PARAM_HIGHEST_BANK_BIT:p->value=state.info.highest_bank_bit;break;
     case MSM_PARAM_UBWC_SWIZZLE:p->value=state.info.ubwc_swizzle;break;
     case MSM_PARAM_MACROTILE_MODE:p->value=state.info.macrotile_mode;break;
+    #ifdef MSM_PARAM_UCHE_TRAP_BASE
     case MSM_PARAM_UCHE_TRAP_BASE:p->value=state.info.uche_trap_base;break;
+    #endif
     default:return ENOTSUP;
     }
     return 0;

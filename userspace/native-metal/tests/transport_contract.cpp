@@ -23,17 +23,17 @@ unsigned IOServiceGetMatchingService(unsigned,void *match){assert(match);return 
 kern_return_t IOServiceOpen(unsigned service,unsigned task,unsigned type,io_connect_t *out){assert(service==7&&task==42&&type==0x4147);*out=9;return 0;}
 void IOObjectRelease(unsigned){}
 void IOServiceClose(unsigned){model::closes++;}
-kern_return_t mach_vm_allocate(unsigned task,uint64_t *out,uint64_t size,int flags){
+kern_return_t vm_allocate(unsigned task,uint64_t *out,uint64_t size,int flags){
     assert(task==42&&flags==VM_FLAGS_ANYWHERE&&(size&16383)==0);
     void *p=nullptr;if(posix_memalign(&p,16384,size))return kIOReturnNoMemory;
     memset(p,0,size);*out=(uintptr_t)p;model::regions[*out]=size;return 0;
 }
-kern_return_t mach_vm_deallocate(unsigned,uint64_t address,uint64_t size){
+kern_return_t vm_deallocate(unsigned,uint64_t address,uint64_t size){
     assert(model::regions.at(address)==size);
     for(auto &p:model::pins)assert(p.second.address!=address);
     model::regions.erase(address);free((void*)(uintptr_t)address);return 0;
 }
-kern_return_t mach_vm_region(unsigned,uint64_t *address,uint64_t *length,int,vm_region_info_t data,unsigned*,unsigned *object){
+kern_return_t vm_region_64(unsigned,uint64_t *address,uint64_t *length,int,vm_region_info_t data,unsigned*,unsigned *object){
     for(auto &r:model::regions)if(*address>=r.first && *address<r.first+r.second){
         *address=r.first;*length=r.second;((vm_region_basic_info_data_64_t*)data)->protection=VM_PROT_READ|VM_PROT_WRITE;*object=0;return 0;
     }return kIOReturnBadArgument;
@@ -112,14 +112,14 @@ static void prevalidate_all(){
     assert(!close_bo(fd,a)&&!close_bo(fd,b));close(fd);
 }
 static void surface_lifetime(){
-    int fd=gpu();uint64_t address=0;assert(!mach_vm_allocate(42,&address,16384,VM_FLAGS_ANYWHERE));
+    int fd=gpu();uint64_t address=0;assert(!vm_allocate(42,&address,16384,VM_FLAGS_ANYWHERE));
     model::surfaces[51]={address,16384,1,51};struct redwood_drm_surface desc{};desc.surface=51;
     assert(!redwood_drm_surface(fd,&desc)&&desc.offset==4096&&desc.size==16384&&desc.row_bytes==64);
     uint32_t handle=0,again=0;assert(!drmPrimeFDToHandle(fd,51,&handle));assert(model::surfaces[51].references==2);
     assert(!drmPrimeFDToHandle(fd,51,&again)&&again==handle);
     assert(!close_bo(fd,handle)&&model::surfaces[51].references==1);
     assert(model::regions.size()==1); // imported storage belongs to IOSurface
-    assert(!mach_vm_deallocate(42,address,16384));close(fd);
+    assert(!vm_deallocate(42,address,16384));close(fd);
 }
 static void timeout_retains(){
     int fd=gpu();auto a=alloc(fd),b=alloc(fd);Submit s(a,b);assert(!s.run(fd));model::forceTimeout=true;

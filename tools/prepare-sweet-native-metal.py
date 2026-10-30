@@ -179,6 +179,15 @@ def adapt_frontend(donor):
     s=s[:begin]+s[end:]
     s=replace(s,'@property (readonly) struct rwa_buffer *mesaBuffer;', '@property (readonly) struct rwa_buffer *mesaBuffer;\n- (void *)contents;\n- (NSUInteger)length;')
     s=replace(s,'@interface RedwoodMetalCommandQueue : _MTLCommandQueue', '@interface RedwoodMetalCommandQueue : _MTLCommandQueue\n- (NSUInteger)maxCommandBufferCount;')
+    s=replace(s,'\t    [[[MTLCommandQueueDescriptor alloc] init] autorelease];','''        [[[(NSClassFromString(@"MTLCommandQueueDescriptorInternal") ?: NSClassFromString(@"MTLCommandQueueDescriptor")) alloc] init] autorelease];
+    if(!use){rw_print("Metal command queue descriptor unavailable\\n");return nil;}''')
+    s=replace(s,'- (id)newCommandQueueWithDescriptor:(id)descriptor\n{','''- (id)newCommandQueue {
+    return [self newCommandQueueWithDescriptor:nil];
+}
+- (id)newCommandQueueWithDescriptor:(id)descriptor
+{''')
+    # Increment and read were previously unsequenced in a logging macro.
+    s=replace(s,'if ((++rw_times_ & (rw_times_ - 1)) == 0)', 'if ((rw_times_++, (rw_times_ & (rw_times_ - 1))) == 0)')
     # Real library and function objects retain exact specialization bytes.
     marker='@implementation RedwoodMetalDevice\n'
     s=replace(s,marker,'#include "SweetNativeLibrary.inc"\n\n'+marker)
@@ -228,6 +237,8 @@ def adapt_frontend(donor):
     if(!native_specialize(_mesa,function,2,nativeWhy,sizeof nativeWhy))
         return [self fail:error with:[NSString stringWithUTF8String:nativeWhy]];
 '''+s[at:]
+    s=replace(s,'\tif (mesa.module_argbufs(_mesa, [air bytes], [air length],','''    if(!native_specialize(_mesa,function,2,why,sizeof why)){rw_print("argument encoder: %s\\n",why);return nil;}
+	if (mesa.module_argbufs(_mesa, [air bytes], [air length],''')
     # Hold every referenced object through the actual command-buffer fence.
     s=replace(s,'@implementation RedwoodMetalWork\n@end','''@implementation RedwoodMetalWork
 - (void)dealloc {
@@ -396,7 +407,7 @@ def adapt_frontend(donor):
     at=s.index('\n\t[super dealloc];',begin)
     s=s[:at]+'\n    if(_nativeSurface)CFRelease(_nativeSurface);'+s[at:]
     # Resources retain their owning device even when the application releases it.
-    for cls in ('RedwoodMetalBuffer','RedwoodMetalTexture','RedwoodMetalComputePipeline','RedwoodMetalRenderPipeline','RedwoodMetalArgumentEncoder'):
+    for cls in ('RedwoodMetalBuffer','RedwoodMetalTexture','RedwoodMetalComputePipeline','RedwoodMetalRenderPipeline','RedwoodMetalArgumentEncoder','RedwoodMetalCommandQueue'):
         begin=s.index('@implementation '+cls)
         end=s.index('\n@end',begin)
         part=s[begin:end]
@@ -441,7 +452,14 @@ static void nativeUnlock(int *unused){(void)unused;pthread_mutex_unlock(&nativeO
     insert=[]
     for m in re.finditer(r'(?m)^[+-] \(',s):
         brace=s.find('{',m.start());semi=s.find(';',m.start())
-        if brace>=0 and (semi<0 or brace<semi):insert.append(brace+1)
+        if brace>=0 and (semi<0 or brace<semi):
+            signature=s[m.start():brace]
+            # Apple's command-buffer constructor waits for a queue slot. Holding
+            # this lock across that wait would prevent another thread's commit
+            # from returning a slot. These factories do not access Gallium.
+            if 'initWithRedwoodQueue:' in signature or re.match(r'- \(id\)commandBuffer(?:\s|WithUnretainedReferences)',signature):
+                continue
+            insert.append(brace+1)
     for at in reversed(insert):s=s[:at]+' NATIVE_OBJECT_LOCK; '+s[at:]
     path.write_text(s)
     p=path.parent/'SweetNativeLibrary.inc';s=p.read_text();insert=[]
