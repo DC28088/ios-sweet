@@ -266,7 +266,7 @@ debug = 1
     return lib, applied
 
 
-def assemble(turnip, bridge_lib, env):
+def assemble(turnip, bridge_lib, env, abi_dir):
     sunfish = WORK / 'donor/sunfish'
     out = ROOT / 'userspace/out'
     bundle = out / 'SweetMetal2.bundle'
@@ -281,8 +281,11 @@ def assemble(turnip, bridge_lib, env):
         '-std=c++17', '-fobjc-arc', '-bundle',
         '-Wno-deprecated-declarations', '-Wno-unused-function',
         '-I' + str(sunfish / 'phone/metal2'), '-I' + str(sunfish / 'phone/metal2/bridge'),
+        '-I' + str(ROOT / 'userspace/native/include'), '-I' + str(abi_dir),
         sunfish / 'phone/metal2/SweetMetal2.mm',
         sunfish / 'phone/metal2/NativeBridgeMetalFrontend.mm',
+        ROOT / 'userspace/native/src/sweet_gpu.cpp',
+        ROOT / 'userspace/native/src/sweet_native_probe.cpp',
         bridge_lib, '-Wl,-dead_strip', '-lc++',
         '-framework', 'Foundation', '-framework', 'Metal', '-framework', 'IOSurface',
         '-framework', 'IOKit', '-framework', 'CoreFoundation', '-o', exe, env=env)
@@ -352,7 +355,7 @@ def main():
     shutil.copy2(abi, out / 'NativeAdrenoABI.h')
     turnip, mesa_patches = build_turnip(donor / 'unixnu', donor / 'sunfish', WORK / 'mesa', abi.parent, env)
     bridge_lib, bridge_patches = build_bridge(WORK / 'metal2vulkan', env)
-    bundle = assemble(turnip, bridge_lib, env)
+    bundle = assemble(turnip, bridge_lib, env, abi.parent)
 
     report = {
         'sources': {'sunfish': SUNFISH_PIN, 'unixnu': UNIXNU_PIN,
