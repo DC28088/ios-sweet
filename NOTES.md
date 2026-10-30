@@ -1,3 +1,22 @@
+## 2026-10-30: native legacy bundle downloaded, recovery staging underway
+
+CI 41090364656 PASSED at 5d3b2bb. Artifact downloaded to
+research/native-metal-artifact-5d3b2bb; all six legacy bundle file hashes match
+native-legacy/build.json. Mach-O symbol table contains both SweetMTL2Device
+and SweetNativeMetalDevice. Read-only ADB sees recovery and iOS16.7.16/20H392.
+Original active executable SHA256 b1f1e3d65e43371b58f4382cf4b31ec830ff4a19f86e067c0352b79f38d4dccc.
+Staging workspace research/native-install-0172, read-only nbdkit session90495
+socket /tmp/sweet-native172-root.sock. Local TCG VM session75484 edits only
+root-overlay.qcow2. Guest init uses root-owned cpio entries (otherwise setuid
+mount drops to host uid). Initial fsck found minor volume-header repair, applied
+ONLY to overlay and is rechecking. No phone filesystem writes. Native bundle
+and original bundle backup are staged via VM share once check completes.
+Source image /home/dan/ios-sweet/shim/out/shim-boot-0172-rbbm.img SHA256
+b988abd8a03ce5cd75667a6e3dfb38e9121daf51533cf734ec023f73f343c5e2.
+Its embedded XNU arguments include sweetmtl=2 sweetgles=0; kernel unchanged.
+Phone remains OrangeFox. Do not apply a delta until fully staged/preflighted;
+confirm any raw partition write per AGENTS and ask before image boot per user.
+
 ## 2026-10-30: older-kernel native compatibility build
 
 User requested using the older XNU artifact. Read-only inspection of original
