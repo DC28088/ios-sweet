@@ -1,3 +1,15 @@
+## 2026-10-30: matching native kernel build queued
+
+User reports FASTBOOT; no device command was sent. Dispatched xnu.yml on
+codex/native-adreno-metal at 6c8f2b9: run 41090044142, macos-14,
+DEVELOPMENT/SWEET, iOS16-era XNU13.5; portable tests disabled for this build.
+Status at handoff: queued. Native bundle remains compiled/downloaded as below.
+No matching image is packaged and no root installation is staged. Do not boot
+until user grants permission for the specific prepared image. FASTBOOT readiness
+is not boot permission. Next inspect CI, download kernel if successful, package
+against the current known-good shim and preserve the original boot arguments
+plus sweetnative=1; reconcile Claude's active changes before any installation.
+
 ## 2026-10-30: isolated native Metal frontend implementation
 
 User requested a native Metal frontend while Claude continues the active original
