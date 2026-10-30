@@ -91,6 +91,19 @@ Kernel patch 0173 adds `sweetmtl=2` to select `SweetNativeMetalDevice` from
 alone does not alter a running phone. Installation/boot is deliberately not part
 of the build script while another developer is using the device.
 
+## Transport contract checks
+
+On Linux, with a Mesa source include directory:
+
+```
+bash tools/check-sweet-native-transport.sh /path/to/mesa/include
+```
+
+Five cases cover scoped residency across 16-IB chunks, mapped 64-bit kernel
+fences, complete prevalidation, imported IOSurface offsets/lifetime, timeout
+quarantine and partial submission failure. The IOKit/Mach implementation is a
+host model; it executes no Adreno instructions and makes no hardware claim.
+
 ## Remaining requirements
 
 Compilation is not evidence of working UI acceleration or improved frame rate.
