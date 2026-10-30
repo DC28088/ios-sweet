@@ -112,7 +112,11 @@ void run()
          info.macrotile_mode);
 
     const uint64_t iova = align_up(info.va_start, 4096);
-    const uint64_t bo = sweet_gpu_bo_alloc(gpu, 4096, 12, why, sizeof(why));
+    /* The command stream and the words the GPU writes must not share storage:
+     * CP prefetches ahead, so a write into the packet's own bytes can change
+     * the command it is executing. Data lives one page past the stream. */
+    const uint64_t data_iova = iova + 4096;
+    const uint64_t bo = sweet_gpu_bo_alloc(gpu, 8192, 12, why, sizeof(why));
     if (!bo) {
         logf("probe: FAIL %s", why);
         sweet_gpu_close(gpu);
@@ -133,14 +137,15 @@ void run()
         sweet_gpu_close(gpu);
         return;
     }
-    cpu[0] = 0;
-    cpu[1] = 0;
+    volatile uint32_t *data = cpu + 1024;   /* byte offset 4096 */
+    data[0] = 0;
+    data[1] = 0;
     __atomic_thread_fence(__ATOMIC_SEQ_CST);
 
     const uint32_t want0 = 0x600df00du;
     const uint32_t want1 = 0x12345678u;
     sweet::Pm4 pm4;
-    const bool built = pm4.mem_write(iova, {want0, want1}) && pm4.nop(2);
+    const bool built = pm4.mem_write(data_iova, {want0, want1}) && pm4.nop(2);
     if (!built) {
         logf("probe: FAIL pm4 build");
         sweet_gpu_bo_cpu_unmap(gpu, bo, (void *)cpu, nullptr, 0);
@@ -168,8 +173,8 @@ void run()
     } else {
         __atomic_thread_fence(__ATOMIC_SEQ_CST);
         const uint64_t after = sweet_gpu_timestamp(gpu);
-        const uint32_t got0 = cpu[0];
-        const uint32_t got1 = cpu[1];
+        const uint32_t got0 = data[0];
+        const uint32_t got1 = data[1];
         logf("probe: waited, timestamp %llu -> %llu, got 0x%08x 0x%08x",
              (unsigned long long)before, (unsigned long long)after, got0, got1);
         if (got0 == want0 && got1 == want1)
