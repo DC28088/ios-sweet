@@ -23,6 +23,25 @@ def adapt_backend(donor):
     s=replace(s,'   uint64_t bits;      /* its value, as the bits of its type */',
                 '   uint64_t bits;      /* little-endian packed scalar/small-vector value */\n   const char *name;    /* declared Metal function-constant name */')
     p.write_text(s)
+    p=air/'air_metallib.c';s=p.read_text()
+    s=replace(s,'   if (total > size || funcs + 4 > size || bc_off + bc_len > size) {',
+                '   if (total > size || funcs > size || size - funcs < 4 || bc_off > size || bc_len > size - bc_off) {')
+    s=replace(s,'   p += 4;\n   lib->functions =','''   p += 4;
+   if (count > (size - funcs - 4) / 4) {
+      *error = "function count exceeds container extent";return false;
+   }
+   lib->functions =''')
+    s=replace(s,'      if (p + 4 > b + size) {','      if ((size_t)(b + size - p) < 4) {')
+    s=replace(s,'      const uint8_t *q = p + 4, *end = p + len;\n      if (len < 4 || end > b + size) {',
+                '      if (len < 4 || len > (size_t)(b + size - p)) {')
+    s=replace(s,'      struct air_metallib_function *f = &lib->functions[lib->num_functions++];',
+                '      const uint8_t *q = p + 4, *end = p + len;\n      struct air_metallib_function *f = &lib->functions[lib->num_functions++];')
+    s=replace(s,'      while (q + 6 <= end && memcmp(q, "ENDT", 4) != 0) {',
+                '      while ((size_t)(end - q) >= 6 && memcmp(q, "ENDT", 4) != 0) {')
+    s=replace(s,'         if (v + vlen > end) {','         if (vlen > (size_t)(end - v)) {')
+    s=replace(s,'      if (module_off + module_size > bc_len) {',
+                '      if (module_off > bc_len || module_size > bc_len - module_off) {')
+    p.write_text(s)
     p=air/'air_to_nir.c';s=p.read_text()
     s=replace(s,'               (*out)[num++].index = idx;',
         '               const char *constant_name = md_str(node, 2);\n               (*out)[num].name = constant_name ? ralloc_strdup(mem_ctx, constant_name) : NULL;\n               (*out)[num++].index = idx;')
@@ -90,19 +109,19 @@ def adapt_backend(donor):
     s=replace(s,marker,marker+'\n   if(device && device->lost)return;\n   if(device)for(unsigned k=0;k<3;k++)for(unsigned i=0;i<device->constant_count[k];i++)free((void*)device->constants[k][i].name);')
     s=replace(s,'.depth_clip_near = 1, .depth_clip_far = 1, .clip_halfz = zs_format != 0,',
                 '.depth_clip_near = 1, .depth_clip_far = 1, .clip_halfz = 1, .scissor = 1,')
+    s=replace(s,'   /* The attachments of the pass must be the attachments the pipeline was compiled for:','''   if(device->lost) {say(why,why_size,"device lost");return -1;}
+   if(draw->native_flags&1)for(unsigned i=0;i<4;i++) {
+      if(!isfinite(draw->native_viewport[i]) || (i>=2 && draw->native_viewport[i]<0)) {
+         say(why,why_size,"invalid viewport");return -1;
+      }
+   }
+   /* The attachments of the pass must be the attachments the pipeline was compiled for:''')
     s=replace(s,'   pipe->set_viewport_states(pipe, 0, 1, &(struct pipe_viewport_state){', '''   float vx=0, vy=0, vw=w, vh=h;
    if(draw->native_flags&1) {
       vx=draw->native_viewport[0];vy=draw->native_viewport[1];
       vw=draw->native_viewport[2];vh=draw->native_viewport[3];
-      if(!isfinite(vx)||!isfinite(vy)||!isfinite(vw)||!isfinite(vh)||vw<0||vh<0) {
-         say(why,why_size,"invalid viewport");goto unbind;
-      }
    }
    pipe->set_viewport_states(pipe, 0, 1, &(struct pipe_viewport_state){''')
-    # `unbind` uses fbound/vbound/rc declared below the viewport. C permits the
-    # goto but initializers would be skipped; reject viewport before surface setup.
-    s=replace(s,'         say(why,why_size,"invalid viewport");goto unbind;',
-                '         vw=vh=0; /* encoder rejects this state before recording */')
     s=replace(s,'      .scale = { w / 2.0f, -(h / 2.0f), zfar - znear },\n      .translate = { w / 2.0f, h / 2.0f, znear } });', '''      .scale = { vw / 2.0f, -(vh / 2.0f), zfar - znear },
       .translate = { vx + vw / 2.0f, vy + vh / 2.0f, znear } });
    struct pipe_scissor_state scissor={.minx=0,.miny=0,.maxx=w,.maxy=h};
@@ -158,6 +177,8 @@ def adapt_frontend(donor):
     begin=s.index('\tif (_contents != NULL) {',s.index('@implementation RedwoodMetalBuffer'))
     end=s.index('\n\t[super dealloc];',begin)
     s=s[:begin]+s[end:]
+    s=replace(s,'@property (readonly) struct rwa_buffer *mesaBuffer;', '@property (readonly) struct rwa_buffer *mesaBuffer;\n- (void *)contents;\n- (NSUInteger)length;')
+    s=replace(s,'@interface RedwoodMetalCommandQueue : _MTLCommandQueue', '@interface RedwoodMetalCommandQueue : _MTLCommandQueue\n- (NSUInteger)maxCommandBufferCount;')
     # Real library and function objects retain exact specialization bytes.
     marker='@implementation RedwoodMetalDevice\n'
     s=replace(s,marker,'#include "SweetNativeLibrary.inc"\n\n'+marker)
@@ -339,6 +360,10 @@ def adapt_frontend(donor):
         brace=s.index('{',m.start());end=s.index('}',brace)
         edits.append((brace+1,end,' [_commandBuffer nativeRecordBarrier]; '))
     for begin,end,body in reversed(edits):s=s[:begin]+body+s[end:]
+    for operation in ('encodeSignalEvent','encodeWaitForEvent'):
+        old='- (void)'+operation+':(id)event value:(uint64_t)value { (void)event; (void)value; }'
+        new='- (void)'+operation+':(id)event value:(uint64_t)value { (void)value;if(event)[self failWith:"interface: shared events are not implemented"]; }'
+        s=replace(s,old,new)
     # Errors encountered during encoding must survive commit.
     s=replace(s,'    if(_status>=RW_CB_COMMITTED){[self failWith:"command buffer committed twice"];return;}',
                 '    if(_status==RW_CB_ERROR){[self redwoodReturnSlot];[self redwoodDeliverHandlers];return;}\n    if(_status>=RW_CB_COMMITTED){[self failWith:"command buffer committed twice"];return;}')
