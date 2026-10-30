@@ -1,3 +1,21 @@
+## 2026-10-30: isolated native Metal frontend implementation
+
+User requested a native Metal frontend while Claude continues the active original
+checkout. Work is isolated at `native-metal-work`, branch
+`codex/native-adreno-metal`, based on `3c12309`. No device access or original
+checkout edits. Do not merge blindly over Claude's ongoing pass audit.
+
+Implemented direct Sweet ABI1 MSM transport, pinned HakiOS AIR/Gallium adaptation,
+shared frontend/backend ABI, native metallib/functions and specialization,
+command-buffer batching/lifetime, viewport/scissor and pass-clear corrections,
+separate build workflow and opt-in `sweetmtl=2` plugin selection (0173).
+See `userspace/native-metal/README.md` for actual capabilities and remaining gaps.
+
+Validation so far: pinned source export/preparation succeeded locally; Python
+build/preparation scripts compile. Full macOS build is the next checkpoint.
+No hardware rendering/performance claim. Larger constants, texture views,
+blits/events/heaps/resolve and remaining CoreAnimation shader coverage need work.
+
 ## 2026-10-30 (later): 0171 block profile, 0172 forced write-back: neither helps
 
 0171 (xnu/patches/0171-sweet-gpu-rbbm-status-profile.patch): while a fence is outstanding,
