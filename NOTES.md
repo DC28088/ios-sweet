@@ -1,3 +1,13 @@
+## 2026-10-30 (night): 0173 image packaged, not yet booted
+
+0173 (SH2/SH3 votes at max) CI run 41075906369 on DC28088/ios-sweet (use `gh -R DC28088/ios-sweet`; default
+repo is origin and 404s) PASSED, commit 0d1220f. Kernel xnu/out-0173 (sha256 verified). Payload =
+`tools/mkpayload.py` with shim/out/sweet-0152-haptics.adt and the 0172 cmdline with sweetbuild=173
+(recipe verified byte-identical against payload-0172-rbbm.bin). Image: `bash shim/build.sh <payload>`
+-> shim/out/shim-boot-0173-votes.img, sha256 d09c3145afb88902ba0a54fcc9338c454071ac340fdb7de5fcca64e596b2251e.
+Phone not visible in fastboot/adb at packaging time. NEXT: user puts phone in FASTBOOT, then
+`fastboot boot shim/out/shim-boot-0173-votes.img`, scroll test, compare presents/10 s and gate vs 0172.
+
 ## 2026-10-31 (later): CPU memory bandwidth vs the GPU's
 
 userspace/bench/membench.c (built by ssh.yml step; new workflow files are NOT registered off the
