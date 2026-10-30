@@ -42,9 +42,20 @@ def adapt_backend(donor):
     s=replace(s,'      if (module_off + module_size > bc_len) {',
                 '      if (module_off > bc_len || module_size > bc_len - module_off) {')
     p.write_text(s)
+    p=air/'air_private.h';s=p.read_text()
+    s=replace(s,'   AIR_VAL_PTR_SELECT,','   AIR_VAL_PTR_SELECT,\n   /* Non-escaping pointer local; .elems[0] is the last stored resolution.\n    * Only direct accesses in the alloca block are accepted. */\n   AIR_VAL_LOCAL_PTR_SLOT,')
+    p.write_text(s)
     p=air/'air_to_nir.c';s=p.read_text()
     s=replace(s,'               (*out)[num++].index = idx;',
         '               const char *constant_name = md_str(node, 2);\n               (*out)[num].name = constant_name ? ralloc_strdup(mem_ctx, constant_name) : NULL;\n               (*out)[num++].index = idx;')
+    s=replace(s,'static bool\ntranslate_instruction(struct air_ctx *c, const struct air_inst *in)',
+        '/* A pointer local can be promoted without inventing GPU addresses only when\n * all its uses are direct, non-volatile loads/stores in the allocation block.\n * No GEP/cast/call/escape or cross-block state is accepted. Sequential traversal\n * then preserves every store/load; a load before the first store is refused. */\nstatic bool\nnative_pointer_local(const struct air_ctx *c, const struct air_inst *alloca)\n{\n   for (unsigned bi = 0; bi < c->fn->num_blocks; bi++) {\n      const struct air_block *b = &c->fn->blocks[bi];\n      for (unsigned ii = 0; ii < b->num_insts; ii++) {\n         const struct air_inst *use = b->insts[ii];\n         for (unsigned oi = 0; oi < use->num_operands; oi++) {\n            if (use->operands[oi] != &alloca->base)\n               continue;\n            if (use->parent != alloca->parent || use->is_volatile)\n               return false;\n            if (use->op == AIR_OP_LOAD && oi == 0 &&\n                use->base.type->kind == AIR_TYPE_POINTER)\n               continue;\n            if (use->op == AIR_OP_STORE && oi == 1 &&\n                use->operands[0]->type->kind == AIR_TYPE_POINTER)\n               continue;\n            return false;\n         }\n      }\n   }\n   return true;\n}\n\n'+'static bool\ntranslate_instruction(struct air_ctx *c, const struct air_inst *in)')
+    s=replace(s,'      /* A local holding a POINTER. Scratch memory cannot hold one',
+        '      if (in->aux_type->kind == AIR_TYPE_POINTER && count == 1 &&\n          native_pointer_local(c, in)) {\n         struct air_val *slot = air_val_agg(c, 1);\n         slot->kind = AIR_VAL_LOCAL_PTR_SLOT;\n         air_set(c, &in->base, slot);\n         return true;\n      }\n      /* A local holding a POINTER. Scratch memory cannot hold one')
+    s=replace(s,'      if (p->kind == AIR_VAL_PTR_SELECT) {\n         nir_def *res = load_through_choice',
+        '      if (p->kind == AIR_VAL_LOCAL_PTR_SLOT) {\n         if (!p->elems[0])\n            return air_error(c, "instruction: pointer local loaded before initialization");\n         air_set(c, &in->base, p->elems[0]);\n         return true;\n      }\n      if (p->kind == AIR_VAL_PTR_SELECT) {\n         nir_def *res = load_through_choice')
+    s=replace(s,'      if (val_is_pointerish(sv))\n         return air_error(c, "instruction: a store of a pointer into memory, which this "',
+        '      if (p->kind == AIR_VAL_LOCAL_PTR_SLOT) {\n         if (!val_is_pointerish(sv))\n            return air_error(c, "instruction: non-pointer stored in a pointer local");\n         p->elems[0] = sv;\n         return true;\n      }\n      if (val_is_pointerish(sv))\n         return air_error(c, "instruction: a store of a pointer into memory, which this "')
     p.write_text(s)
     for name in ('sweet_native_ext.h','sweet_native_ext.c'):shutil.copy2(NATIVE/'backend'/name,air/name)
     p=air/'air_metal.h';s=p.read_text()
