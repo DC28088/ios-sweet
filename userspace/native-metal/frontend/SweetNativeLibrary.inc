@@ -121,7 +121,7 @@ static unsigned native_constant_bytes(NSUInteger type) {
         id snapshot=[values copy];
         NSArray *indexed=[snapshot newIndexedConstantArray],*named=[snapshot newNamedConstantArray];
         BOOL valid=YES;
-        for(unsigned group=0;group<2;group++)for(id value in group?named:indexed) {
+        for(unsigned group=0;group<2;group++)for(id value in (group?named:indexed)) {
             if(!native_method_abi(value,@selector(dataType),"Q16@0:8") ||
                !native_method_abi(value,@selector(data),"^v16@0:8") ||
                !native_method_abi(value,group?@selector(name):@selector(index),group?"@16@0:8":"Q16@0:8")) {valid=NO;break;}

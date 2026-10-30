@@ -218,11 +218,13 @@ int get_param(drm_msm_param *p) {
     case MSM_PARAM_MAX_FREQ:return ENOTSUP; // frequency is not exposed by this ABI
     case MSM_PARAM_TIMESTAMP: {
         int e=call(NativeAdrenoMethodGetTimestamp,nullptr,0,&time,sizeof time);
-        if(e)return e;p->value=time.ticks;break;
+        if(e)return e;
+        p->value=time.ticks;break;
     }
     case MSM_PARAM_FAULTS:case MSM_PARAM_SUSPENDS: {
         int e=call(NativeAdrenoMethodGetStatus,nullptr,0,&status,sizeof status);
-        if(e)return e;p->value=p->param==MSM_PARAM_FAULTS?status.faults:status.suspends;break;
+        if(e)return e;
+        p->value=p->param==MSM_PARAM_FAULTS?status.faults:status.suspends;break;
     }
     case MSM_PARAM_PRIORITIES:p->value=1;break;
     case MSM_PARAM_VA_START:p->value=state.info.va_start;break;
@@ -332,7 +334,7 @@ int dispatch(unsigned n,void *data,size_t bytes) {
     REQUEST(DRM_MSM_GEM_SUBMIT,drm_msm_gem_submit,return submit(p))
     REQUEST(DRM_MSM_WAIT_FENCE,drm_msm_wait_fence,
         if(p->flags&~MSM_WAIT_FENCE_FLAGS)return EINVAL;
-        for(auto &f:state.fences)if(f.number==p->fence && f.queue==p->queueid)return wait(f.kernel,remaining(p->timeout));
+        for(auto &f:state.fences)if(f.number==p->fence)return f.queue==p->queueid?wait(f.kernel,remaining(p->timeout)):EINVAL;
         return p->fence && p->fence<state.next?0:EINVAL)
     REQUEST(DRM_MSM_GEM_MADVISE,drm_msm_gem_madvise,
         if(!buffer(p->handle) || p->madv>MSM_MADV_DONTNEED)return EINVAL;
@@ -350,7 +352,8 @@ int dispatch(unsigned n,void *data,size_t bytes) {
         uint32_t id=*(uint32_t*)data;
         for(auto &queue:state.queues)if(queue && queue==id){
             NativeAdrenoAbiQueue request{queue};int e=call(NativeAdrenoMethodCloseQueue,&request,sizeof request);
-            if(!e)queue=0;return e;
+            if(!e)queue=0;
+            return e;
         }return ENOENT;
     }
     default:return ENOTSUP;
@@ -377,7 +380,11 @@ extern "C" int drmIoctl(int,unsigned long request,void *data) {
     if(e){errno=e;return -1;}return 0;
 }
 extern "C" int drmCommandWriteRead(int,unsigned long index,void *data,unsigned long bytes) {
-    Lock lock;int e=dispatch(index,data,bytes);if(e)errno=e;return -e;
+    Lock lock;int e=0;
+    try {e=dispatch(index,data,bytes);}
+    catch(const std::bad_alloc &) {state.lost=true;e=ENOMEM;}
+    if(e)errno=e;
+    return -e;
 }
 extern "C" int drmCommandWrite(int fd,unsigned long index,const void *data,unsigned long bytes) {
     return drmCommandWriteRead(fd,index,const_cast<void*>(data),bytes);
@@ -385,7 +392,9 @@ extern "C" int drmCommandWrite(int fd,unsigned long index,const void *data,unsig
 extern "C" drmVersionPtr drmGetVersion(int) {
     auto v=(drmVersionPtr)calloc(1,sizeof(drmVersion));
     if(v){v->version_major=1;v->version_minor=7;v->name=strdup("msm");v->name_len=3;
-          v->date=strdup("");v->desc=strdup("Sweet NativeAdreno ABI1");v->desc_len=strlen(v->desc);}
+          v->date=strdup("");v->desc=strdup("Sweet NativeAdreno ABI1");
+          if(!v->name || !v->date || !v->desc){drmFreeVersion(v);return nullptr;}
+          v->desc_len=strlen(v->desc);}
     return v;
 }
 extern "C" void drmFreeVersion(drmVersionPtr v) {

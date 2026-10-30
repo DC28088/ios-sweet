@@ -25,7 +25,7 @@ def adapt_backend(donor):
     p.write_text(s)
     p=air/'air_to_nir.c';s=p.read_text()
     s=replace(s,'               (*out)[num++].index = idx;',
-        '               (*out)[num].name = ralloc_strdup(mem_ctx, md_str(node, 2));\n               (*out)[num++].index = idx;')
+        '               const char *constant_name = md_str(node, 2);\n               (*out)[num].name = constant_name ? ralloc_strdup(mem_ctx, constant_name) : NULL;\n               (*out)[num++].index = idx;')
     p.write_text(s)
     for name in ('sweet_native_ext.h','sweet_native_ext.c'):shutil.copy2(NATIVE/'backend'/name,air/name)
     p=air/'air_metal.h';s=p.read_text()
@@ -61,6 +61,7 @@ def adapt_backend(donor):
                 '      native_constants(device, 1, render->mem_ctx, fragment_bitcode, fragment_size, &ffc);')
     s=replace(s,'         air_module_function_constants(render->mem_ctx, vertex_bitcode, vertex_size, &vfc);',
                 '         native_constants(device, 0, render->mem_ctx, vertex_bitcode, vertex_size, &vfc);')
+    s=replace(s,'   pipe->launch_grid(pipe, &grid);','   pipe->launch_grid(pipe, &grid);\n   pipe->memory_barrier(pipe, PIPE_BARRIER_ALL);')
     s=replace(s,'   int rc = finish_or_say_why(device, true, "dispatch", why, why_size);',
                 '   int rc = device->in_command ? 0 : finish_or_say_why(device, true, "dispatch", why, why_size);')
     s=replace(s,'   rc = finish_or_say_why(device, true, "draw", why, why_size);',
@@ -243,7 +244,7 @@ def adapt_frontend(donor):
     s=replace(s,'\tBOOL hasDepthRange;','''\tBOOL hasDepthRange;
     float nativeViewport[4], nativeBlend[4];
     unsigned nativeScissor[4], nativeFlags;
-    BOOL nativeClearOnly;
+    BOOL nativeClearOnly, nativeBarrier;
     unsigned nativeClearMask;
     float nativeClearColors[8][4];''')
     s=replace(s,'\tBOOL _hasDepthRange;','''\tBOOL _hasDepthRange;
@@ -292,7 +293,11 @@ def adapt_frontend(donor):
             _nativeClearColors[i][2]=c.blue;_nativeClearColors[i][3]=c.alpha;
 \t\t\t_clears = YES;''')
     # Clear via Gallium before the first draw. EndEncoding records clear-only passes.
-    s=replace(s,'\t\tif (work->render != nil) {','''        if(work->nativeClearMask || work->clearsDepth || work->clearsStencil) {
+    s=replace(s,'\t\tif (work->render != nil) {','''        if(work->nativeBarrier) {
+            if(rwa_barrier([[_queue device] mesaDevice],why,sizeof why)){[self failWith:why];goto done;}
+            continue;
+        }
+        if(work->nativeClearMask || work->clearsDepth || work->clearsStencil) {
             struct rwa_texture *targets[8]={0};
             for(unsigned i=0;i<work->colorCount;i++)targets[i]=[work->color[i] mesaTexture];
             if(rwa_clear([[_queue device] mesaDevice],targets,work->colorCount,work->nativeClearMask,
@@ -321,6 +326,19 @@ def adapt_frontend(donor):
     }
     [super endEncoding];
 }''',1)
+    at=s.index('- (void)recordWork:(RedwoodMetalWork *)work\n{')
+    s=s[:at]+'''- (void)nativeRecordBarrier {
+    RedwoodMetalWork *work=[RedwoodMetalWork new];work->nativeBarrier=YES;
+    [self recordWork:work];[work release];
+}
+'''+s[at:]
+    # Barriers became necessary once draws stopped waiting individually. Keep
+    # their ordering in the recorded command stream, not at encoding time.
+    edits=[]
+    for m in re.finditer(r'(?m)^- \(void\)memoryBarrier',s):
+        brace=s.index('{',m.start());end=s.index('}',brace)
+        edits.append((brace+1,end,' [_commandBuffer nativeRecordBarrier]; '))
+    for begin,end,body in reversed(edits):s=s[:begin]+body+s[end:]
     # Errors encountered during encoding must survive commit.
     s=replace(s,'    if(_status>=RW_CB_COMMITTED){[self failWith:"command buffer committed twice"];return;}',
                 '    if(_status==RW_CB_ERROR){[self redwoodReturnSlot];[self redwoodDeliverHandlers];return;}\n    if(_status>=RW_CB_COMMITTED){[self failWith:"command buffer committed twice"];return;}')
@@ -328,7 +346,6 @@ def adapt_frontend(donor):
                 '- (id)iosurface                    { return (id)_nativeSurface; }')
     s=replace(s,'\tstruct rwa_texture_shape _shape;','\tstruct rwa_texture_shape _shape;\n    CFTypeRef _nativeSurface;')
     # keep exact IOSurface object for Metal's iosurface accessor as well as winsys ownership
-    at=s.index('\treturn texture;',s.index('- (id)newTextureWithDescriptor:(MTLTextureDescriptor *)d iosurface:')) if False else -1
     # Locate the creation/wrapping code in the donor and add via object_setIvar is
     # unnecessary: private ivars are available to a category setter below.
     begin=s.index('- (NSString *)name\n{',s.index('@implementation RedwoodMetalDevice'))
