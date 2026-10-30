@@ -7,11 +7,10 @@
  * IOAcceleratorES user client: buffers, host-page import (an IOSurface's
  * pages), client-chosen IOVAs, PM4 submission, CP fences and timestamps.
  *
- * The kernel wraps every submission with the CP prologue and the
- * CACHE_FLUSH_TS + WHERE_AM_I fence, so callers submit plain PM4 and get a
- * fence value back. All entry points are thread-safe only in the sense that
- * the underlying IOKit connection is; a driver should serialise submissions
- * (the GPU has one ring).
+ * The kernel appends the CACHE_FLUSH_TS + WHERE_AM_I completion fence to every
+ * submission, so callers submit plain PM4 and get a fence value back. All entry
+ * points are thread-safe only in the sense that the underlying IOKit connection
+ * is; a driver should serialise submissions (the GPU has one ring).
  */
 #ifndef SWEET_GPU_H
 #define SWEET_GPU_H
