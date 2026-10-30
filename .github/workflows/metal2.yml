@@ -15,7 +15,7 @@ jobs:
           rustup toolchain install 1.98.0 --profile minimal
           rustup target add aarch64-apple-ios --toolchain 1.98.0
           python3 --version
-      - name: Host test: PM4 builder
+      - name: Host test of the PM4 builder
         run: |
           clang++ -std=c++17 -Wall -Wextra -I userspace/native/src \
             userspace/native/test/pm4_test.cpp -o "$RUNNER_TEMP/sweet-pm4-test"
