@@ -1,3 +1,24 @@
+## 2026-10-30: native hotfix still failed; ORIGINAL frontend restored live
+
+c734767 CI41095763883 PASSED; downloaded and verified legacy bundle. Used live
+file server to stage six files, readback-verified every hash, refused concurrent
+changes against5d3b2bb. Swapped bundle over SSH; toybox sync command unavailable,
+so kernel file-server SYNC used instead. Active corrected backend readback hash
+matched c734767 manifest. Restarted BackBoard. Same pointer-store rejection
+continued: restricted non-escaping-local promotion does NOT cover failing AIR.
+To recover user interaction, restored full original pre-native bundle LIVE from
+/private/var/db/sweet-native-backup-5d3b2bb to active SweetMetal2.bundle, saving
+c734767 in /private/var/db/sweet-native-trial-c734767. Original native5d3b2bb
+retained /private/var/db/sweet-native-trial-5d3b2bb. Kernel file server SYNC done;
+active original executable readback SHA256 b1f1e3d65e43371b58f4382cf4b31ec830ff4a19f86e067c0352b79f38d4dccc
+matches pre-native snapshot. Restarted BackBoard PID696 overSSH; live GPU methods
+resumed. User interaction confirmation pending. NO new image boot/reboot.
+Do not describe this rollback as a native acceleration fix. Native compiler
+needs exact failing shader dump + pointer-store destination/use graph analysis.
+Current raw delta restore scripts are stale after live filesystem changes;
+NEVER apply old block delta against the now-mutated filesystem. Use bundle-based
+rollback/installation and fresh read-only snapshots for future raw changes.
+
 ## 2026-10-30: requested SpringBoard restart sent over USB SSH
 
 User explicitly asked to restart SpringBoard. USB SSH works with original
