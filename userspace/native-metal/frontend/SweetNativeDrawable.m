@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #import <Foundation/Foundation.h>
-#include <IOSurface/IOSurface.h>
+#include <IOSurface/IOSurfaceRef.h>
 #include <stdio.h>
 #include <string.h>
 #include "redwood_drawable.h"

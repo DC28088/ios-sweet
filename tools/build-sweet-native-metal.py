@@ -98,7 +98,7 @@ libsweetnative = shared_library(
     idep_xmlconfig, dep_libdrm],
   link_with : [libgallium, libgalliumvl_stub, libfreedrenowinsys],
   gnu_symbol_visibility : 'default',
-  link_args : ['-Wl,-install_name,@loader_path/libSweetNativeBackend.dylib'],
+  link_args : ['-Wl,-install_name,@loader_path/libSweetNativeBackend.dylib', '-Wl,-headerpad_max_install_names'],
   build_by_default : false, install : false,
 )
 ''')

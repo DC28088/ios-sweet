@@ -5,7 +5,7 @@
 #include "xf86drm.h"
 #include "NativeAdrenoABI.h"
 #include "drm-uapi/msm_drm.h"
-#include <IOSurface/IOSurface.h>
+#include <IOSurface/IOSurfaceRef.h>
 #include <IOKit/IOKitLib.h>
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
