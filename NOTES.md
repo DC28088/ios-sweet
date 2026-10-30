@@ -1,3 +1,21 @@
+## 2026-10-30: native frontend INSTALLED and temporary 0172 boot issued
+
+User explicitly approved: "yes write it and boot the image". Fresh preflight
+passed all24 original chunks. apply-delta.py completed: all24 written and fully
+readback verified, state installed-readback-verified. Data 9,895,936 bytes;
+complete original blocks and 12-file original bundle retained for rollback.
+Executed adb reboot bootloader, then fastboot boot exact existing image
+/home/dan/ios-sweet/shim/out/shim-boot-0172-rbbm.img, SHA256 b988abd8a03ce5cd75667a6e3dfb38e9121daf51533cf734ec023f73f343c5e2.
+Fastboot sending and booting both OKAY. No persistent boot/recovery flash.
+Screen outcome PENDING user response; do not claim successful iOS rendering.
+Own USB receiver could not bind UDP5140 because existing receiver PID258634
+(from original checkout, logs/live-0172-membus.txt) owns it. Left that process
+untouched. Existing log has not gained fresh boot output; host currently has
+no phone USB Ethernet interface. Need user screen report and fresh runtime logs.
+No additional image boot authorized by this approval without asking again.
+Local install workspace research/native-install-0172 has manifests, delta,
+apply-delta.log and backups. Installation.json records boot issued, not qualified.
+
 ## 2026-10-30: native frontend installation READY; awaiting approval
 
 Corrected 16 GiB overlay passed full fsck; six native bundle hashes passed from
