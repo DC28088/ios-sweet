@@ -206,6 +206,43 @@ cpp_std = 'c++17'
       completion='synchronous once per command buffer; no per-draw fence waits',
       files={str(p.relative_to(bundle)):sha(p) for p in bundle.rglob('*') if p.is_file()})
     (out/'native-metal-build.json').write_text(json.dumps(report,indent=2)+'\n')
+    # Older kernels select this public class/name. Keep a separate package so the
+    # original SweetMetal2 installation is never overwritten by the build itself.
+    legacy=out/'native-legacy'/'SweetMetal2.bundle'
+    if legacy.exists():raise SystemExit('Refusing to overwrite prior compatibility bundle')
+    shutil.copytree(bundle,legacy)
+    shutil.rmtree(legacy/'_CodeSignature')
+    (legacy/'SweetNativeMetal').unlink()
+    alias=WORK/'SweetNativeLegacyAlias.m'
+    alias.write_text('#import <Foundation/Foundation.h>\n'
+      '@interface SweetNativeMetalDevice : NSObject @end\n'
+      '@interface SweetMTL2Device : SweetNativeMetalDevice @end\n'
+      '@implementation SweetMTL2Device @end\n')
+    alias_obj=WORK/'SweetNativeLegacyAlias.o'
+    run(clang,*common,'-c',alias,'-o',alias_obj)
+    legacy_exe=legacy/'SweetMetal2'
+    run(clangxx,*flags,'-bundle','-Wl,-dead_strip',frontend,drawable,alias_obj,
+        legacy/'libSweetNativeBackend.dylib','-framework','Foundation',
+        '-framework','Metal','-framework','IOKit','-framework','IOSurface',
+        '-framework','CoreFoundation','-lobjc','-o',legacy_exe)
+    (legacy/'Info.plist').write_bytes(plistlib.dumps(dict(
+      CFBundleIdentifier='org.sweet.SweetMetal2',CFBundleExecutable='SweetMetal2',
+      CFBundlePackageType='BNDL',CFBundleVersion='1',MinimumOSVersion='16.0',
+      NSPrincipalClass='SweetMTL2Device')))
+    run('strip','-x',legacy_exe)
+    run('codesign','--force','--sign','-','--pagesize','4096',legacy_exe)
+    run('codesign','--force','--sign','-','--pagesize','4096',legacy)
+    run('codesign','--verify','--strict',legacy)
+    legacy_dependencies=output('otool','-L',legacy_exe)
+    if any(x in legacy_dependencies.lower() for x in ('vulkan','turnip','metal2vulkan')):
+        raise SystemExit('Unexpected Vulkan dependency in compatibility build')
+    (out/'native-legacy'/'build.json').write_text(json.dumps(dict(
+      source_commit=report['source_commit'],built=True,installed=False,
+      hardware_qualified=False,kernel_plugin='SweetMetal2',
+      kernel_class='SweetMTL2Device',required_boot_args='sweetmtl=2 sweetgles=0',
+      kernel_changed=False,dependencies=legacy_dependencies,
+      files={str(p.relative_to(legacy)):sha(p) for p in legacy.rglob('*') if p.is_file()}
+    ),indent=2)+'\n')
     print('Built',bundle,'; hardware operation and CoreAnimation coverage remain unqualified.',flush=True)
 
 if __name__=='__main__':main()

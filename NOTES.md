@@ -1,3 +1,14 @@
+## 2026-10-30: older-kernel native compatibility build
+
+User requested using the older XNU artifact. Read-only inspection of original
+xnu/out-0172/kernel.development.sweet confirms SweetMetal2/SweetMTL2Device and
+scoped submission. Build now emits separate native-legacy/SweetMetal2.bundle
+with an actual Objective-C SweetMTL2Device subclass of SweetNativeMetalDevice,
+the same backend, matching plist, fresh signatures and hash report. This avoids
+kernel patching/rebuild; requires sweetmtl=2 sweetgles=0 and runtime ABI checks.
+Build pending. Do NOT use the existing fixed-Vulkan-file installer for it.
+No phone access or installation. User still requires permission before boot.
+
 ## 2026-10-30: matching native kernel build queued
 
 User reports FASTBOOT; no device command was sent. Dispatched xnu.yml on

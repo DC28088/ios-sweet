@@ -20,6 +20,7 @@ jobs:
         with:
           name: sweet-native-metal-ios16
           path: |
+            userspace/out/native-legacy
             userspace/out/SweetNativeMetal.bundle
             userspace/out/native-metal-build.json
             userspace/out/native-metal-dependencies.txt
