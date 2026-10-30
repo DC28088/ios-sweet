@@ -1,0 +1,205 @@
+#!/usr/bin/env python3
+"""Build the direct AIR/freedreno SweetNativeMetal.bundle (macOS, iOS SDK).
+
+This driver has no metal2vulkan or Turnip dependency. Sources are pinned and
+exported into a fresh private directory, then adapted by prepare-sweet-native-
+metal.py. --prepare-only works on Linux for inspecting/reviewing generated code.
+A local --donor-repo is read with git archive at the pinned revision, never edited.
+"""
+from pathlib import Path
+import argparse
+import hashlib
+import importlib.util
+import json
+import os
+import plistlib
+import shutil
+import subprocess
+import sys
+import tarfile
+import urllib.request
+
+ROOT=Path(__file__).resolve().parents[1]
+NATIVE=ROOT/'userspace/native-metal'
+INPUTS=json.loads((NATIVE/'inputs.json').read_text())
+WORK=ROOT/'research/sweet-native-metal-build'
+
+def run(*args,**kw):
+    print('+',' '.join(str(v) for v in args),flush=True)
+    return subprocess.run([str(v) for v in args],check=True,**kw)
+
+def output(*args,**kw):
+    return subprocess.check_output([str(v) for v in args],text=True,**kw).strip()
+
+def sha(path):
+    digest=hashlib.sha256()
+    with Path(path).open('rb') as stream:
+        for block in iter(lambda:stream.read(1024*1024),b''):digest.update(block)
+    return digest.hexdigest()
+
+def export_donor(repo):
+    if repo is None:
+        repo=WORK/'donor-git'
+        run('git','init','-q',repo)
+        run('git','-C',repo,'fetch','--depth=1',INPUTS['donor_repository'],INPUTS['donor_commit'])
+    revision=output('git','-C',repo,'rev-parse',INPUTS['donor_commit']+'^{commit}')
+    if revision!=INPUTS['donor_commit']:raise SystemExit('Donor pin mismatch')
+    archive=WORK/'donor.tar'
+    with archive.open('wb') as stream:
+        run('git','-C',repo,'archive',revision,'LICENSE','tools/mesa',
+            'userland/src/redwoodmetal.m','userland/src/redwood_drawable.h',
+            'userland/src/redwooddrawable.m',stdout=stream)
+    donor=WORK/'donor';donor.mkdir()
+    with tarfile.open(archive) as tar:tar.extractall(donor,filter='data')
+    run(sys.executable,ROOT/'tools/prepare-sweet-native-metal.py',donor)
+    return donor
+
+def prepare_mesa(donor,archive):
+    if archive is None:
+        archive=WORK/('mesa-'+INPUTS['mesa_version']+'.tar.xz')
+        print('Downloading pinned Mesa archive',flush=True)
+        with urllib.request.urlopen(INPUTS['mesa_url'],timeout=120) as source,archive.open('wb') as destination:
+            shutil.copyfileobj(source,destination)
+    if sha(archive)!=INPUTS['mesa_sha256']:raise SystemExit('Mesa archive checksum mismatch')
+    with tarfile.open(archive) as tar:tar.extractall(WORK,filter='data')
+    mesa=WORK/('mesa-'+INPUTS['mesa_version'])
+    # Runtime library only: the donor air-ir3.patch modifies standalone tools,
+    # which are deliberately not built here. Our Meson target below is explicit.
+    for name in ('air-frontend.patch','freedreno-darwin.patch','ir3-round-default.patch',
+                 'ir3-shift-split.patch','ir3-ssbo-subdword.patch'):
+        with (donor/'tools/mesa'/name).open('rb') as patch:
+            run('patch','--batch','--forward','--fuzz=0','-p1',cwd=mesa,stdin=patch)
+    shutil.copytree(donor/'tools/mesa/air',mesa/'src/compiler/air')
+    shutil.copytree(NATIVE/'transport',mesa/'src/redwood-drm')
+    # Header reconstructed from the same tracked kernel patch series as Metal2.
+    spec=importlib.util.spec_from_file_location('sweet_abi',ROOT/'tools/build-sweet-metal2.py')
+    abi=importlib.util.module_from_spec(spec);spec.loader.exec_module(abi);abi.WORK=WORK
+    header=abi.kernel_abi_header()
+    shutil.copy2(header,mesa/'src/redwood-drm/NativeAdrenoABI.h')
+    drm=mesa/'src/freedreno/drm/meson.build'
+    text=drm.read_text().replace('../../redwood-drm/redwood_drm.c','../../redwood-drm/sweet_drm.cpp')
+    if 'sweet_drm.cpp' not in text:raise SystemExit('MSM transport Meson integration missing')
+    drm.write_text(text)
+    # The custom winsys needs IOSurface lookup/retention and C++17. Every external
+    # selector remains ABI1, not Linux ioctl numbers sent to an IOKit connection.
+    p=mesa/'meson.build';text=p.read_text()
+    needle="link_args : ['-framework', 'IOKit', '-framework', 'CoreFoundation'],"
+    if text.count(needle)!=1:raise SystemExit('Missing Darwin framework dependency')
+    p.write_text(text.replace(needle,"link_args : ['-framework', 'IOKit', '-framework', 'CoreFoundation', '-framework', 'IOSurface'],"))
+    p=mesa/'src/gallium/meson.build'
+    p.write_text(p.read_text()+'''
+# Sweet native Metal C ABI. AIR -> NIR -> Gallium/ir3, with no Vulkan target.
+libsweetnative = shared_library(
+  'SweetNativeBackend', files('../compiler/air/air_metal.c'),
+  include_directories : [inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium,
+    inc_gallium_aux, inc_gallium_winsys, inc_gallium_winsys_sw,
+    include_directories('drivers')],
+  dependencies : [dep_m, idep_air, idep_mesautil, driver_freedreno,
+    idep_xmlconfig, dep_libdrm],
+  link_with : [libgallium, libgalliumvl_stub, libfreedrenowinsys],
+  gnu_symbol_visibility : 'default',
+  link_args : ['-Wl,-install_name,@loader_path/libSweetNativeBackend.dylib'],
+  build_by_default : false, install : false,
+)
+''')
+    return mesa,header
+
+def main():
+    global WORK
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--donor-repo',type=Path)
+    parser.add_argument('--mesa-archive',type=Path)
+    parser.add_argument('--prepare-only',action='store_true',help='export/adapt donor without compiling')
+    parser.add_argument('--work',type=Path,default=WORK)
+    args=parser.parse_args()
+    WORK=args.work.resolve()
+    if WORK.exists():raise SystemExit('Refusing to reuse build tree: '+str(WORK))
+    if not args.prepare_only and sys.platform!='darwin':raise SystemExit('Full bundle build requires macOS and the iPhoneOS SDK')
+    WORK.mkdir(parents=True)
+    donor=export_donor(args.donor_repo)
+    if args.prepare_only:
+        print('Prepared source only; no binary compiled.',flush=True);return
+    mesa,header=prepare_mesa(donor,args.mesa_archive)
+    sdk=output('xcrun','--sdk','iphoneos','--show-sdk-path')
+    clang=output('xcrun','--sdk','iphoneos','--find','clang')
+    clangxx=output('xcrun','--sdk','iphoneos','--find','clang++')
+    flags=['-target','arm64-apple-ios16.0','-isysroot',sdk,'-O2','-fstack-protector-strong']
+    venv=WORK/'venv';run(sys.executable,'-m','venv',venv)
+    run(venv/'bin/python3','-m','pip','install','meson==1.7.2','Mako==1.3.10','PyYAML==6.0.2','packaging==24.2')
+    env=dict(os.environ);env['PATH']=str(venv/'bin')+os.pathsep+env.get('PATH','')
+    cross=WORK/'ios.cross'
+    cross.write_text('''[binaries]
+c = %s
+cpp = %s
+objc = %s
+ar = %s
+strip = %s
+pkg-config = '/usr/bin/false'
+[host_machine]
+system = 'darwin'
+subsystem = 'ios'
+cpu_family = 'aarch64'
+cpu = 'arm64'
+endian = 'little'
+[properties]
+needs_exe_wrapper = true
+[built-in options]
+c_args = %s
+cpp_args = %s
+c_link_args = %s
+cpp_link_args = %s
+cpp_std = 'c++17'
+'''%(repr(clang),repr(clangxx),repr(clang),repr(output('xcrun','--find','ar')),
+     repr(output('xcrun','--find','strip')),repr(flags),repr(flags),repr(flags),repr(flags)))
+    build=WORK/'build-ios'
+    options=['-Dgallium-drivers=freedreno','-Dfreedreno-kmds=msm','-Dvulkan-drivers=',
+      '-Dplatforms=','-Dglx=disabled','-Degl=disabled','-Dgbm=disabled','-Dosmesa=false',
+      '-Dopengl=false','-Dgles1=disabled','-Dgles2=disabled','-Dllvm=disabled',
+      '-Dshared-glapi=disabled','-Dzstd=disabled','-Dxmlconfig=disabled','-Dexpat=disabled',
+      '-Dshader-cache=disabled','-Dvalgrind=disabled','-Dlibunwind=disabled','-Dglvnd=disabled',
+      '-Dvideo-codecs=','-Dtools=','-Dgallium-vdpau=disabled','-Dgallium-va=disabled',
+      '-Dgallium-xa=disabled','-Dlmsensors=disabled','-Dbuild-tests=false',
+      '-Dbuildtype=release','-Db_ndebug=true']
+    with (WORK/'configure.log').open('w') as log:
+        run(venv/'bin/meson','setup',build,mesa,'--cross-file',cross,'--wrap-mode=nodownload',*options,env=env,stdout=log,stderr=subprocess.STDOUT)
+    # Capture source diagnostics early, before the full Mesa dependency graph.
+    src=donor/'userland/src';air=mesa/'src/compiler/air'
+    frontend=WORK/'SweetNativeMetal.o';drawable=WORK/'SweetNativeDrawable.o'
+    common=[*flags,'-fno-objc-arc','-fblocks','-Wall','-Werror=implicit-function-declaration',
+            '-I'+str(air),'-I'+str(src)]
+    run(clang,*common,'-c',src/'redwoodmetal.m','-o',frontend)
+    run(clang,*common,'-c',src/'redwooddrawable.m','-o',drawable)
+    with (WORK/'ninja.log').open('w') as log:
+        run('ninja','-j','3','-C',build,'src/gallium/libSweetNativeBackend.dylib',env=env,stdout=log,stderr=subprocess.STDOUT)
+    out=ROOT/'userspace/out';out.mkdir(parents=True,exist_ok=True)
+    bundle=out/'SweetNativeMetal.bundle'
+    if bundle.exists():raise SystemExit('Refusing to overwrite prior bundle')
+    bundle.mkdir();backend=bundle/'libSweetNativeBackend.dylib'
+    shutil.copy2(build/'src/gallium/libSweetNativeBackend.dylib',backend)
+    run('install_name_tool','-id','@loader_path/libSweetNativeBackend.dylib',backend)
+    executable=bundle/'SweetNativeMetal'
+    run(clangxx,*flags,'-bundle','-Wl,-dead_strip',frontend,drawable,backend,
+        '-framework','Foundation','-framework','Metal','-framework','IOKit',
+        '-framework','IOSurface','-framework','CoreFoundation','-lobjc','-o',executable)
+    (bundle/'Info.plist').write_bytes(plistlib.dumps(dict(CFBundleIdentifier='org.sweet.SweetNativeMetal',
+      CFBundleExecutable='SweetNativeMetal',CFBundlePackageType='BNDL',CFBundleVersion='1',
+      MinimumOSVersion='16.0',NSPrincipalClass='SweetNativeMetalDevice')))
+    licenses=bundle/'Licenses';licenses.mkdir()
+    shutil.copy2(donor/'LICENSE',licenses/'HakiOS.txt')
+    shutil.copy2(mesa/'docs/license.rst',licenses/'Mesa.txt')
+    for binary in (backend,executable):
+        run('strip','-x',binary);run('codesign','--force','--sign','-','--pagesize','4096',binary)
+    run('codesign','--force','--sign','-','--pagesize','4096',bundle)
+    run('codesign','--verify','--strict',bundle)
+    dependencies=output('otool','-L',executable)+'\n'+output('otool','-L',backend)
+    if any(x in dependencies.lower() for x in ('vulkan','turnip','metal2vulkan')):
+        raise SystemExit('Unexpected Vulkan dependency in native build')
+    (out/'native-metal-dependencies.txt').write_text(dependencies+'\n')
+    report=dict(INPUTS,built=True,installed=False,hardware_qualified=False,
+      abi_sha256=sha(header),source_commit=output('git','-C',ROOT,'rev-parse','HEAD'),
+      completion='synchronous once per command buffer; no per-draw fence waits',
+      files={str(p.relative_to(bundle)):sha(p) for p in bundle.rglob('*') if p.is_file()})
+    (out/'native-metal-build.json').write_text(json.dumps(report,indent=2)+'\n')
+    print('Built',bundle,'; hardware operation and CoreAnimation coverage remain unqualified.',flush=True)
+
+if __name__=='__main__':main()

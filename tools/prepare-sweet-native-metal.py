@@ -1,0 +1,421 @@
+#!/usr/bin/env python3
+"""Adapt pinned HakiOS AIR/Gallium sources to Sweet; never touch a device.
+
+The input is a disposable export of inputs.json's donor revision. Every edit
+checks its source context so a changed donor cannot silently make another ABI.
+"""
+from pathlib import Path
+import argparse
+import re
+import shutil
+
+ROOT=Path(__file__).resolve().parents[1]
+NATIVE=ROOT/'userspace/native-metal'
+
+def replace(s,old,new,count=1):
+    actual=s.count(old)
+    if actual!=count:raise RuntimeError(f'expected {count} matches, found {actual}: {old[:110]!r}')
+    return s.replace(old,new)
+
+def adapt_backend(donor):
+    air=donor/'tools/mesa/air'
+    p=air/'nir_air.h';s=p.read_text()
+    s=replace(s,'   uint64_t bits;      /* its value, as the bits of its type */',
+                '   uint64_t bits;      /* little-endian packed scalar/small-vector value */\n   const char *name;    /* declared Metal function-constant name */')
+    p.write_text(s)
+    p=air/'air_to_nir.c';s=p.read_text()
+    s=replace(s,'               (*out)[num++].index = idx;',
+        '               (*out)[num].name = ralloc_strdup(mem_ctx, md_str(node, 2));\n               (*out)[num++].index = idx;')
+    p.write_text(s)
+    for name in ('sweet_native_ext.h','sweet_native_ext.c'):shutil.copy2(NATIVE/'backend'/name,air/name)
+    p=air/'air_metal.h';s=p.read_text()
+    s=replace(s,'\tunsigned fragment_buffer_table_count;\n};', '''\tunsigned fragment_buffer_table_count;
+    /* Native ABI extension, shared by frontend and backend in this build. */
+    float native_viewport[4];  /* x,y,width,height */
+    unsigned native_scissor[4]; /* x,y,width,height */
+    float native_blend[4];
+    unsigned native_flags; /* bit0 viewport, bit1 scissor, bit2 blend */
+    unsigned native_cull, native_winding, native_fill;
+};''')
+    p.write_text(s)
+    p=air/'air_metal.c';s=p.read_text()
+    s=replace(s,'#include "air_metal.h"','#include "sweet_native_ext.h"\n#include "util/u_framebuffer.h"\n#include <math.h>')
+    s=replace(s,'   bool software;','''   bool software;
+   bool in_command, lost;
+   struct pipe_framebuffer_state batch_fb;
+   struct rwa_constant constants[3][256];
+   unsigned constant_count[3];''')
+    s=replace(s,'/* PRINTFLIKE,', '''static unsigned native_constants(struct rwa_device *, unsigned, void *, const void *,
+                                  size_t, struct air_constant_value **);
+
+/* PRINTFLIKE,''')
+    # GPU-only build. Keeping a CPU fallback here would disguise failed bring-up.
+    s=replace(s,'   bool software = debug_get_bool_option("RWA_SOFTWARE", false);','   bool software = false;')
+    s=replace(s,'   if (!device->screen)\n      device->screen = sw_screen_create(null_sw_create());','')
+    s=s.replace('#include "target-helpers/inline_sw_helper.h"','').replace('#include "null/null_sw_winsys.h"','')
+    s=replace(s,'      air_module_function_constants(compute->mem_ctx, bitcode, size, &constants);',
+                '      native_constants(device, 2, compute->mem_ctx, bitcode, size, &constants);')
+    s=replace(s,'      air_module_function_constants(mem_ctx, bitcode, size, &constants);',
+                '      native_constants(device, 2, mem_ctx, bitcode, size, &constants);',count=2)
+    s=replace(s,'      air_module_function_constants(render->mem_ctx, fragment_bitcode, fragment_size, &ffc);',
+                '      native_constants(device, 1, render->mem_ctx, fragment_bitcode, fragment_size, &ffc);')
+    s=replace(s,'         air_module_function_constants(render->mem_ctx, vertex_bitcode, vertex_size, &vfc);',
+                '         native_constants(device, 0, render->mem_ctx, vertex_bitcode, vertex_size, &vfc);')
+    s=replace(s,'   int rc = finish_or_say_why(device, true, "dispatch", why, why_size);',
+                '   int rc = device->in_command ? 0 : finish_or_say_why(device, true, "dispatch", why, why_size);')
+    s=replace(s,'   rc = finish_or_say_why(device, true, "draw", why, why_size);',
+                '   rc = device->in_command ? 0 : finish_or_say_why(device, true, "draw", why, why_size);')
+    s=replace(s,'   pipe->set_framebuffer_state(pipe, &fb);', '''   bool same = device->in_command && device->batch_fb.width == fb.width &&
+      device->batch_fb.height == fb.height && device->batch_fb.samples == fb.samples &&
+      device->batch_fb.nr_cbufs == fb.nr_cbufs;
+   for (unsigned i=0; same && i<fb.nr_cbufs; i++)
+      same = device->batch_fb.cbufs[i] &&
+             device->batch_fb.cbufs[i]->texture == fb.cbufs[i]->texture;
+   if (same) same = (!fb.zsbuf && !device->batch_fb.zsbuf) ||
+      (fb.zsbuf && device->batch_fb.zsbuf && fb.zsbuf->texture == device->batch_fb.zsbuf->texture);
+   if (!same) {
+      pipe->set_framebuffer_state(pipe, &fb);
+      if(device->in_command)util_copy_framebuffer_state(&device->batch_fb,&fb);
+   }''')
+    s=replace(s,'   pipe->set_framebuffer_state(pipe, &(struct pipe_framebuffer_state){ 0 });',
+                '   if (!device->in_command) pipe->set_framebuffer_state(pipe, &(struct pipe_framebuffer_state){ 0 });')
+    # Context and batch_fb own references when a draw is deferred.
+    s=s.replace('pipe->surface_destroy(pipe, surf[i]);','pipe_surface_reference(&surf[i], NULL);')
+    s=s.replace('pipe->surface_destroy(pipe, surf[j]);','pipe_surface_reference(&surf[j], NULL);')
+    s=replace(s,'      pipe->surface_destroy(pipe, zsurf);','      pipe_surface_reference(&zsurf, NULL);')
+    s=replace(s,'   if (!done) {\n      say(why, why_size,', '   if (!done) {\n      device->lost = true;\n      say(why, why_size,')
+    # Do not destroy a timed-out context and its in-flight allocations.
+    marker='rwa_device_close(struct rwa_device *device)\n{'
+    s=replace(s,marker,marker+'\n   if(device && device->lost)return;\n   if(device)for(unsigned k=0;k<3;k++)for(unsigned i=0;i<device->constant_count[k];i++)free((void*)device->constants[k][i].name);')
+    s=replace(s,'.depth_clip_near = 1, .depth_clip_far = 1, .clip_halfz = zs_format != 0,',
+                '.depth_clip_near = 1, .depth_clip_far = 1, .clip_halfz = 1, .scissor = 1,')
+    s=replace(s,'   pipe->set_viewport_states(pipe, 0, 1, &(struct pipe_viewport_state){', '''   float vx=0, vy=0, vw=w, vh=h;
+   if(draw->native_flags&1) {
+      vx=draw->native_viewport[0];vy=draw->native_viewport[1];
+      vw=draw->native_viewport[2];vh=draw->native_viewport[3];
+      if(!isfinite(vx)||!isfinite(vy)||!isfinite(vw)||!isfinite(vh)||vw<0||vh<0) {
+         say(why,why_size,"invalid viewport");goto unbind;
+      }
+   }
+   pipe->set_viewport_states(pipe, 0, 1, &(struct pipe_viewport_state){''')
+    # `unbind` uses fbound/vbound/rc declared below the viewport. C permits the
+    # goto but initializers would be skipped; reject viewport before surface setup.
+    s=replace(s,'         say(why,why_size,"invalid viewport");goto unbind;',
+                '         vw=vh=0; /* encoder rejects this state before recording */')
+    s=replace(s,'      .scale = { w / 2.0f, -(h / 2.0f), zfar - znear },\n      .translate = { w / 2.0f, h / 2.0f, znear } });', '''      .scale = { vw / 2.0f, -(vh / 2.0f), zfar - znear },
+      .translate = { vx + vw / 2.0f, vy + vh / 2.0f, znear } });
+   struct pipe_scissor_state scissor={.minx=0,.miny=0,.maxx=w,.maxy=h};
+   if(draw->native_flags&2) {
+      scissor.minx=MIN2(draw->native_scissor[0],w);scissor.miny=MIN2(draw->native_scissor[1],h);
+      scissor.maxx=scissor.minx+MIN2(draw->native_scissor[2],w-scissor.minx);
+      scissor.maxy=scissor.miny+MIN2(draw->native_scissor[3],h-scissor.miny);
+   }
+   pipe->set_scissor_states(pipe,0,1,&scissor);
+   pipe->set_blend_color(pipe,&(struct pipe_blend_color){.color={draw->native_blend[0],draw->native_blend[1],draw->native_blend[2],draw->native_blend[3]}});''')
+    # Cull/fill are explicitly checked by frontend; don't silently ignore them.
+    s+='\n#include "sweet_native_ext.c"\n'
+    p.write_text(s)
+
+def adapt_frontend(donor):
+    src=donor/'userland/src'
+    p=src/'redwoodmetal.m';s=p.read_text()
+    begin=s.index('struct rwa_device;')
+    end=s.index('_Static_assert(',begin)
+    s=s[:begin]+'#include "sweet_native_ext.h"\n#include <pthread.h>\n#include <math.h>\n\n'+s[end:]
+    # Resolve the same-build C ABI directly at load time. No weak or stale backend.
+    s=replace(s,'\tmesa.handle = dlopen("/redwood/lib/libredwoodair.dylib", RTLD_NOW);',
+                '\tmesa.handle = rwa_native_abi()==SWEET_NATIVE_METAL_ABI ? (void *)1 : NULL;')
+    s,n=re.subn(r'\*\(void \*\*\)&mesa\.(\w+) = dlsym\(mesa.handle,\s*"(rwa_\w+)"\);',r'mesa.\1 = \2;',s)
+    if n!=29:raise RuntimeError(f'incomplete symbol adaptation: {n}')
+    s=s.replace('dlclose(mesa.handle);','/* backend is a required @loader_path dependency */')
+    # Remove foreign kernel selectors: resource allocation must use this backend.
+    begin=s.index('static bool\ngpu_param(');end=s.index('/* The kernel\'s gpu interface',begin)
+    s=s[:begin]+'''static bool gpu_param(io_connect_t gpu, uint32_t which, uint64_t *value)
+{
+    (void)gpu;(void)which;(void)value;return false;
+}
+
+'''+s[end:]
+    begin=s.index('\t/* The gpu this driver would actually drive.')
+    end=s.index('\t/* The struct Metal reads',begin)
+    s=s[:begin]+'''    _gpu=IO_OBJECT_NULL;
+    char nativeWhy[512]={0};
+    if(mesa_available())_mesa=mesa.device_open(nativeWhy,sizeof nativeWhy);
+    if(!_mesa) {
+        rw_print("native A618 backend unavailable: %s\\n",nativeWhy);
+        [self release];return nil;
+    }
+    rw_print("native renderer %s; AIR -> NIR -> freedreno, no Vulkan\\n",mesa.device_name(_mesa));
+
+'''+s[end:]
+    begin=s.index('\tif (gpu == IO_OBJECT_NULL || length == 0)',s.index('@implementation RedwoodMetalBuffer'))
+    end=s.index('\n- (struct rwa_buffer *)mesaBuffer',begin)
+    s=s[:begin]+'''    rw_print("native buffer allocation requires the AIR/freedreno backend\\n");
+    [self release];return nil;
+}
+'''+s[end:]
+    begin=s.index('\tif (_contents != NULL) {',s.index('@implementation RedwoodMetalBuffer'))
+    end=s.index('\n\t[super dealloc];',begin)
+    s=s[:begin]+s[end:]
+    # Real library and function objects retain exact specialization bytes.
+    marker='@implementation RedwoodMetalDevice\n'
+    s=replace(s,marker,'#include "SweetNativeLibrary.inc"\n\n'+marker)
+    at=s.index('- (struct rwa_device *)mesaDevice',s.index(marker))
+    s=s[:at]+'''- (id)newLibraryWithFile:(NSString *)path error:(NSError **)error {
+    NSData *data=[NSData dataWithContentsOfFile:path options:0 error:error];
+    return data?[[SweetNativeLibrary alloc] initWithDevice:self data:data error:error]:nil;
+}
+- (id)newLibraryWithURL:(NSURL *)url error:(NSError **)error {
+    return [self newLibraryWithFile:[url path] error:error];
+}
+- (id)newLibraryWithData:(dispatch_data_t)data error:(NSError **)error {
+    if(!data){if(error)*error=native_error("empty metallib data");return nil;}
+    const void *bytes=NULL;size_t length=0;
+    dispatch_data_t mapped=dispatch_data_create_map(data,&bytes,&length);
+    NSData *copy=[NSData dataWithBytes:bytes length:length];
+    id library=[[SweetNativeLibrary alloc] initWithDevice:self data:copy error:error];
+    dispatch_release(mapped);return library;
+}
+- (id)newDefaultLibrary {
+    NSString *path=[[NSBundle mainBundle] pathForResource:@"default" ofType:@"metallib"];
+    return path?[self newLibraryWithFile:path error:NULL]:nil;
+}
+- (id)newDefaultLibraryWithBundle:(NSBundle *)bundle error:(NSError **)error {
+    NSString *path=[bundle pathForResource:@"default" ofType:@"metallib"];
+    if(!path){if(error)*error=native_error("bundle has no default.metallib");return nil;}
+    return [self newLibraryWithFile:path error:error];
+}
+- (id)newLibraryWithSource:(NSString *)source options:(id)options error:(NSError **)error {
+    (void)source;(void)options;if(error)*error=native_error("Metal source compilation is unavailable; supply AIR/metallib");return nil;
+}
+'''+s[at:]
+    # The exact call sites can be found by the C-ABI calls, with the descriptor's
+    # function objects still in scope. Never replace specialized values with zeros.
+    at=s.index('\tstruct rwa_render *render = mesa.render_create(')
+    s=s[:at]+'''    char nativeWhy[512]={0};
+    if(!native_specialize(_mesa,vertex,0,nativeWhy,sizeof nativeWhy) ||
+       !native_specialize(_mesa,fragment,1,nativeWhy,sizeof nativeWhy))
+        return [self fail:error with:[NSString stringWithUTF8String:nativeWhy]];
+'''+s[at:]
+    # Inspect compute context for its actual function variable name.
+    pattern=r'(\tstruct rwa_compute \*compute = mesa\.compute_create\()'
+    match=re.search(pattern,s)
+    if not match:raise RuntimeError('missing compute create')
+    at=match.start()
+    s=s[:at]+'''    char nativeWhy[512]={0};
+    if(!native_specialize(_mesa,function,2,nativeWhy,sizeof nativeWhy))
+        return [self fail:error with:[NSString stringWithUTF8String:nativeWhy]];
+'''+s[at:]
+    # Hold every referenced object through the actual command-buffer fence.
+    s=replace(s,'@implementation RedwoodMetalWork\n@end','''@implementation RedwoodMetalWork
+- (void)dealloc {
+    [pipeline release];[render release];[depth release];[depthStencilState release];[indexBuffer release];
+    for(unsigned i=0;i<8;i++)[color[i] release];
+    for(unsigned i=0;i<RW_MAX_BUFFERS;i++){[vertexBuffers[i] release];[buffers[i] release];[textures[i] release];[samplers[i] release];}
+    [super dealloc];
+}
+@end''')
+    s=replace(s,'\t[_work addObject:work];','''    [work->pipeline retain];[work->render retain];[work->depth retain];[work->depthStencilState retain];[work->indexBuffer retain];
+    for(unsigned i=0;i<8;i++)[work->color[i] retain];
+    for(unsigned i=0;i<RW_MAX_BUFFERS;i++){[work->vertexBuffers[i] retain];[work->buffers[i] retain];[work->textures[i] retain];[work->samplers[i] retain];}
+\t[_work addObject:work];''')
+    # Every commit is one context transaction. This initial implementation waits
+    # once at commit, including on partial failure, before completion callbacks.
+    s=replace(s,'\t_status = RW_CB_COMMITTED;\n\tfor (RedwoodMetalWork *work in _work) {', '''    if(_status>=RW_CB_COMMITTED){[self failWith:"command buffer committed twice"];return;}
+    _status = RW_CB_COMMITTED;
+    if(rwa_command_begin([[_queue device] mesaDevice],why,sizeof why)) {
+        [self failWith:why];[self redwoodReturnSlot];[self redwoodDeliverHandlers];return;
+    }
+\tfor (RedwoodMetalWork *work in _work) {''')
+    s=replace(s,'done:\n\t/* The queue\'s slot goes back here', '''done:
+    {
+        char completionWhy[512]={0};
+        if(rwa_command_end([[_queue device] mesaDevice],completionWhy,sizeof completionWhy))
+            [self failWith:completionWhy];
+        else if(_status!=RW_CB_ERROR)_status=RW_CB_COMPLETED;
+    }
+\t/* The queue's slot goes back here''')
+    s=replace(s,'\tif (_status == RW_CB_ERROR) {\n\t\treturn;\n\t}',
+                '\tif (_status == RW_CB_ERROR || _status == RW_CB_COMPLETED) {\n\t\treturn;\n\t}')
+    s=replace(s,'\tif (_status >= RW_CB_SCHEDULED) {\n\t\t[self redwoodDeliver:handler];\n\t\treturn;\n\t}\n\tif (_completed == nil)',
+                '\tif (_status >= RW_CB_COMPLETED) {\n\t\t[self redwoodDeliver:handler];\n\t\treturn;\n\t}\n\tif (_completed == nil)')
+    # Draw state is appended to the shared C ABI and recorded at encode time.
+    s=replace(s,'\tBOOL hasDepthRange;','''\tBOOL hasDepthRange;
+    float nativeViewport[4], nativeBlend[4];
+    unsigned nativeScissor[4], nativeFlags;
+    BOOL nativeClearOnly;
+    unsigned nativeClearMask;
+    float nativeClearColors[8][4];''')
+    s=replace(s,'\tBOOL _hasDepthRange;','''\tBOOL _hasDepthRange;
+    float _nativeViewport[4], _nativeBlend[4];
+    unsigned _nativeScissor[4], _nativeFlags;
+    unsigned _nativeClearMask;
+    float _nativeClearColors[8][4];''')
+    begin=s.index('- (void)setViewport:(MTLViewport)viewport\n{')
+    end=s.index('/* The depth/stencil state,',begin)
+    s=s[:begin]+'''- (void)setViewport:(MTLViewport)v {
+    if(!isfinite(v.originX)||!isfinite(v.originY)||!isfinite(v.width)||!isfinite(v.height)||v.width<0||v.height<0||
+       !isfinite(v.znear)||!isfinite(v.zfar)) {[_commandBuffer failWith:"invalid viewport"];return;}
+    _nativeViewport[0]=v.originX;_nativeViewport[1]=v.originY;
+    _nativeViewport[2]=v.width;_nativeViewport[3]=v.height;_nativeFlags|=1;
+    _depthRange[0]=v.znear;_depthRange[1]=v.zfar;_hasDepthRange=YES;
+}
+- (void)setScissorRect:(MTLScissorRect)r {
+    if(r.x>UINT32_MAX||r.y>UINT32_MAX||r.width>UINT32_MAX||r.height>UINT32_MAX){[_commandBuffer failWith:"scissor exceeds 32-bit range"];return;}
+    _nativeScissor[0]=r.x;_nativeScissor[1]=r.y;_nativeScissor[2]=r.width;_nativeScissor[3]=r.height;_nativeFlags|=2;
+}
+- (void)setCullMode:(NSUInteger)mode {if(mode)[_commandBuffer failWith:"interface: culling is not implemented"];}
+- (void)setFrontFacingWinding:(NSUInteger)mode {if(mode)[_commandBuffer failWith:"interface: non-default winding is not implemented"];}
+- (void)setTriangleFillMode:(NSUInteger)mode {if(mode)[_commandBuffer failWith:"interface: wireframe is not implemented"];}
+
+'''+s[end:]
+    s=replace(s,'\t(void)r; (void)g; (void)b; (void)a;',
+                '    _nativeBlend[0]=r;_nativeBlend[1]=g;_nativeBlend[2]=b;_nativeBlend[3]=a;_nativeFlags|=4;')
+    s=replace(s,'\twork->hasDepthRange = _hasDepthRange;','''\twork->hasDepthRange = _hasDepthRange;
+    memcpy(work->nativeViewport,_nativeViewport,sizeof _nativeViewport);
+    memcpy(work->nativeScissor,_nativeScissor,sizeof _nativeScissor);
+    memcpy(work->nativeBlend,_nativeBlend,sizeof _nativeBlend);
+    work->nativeFlags=_nativeFlags;
+    work->nativeClearMask=_nativeClearMask;
+    memcpy(work->nativeClearColors,_nativeClearColors,sizeof _nativeClearColors);
+    _nativeClearMask=0;_clears=NO;_clearsDepth=NO;_clearsStencil=NO;''')
+    s=replace(s,'\t\t.fragment_buffer_table_count = work->count,','''\t\t.fragment_buffer_table_count = work->count,
+        .native_flags=work->nativeFlags,
+        .native_viewport={work->nativeViewport[0],work->nativeViewport[1],work->nativeViewport[2],work->nativeViewport[3]},
+        .native_scissor={work->nativeScissor[0],work->nativeScissor[1],work->nativeScissor[2],work->nativeScissor[3]},
+        .native_blend={work->nativeBlend[0],work->nativeBlend[1],work->nativeBlend[2],work->nativeBlend[3]},''')
+    # Independent attachment clear values and exactly one clear per pass.
+    s=replace(s,'\t\tif (i == 0 && [attachment loadAction] == MTLLoadActionClear) {',
+                '\t\tif ([attachment loadAction] == MTLLoadActionClear) {')
+    s=replace(s,'\t\t\t_clears = YES;', '''            _nativeClearMask|=1u<<i;
+            _nativeClearColors[i][0]=c.red;_nativeClearColors[i][1]=c.green;
+            _nativeClearColors[i][2]=c.blue;_nativeClearColors[i][3]=c.alpha;
+\t\t\t_clears = YES;''')
+    # Clear via Gallium before the first draw. EndEncoding records clear-only passes.
+    s=replace(s,'\t\tif (work->render != nil) {','''        if(work->nativeClearMask || work->clearsDepth || work->clearsStencil) {
+            struct rwa_texture *targets[8]={0};
+            for(unsigned i=0;i<work->colorCount;i++)targets[i]=[work->color[i] mesaTexture];
+            if(rwa_clear([[_queue device] mesaDevice],targets,work->colorCount,work->nativeClearMask,
+                         work->nativeClearColors,[work->depth mesaTexture],
+                         work->clearsDepth?&work->clearDepth:NULL,work->clearsStencil?&work->clearStencil:NULL,
+                         why,sizeof why)){[self failWith:why];goto done;}
+        }
+        if(work->nativeClearOnly)continue;
+\t\tif (work->render != nil) {''')
+    s=replace(s,'\t\t.clear_color = work->clears ? work->clearColor : NULL,','\t\t.clear_color = NULL,')
+    s=replace(s,'\t\t.clear_depth = work->clearsDepth ? &work->clearDepth : NULL,','\t\t.clear_depth = NULL,')
+    s=replace(s,'\t\t.clear_stencil = work->clearsStencil ? &work->clearStencil : NULL,','\t\t.clear_stencil = NULL,')
+    marker='- (void)endEncoding\n{\n\t[super endEncoding];\n}'
+    # first is render encoder, second compute: only edit first.
+    at=s.index(marker)
+    s=s[:at]+s[at:].replace(marker,'''- (void)endEncoding
+{
+    if(_nativeClearMask || _clearsDepth || _clearsStencil) {
+        RedwoodMetalWork *work=[RedwoodMetalWork new];work->nativeClearOnly=YES;
+        work->colorCount=_colorCount;for(unsigned i=0;i<8;i++)work->color[i]=_color[i];
+        work->nativeClearMask=_nativeClearMask;memcpy(work->nativeClearColors,_nativeClearColors,sizeof _nativeClearColors);
+        work->depth=_depth;work->clearDepth=_clearDepth;work->clearStencil=_clearStencil;
+        work->clearsDepth=_clearsDepth;work->clearsStencil=_clearsStencil;
+        [_commandBuffer recordWork:work];[work release];
+        _nativeClearMask=0;_clearsDepth=NO;_clearsStencil=NO;
+    }
+    [super endEncoding];
+}''',1)
+    # Errors encountered during encoding must survive commit.
+    s=replace(s,'    if(_status>=RW_CB_COMMITTED){[self failWith:"command buffer committed twice"];return;}',
+                '    if(_status==RW_CB_ERROR){[self redwoodReturnSlot];[self redwoodDeliverHandlers];return;}\n    if(_status>=RW_CB_COMMITTED){[self failWith:"command buffer committed twice"];return;}')
+    s=replace(s,'- (id)iosurface                    { return nil; }',
+                '- (id)iosurface                    { return (id)_nativeSurface; }')
+    s=replace(s,'\tstruct rwa_texture_shape _shape;','\tstruct rwa_texture_shape _shape;\n    CFTypeRef _nativeSurface;')
+    # keep exact IOSurface object for Metal's iosurface accessor as well as winsys ownership
+    at=s.index('\treturn texture;',s.index('- (id)newTextureWithDescriptor:(MTLTextureDescriptor *)d iosurface:')) if False else -1
+    # Locate the creation/wrapping code in the donor and add via object_setIvar is
+    # unnecessary: private ivars are available to a category setter below.
+    begin=s.index('- (NSString *)name\n{',s.index('@implementation RedwoodMetalDevice'))
+    end=s.index('\n/*',begin)
+    s=s[:begin]+'''- (NSString *)name
+{
+    return @"Adreno 618 (Sweet Native Metal)";
+}
+'''+s[end:]
+    s=replace(s,'@property (readonly) struct rwa_texture *mesaTexture;',
+                '@property (readonly) struct rwa_texture *mesaTexture;\n- (void)nativeAttachSurface:(void *)surface;')
+    begin=s.index('\treturn [[RedwoodMetalTexture alloc] initWithRedwoodDevice:self',s.index('- (id)newTextureWithDescriptor:(MTLTextureDescriptor *)d iosurface:'))
+    end=s.index('\n}',begin)
+    s=s[:begin]+'''    RedwoodMetalTexture *result=[[RedwoodMetalTexture alloc] initWithRedwoodDevice:self texture:texture shape:&shape];
+    [result nativeAttachSurface:s];return result;'''+s[end:]
+    at=s.index('+ (void)load',s.index('@implementation RedwoodMetalTexture'))
+    s=s[:at]+'''- (void)nativeAttachSurface:(void *)surface {
+    if(_nativeSurface)CFRelease(_nativeSurface);
+    _nativeSurface=surface?CFRetain(surface):NULL;
+}
+'''+s[at:]
+    begin=s.index('- (void)dealloc',s.index('@implementation RedwoodMetalTexture'))
+    at=s.index('\n\t[super dealloc];',begin)
+    s=s[:at]+'\n    if(_nativeSurface)CFRelease(_nativeSurface);'+s[at:]
+    # Resources retain their owning device even when the application releases it.
+    for cls in ('RedwoodMetalBuffer','RedwoodMetalTexture','RedwoodMetalComputePipeline','RedwoodMetalRenderPipeline','RedwoodMetalArgumentEncoder'):
+        begin=s.index('@implementation '+cls)
+        end=s.index('\n@end',begin)
+        part=s[begin:end]
+        part=part.replace('_owner = device;','_owner = [device retain];')
+        if '_owner = [device retain];' in part:
+            part=part.replace('[super dealloc];','[_owner release];[super dealloc];')
+        s=s[:begin]+part+s[end:]
+    # Never globally replace methods on Apple's function class. Native functions
+    # implement their own argument-encoder entrypoints.
+    at=s.index('static void\nensure_function_encoder(void)\n{')
+    s=s[:at]+'''static void
+ensure_function_encoder(void)
+{
+    /* SweetNativeFunction owns this API; no process-wide Objective-C swizzle. */
+}
+'''
+    s=s.replace('RedwoodMetal','SweetNativeMetal')
+    s=s.replace('redwoodmetal[','SweetNativeMetal[')
+    p.write_text(s)
+    shutil.copy2(NATIVE/'frontend/SweetNativeLibrary.inc',src/'SweetNativeLibrary.inc')
+    shutil.copy2(NATIVE/'frontend/SweetNativeDrawable.m',src/'redwooddrawable.m')
+    # The donor includes structs by hand in two files; only the drawable shim's
+    # geometry record remains local. The AIR header itself is shared above.
+    return p
+
+def serialize_methods(path):
+    s=path.read_text()
+    support='''
+// Gallium has one context per device. Serialize all object entrypoints, not just
+// commits, because pipeline creation and CPU texture transfers also use it.
+static pthread_mutex_t nativeObjectLock;
+static pthread_once_t nativeLockOnce=PTHREAD_ONCE_INIT;
+static void nativeLockInit(void){pthread_mutexattr_t a;pthread_mutexattr_init(&a);pthread_mutexattr_settype(&a,PTHREAD_MUTEX_RECURSIVE);pthread_mutex_init(&nativeObjectLock,&a);pthread_mutexattr_destroy(&a);}
+static int nativeLock(void){pthread_once(&nativeLockOnce,nativeLockInit);pthread_mutex_lock(&nativeObjectLock);return 0;}
+static void nativeUnlock(int *unused){(void)unused;pthread_mutex_unlock(&nativeObjectLock);}
+#define NATIVE_OBJECT_LOCK __attribute__((cleanup(nativeUnlock))) int nativeGuard = nativeLock()
+'''
+    at=s.index('static struct {\n\tvoid *handle;')
+    s=s[:at]+support+s[at:]
+    # Only definitions, not @interface declarations. A method's next semicolon
+    # appears before its opening brace for declarations.
+    insert=[]
+    for m in re.finditer(r'(?m)^[+-] \(',s):
+        brace=s.find('{',m.start());semi=s.find(';',m.start())
+        if brace>=0 and (semi<0 or brace<semi):insert.append(brace+1)
+    for at in reversed(insert):s=s[:at]+' NATIVE_OBJECT_LOCK; '+s[at:]
+    path.write_text(s)
+    p=path.parent/'SweetNativeLibrary.inc';s=p.read_text();insert=[]
+    for m in re.finditer(r'(?m)^[+-] \(',s):
+        brace=s.find('{',m.start());semi=s.find(';',m.start())
+        if brace>=0 and (semi<0 or brace<semi):insert.append(brace+1)
+    for at in reversed(insert):s=s[:at]+' NATIVE_OBJECT_LOCK; '+s[at:]
+    p.write_text(s)
+
+def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('donor',type=Path,help='disposable export of the pinned donor')
+    args=parser.parse_args()
+    adapt_backend(args.donor)
+    frontend=adapt_frontend(args.donor)
+    serialize_methods(frontend)
+    print('Prepared native Sweet Metal sources:',args.donor)
+
+if __name__=='__main__':main()
