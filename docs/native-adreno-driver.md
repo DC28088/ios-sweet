@@ -63,6 +63,7 @@ pulled read-only over SSH):
 | --- | --- |
 | container read, AIR parsed | 141 |
 | translated to NIR (`nir_validate`) | 135 |
+| compiled by ir3 to A618 machine code | 135 |
 | failed | 6 |
 
 The six failures are:
@@ -75,9 +76,13 @@ The six failures are:
 
 Everything else CoreAnimation needs is covered, including `std_vert0_lpf`,
 `upsample_frag_lpf`, `downsample_4_frag_lpf`, `downsample_8_frag_lpf`,
-`variable_blur_*`, the path shaders and the blend/copy shaders. Compiling those
-135 through ir3 is the next compiler step (they already compile in HackiOS's
-tree; see `docs/air.md` there for the 321/456 system-wide result).
+`variable_blur_*`, the path shaders and the blend/copy shaders. All 135 that
+translate also compile through ir3 to A618 machine code here (the same pass
+order as `ir3_cmdline`'s AIR path, A618 gpu-id 618); for example
+`downsample_4_frag_lpf` is 42 instructions / 72 dwords and
+`variable_blur_frag_lpf` 382 / 608. This is compilation, not correctness: no
+pixel has been compared against Apple's result yet, and binding/constant
+layouts are the driver's job.
 
 Reusing this compiler is the difference between a multi-month LLVM backend and
 a build-integration job. The AIR frontend is a Mesa subdirectory and ir3 is

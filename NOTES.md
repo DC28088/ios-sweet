@@ -11,8 +11,10 @@ codex/adreno-power-audit; nothing here changes it.
 - Compiler evidence (host, Linux gcc, no clang): Mesa 25.0.7 + hackios-sweet AIR patches build
   and run here. Against the phone's own QuartzCore default.metallib (sha256
   11c74cc42ce5137b73d44d427f75764f886656d4ddb374422d56b609ed2762d9, pulled read-only over
-  SSH): 141 modules, 135 translate to NIR; 6 fail (fixed_frag_lph_cph/cpf pointer store under a
-  function constant; tile_downsample_1/2/4/8 air.imageblock).
+  SSH): 141 modules, 135 translate to NIR and all 135 of those compile through ir3 to A618
+  machine code (local sweep with the same AIR pass order as ir3_cmdline; gpu-id 618). 6 fail at
+  translation: fixed_frag_lph_cph/cpf (pointer store under a function constant) and
+  tile_downsample_1/2/4/8 (air.imageblock). Compilation only: no pixel has been compared yet.
 - userspace/native/: sweet_gpu.h/.cpp (NativeAdreno ABI1 over IOAcceleratorES type 0x4147 and
   the NTNL tunnel: BO alloc/import/map/free, CPU map, PM4 submit, CP fence, timestamp),
   sweet_pm4.h (checked type 4/7, CP_MEM_WRITE/EVENT_WRITE/NOP), pm4_test.cpp (host, passes
