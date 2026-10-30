@@ -1,0 +1,22 @@
+name: sweet-bench
+# CPU streaming memory bandwidth benchmark for the phone (what the DRAM delivers; the GPU shares it).
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and sign
+        run: |
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          mkdir -p out
+          $(xcrun --sdk iphoneos --find clang) -arch arm64 -isysroot $SDK -miphoneos-version-min=16.0 -O2 -o out/membench userspace/bench/membench.c
+          codesign --force --sign - --pagesize 4096 --entitlements userspace/ssh/tools.entitlements out/membench
+          codesign --verify --strict out/membench
+          shasum -a 256 out/membench | tee out/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sweet-membench-ios16
+          path: out/
