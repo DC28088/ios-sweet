@@ -24,6 +24,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "sweet_gpu.h"
 #include "sweet_pm4.h"
@@ -193,7 +194,7 @@ void run()
 
 }  // namespace
 
-extern "C" __attribute__((constructor)) static void sweet_native_probe_entry(void)
+static void __attribute__((constructor)) sweet_native_probe_entry(void)
 {
     try {
         if (requested())
