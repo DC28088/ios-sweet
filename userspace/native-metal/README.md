@@ -86,8 +86,9 @@ python3 tools/build-sweet-native-metal.py --prepare-only \
 A fresh work directory is required. The input clone is read using `git archive`
 at the pinned revision; its working tree is never modified.
 
-Kernel patch 0173 adds `sweetmtl=2` to select `SweetNativeMetalDevice` from
-`SweetNativeMetal.bundle`. Existing selection stays the default. The bundle
+Kernel patch 0173 adds `sweetnative=1` to select `SweetNativeMetalDevice` from
+`SweetNativeMetal.bundle`. Use it with `sweetmtl=2` for the existing aligned owned IOSurface rows.
+Existing selection stays the default. The bundle
 alone does not alter a running phone. Installation/boot is deliberately not part
 of the build script while another developer is using the device.
 

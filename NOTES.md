@@ -8,7 +8,9 @@ checkout edits. Do not merge blindly over Claude's ongoing pass audit.
 Implemented direct Sweet ABI1 MSM transport, pinned HakiOS AIR/Gallium adaptation,
 shared frontend/backend ABI, native metallib/functions and specialization,
 command-buffer batching/lifetime, viewport/scissor and pass-clear corrections,
-separate build workflow and opt-in `sweetmtl=2` plugin selection (0173).
+separate build workflow and opt-in `sweetnative=1` plugin selection (0173).
+Keep `sweetmtl=2` for aligned owned rows; its existing meaning is preserved.
+User explicitly requires permission before booting any new image (latest instruction).
 See `userspace/native-metal/README.md` for actual capabilities and remaining gaps.
 
 Validation: pinned source export/preparation and Python compilation pass. Five
@@ -17,11 +19,23 @@ validation, IOSurface offset/retention, timeout quarantine, partial-submit loss)
 These use mock IOKit/Mach and execute no GPU commands. GCC warning-clean syntax
 check also passed against Mesa DRM headers.
 
-CI 41083140933 was superseded while queued. Intel macOS run 41084159383 compiled
-the frontend and applied all Mesa patches, then failed on IOSurface.h, which the
-iOS SDK does not provide; changed to IOSurfaceRef.h. Run 41084956259 builds that
-correction. Further local queue lifetime/descriptor changes await the next CI.
-Full backend link is still pending.
+Native userspace build PASSED: CI 41086252203, source
+`d1ee31905116aa08a94da296c93db317408e78ba`. Both Objective-C objects and
+Mesa AIR/freedreno backend compiled and linked for iOS 16 arm64. Earlier runs
+41084159383/41084956259 exposed unavailable iOS headers/Mach APIs; fixed using
+IOSurfaceRef.h and public vm_allocate/vm_region_64 APIs. Queue slot waits no
+longer hold the global context lock.
+Downloaded artifact: `research/native-metal-artifact-d1ee319/`.
+All six file SHA256 values match native-metal-build.json. Dependency report has
+no Vulkan/Turnip/metal2vulkan library; both binaries are arm64 Mach-O.
+Bundle SHA256: 9001bb76759f856f1bebad34090ec97096cb47d3eb7d55f45081e353fd85980f.
+Backend SHA256: 4ea65603211d141ef3411a8650e1538c0496184a63866576a62985c6677cde85.
+The kernel opt-in correction preserves existing sweetmtl=2 and separately uses
+sweetnative=1. A matching kernel/boot image is NOT built or staged yet.
+No installation, partition write, phone access or boot occurred. Ask the user
+before booting any new image. Next: fill remaining compositor API gaps, build
+the opt-in kernel, then stage a reversible root installation and request boot
+permission. The successfully compiled bundle alone is not a completed GPU fix.
 No hardware rendering/performance claim. Larger constants, texture views,
 blits/events/heaps/resolve and remaining CoreAnimation shader coverage need work.
 
