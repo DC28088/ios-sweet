@@ -1,3 +1,35 @@
+## 2026-10-30 (later): native driver - plan and N0 device/PM4 foundation
+
+The user asked for a native Metal driver (no metal2vulkan, no Turnip) while another agent was
+working on the power audit; this entry is on branch codex/native-driver (worktree
+/tmp/opencode/native-driver), based on 8661f61. That other work continues on
+codex/adreno-power-audit; nothing here changes it.
+- docs/native-adreno-driver.md: architecture and stages N0-N5. Recommended path B: Metal
+  implementation over Mesa's fd6 Gallium driver (state/PM4/GMEM) with the HackiOS AIR -> NIR ->
+  ir3 compiler, instead of writing a PM4 emitter from scratch (path A). The Metal core keeps
+  the fd6 seam narrow so a direct-PM4 backend can replace it later.
+- Compiler evidence (host, Linux gcc, no clang): Mesa 25.0.7 + hackios-sweet AIR patches build
+  and run here. Against the phone's own QuartzCore default.metallib (sha256
+  11c74cc42ce5137b73d44d427f75764f886656d4ddb374422d56b609ed2762d9, pulled read-only over
+  SSH): 141 modules, 135 translate to NIR; 6 fail (fixed_frag_lph_cph/cpf pointer store under a
+  function constant; tile_downsample_1/2/4/8 air.imageblock).
+- userspace/native/: sweet_gpu.h/.cpp (NativeAdreno ABI1 over IOAcceleratorES type 0x4147 and
+  the NTNL tunnel: BO alloc/import/map/free, CPU map, PM4 submit, CP fence, timestamp),
+  sweet_pm4.h (checked type 4/7, CP_MEM_WRITE/EVENT_WRITE/NOP), pm4_test.cpp (host, passes
+  with g++ -Werror), README, and sweet_native_probe.cpp.
+- The probe is compiled into SweetMetal2.bundle and runs from a constructor inside backboardd
+  when /var/local/mtl2-native-probe starts with '1' or /var/local/mtl2-env has
+  SWEET_NATIVE_PROBE=1: opens the user client, allocates a 4 KiB BO, maps it at va_start, has
+  the GPU CP_MEM_WRITE 0x600df00d/0x12345678, waits on the real CP fence, reads back, then
+  closes the connection before Turnip opens it. Log: stderr and /var/local/mtl2-native-probe.log.
+- metal2.yml runs the host PM4 test before the bundle build; build-sweet-metal2.py compiles the
+  three native sources into the bundle.
+OBSERVED: host PM4 test and the compiler coverage above. NOT RUN YET: bundle CI and the hardware
+probe; the phone was left alone because another agent was active on it. Next: dispatch
+sweet-metal2 on codex/native-driver, install the bundle with tools/sweet-install-metal2.sh,
+create /var/local/mtl2-native-probe, restart backboardd, confirm "probe: PASS", then N1
+(libsweetair) or N2 (libdrm shim over ABI 1).
+
 ## 2026-10-30 (night): render-pass audit (bridge 0202) - what Metal asks of the GPU
 
 Bridge patch userspace/metal2/bridge-patches/0202-sweet-render-pass-audit.patch (metal2vulkan
