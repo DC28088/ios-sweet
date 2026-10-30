@@ -1,0 +1,49 @@
+--- a/crates/metal2vulkan-runtime/src/render.rs
++++ b/crates/metal2vulkan-runtime/src/render.rs
+@@ -5648,7 +5648,7 @@
+         buffers: DrawBuffers<'_>,
+         empty: bool,
+     ) -> Result<(), Error> {
+-        if sweet_skip_draw(self.pipeline.as_ref()) {
++        if sweet_skip_draw(self.pipeline.as_ref()) || self.sweet_noop_draw() {
+             return Ok(());
+         }
+         self.sync_heaps();
+@@ -8686,6 +8686,37 @@
+     SWEET_PASS.with(|pass| std::mem::take(&mut *pass.borrow_mut()))
+ }
+ 
++impl RenderCommandEncoder {
++    /// Sweet: a draw that cannot change any pixel is not recorded. It writes no color component of
++    /// any attachment, the pass has no depth or stencil attachment and no visibility buffer, and its
++    /// fragment function is one of CoreAnimation's fixed ones, which have no side effects. (Env
++    /// `SWEET_M2V_KEEP_NOOP_DRAWS` keeps them.)
++    fn sweet_noop_draw(&self) -> bool {
++        use std::sync::OnceLock;
++        static KEEP: OnceLock<bool> = OnceLock::new();
++        if *KEEP.get_or_init(|| std::env::var_os("SWEET_M2V_KEEP_NOOP_DRAWS").is_some()) {
++            return false;
++        }
++        if self.layout.visibility.is_some()
++            || self.layout.depth_stencil.as_ref().is_some_and(|ds| !ds.hidden)
++        {
++            return false;
++        }
++        let Some(state) = self.pipeline.as_ref() else { return false };
++        let RenderStateKind::Graphics(graphics) = state.kind() else { return false };
++        let descriptor = graphics.descriptor();
++        let known = ["fixed_frag_lph_cph", "attachment_clear_frag_lph"]
++            .iter()
++            .any(|name| descriptor.draw_at(0).contains(&format!("`{}`", name)));
++        known
++            && descriptor
++                .color_attachments()
++                .iter()
++                .flatten()
++                .all(|a| a.write_mask.is_empty())
++    }
++}
++
+ /// Sweet experiment (env `SWEET_M2V_SKIP_FRAGMENT=name`): a draw whose fragment function is `name` is dropped. Off unless set.
+ fn sweet_skip_draw(pipeline: Option<&RenderPipelineState>) -> bool {
+     use std::collections::HashMap;
