@@ -29,7 +29,7 @@ struct Buffer {
     uint64_t kernel = 0, iova = 0, size = 0, cpu = 0, last = 0;
     IOSurfaceRef surface = nullptr;
     uint32_t flags = 0;
-    bool own = false, closing = false;
+    bool own = false, closing = false, gpu_dirty = false;
     std::vector<uint8_t> metadata;
 };
 struct Fence { uint32_t number; uint64_t kernel, queue; };
@@ -78,11 +78,30 @@ Buffer *buffer(uint32_t handle) {
     return handle && handle<=MaxBO && state.buffers[handle-1].kernel
         ? &state.buffers[handle-1] : nullptr;
 }
+// Sweet's Adreno does not snoop the CPU caches. 0172 delegates large
+// imported BOs to the client (sweetimportsync=0, sweetimportmin=2048).
+// libSystem sys_dcache_flush is not DMA maintenance on this iOS build.
+// A55/A76 use 64-byte lines; the same EL0 operation is used by the stable
+// SweetMetal2 frontend on this kernel (SCTLR_EL1.UCI permits it).
+void cache_clean_invalidate(const Buffer &b) {
+    __asm__ volatile("dsb sy" ::: "memory");
+    for(uint64_t at=b.cpu; at<b.cpu+b.size; at+=64)
+        __asm__ volatile("dc civac, %0" :: "r"(at) : "memory");
+    __asm__ volatile("dsb sy" ::: "memory");
+}
 int wait(uint64_t fence, uint64_t ns) {
     if (!fence || fence<=state.completed) return 0;
     NativeAdrenoAbiWaitFence req{fence,ns};
     int e=call(NativeAdrenoMethodWaitFence,&req,sizeof req);
-    if (!e) state.completed=std::max(state.completed,fence);
+    if (!e) {
+        // Only after a real GPU fence. Before-submit maintenance removed CPU
+        // dirty lines, so this cannot write stale CPU data over device output.
+        for(auto &b:state.buffers) if(b.kernel && b.gpu_dirty && b.last<=fence) {
+            cache_clean_invalidate(b);
+            b.gpu_dirty=false;
+        }
+        state.completed=std::max(state.completed,fence);
+    }
     return e;
 }
 uint64_t remaining(const drm_msm_timespec &absolute) {
@@ -204,6 +223,7 @@ int open_gpu() {
               !state.info.va_size || (state.params.flags&flags)!=flags)) e=ENOTSUP;
     if(e){IOServiceClose(state.connection);state.connection=0;return e;}
     fprintf(stderr,"SweetNativeMetal: NativeAdreno ABI1 A618 chip=%#x GMEM=%u scoped residency\n",chip,state.info.gmem_bytes);
+    fprintf(stderr,"SweetNativeMetal: explicit imported BO cache ownership; publish before submit, acquire after GPU fence\n");
     return 0;
 }
 int get_param(drm_msm_param *p) {
@@ -272,6 +292,12 @@ int submit(drm_msm_gem_submit *s) {
         else if(c.type!=MSM_SUBMIT_CMD_IB_TARGET_BUF)e=ENOTSUP;
     }
     if(ibs.empty()&&!e)e=EINVAL;
+    // Cache operations must not race an earlier job writing these pages.
+    // Start conservatively with serialized publication; CPU and GPU ownership
+    // transitions, not fence success alone, define visible texture contents.
+    if(!e && !state.fences.empty())e=wait(state.fences.back().kernel,WaitNS);
+    if(!e)for(unsigned i=0;i<s->nr_bos;++i)
+        cache_clean_invalidate(*buffer(bos[i].handle));
     uint64_t last=0;
     for(size_t at=0;at<ibs.size() && !e;at+=NativeAdrenoAbiMaxBuffers) {
         req->commands.buffer_count=std::min<size_t>(NativeAdrenoAbiMaxBuffers,ibs.size()-at);
@@ -285,7 +311,11 @@ int submit(drm_msm_gem_submit *s) {
         if(!e && !reply.fence)e=EPROTO;
         if(!e) {
             last=reply.fence;
-            for(unsigned i=0;i<s->nr_bos;++i)buffer(bos[i].handle)->last=last;
+            for(unsigned i=0;i<s->nr_bos;++i) {
+                Buffer *b=buffer(bos[i].handle);
+                b->last=last;
+                b->gpu_dirty |= (bos[i].flags&MSM_SUBMIT_BO_WRITE)!=0;
+            }
         }
     }
     delete req;
