@@ -318,6 +318,7 @@ air2nir = executable(""")
     p.write_text(s)
     shutil.copy2(NATIVE/'backend/air_live_resources.inc',air/'air_live_resources.inc')
     shutil.copy2(NATIVE/'backend/air_stage_link.inc',air/'air_stage_link.inc')
+    shutil.copy2(NATIVE/'backend/air_vertex_exports.inc',air/'air_vertex_exports.inc')
     for name in ('sweet_native_ext.h','sweet_native_ext.c'):shutil.copy2(NATIVE/'backend'/name,air/name)
     p=air/'air_metal.h';s=p.read_text()
     s=replace(s,'\tunsigned fragment_buffer_table_count;\n};', '''\tunsigned fragment_buffer_table_count;
@@ -331,7 +332,7 @@ air2nir = executable(""")
     p.write_text(s)
     p=air/'air_metal.c';s=p.read_text()
     s=replace(s,'#include "air_metal.h"','#include "sweet_native_ext.h"\n#include "util/u_framebuffer.h"\n#include <math.h>')
-    s=replace(s,'#include "nir_air.h"','#include "nir_air.h"\n#include "air_live_resources.inc"\n#include "air_stage_link.inc"')
+    s=replace(s,'#include "nir_air.h"','#include "nir_air.h"\n#include "air_live_resources.inc"\n#include "air_stage_link.inc"\n#include "air_vertex_exports.inc"')
     s=replace(s,'   slot_shapes(fs, render->frag_slots, render->frag_compare_sampler);',
                 '   native_prune_direct_resources(fs, &render->finfo);\n   slot_shapes(fs, render->frag_slots, render->frag_compare_sampler);')
     s=replace(s,'      if (render->vinfo.stage != MESA_SHADER_VERTEX) {',
@@ -345,7 +346,7 @@ air2nir = executable(""")
     s=replace(s,'static void\nfinalize_for_gallium(nir_shader *nir, struct pipe_screen *screen)\n{',
                 'static bool\nfinalize_for_gallium(nir_shader *nir, struct pipe_screen *screen, char *why, size_t why_size)\n{')
     s=replace(s,'   NIR_PASS(_, nir, nir_lower_io, nir_var_shader_in | nir_var_shader_out,\n            type_size_vec4, nir_lower_io_use_interpolated_input_intrinsics);\n}',
-                '   nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));\n   if (screen->finalize_nir) {\n      char *error = screen->finalize_nir(screen, nir);\n      if (error) {say(why, why_size, "NIR finalization: %s", error);free(error);return false;}\n   }\n   NIR_PASS(_, nir, nir_lower_io, nir_var_shader_in | nir_var_shader_out,\n            type_size_vec4, nir_lower_io_use_interpolated_input_intrinsics);\n   nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));\n   return true;\n}')
+                '   nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));\n   if (screen->finalize_nir) {\n      char *error = screen->finalize_nir(screen, nir);\n      if (error) {say(why, why_size, "NIR finalization: %s", error);free(error);return false;}\n   }\n   NIR_PASS(_, nir, nir_lower_io, nir_var_shader_in | nir_var_shader_out,\n            type_size_vec4, nir_lower_io_use_interpolated_input_intrinsics);\n   native_widen_vertex_exports(nir);\n   nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));\n   return true;\n}')
     s=replace(s,'   finalize_for_gallium(cs, device->screen);',
                 '   if (!finalize_for_gallium(cs, device->screen, why, why_size)) {ralloc_free(cs);return NULL;}')
     s=replace(s,'   finalize_for_gallium(clone, device->screen);',
