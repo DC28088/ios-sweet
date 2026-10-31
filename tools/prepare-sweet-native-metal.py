@@ -43,19 +43,276 @@ def adapt_backend(donor):
                 '      if (module_off > bc_len || module_size > bc_len - module_off) {')
     p.write_text(s)
     p=air/'air_private.h';s=p.read_text()
-    s=replace(s,'   AIR_VAL_PTR_SELECT,','   AIR_VAL_PTR_SELECT,\n   /* Non-escaping pointer local; .elems[0] is the last stored resolution.\n    * Only direct accesses in the alloca block are accepted. */\n   AIR_VAL_LOCAL_PTR_SLOT,')
+    s=replace(s,'   AIR_VAL_PTR_SELECT,','''   AIR_VAL_PTR_SELECT,
+   /* A translation-time pointer cell (air_pointer_cells.inc): .elems[0] is the
+    * one stored resolution, or .cell_src a constant global's pointer
+    * initializer, resolved where it is read. Never bytes in memory.
+    */
+   AIR_VAL_PTR_CELL,''')
+    s=replace(s,'   unsigned num_elems;\n   struct air_val **elems;\n};',
+                '   unsigned num_elems;\n   struct air_val **elems;\n   const struct air_value *cell_src;\n};')
+    s=replace(s,'   const struct air_function *fn;\n','''   const struct air_function *fn;
+   /* translating the static initializers -- and what they call, which is
+    * cached and may be reused by the body: no shadow answers then */
+   bool in_static_init;
+   /* the executable edges of the function translate_body is in */
+   struct air_edges *edges;
+''')
+    s=replace(s,'      bool skip;            /* llvm.* lists, and anything that failed */\n   } *global_plan;','''      bool skip;            /* llvm.* lists, and anything that failed */
+      /* air_pointer_cells.inc */
+      bool cell;            /* a constant wrapping one pointer: .cell_leaf */
+      const struct air_value *cell_leaf;
+      /* program-scope bytes known at translation time: plan_static_constants */
+      uint8_t *shadow, *shadow_known;
+      uint64_t shadow_size;
+   } *global_plan;''')
+    p.write_text(s)
+    shutil.copy2(NATIVE/'backend/air_pointer_cells.inc',air/'air_pointer_cells.inc')
+    shutil.copy2(NATIVE/'tests/air_specialization_check.c',air/'air_specialization_check.c')
+    p=air/'meson.build';s=p.read_text()
+    s=replace(s,"air2nir = executable(","""# Sweet: generic QuartzCore functions against Apple's own specializations
+# (userspace/native-metal/tests/air_specialization_check.c). Host-only.
+air_specialization_check = executable(
+  'air_specialization_check',
+  files('air_specialization_check.c'),
+  dependencies : [dep_m, idep_air],
+  include_directories : [inc_include, inc_src],
+  build_by_default : false,
+  install : false,
+)
+
+air2nir = executable(""")
     p.write_text(s)
     p=air/'air_to_nir.c';s=p.read_text()
     s=replace(s,'               (*out)[num++].index = idx;',
         '               const char *constant_name = md_str(node, 2);\n               (*out)[num].name = constant_name ? ralloc_strdup(mem_ctx, constant_name) : NULL;\n               (*out)[num++].index = idx;')
-    s=replace(s,'static bool\ntranslate_instruction(struct air_ctx *c, const struct air_inst *in)',
-        '/* A pointer local can be promoted without inventing GPU addresses only when\n * all its uses are direct, non-volatile loads/stores in the allocation block.\n * No GEP/cast/call/escape or cross-block state is accepted. Sequential traversal\n * then preserves every store/load; a load before the first store is refused. */\nstatic bool\nnative_pointer_local(const struct air_ctx *c, const struct air_inst *alloca)\n{\n   for (unsigned bi = 0; bi < c->fn->num_blocks; bi++) {\n      const struct air_block *b = &c->fn->blocks[bi];\n      for (unsigned ii = 0; ii < b->num_insts; ii++) {\n         const struct air_inst *use = b->insts[ii];\n         for (unsigned oi = 0; oi < use->num_operands; oi++) {\n            if (use->operands[oi] != &alloca->base)\n               continue;\n            if (use->parent != alloca->parent || use->is_volatile)\n               return false;\n            if (use->op == AIR_OP_LOAD && oi == 0 &&\n                use->base.type->kind == AIR_TYPE_POINTER)\n               continue;\n            if (use->op == AIR_OP_STORE && oi == 1 &&\n                use->operands[0]->type->kind == AIR_TYPE_POINTER)\n               continue;\n            return false;\n         }\n      }\n   }\n   return true;\n}\n\n'+'static bool\ntranslate_instruction(struct air_ctx *c, const struct air_inst *in)')
+    s=replace(s,'   return v && (v->kind == AIR_VAL_PTR || v->kind == AIR_VAL_PTR_SELECT);',
+                '   return v && (v->kind == AIR_VAL_PTR || v->kind == AIR_VAL_PTR_SELECT ||\n                v->kind == AIR_VAL_PTR_CELL);')
+    s=replace(s,'/* -- instructions -','#include "air_pointer_cells.inc"\n\n/* -- instructions -')
+    s=replace(s,'   if (base->kind == AIR_VAL_PTR_SELECT) {\n      struct air_val *a = NULL, *b = NULL;','''   if (base->kind == AIR_VAL_PTR_CELL) {
+      if (!gep_indices_zero(in))
+         return air_error(c, "instruction: getelementptr at an offset into a pointer cell");
+      *out = base;
+      return true;
+   }
+   if (base->kind == AIR_VAL_PTR_SELECT) {
+      struct air_val *a = NULL, *b = NULL;''')
+    s=replace(s,'   if (in->sub == AIR_CAST_BITCAST && dt->kind == AIR_TYPE_POINTER) {\n      struct air_val *v = air_get(c, in->operands[0]);','''   if ((in->sub == AIR_CAST_BITCAST || in->sub == AIR_CAST_ADDRSPACECAST) &&
+       dt->kind == AIR_TYPE_POINTER) {
+      struct air_val *v = air_get(c, in->operands[0]);
+      if (v && (v->kind == AIR_VAL_PTR_CELL ||
+                (v->kind == AIR_VAL_PTR_SELECT && in->sub == AIR_CAST_BITCAST))) {
+         struct air_val *r = retype_pointer(c, v, dt->elem);
+         if (!r)
+            return air_error(c, "instruction: a bitcast of a choice with a side that is "
+                                "not a pointer");
+         air_set(c, &in->base, r);
+         return true;
+      }
+   }
+   if (in->sub == AIR_CAST_BITCAST && dt->kind == AIR_TYPE_POINTER) {
+      struct air_val *v = air_get(c, in->operands[0]);''')
+    s=replace(s,'         /* A choice between two members of an argument buffer cannot be kept','''         /* A condition known at translation time -- function constants, read
+          * through the static initializer -- is no choice: take that side.
+          */
+         nir_def *known_cond = air_get_ssa(c, in->operands[0]);
+         uint64_t take;
+         if (!known_cond)
+            return false;
+         if (fold_scalar(c, known_cond, &take)) {
+            air_set(c, &in->base, take ? pa : pb);
+            return true;
+         }
+         /* A choice between two members of an argument buffer cannot be kept''')
     s=replace(s,'      /* A local holding a POINTER. Scratch memory cannot hold one',
-        '      if (in->aux_type->kind == AIR_TYPE_POINTER && count == 1 &&\n          native_pointer_local(c, in)) {\n         struct air_val *slot = air_val_agg(c, 1);\n         slot->kind = AIR_VAL_LOCAL_PTR_SLOT;\n         air_set(c, &in->base, slot);\n         return true;\n      }\n      /* A local holding a POINTER. Scratch memory cannot hold one')
-    s=replace(s,'      if (p->kind == AIR_VAL_PTR_SELECT) {\n         nir_def *res = load_through_choice',
-        '      if (p->kind == AIR_VAL_LOCAL_PTR_SLOT) {\n         if (!p->elems[0])\n            return air_error(c, "instruction: pointer local loaded before initialization");\n         air_set(c, &in->base, p->elems[0]);\n         return true;\n      }\n      if (p->kind == AIR_VAL_PTR_SELECT) {\n         nir_def *res = load_through_choice')
-    s=replace(s,'      if (val_is_pointerish(sv))\n         return air_error(c, "instruction: a store of a pointer into memory, which this "',
-        '      if (p->kind == AIR_VAL_LOCAL_PTR_SLOT) {\n         if (!val_is_pointerish(sv))\n            return air_error(c, "instruction: non-pointer stored in a pointer local");\n         p->elems[0] = sv;\n         return true;\n      }\n      if (val_is_pointerish(sv))\n         return air_error(c, "instruction: a store of a pointer into memory, which this "')
+        '      if (pointer_cell_alloca(c, in)) {\n         air_set(c, &in->base, air_val_cell(c, in->aux_type, NULL));\n         return true;\n      }\n      /* A local holding a POINTER. Scratch memory cannot hold one')
+    s=replace(s,'   case AIR_OP_LOAD: {\n      struct air_val *p = air_get(c, in->operands[0]);\n      if (!p)\n         return false;\n','''   case AIR_OP_LOAD: {
+      struct air_val *p = air_get(c, in->operands[0]);
+      if (!p)
+         return false;
+      struct air_val *known = p->kind == AIR_VAL_PTR ? shadow_load(c, in, p->ptr) : NULL;
+      if (known) {
+         air_set(c, &in->base, known);
+         return true;
+      }
+      if (p->kind == AIR_VAL_PTR_CELL ||
+          (p->kind == AIR_VAL_PTR_SELECT && in->base.type->kind == AIR_TYPE_POINTER)) {
+         if (in->base.type->kind != AIR_TYPE_POINTER)
+            return air_error(c, "instruction: a number loaded from a pointer cell");
+         struct air_val *v = load_pointer(c, p, in->base.type);
+         if (!v)
+            return false;
+         air_set(c, &in->base, v);
+         return true;
+      }
+''')
+    s=replace(s,'      if (val_is_pointerish(sv))\n         return air_error(c, "instruction: a store of a pointer into memory, which this "','''      if (p->kind == AIR_VAL_PTR_CELL) {
+         if (p->cell_src)
+            return air_error(c, "instruction: a store into a constant pointer");
+         if (p->elems[0])
+            return air_error(c, "instruction: a second store into a pointer cell");
+         if (sv->kind == AIR_VAL_PTR_CELL || !val_is_pointerish(sv))
+            return air_error(c, "instruction: a pointer cell stored with something that is "
+                                "not a resolution");
+         p->elems[0] = sv;
+         return true;
+      }
+      if (val_is_pointerish(sv))
+         return air_error(c, "instruction: a store of a pointer into memory, which this "''')
+    s=replace(s,'      return air_store_ptr(c, p->ptr, v, in->align);',
+                '      shadow_store(c, in, p->ptr, v);\n      return air_store_ptr(c, p->ptr, v, in->align);')
+    s=replace(s,'      } else if (g->addrspace == 3) {\n         /* a static threadgroup array */',
+                '      } else if (g->is_const && g->init && plan_constant_global(c, pl, g)) {\n         /* air_pointer_cells.inc: constant data, or a pointer cell */\n      } else if (g->addrspace == 3) {\n         /* a static threadgroup array */')
+    s=replace(s,'         c->scratch_size += air_type_alloc_size(c->m, g->value_type);\n      }\n   }\n}\n',
+                '         c->scratch_size += air_type_alloc_size(c->m, g->value_type);\n      }\n   }\n   if (!c->error[0])\n      plan_static_constants(c);\n}\n')
+    s=replace(s,'      if (pl->skip)\n         continue;\n      const struct air_global *g = c->m->globals[i];\n      struct air_ptr p = {','''      if (pl->skip)
+         continue;
+      const struct air_global *g = c->m->globals[i];
+      if (pl->cell) {
+         air_set(c, &g->base, air_val_cell(c, g->value_type, pl->cell_leaf));
+         continue;
+      }
+      struct air_ptr p = {''')
+    s=replace(s,'      if (!v)\n         return air_error(c, "interface: function constant %u has no value", ptr.binding), NULL;\n','''      if (!v) {
+         /* Not supplied: what is read is the global's own initializer, which
+          * for a Metal function constant is `undef` -- the uber shaders load
+          * all 58 in their static initializer and guard each optional one
+          * with is_function_constant_defined. Any other initializer is
+          * refused rather than guessed.
+          */
+         bool declared_undef = false;
+         for (unsigned g = 0; c->global_plan && g < c->m->num_globals; g++) {
+            const struct air_global_plan *pl = &c->global_plan[g];
+            const struct air_constant *k = air_value_as_constant(c->m->globals[g]->init);
+            if (!pl->skip && pl->class == AIR_PTR_FUNCTION_CONSTANT &&
+                pl->binding == ptr.binding)
+               declared_undef = k && (k->ckind == AIR_CONST_UNDEF ||
+                                      k->ckind == AIR_CONST_POISON);
+         }
+         if (!declared_undef)
+            return air_error(c, "interface: function constant %u has no value", ptr.binding), NULL;
+         res = nir_undef(&c->b, comps, bits);
+         break;
+      }
+''')
+    s=replace(s,'resolve_pointer_phi(struct air_ctx *c, const struct air_inst *in, const bool *reachable)',
+                'resolve_pointer_phi(struct air_ctx *c, const struct air_inst *in,\n                    const struct air_edges *edges)')
+    s=replace(s,'      if (!in->targets[k] || !reachable[in->targets[k]->index])\n         continue;',
+                '      if (!in->targets[k] ||\n          !edge_possible(edges, in->targets[k]->index, in->parent->index))\n         continue;')
+    s=replace(s,'   for (unsigned oi = 0; oi < num_order; oi++)\n      reachable[order[oi]] = true;\n',
+                '   for (unsigned oi = 0; oi < num_order; oi++)\n      reachable[order[oi]] = true;\n   struct air_edges edges;\n   edges_init(c, &edges, f, reachable);\n   struct air_edges *outer_edges = c->edges;\n   c->edges = &edges;\n')
+    s=replace(s,'      unsigned bi = order[oi];\n      const struct air_block *blk = &f->blocks[bi];\n      nir_block *nb = nir_block_of(c, blk);','''      unsigned bi = order[oi];
+      const struct air_block *blk = &f->blocks[bi];
+      if (!block_executable(&edges, bi)) {
+         /* dead under the function constants: no instruction, no edge out */
+         edges.processed[bi] = true;
+         continue;
+      }
+      nir_block *nb = nir_block_of(c, blk);''')
+    s=replace(s,'            if (!resolve_pointer_phi(c, in, reachable))','            if (!resolve_pointer_phi(c, in, &edges))')
+    s=replace(s,'         struct hash_entry *e = _mesa_hash_table_search(c->phi_regs, in);\n         air_set(c, &in->base,\n','''         const struct air_value *only = single_incoming(&edges, in);
+         if (only) {
+            struct air_val *ov = air_get(c, only);
+            if (!ov)
+               return false;
+            air_set(c, &in->base, ov);
+            continue;
+         }
+         struct hash_entry *e = _mesa_hash_table_search(c->phi_regs, in);
+         air_set(c, &in->base,
+''')
+    s=replace(s,'''         if (term->num_targets == 1) {
+            nir_goto(&c->b, nir_block_of(c, term->targets[0]));
+         } else {
+            nir_def *cond = air_get_ssa(c, term->operands[0]);
+            if (!cond)
+               return false;
+            if (term->targets[0] == term->targets[1])
+               nir_goto(&c->b, nir_block_of(c, term->targets[0]));
+            else
+               nir_goto_if(&c->b, nir_block_of(c, term->targets[0]), cond,
+                           nir_block_of(c, term->targets[1]));
+         }''','''         if (term->num_targets == 1) {
+            edge_take(&edges, bi, term->targets[0]);
+            nir_goto(&c->b, nir_block_of(c, term->targets[0]));
+         } else {
+            nir_def *cond = air_get_ssa(c, term->operands[0]);
+            uint64_t known = 0;
+            if (!cond)
+               return false;
+            if (term->targets[0] == term->targets[1] || fold_scalar(c, cond, &known)) {
+               const struct air_block *to = term->targets[0] == term->targets[1] || known
+                                               ? term->targets[0] : term->targets[1];
+               edge_take(&edges, bi, to);
+               nir_goto(&c->b, nir_block_of(c, to));
+            } else {
+               edge_take(&edges, bi, term->targets[0]);
+               edge_take(&edges, bi, term->targets[1]);
+               nir_goto_if(&c->b, nir_block_of(c, term->targets[0]), cond,
+                           nir_block_of(c, term->targets[1]));
+            }
+         }''')
+    s=replace(s,'         nir_def *cond = air_get_ssa(c, term->operands[0]);\n         if (!cond)\n            return false;\n         nir_block *deflt = nir_block_of(c, term->targets[0]);','''         nir_def *cond = air_get_ssa(c, term->operands[0]);
+         if (!cond)
+            return false;
+         uint64_t known;
+         if (fold_scalar(c, cond, &known)) {
+            const struct air_block *to = switch_known_target(term, known, cond->bit_size);
+            if (to) {
+               edge_take(&edges, bi, to);
+               nir_goto(&c->b, nir_block_of(c, to));
+               break;
+            }
+         }
+         for (unsigned k = 0; k < term->num_targets; k++)
+            edge_take(&edges, bi, term->targets[k]);
+         nir_block *deflt = nir_block_of(c, term->targets[0]);''')
+    s=replace(s,'      default:\n         return air_error(c, "instruction: block %u ends with opcode %u", bi, term->op);\n      }\n   }\n',
+                '      default:\n         return air_error(c, "instruction: block %u ends with opcode %u", bi, term->op);\n      }\n      edges_decided(&edges, bi);\n   }\n   c->edges = outer_edges;\n   if (!edges_check(c, &edges))\n      return false;\n')
+    s=replace(s,'            if (!ce)\n               continue; /* an edge from a block the entry cannot reach */\n',
+                '            if (!ce)\n               continue; /* an edge from a block the entry cannot reach */\n            if (!edge_possible(&edges, in->targets[k]->index, bi))\n               continue; /* an edge the function constants rule out */\n')
+    s=replace(s,'      if (!nir_src_is_const(nir_src_for_ssa(i)))\n         return air_error(c, "instruction: insertelement at a run-time index");','''      if (!nir_src_is_const(nir_src_for_ssa(i))) {
+         /* each component compared against the index and selected: exact */
+         air_set(c, &in->base,
+                 air_val_ssa(c, nir_vector_insert(&c->b, v, x, nir_u2u32(&c->b, i))));
+         return true;
+      }''')
+    s=replace(s,'static void\nrun_static_initializers(struct air_ctx *c)\n{\n',
+                'static void\nrun_static_initializers(struct air_ctx *c)\n{\n   store_initializers(c);\n')
+    s=replace(s,'   nir_cursor saved_consts = c->const_cursor;\n',
+                '   nir_cursor saved_consts = c->const_cursor;\n   struct air_edges *saved_edges = c->edges;\n')
+    s=replace(s,'   c->const_cursor = saved_consts;\n','   c->const_cursor = saved_consts;\n   c->edges = saved_edges;\n')
+    s=replace(s,'   if (!c.error[0])\n      run_static_initializers(&c);\n',
+                '   if (!c.error[0]) {\n      c.in_static_init = true;\n      run_static_initializers(&c);\n      c.in_static_init = false;\n   }\n')
+    s=replace(s,'   nir_index_ssa_defs(nir_shader_get_entrypoint(c.nir));\n',
+                '   drop_unread_scratch(c.nir);\n   nir_index_ssa_defs(nir_shader_get_entrypoint(c.nir));\n')
+    s=replace(s,'      if (ptr && argv[i]->kind == AIR_VAL_PTR && argv[i]->ptr.offset) {',
+                '      uint64_t const_offset;\n      if (ptr && argv[i]->kind == AIR_VAL_PTR && argv[i]->ptr.offset &&\n          !fold_scalar(c, argv[i]->ptr.offset, &const_offset)) {')
+    s=replace(s,'         air_set(c, &f->args[i], argv[i]);   /* the caller\'s own resolution */','''         struct air_val *a = argv[i];
+         if (a->kind == AIR_VAL_PTR && a->ptr.offset) {
+            /* a constant byte offset is an immediate: rebuilt in this impl */
+            struct air_ptr rp = a->ptr;
+            uint64_t bytes = 0;
+            fold_scalar(c, a->ptr.offset, &bytes);   /* checked by the caller above */
+            rp.offset = nir_imm_int(&c->b, bytes);
+            a = air_val_ptr(c, rp);
+         }
+         air_set(c, &f->args[i], a);   /* the caller's own resolution */''')
+    p.write_text(s)
+    p=air/'air_intrinsics.c';s=p.read_text()
+    s=replace(s,'   struct air_tex_name t;\n   if (!parse_tex_name(n->part[0], &t))\n','''   /* metal::texture2d() and its kin: a NULL handle, which is no binding. Every
+    * member but is_null_texture is undefined on one, so a use that reaches
+    * tex_handle is refused there; the QuartzCore uber shaders only phi it with
+    * their texture arguments, on edges their function constants decide.
+    */
+   if (!strncmp(n->part[0], "get_null_", 9) && in->base.type->kind == AIR_TYPE_POINTER) {
+      struct air_ptr p = { .class = AIR_PTR_NONE };
+      air_set(c, &in->base, air_val_ptr(c, p));
+      return true;
+   }
+   struct air_tex_name t;
+   if (!parse_tex_name(n->part[0], &t))
+''')
     p.write_text(s)
     for name in ('sweet_native_ext.h','sweet_native_ext.c'):shutil.copy2(NATIVE/'backend'/name,air/name)
     p=air/'air_metal.h';s=p.read_text()

@@ -1,3 +1,27 @@
+## 2026-10-31: continued Claude native AIR work; offline reproduction PASSES
+
+Found Claude's uncommitted prepare script + air_pointer_cells.inc and
+host specialization check. Preserved and reviewed them. Claude scratchpad:
+/tmp/claude-1000/-home-dan-Documents-Codex-2026-10-19-https-github-com-dc28088-ios-sweet-native-metal-work/963822f7-47a1-423c-84e8-31ee825be375/scratchpad
+contains extracted local QuartzCore corpus and existing Mesa25 host build.
+Fresh pinned donor export /tmp/sweet-native-resume-20261031 prepared, copied
+into host Mesa AIR sources and rebuilt with ninja (exit0, not masked by grep).
+Reproduced c734767 pointer-store failure on generic fixed_frag_lph_cp{h,f};
+new compiler translates both. Ran full offline specialization comparison:
+451 entries /451 specialized modules, match451, mismatch0, genericfail0,
+referencefail0. It compares texture/sampler resource selection after folding;
+NOT numerical equivalence or hardware rendering. Fixed checker return status
+to fail on reference failures and empty corpus as well. Four imageblock compute
+shaders still refused. Reports research/native-resume-20261031/{baseline,current,
+specializations}.log and summary.json (Apple binaries kept out of git).
+Implementation handles one-store entry-block pointer cells across zero-offset
+aliases/selects; constant sampler wrappers and constant globals; static-init
+shadows + function-constant CFG pruning. Remaining dynamic pointers refused.
+Next: iOS CI build and qualify native frontend API/actual render output before
+claiming a GPU fix. No phone access/change/boot in this continuation yet.
+Recommendation to user: retain ios-sweet working hardware baseline; HakiOS UEFI
+migration does not address the compiler blocker. Ask before any image boot.
+
 ## 2026-10-30: user confirms interaction RECOVERED
 
 After restoring the original graphics bundle live, user confirms "yeah its

@@ -149,3 +149,28 @@ non-volatile loads/stores confined to the allocation block. It preserves the
 stored pointer resolution and rejects uninitialized loads, escaping locals and
 cross-block accesses. Compilation and the exact failing shader still need
 qualification; this is not a successful native UI rendering result.
+
+## QuartzCore compiler correction (2026-10-31)
+
+The failing shader was reproduced offline: the generic `fixed_frag_lph_cph`
+and `fixed_frag_lph_cpf` in iOS 16.7.16 / 20H392 store a sampler argument in an
+entry-block alloca, cast/select its address across blocks, then load through
+it. The other side of the choice is a constant global wrapping an inline
+sampler pointer. The previous same-block local promotion cannot express this.
+
+`backend/air_pointer_cells.inc` adds single-store, non-escaping pointer cells,
+constant-global layout, program-constant propagation and executable CFG edges
+under function constants. It preserves resource resolutions and refuses dynamic
+pointer memory it cannot represent. Generic shaders' selected texture/sampler
+bindings match Apple's pre-specialized pipeline modules for all 451 recorded
+QuartzCore pipelines in the local corpus. This checks compiler coverage and
+resource selection, not full numerical/image equivalence or A618 execution.
+Four imageblock compute shaders remain unsupported.
+
+Host comparison target: `src/compiler/air/air_specialization_check` in an adapted
+Mesa build. Run it with the locally extracted QuartzCore `default.metallib`,
+`default.pipelinelib/pipelines.desc`, and `default.pipelinelib/functions` as its
+three arguments. Apple files are local inputs and must not be committed or
+uploaded to public CI. The comparison also fails on reference translation
+errors and an empty corpus. Reproducing the previous pointer-store refusal and
+passing this comparison precede the next native trial.
