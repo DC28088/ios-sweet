@@ -1,3 +1,22 @@
+## Continuation after DeepSeek fa1b6d4: boot requested, USB absent
+
+User explicitly authorized temporary image boot and driver work. Checked clean
+native branch at fa1b6d4 and installed manifest hotfix-fa1b6d4.json. Saved log
+confirms BackBoard2727 imports LA08 RG8 surfaces successfully (IDs1762/1765/
+1764/1763), but user reports rendering still broken. RG8 refusal is therefore
+resolved, not sufficient. No other kernel/frontend source change found in this
+checkout. Original /home/dan/ios-sweet remains51c71fb with unrelated --help file.
+0172-rbbm image SHA verified b988abd8a03ce5cd75667a6e3dfb38e9121daf51533cf734ec023f73f343c5e2.
+Host lsusb sees only hubs/webcam/internal Bluetooth; fastboot and ADB empty.
+Asked user to reconnect cable on FASTBOOT. NO BOOT performed yet this turn.
+Preparing opt-in fixed-shader AIR/function-constant capture to private/var/tmp
+for numerical compiler investigation. Captures must remain local, outside git.
+Next first boot approved0172 once detected, inspect active graphics hashes and
+fresh logs; verify current receiver before starting another UDP5140 listener.
+Potential fast runtime isolation: Mesa FD_MESA_DEBUG=sysmem, or nobin, via
+launchctl environment if available. These are diagnostic choices, not fixes;
+use one at a time and clear settings afterward. Do not promise visual repair.
+
 ## 2026-10-31: b0fdd3f still corrupt; explicit RG8 import refusal identified
 
 Combined shader-finalization/semantic-link CI41169637835 PASSED. Bundle verified
