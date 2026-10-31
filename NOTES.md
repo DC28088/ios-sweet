@@ -1,3 +1,19 @@
+## 2026-10-31: sampler-view correction9dff3a6 installed live
+
+CI41226882019 PASSED. Six artifact hashes, arm64/load-base markers and backend/
+legacy pre-strip symbol files verified. Activeb46ada7 manifest matched; host
+pre-hotfix-9dff3a6 and phone sweet-native-stable-pre-9dff3a6 saved; stage readback,
+SYNC and directory swap completed; restarted BackBoard5987. No image boot.
+Current phone9dff3a6. User asked to use launcher/apps for about1min and report
+whether restart persists; pending. Crash root writer is still unproven; API
+reference-release defect corrected, not yet established as sole root cause.
+Snapshot live-9dff3a6.log and offset9dff3a6-trial-start.json. New backend/frontend
+base log lines plus native-metal-artifact-9dff3a6/native-metal-symbols/*.symbols.txt
+allow symbolicate-native-images.py to resolve FUTURE native crashes for this build.
+Oldb46 crash native base unknown; shared-cache symbols prove malloc corruption.
+Do not claim crash/performance fixed before active result. No pending texture-
+binding experiment included; cd9c9e9 saved locally and deferred for stability.
+
 ## 2026-10-31: BackBoard heap corruption; sampler-view reference correction
 
 User reports launcher restarting; slight animation improvement but under20fps.
