@@ -186,3 +186,14 @@ The local 451-pipeline comparison now also checks live buffer slots. Synthetic
 cases cover dead reads, retained writes, dynamic indices and texture/sampler
 selection. Passing these checks does not establish correct rendered pixels;
 the next hardware trial must confirm compositor output and interaction.
+
+## Imported-memory ownership
+
+The native transport imports task-owned cached pages for all BOs. Sweet kernels
+can delegate cache maintenance of large imports to userspace. The transport
+therefore cleans and invalidates each submitted BO before GPU use, waits for
+prior work before changing ownership, and acquires GPU-written pages only after
+a real fence completes. This uses the same EL0 `dc civac` operation as the
+working SweetMetal2 frontend. LibSystem cache stubs are insufficient here.
+Serialization is intentional until correct rendering is established; it is not
+a performance optimization.

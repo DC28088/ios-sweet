@@ -1,3 +1,25 @@
+## 2026-10-31: b824dcf renders but corrupts; missing import cache ownership found
+
+CI41166004454 PASSED b824dcf. Downloaded and verified six file hashes, arm64
+Mach-O and direct dependencies. Live installation backed up all12 stable files,
+staged+readback verified six native files, swapped and restarted BackBoard401.
+BackBoard841 ran native AIR/freedreno; buffer0 validation refusal gone, real
+frames and scoped GPU submissions completed without observed fence/draw errors.
+User confirms touch/UI works, but no blur, apps black, colorful flicker. Thus
+resource validation blocker fixed, rendering NOT qualified. Restored stable
+bundle live from sweet-native-stable-pre-b824dcf; retained failed trial in
+/private/var/db/sweet-native-trial-b824dcf and restarted BackBoard841. No reboot.
+Logs/install reports: research/native-resume-20261031/*b824dcf*.
+
+Concrete new defect: sweet_drm.cpp imports EVERY BO as CPU-cached task memory,
+but had no client cache operations. 0172 boot log says sweetimportsync=0 and
+kernel maintains only imports <2048KiB (0140). Working SweetMetal2 explicitly
+uses EL0 dc civac before/after surface GPU commands; native transport did not.
+Preparing per-submit clean/invalidate of referenced BOs, real-fence acquisition
+of GPU-written BOs, and serialization before maintenance so ownership cannot
+race a prior GPU job. This is correctness-first; runtime visuals still unproven.
+Phone stays on approved0172, stable frontend restored. Ask before any new boot.
+
 ## 2026-10-31: native draw resource correction prepared
 
 The e8c7631 draw error is caused by validating every AIR resource declaration,
