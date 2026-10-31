@@ -446,11 +446,18 @@ int dispatch(unsigned n,void *data,size_t bytes) {
     REQUEST(DRM_MSM_GEM_CPU_PREP,drm_msm_gem_cpu_prep,
         auto b=buffer(p->handle);if(!b)return ENOENT;
         if(p->op&~MSM_PREP_FLAGS)return EINVAL;
-        int e=wait(b->last,p->op&MSM_PREP_NOSYNC?0:remaining(p->timeout));
+        uint64_t last=b->last;bool dirty=b->gpu_dirty;
+        if(b->surface)for(auto &alias:state.buffers)
+            if(alias.kernel && alias.surface_id==b->surface_id) {
+                last=std::max(last,alias.last);dirty|=alias.gpu_dirty;
+            }
+        int e=wait(last,p->op&MSM_PREP_NOSYNC?0:remaining(p->timeout));
         if(!e) {
-            if(b->gpu_dirty){cache_clean_invalidate(*b);b->gpu_dirty=false;}
-            for(auto &alias:state.buffers)if(alias.kernel && b->surface && alias.surface_id==b->surface_id)
-                alias.imported_published=false;
+            if(dirty)cache_clean_invalidate(*b);
+            b->gpu_dirty=false;
+            for(auto &alias:state.buffers)if(alias.kernel && b->surface && alias.surface_id==b->surface_id) {
+                alias.imported_published=false;alias.gpu_dirty=false;
+            }
         }
         return (e==ETIMEDOUT && (p->op&MSM_PREP_NOSYNC))?EBUSY:e)
     REQUEST(DRM_MSM_GEM_CPU_FINI,drm_msm_gem_cpu_fini,return buffer(p->handle)?0:ENOENT)
