@@ -384,7 +384,12 @@ native_render_surface(struct rwa_texture *texture)
    uint64_t native_draw_count, native_command_count, native_phase_ns[4];
    struct pipe_constant_buffer native_cb[PIPE_SHADER_TYPES][PIPE_MAX_CONSTANT_BUFFERS];
    bool native_cb_valid[PIPE_SHADER_TYPES][PIPE_MAX_CONSTANT_BUFFERS], native_buffer_writes;
-   uint64_t native_cb_calls, native_cb_reused;
+   uint64_t native_cb_calls, native_cb_reused, native_cb_ns;
+   struct pipe_sampler_view *native_views[PIPE_SHADER_TYPES][RWA_MAX_TEXTURES];
+   struct pipe_image_view native_images[PIPE_SHADER_TYPES][RWA_MAX_TEXTURES];
+   void *native_samplers[PIPE_SHADER_TYPES][RWA_MAX_TEXTURES];
+   bool native_views_valid[PIPE_SHADER_TYPES], native_images_valid[PIPE_SHADER_TYPES], native_samplers_valid[PIPE_SHADER_TYPES];
+   uint64_t native_views_ns, native_images_ns, native_samplers_ns, native_binding_reused;
    unsigned native_pending_views[PIPE_SHADER_TYPES], native_pending_images[PIPE_SHADER_TYPES];
    unsigned native_pending_samplers[PIPE_SHADER_TYPES];
    struct pipe_framebuffer_state batch_fb;
@@ -407,16 +412,36 @@ native_render_surface(struct rwa_texture *texture)
     # Clear stale trailing slots when a new shader uses fewer resources. The
     # remaining bindings are reused, not blindly unbound and rebound per draw.
     s=replace(s,'   if (num_views)\n      pipe->set_sampler_views(pipe, stage, 0, num_views, 0, false, views);','''   unsigned old_views=device->native_pending_views[stage];
-   if (num_views || old_views)
-      pipe->set_sampler_views(pipe, stage, 0, num_views,
-         old_views>num_views?old_views-num_views:0, false, views);''')
+   if (device->in_command && device->native_views_valid[stage] &&
+       !memcmp(device->native_views[stage],views,sizeof(views)))device->native_binding_reused++;
+   else {
+      uint64_t began=native_now_ns();
+      if (num_views || old_views)
+         pipe->set_sampler_views(pipe, stage, 0, num_views,
+            old_views>num_views?old_views-num_views:0, false, views);
+      device->native_views_ns+=native_now_ns()-began;
+      memcpy(device->native_views[stage],views,sizeof(views));device->native_views_valid[stage]=true;
+   }''')
     s=replace(s,'   if (num_images)\n      pipe->set_shader_images(pipe, stage, 0, num_images, 0, images);','''   unsigned old_images=device->native_pending_images[stage];
-   if (num_images || old_images)
-      pipe->set_shader_images(pipe, stage, 0, num_images,
-         old_images>num_images?old_images-num_images:0, images);''')
+   if (device->in_command && device->native_images_valid[stage] &&
+       !memcmp(device->native_images[stage],images,sizeof(images)))device->native_binding_reused++;
+   else {
+      uint64_t began=native_now_ns();
+      if (num_images || old_images)
+         pipe->set_shader_images(pipe, stage, 0, num_images,
+            old_images>num_images?old_images-num_images:0, images);
+      device->native_images_ns+=native_now_ns()-began;
+      memcpy(device->native_images[stage],images,sizeof(images));device->native_images_valid[stage]=true;
+   }''')
     s=replace(s,'   if (num_samplers)\n      pipe->bind_sampler_states(pipe, stage, 0, num_samplers, samplers);','''   unsigned sampler_slots=MAX2(num_samplers,device->native_pending_samplers[stage]);
-   if (sampler_slots)
-      pipe->bind_sampler_states(pipe, stage, 0, sampler_slots, samplers);''')
+   if (device->in_command && device->native_samplers_valid[stage] &&
+       !memcmp(device->native_samplers[stage],samplers,sizeof(samplers)))device->native_binding_reused++;
+   else {
+      uint64_t began=native_now_ns();
+      if (sampler_slots)pipe->bind_sampler_states(pipe, stage, 0, sampler_slots, samplers);
+      device->native_samplers_ns+=native_now_ns()-began;
+      memcpy(device->native_samplers[stage],samplers,sizeof(samplers));device->native_samplers_valid[stage]=true;
+   }''')
     s=replace(s,'static int\nnative_render_draw(','''static uint64_t native_now_ns(void);
 static void native_draw_checkpoint(struct rwa_device *d,uint64_t *at,unsigned phase)
 {
@@ -436,7 +461,8 @@ native_render_draw(''')
                 'unbind:\n   native_draw_checkpoint(device,&native_phase_at,3);\n   unbind_stage(device, PIPE_SHADER_FRAGMENT, &fbound);')
     # Gallium constant bindings persist. Do not re-upload an unchanged unaligned
     # user constant range for every adjacent CA draw in the same transaction.
-    s=replace(s,'static int\nbind_stage(','''static void
+    s=replace(s,'static int\nbind_stage(','''static uint64_t native_now_ns(void);
+static void
 native_bind_constant(struct rwa_device *d, enum pipe_shader_type stage,unsigned slot,
                      const struct pipe_constant_buffer *cb)
 {
@@ -447,7 +473,9 @@ native_bind_constant(struct rwa_device *d, enum pipe_shader_type stage,unsigned 
       old->buffer_offset==cb->buffer_offset && old->buffer_size==cb->buffer_size) {
       d->native_cb_reused++;return;
    }
+   uint64_t began=native_now_ns();
    d->pipe->set_constant_buffer(d->pipe,stage,slot,false,cb);
+   d->native_cb_ns+=native_now_ns()-began;
    d->native_cb[stage][slot]=*cb;d->native_cb_valid[stage][slot]=true;
 }
 

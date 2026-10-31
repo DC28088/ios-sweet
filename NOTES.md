@@ -1,3 +1,24 @@
+## 2026-10-31: b46ada7 still slow; measured coarse utilization15-20%; binding reuse extended
+
+User asks actual GPU utilization and fix underutilization. Saved interaction trace
+live-b46ada7-still-slow.log. Kernel gpu_busy_pct is a SAMPLING estimate of latest
+GPU fence outstanding, excludes lock-held samples; NOT a cycle counter. Active
+windows report15-20%, with193-295 lock-held samples/10s. While fence outstanding,
+SP active in65-75% samples, UCHE85-95%, CP100%. Presentation94-115/10s ~=9-12fps.
+This supports substantial CPU starvation, not a saturated GPU; no GPU clock claim.
+Active5s frontend bindings reach2340022us; other window5517draws/5s bindings
+1834788us,VBO1482463us. Command ownership reduced client cache walks from busiest
+~10761MiB/5s to1393-1672MiB/5s in busy windows, but UX remains slow.
+Next code caches identical texture-view, image-view and sampler state per shader
+stage within a command (resources retained, clear at final fence, invalidate state
+cache at next command start). Skips redundant freedreno validation and binding
+state updates. Adds driver-call timing categories constants/views/images/samplers
+and reuse counts to determine exact remaining binding cost. Host C syntax compile
+passed; pristine pinned source preparation passed. No device update yet. Current
+phone remainsb46ada7. Current session sandbox switched back to restricted network
+with approvals never, so GitHub/phone reachability must be checked before claiming
+CI or install. User explicitly says no rollback; keep moving forward.
+
 ## 2026-10-31: command ownershipb46ada7 installed live, interaction pending
 
 CI41224777059 PASSED for b46ada7 (includes alias CPU_PREP correction), earlier
