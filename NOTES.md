@@ -1,3 +1,17 @@
+## 2026-10-31: performance priority after corrected main rendering
+
+User confirms 0c298b7 main rendering now looks correct, but performance is
+horrible. Battery outline, widget details and Control Center icons still have
+faults; user explicitly prioritizes performance over these defects.
+Private native BOs previously used cached vm_allocate/BoImport, causing full
+client cache-line walks before submissions and after GPU writes. Switch private
+BOs to existing ABI BoAlloc + BoCpuMap + IOConnectMapMemory64, preserving the
+kernel descriptor cache policy (0172 sweetwc=1). Only imported IOSurfaces retain
+client cache maintenance. Preserve serial ownership waits and a submission DSB.
+Cleanup waits, unmaps CPU mapping, releases mapping lease, then frees BO;
+failures quarantine storage. Build/runtime qualification pending. Current phone
+still runs 0c298b7; no performance improvement claimed yet.
+
 ## 2026-10-31: vertex export correction0c298b7 installed live, visuals pending
 
 CI41196402093 PASSED source0c298b7. Artifact six hashes, arm64 headers and VPC

@@ -28,8 +28,9 @@ constexpr uint64_t WaitNS = 5000000000ull;
 struct Buffer {
     uint64_t kernel = 0, iova = 0, size = 0, cpu = 0, last = 0;
     IOSurfaceRef surface = nullptr;
-    uint32_t flags = 0;
-    bool own = false, closing = false, gpu_dirty = false;
+    uint32_t flags = 0, cpu_token = 0;
+    bool cpu_lease = false, cpu_mapped = false;
+    bool closing = false, gpu_dirty = false;
     std::vector<uint8_t> metadata;
 };
 struct Fence { uint32_t number; uint64_t kernel, queue; };
@@ -84,6 +85,9 @@ Buffer *buffer(uint32_t handle) {
 // A55/A76 use 64-byte lines; the same EL0 operation is used by the stable
 // SweetMetal2 frontend on this kernel (SCTLR_EL1.UCI permits it).
 void cache_clean_invalidate(const Buffer &b) {
+    // Owned BO cache policy and maintenance belong to the kernel. Only
+    // imported IOSurfaces retain cached task pages requiring client walks.
+    if (!b.surface) return;
     __asm__ volatile("dsb sy" ::: "memory");
     for(uint64_t at=b.cpu; at<b.cpu+b.size; at+=64)
         __asm__ volatile("dc civac, %0" :: "r"(at) : "memory");
@@ -133,10 +137,21 @@ uint64_t reserve(uint64_t bytes) {
 int release(Buffer &b) {
     int e=wait(b.last,WaitNS);
     if (e) { b.closing=true; return e; } // retained/quarantined; no use-after-free
+    if (b.cpu_mapped) {
+        e=error(IOConnectUnmapMemory64(state.connection,b.cpu_token,
+                                      mach_task_self(),b.cpu));
+        if(e) { b.closing=true; return e; }
+        b.cpu_mapped=false;b.cpu=0;
+    }
+    if (b.cpu_lease) {
+        NativeAdrenoAbiBoCpuUnmap unmap{b.kernel,b.cpu_token,0};
+        e=call(NativeAdrenoMethodBoCpuUnmap,&unmap,sizeof unmap);
+        if(e) { b.closing=true; return e; }
+        b.cpu_lease=false;
+    }
     NativeAdrenoAbiBoFree req{b.kernel};
     e=call(NativeAdrenoMethodBoFree,&req,sizeof req);
     if (e) { b.closing=true; return e; }
-    if (b.own) vm_deallocate(mach_task_self(),b.cpu,b.size);
     if (b.surface) CFRelease(b.surface);
     b=Buffer{};
     return 0;
@@ -183,27 +198,51 @@ int allocate(uint64_t bytes,uint32_t flags,IOSurfaceRef s,uint32_t *handle) {
     if (!va) return ENOSPC;
     Buffer b;
     b.size=bytes;b.flags=flags;
-    kern_return_t kr=KERN_SUCCESS;
+    NativeAdrenoAbiBoAllocReply reply{};
+    int e=0;
     if(s) {
         b.cpu=(uintptr_t)IOSurfaceGetBaseAddress(s)&~(HostPage-1);
         b.surface=s;CFRetain(s);
+        NativeAdrenoAbiBoImport req{b.cpu,bytes};
+        e=call(NativeAdrenoMethodBoImport,&req,sizeof req,&reply,sizeof reply);
     } else {
-        vm_address_t address=0;
-        kr=vm_allocate(mach_task_self(),&address,bytes,VM_FLAGS_ANYWHERE);
-        b.cpu=address;b.own=true;
+        // Avoid pinning cached vm_allocate pages for every texture, shader,
+        // command stream and intermediate. 0172 owns WC storage and its DMA
+        // cache policy; the CPU mapping is a lease on that same allocation.
+        NativeAdrenoAbiBoAlloc req{bytes,14,0};
+        e=call(NativeAdrenoMethodBoAlloc,&req,sizeof req,&reply,sizeof reply);
     }
-    if(kr) {if(b.surface)CFRelease(b.surface);return error(kr);}
-    NativeAdrenoAbiBoImport req{b.cpu,bytes};NativeAdrenoAbiBoAllocReply reply{};
-    int e=call(NativeAdrenoMethodBoImport,&req,sizeof req,&reply,sizeof reply);
     if(!e && !reply.handle)e=EPROTO;
-    if(e) {if(b.own)vm_deallocate(mach_task_self(),b.cpu,b.size);if(b.surface)CFRelease(b.surface);return e;}
+    if(e) {if(b.surface)CFRelease(b.surface);return e;}
     b.kernel=reply.handle;state.buffers[index]=std::move(b);
     Buffer &live=state.buffers[index];
     NativeAdrenoAbiBoMap map{live.kernel,va,3,0,2,0};NativeAdrenoAbiBoMapReply mapped{};
     e=call(NativeAdrenoMethodBoMap,&map,sizeof map,&mapped,sizeof mapped);
     if(!e && mapped.iova!=va)e=EPROTO;
     if(e){release(live);return e;}
-    live.iova=va;*handle=index+1;
+    live.iova=va;
+    if(!s) {
+        NativeAdrenoAbiBoCpuMap req{live.kernel};
+        NativeAdrenoAbiBoCpuMapReply mapped_cpu{};
+        e=call(NativeAdrenoMethodBoCpuMap,&req,sizeof req,&mapped_cpu,sizeof mapped_cpu);
+        if(!e) {
+            live.cpu_token=mapped_cpu.token;live.cpu_lease=true;
+            if(mapped_cpu.reserved || mapped_cpu.bytes<bytes)e=EPROTO;
+        }
+        mach_vm_address_t address=0;mach_vm_size_t length=0;
+        if(!e) {
+            // Preserve the descriptor's cache policy, including the kernel's
+            // cacheable fallback if its WC pool cannot satisfy an allocation.
+            e=error(IOConnectMapMemory64(state.connection,live.cpu_token,
+                       mach_task_self(),&address,&length,kIOMapAnywhere|kIOMapDefaultCache));
+            if(!e) {
+                live.cpu=address;live.cpu_mapped=true;
+                if(!address || length<bytes)e=EPROTO;
+            }
+        }
+        if(e){release(live);return e;}
+    }
+    *handle=index+1;
     return 0;
 }
 int open_gpu() {
@@ -223,7 +262,7 @@ int open_gpu() {
               !state.info.va_size || (state.params.flags&flags)!=flags)) e=ENOTSUP;
     if(e){IOServiceClose(state.connection);state.connection=0;return e;}
     fprintf(stderr,"SweetNativeMetal: NativeAdreno ABI1 A618 chip=%#x GMEM=%u scoped residency\n",chip,state.info.gmem_bytes);
-    fprintf(stderr,"SweetNativeMetal: explicit imported BO cache ownership; publish before submit, acquire after GPU fence\n");
+    fprintf(stderr,"SweetNativeMetal: kernel-owned private BOs with CPU map leases; imported IOSurface cache ownership\n");
     return 0;
 }
 int get_param(drm_msm_param *p) {
@@ -298,6 +337,9 @@ int submit(drm_msm_gem_submit *s) {
     if(!e && !state.fences.empty())e=wait(state.fences.back().kernel,WaitNS);
     if(!e)for(unsigned i=0;i<s->nr_bos;++i)
         cache_clean_invalidate(*buffer(bos[i].handle));
+    // WC command and upload stores must reach the device even when the
+    // submission contains no imported surfaces and hence no cache walk.
+    __asm__ volatile("dsb sy" ::: "memory");
     uint64_t last=0;
     for(size_t at=0;at<ibs.size() && !e;at+=NativeAdrenoAbiMaxBuffers) {
         req->commands.buffer_count=std::min<size_t>(NativeAdrenoAbiMaxBuffers,ibs.size()-at);
