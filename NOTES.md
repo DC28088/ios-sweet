@@ -1,3 +1,21 @@
+## 2026-10-31: user says NO rollback; continue forward performance fixes
+
+Latest instruction overrides rollback plan below: leave current b70ea81 active.
+No rollback happened. Main rendering correction0c298b7 remains in current code.
+Implemented reuse of a texture-owned level-zero pipe_surface for repeated draws
+and clear calls, retaining transient references for existing cleanup. Textures
+are immutable in this API, so the cached view is released before texture storage.
+Added per-device five-second frontend counters: commands, draws, encode wall time,
+draw wall time (subset of encode), and command finalization/fence wall time.
+These complement transport counters to isolate remaining delay; no FPS claim.
+Source preparation from pinned donor succeeded. Host C syntax compilation against
+existing Mesa25 generated headers passed (no renderer/runtime tests run).
+Host compile lacks GALLIUM_FREEDRENO screen setup; iOS macOS CI still required.
+Local diagnostics: research/native-resume-20261031/surface-cache-host-compile.log;
+disposable prepared source: research/native-perf-surface-source (gitignored).
+GitHub API still fails connection under restricted network/approval-never session.
+Do not claim new bundle built/installed. Current phone still b70ea81.
+
 ## 2026-10-31: b70ea81 user reports WORSE; rollback blocked by session sandbox
 
 Saved live-b70ea81-regression.log. Interaction transport windows show roughly

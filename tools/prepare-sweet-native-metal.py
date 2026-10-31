@@ -331,7 +331,7 @@ air2nir = executable(""")
 };''')
     p.write_text(s)
     p=air/'air_metal.c';s=p.read_text()
-    s=replace(s,'#include "air_metal.h"','#include "sweet_native_ext.h"\n#include "util/u_framebuffer.h"\n#include <math.h>')
+    s=replace(s,'#include "air_metal.h"','#include "sweet_native_ext.h"\n#include "util/u_framebuffer.h"\n#include <math.h>\n#include <time.h>')
     s=replace(s,'#include "nir_air.h"','#include "nir_air.h"\n#include "air_live_resources.inc"\n#include "air_stage_link.inc"\n#include "air_vertex_exports.inc"')
     s=replace(s,'   slot_shapes(fs, render->frag_slots, render->frag_compare_sampler);',
                 '   native_prune_direct_resources(fs, &render->finfo);\n   slot_shapes(fs, render->frag_slots, render->frag_compare_sampler);')
@@ -351,8 +351,37 @@ air2nir = executable(""")
                 '   if (!finalize_for_gallium(cs, device->screen, why, why_size)) {ralloc_free(cs);return NULL;}')
     s=replace(s,'   finalize_for_gallium(clone, device->screen);',
                 '   if (!finalize_for_gallium(clone, device->screen, why, why_size)) {ralloc_free(clone);return NULL;}')
+    # Texture storage/format is immutable here. Keep its level-zero surface
+    # instead of allocating an identical Gallium view for every CA draw.
+    s=replace(s,'   struct pipe_sampler_view *view;  /* made when a dispatch first samples it, then kept */',
+                '   struct pipe_sampler_view *view;  /* made when a dispatch first samples it, then kept */\n   struct pipe_surface *native_surface;')
+    s=replace(s,'   pipe_resource_reference(&texture->res, NULL);\n   free(texture);',
+                '   pipe_surface_reference(&texture->native_surface, NULL);\n   pipe_resource_reference(&texture->res, NULL);\n   free(texture);')
+    s=replace(s,'rwa_render_draw(struct rwa_render *render, const struct rwa_draw *draw,',
+                'native_render_draw(struct rwa_render *render, const struct rwa_draw *draw,')
+    # Return one transient reference so existing draw cleanup stays balanced.
+    s=replace(s,'surf[i] = pipe->create_surface(pipe, draw->color[i]->res,\n         &(struct pipe_surface){ .format = draw->color[i]->res->format });',
+                'surf[i] = native_render_surface(draw->color[i]);')
+    s=replace(s,'zsurf = pipe->create_surface(pipe, draw->depth->res,\n         &(struct pipe_surface){ .format = draw->depth->res->format });',
+                'zsurf = native_render_surface(draw->depth);')
+    s=replace(s,'int\nnative_render_draw(', 'static int\nnative_render_draw(')
+    at=s.index('static int\nnative_render_draw(')
+    s=s[:at]+'''static struct pipe_surface *
+native_render_surface(struct rwa_texture *texture)
+{
+   if (!texture->native_surface)
+      texture->native_surface = texture->device->pipe->create_surface(texture->device->pipe,
+         texture->res, &(struct pipe_surface){ .format = texture->res->format });
+   struct pipe_surface *surface = NULL;
+   if (texture->native_surface) pipe_surface_reference(&surface, texture->native_surface);
+   return surface;
+}
+
+'''+s[at:]
     s=replace(s,'   bool software;','''   bool software;
    bool in_command, lost;
+   uint64_t native_begin_ns, native_window_ns, native_draw_ns, native_encode_ns, native_finish_ns;
+   uint64_t native_draw_count, native_command_count;
    struct pipe_framebuffer_state batch_fb;
    struct rwa_constant constants[3][256];
    unsigned constant_count[3];''')
