@@ -1,3 +1,16 @@
+## 2026-10-31: command ownershipb46ada7 installed live, interaction pending
+
+CI41224777059 PASSED for b46ada7 (includes alias CPU_PREP correction), earlier
+4f64faf run41224645249 canceled as superseded. Six hashes/arm64/ownership/VPC
+markers verified. Active028a491 manifest matched; host pre-hotfix-b46ada7 and
+phone sweet-native-stable-pre-b46ada7 saved; stage readbacks and SYNC verified;
+BackBoard5515 restarted after live directory swap. No new image boot/rollback.
+Current phoneb46ada7. User interaction result requested asynchronously; pending.
+Snapshot live-b46ada7.log and b46ada7-trial-start.json offset. Need compare
+cache_MiB/cache_us per active submit and phase timings, not startup/idle FPS.
+Do not claim performance solved. Last user result028a491 still slow; actual
+constant reuse alone insufficient. All prior bundles/backups retained.
+
 ## 2026-10-31:028a491 installed; still slow; scope surface cache ownership to command
 
 CI41223793542 PASSED. Six hashes/arm64/constant marker verified; active2263e39
