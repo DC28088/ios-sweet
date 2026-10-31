@@ -51,6 +51,29 @@ struct State {
 State state;
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 struct Lock { Lock(){pthread_mutex_lock(&mutex);} ~Lock(){pthread_mutex_unlock(&mutex);} };
+uint64_t clock_ns() {
+    timespec now{};clock_gettime(CLOCK_MONOTONIC_RAW,&now);
+    return uint64_t(now.tv_sec)*1000000000ull+now.tv_nsec;
+}
+struct Timings {
+    uint64_t began=0,submits=0,ibs=0,total=0,wait=0,cache=0,cache_bytes=0,ioctl=0;
+} timings;
+struct SubmitTiming {
+    uint64_t began=clock_ns();
+    SubmitTiming() {if(!timings.began)timings.began=began;}
+    ~SubmitTiming() {
+        const uint64_t now=clock_ns();
+        timings.total+=now-began;++timings.submits;
+        if(now-timings.began<5000000000ull)return;
+        fprintf(stderr,"SweetNativeMetal: transport window_ms=%llu submits=%llu ibs=%llu submit_cpu_us=%llu fence_us=%llu cache_us=%llu cache_MiB=%llu submit_ioctl_us=%llu\n",
+            (unsigned long long)((now-timings.began)/1000000),
+            (unsigned long long)timings.submits,(unsigned long long)timings.ibs,
+            (unsigned long long)(timings.total/1000),(unsigned long long)(timings.wait/1000),
+            (unsigned long long)(timings.cache/1000),(unsigned long long)(timings.cache_bytes>>20),
+            (unsigned long long)(timings.ioctl/1000));
+        timings=Timings{};timings.began=now;
+    }
+};
 int error(kern_return_t r) {
     switch (r) {
     case KERN_SUCCESS: return 0;
@@ -68,8 +91,10 @@ int error(kern_return_t r) {
 int call(uint32_t selector, const void *in, size_t n, void *out=nullptr, size_t size=0) {
     if (!state.connection || state.lost) return EIO;
     size_t actual=size;
+    const uint64_t began=clock_ns();
     int e=error(IOConnectCallStructMethod(state.connection, selector, in, n,
                                          out, size?&actual:nullptr));
+    if(selector==NativeAdrenoMethodSubmitResources)timings.ioctl+=clock_ns()-began;
     return !e && actual!=size ? EPROTO : e;
 }
 uint64_t rounded(uint64_t value, uint64_t align=HostPage) {
@@ -88,15 +113,19 @@ void cache_clean_invalidate(const Buffer &b) {
     // Owned BO cache policy and maintenance belong to the kernel. Only
     // imported IOSurfaces retain cached task pages requiring client walks.
     if (!b.surface) return;
+    const uint64_t began=clock_ns();
     __asm__ volatile("dsb sy" ::: "memory");
     for(uint64_t at=b.cpu; at<b.cpu+b.size; at+=64)
         __asm__ volatile("dc civac, %0" :: "r"(at) : "memory");
     __asm__ volatile("dsb sy" ::: "memory");
+    timings.cache+=clock_ns()-began;timings.cache_bytes+=b.size;
 }
 int wait(uint64_t fence, uint64_t ns) {
     if (!fence || fence<=state.completed) return 0;
     NativeAdrenoAbiWaitFence req{fence,ns};
+    const uint64_t began=clock_ns();
     int e=call(NativeAdrenoMethodWaitFence,&req,sizeof req);
+    timings.wait+=clock_ns()-began;
     if (!e) {
         // Only after a real GPU fence. Before-submit maintenance removed CPU
         // dirty lines, so this cannot write stale CPU data over device output.
@@ -298,6 +327,7 @@ int get_param(drm_msm_param *p) {
     return 0;
 }
 int submit(drm_msm_gem_submit *s) {
+    SubmitTiming profile;
     if ((s->flags&MSM_PIPE_ID_MASK)!=MSM_PIPE_3D0 ||
         (s->flags&~(MSM_PIPE_ID_MASK|MSM_SUBMIT_NO_IMPLICIT)) ||
         s->nr_in_syncobjs || s->nr_out_syncobjs || s->pad || !s->bos || !s->cmds ||
@@ -331,10 +361,16 @@ int submit(drm_msm_gem_submit *s) {
         else if(c.type!=MSM_SUBMIT_CMD_IB_TARGET_BUF)e=ENOTSUP;
     }
     if(ibs.empty()&&!e)e=EINVAL;
-    // Cache operations must not race an earlier job writing these pages.
-    // Start conservatively with serialized publication; CPU and GPU ownership
-    // transitions, not fence success alone, define visible texture contents.
-    if(!e && !state.fences.empty())e=wait(state.fences.back().kernel,WaitNS);
+    timings.ibs+=ibs.size();
+    // Only cached imported surfaces need a CPU/GPU ownership transition here.
+    // Private BOs use the kernel's publication path and ordered GPU execution;
+    // waiting for an unrelated previous job prevents normal batch pipelining.
+    uint64_t imported_fence=0;
+    if(!e)for(unsigned i=0;i<s->nr_bos;++i) {
+        Buffer *b=buffer(bos[i].handle);
+        if(b->surface)imported_fence=std::max(imported_fence,b->last);
+    }
+    if(!e && imported_fence)e=wait(imported_fence,WaitNS);
     if(!e)for(unsigned i=0;i<s->nr_bos;++i)
         cache_clean_invalidate(*buffer(bos[i].handle));
     // WC command and upload stores must reach the device even when the

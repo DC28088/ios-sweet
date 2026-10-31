@@ -1,3 +1,19 @@
+## 2026-10-31: private BO trial installed; user still reports under15fps
+
+6194c4f CI41200530247 PASSED. Six artifact hashes, arm64 binaries and prior
+half-export fix verified. Live installation checked old0c298b7 manifest,
+saved all old files at research/native-install-0172/pre-hotfix-6194c4f and phone
+/private/var/db/sweet-native-stable-pre-6194c4f, verified staged readbacks and
+restarted BackBoard1224 ->1673. Logs confirm kernel-owned private BO mode,
+38MiB pool usage and113 owned allocations averaging64us in startup window.
+User reports still very sluggish, under15fps. Not a successful performance fix.
+Next change scopes the pre-submit ownership wait to referenced imported
+surfaces' last fences rather than the globally latest job. Private-only batches
+can proceed without an unnecessary global wait; real completion and IOSurface
+cache maintenance stay intact. Add five-second transport timing windows for
+submit CPU time, fence time, cache bytes/time and submit ioctl time to identify
+remaining costs. Build/live qualification pending. No new image boot.
+
 ## 2026-10-31: performance priority after corrected main rendering
 
 User confirms 0c298b7 main rendering now looks correct, but performance is
