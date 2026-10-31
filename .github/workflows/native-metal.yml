@@ -24,6 +24,7 @@ jobs:
             userspace/out/SweetNativeMetal.bundle
             userspace/out/native-metal-build.json
             userspace/out/native-metal-dependencies.txt
+            userspace/out/native-metal-symbols
       - name: Collect build logs
         if: failure()
         run: |

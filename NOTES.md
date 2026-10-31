@@ -1,3 +1,28 @@
+## 2026-10-31: BackBoard heap corruption; sampler-view reference correction
+
+User reports launcher restarting; slight animation improvement but under20fps.
+Phone remainsb46ada7; active backendSHA f41c491189c2b4a1f22c5dc8c4a2738ce4e64710388ed65a3a9ef36bdcdded4f.
+Saved live-b46ada7-launcher-restarts.log. Crashes5715/5746/5831 SIGABRT;
+shared-cache local-symbol scan identifies malloc_vreport, malloc_zone_error,
+free_list_checksum_botch, tiny freelist allocation/free. Crash5891 SIGSEGV
+PC0x10608f664 FAR0x100000007 with backend-like frames; load base unknown.
+No fresh crash reports in phone CrashReporter. launcher-cache-symbols.txt and
+symbolicate-launcher.py in local research. Heap corruption is observed, exact
+writer not yet identified. Do not claim a proved root cause from malloc abort.
+Concrete API bug: donor texture_destroy directly invokes sampler_view_destroy,
+bypassing Gallium reference counting. Correct to pipe_sampler_view_reference
+(&texture->view,NULL). This preserves retained context/cache references. Add
+runtime backend/frontend load bases and CI pre-strip symbols for future frames.
+Hold uninstalledcd9c9e9 performance experiment: saved snapshots in research;
+source adaptation/extension reset to installedb46ada7 baseline before lifetime fix.
+Other performance fixes and correct rendering remain. Host C syntax compile
+passed; pinned source generation passed. No device update yet.
+User reference oosexgang/hakios-metal reviewed README,plugin,command,transport via
+GitHub API. README explicitly says shaders NOT YET joined; current supports CP
+blits, BOs/fences/command lifetimes. Not a finished CA renderer to drop in.
+Use its retained-command resources/fence discipline as reference, not its foreign
+HakiosGPU selectors on NativeAdreno ABI1. Do not disable crash signals.
+
 ## 2026-10-31: b46ada7 still slow; measured coarse utilization15-20%; binding reuse extended
 
 User asks actual GPU utilization and fix underutilization. Saved interaction trace

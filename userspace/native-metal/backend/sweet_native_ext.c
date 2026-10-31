@@ -97,9 +97,6 @@ int rwa_command_begin(struct rwa_device *d,char *why,size_t n)
    if(!d || d->lost || d->in_command){say(why,n,"device lost or command buffer already executing");return -1;}
    if(sweet_transport_command_begin()){say(why,n,"transport transaction already active");return -1;}
    memset(d->native_cb_valid,0,sizeof(d->native_cb_valid));
-   memset(d->native_views_valid,0,sizeof(d->native_views_valid));
-   memset(d->native_images_valid,0,sizeof(d->native_images_valid));
-   memset(d->native_samplers_valid,0,sizeof(d->native_samplers_valid));
    d->native_begin_ns=native_now_ns();
    if(!d->native_window_ns)d->native_window_ns=d->native_begin_ns;
    d->in_command=true;return 0;
@@ -138,11 +135,6 @@ int rwa_command_end(struct rwa_device *d,char *why,size_t n)
          (unsigned long long)(d->native_phase_ns[2]/1000),(unsigned long long)(d->native_phase_ns[3]/1000));
       fprintf(stderr,"SweetNativeMetal: constant bindings calls=%llu reused=%llu\n",
          (unsigned long long)d->native_cb_calls,(unsigned long long)d->native_cb_reused);
-      fprintf(stderr,"SweetNativeMetal: binding driver_us constants=%llu views=%llu images=%llu samplers=%llu reused_states=%llu\n",
-         (unsigned long long)(d->native_cb_ns/1000),(unsigned long long)(d->native_views_ns/1000),
-         (unsigned long long)(d->native_images_ns/1000),(unsigned long long)(d->native_samplers_ns/1000),
-         (unsigned long long)d->native_binding_reused);
-      d->native_cb_ns=d->native_views_ns=d->native_images_ns=d->native_samplers_ns=d->native_binding_reused=0;
       d->native_cb_calls=d->native_cb_reused=0;
       memset(d->native_phase_ns,0,sizeof(d->native_phase_ns));
       d->native_window_ns=ended;d->native_command_count=d->native_draw_count=0;

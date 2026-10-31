@@ -193,6 +193,10 @@ cpp_std = 'c++17'
     licenses=bundle/'Licenses';licenses.mkdir()
     shutil.copy2(donor/'LICENSE',licenses/'HakiOS.txt')
     shutil.copy2(mesa/'docs/license.rst',licenses/'Mesa.txt')
+    symbols=out/'native-metal-symbols';symbols.mkdir()
+    for name,binary in (('backend',backend),('frontend',executable)):
+        (symbols/(name+'.symbols.txt')).write_text(output('nm','-an',binary)+'\n')
+        (symbols/(name+'.macho.txt')).write_text(output('otool','-l',binary)+'\n')
     for binary in (backend,executable):
         run('strip','-x',binary);run('codesign','--force','--sign','-','--pagesize','4096',binary)
     run('codesign','--force','--sign','-','--pagesize','4096',bundle)
@@ -229,6 +233,8 @@ cpp_std = 'c++17'
       CFBundleIdentifier='org.sweet.SweetMetal2',CFBundleExecutable='SweetMetal2',
       CFBundlePackageType='BNDL',CFBundleVersion='1',MinimumOSVersion='16.0',
       NSPrincipalClass='SweetMTL2Device')))
+    (symbols/'legacy.symbols.txt').write_text(output('nm','-an',legacy_exe)+'\n')
+    (symbols/'legacy.macho.txt').write_text(output('otool','-l',legacy_exe)+'\n')
     run('strip','-x',legacy_exe)
     run('codesign','--force','--sign','-','--pagesize','4096',legacy_exe)
     run('codesign','--force','--sign','-','--pagesize','4096',legacy)
