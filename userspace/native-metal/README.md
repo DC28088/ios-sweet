@@ -174,3 +174,15 @@ three arguments. Apple files are local inputs and must not be committed or
 uploaded to public CI. The comparison also fails on reference translation
 errors and an empty corpus. Reproducing the previous pointer-store refusal and
 passing this comparison precede the next native trial.
+
+## Specialized resource validation (2026-10-31)
+
+The pointer-cell correction passes compilation on the phone, but its next draw
+failed because AIR declarations included an unused buffer. Pipeline creation
+now optimizes executable NIR and filters inactive direct resource declarations
+before validation and binding. Dynamic indices retain all resources of their
+kind, argument-buffer layouts remain intact, and binding numbers are unchanged.
+The local 451-pipeline comparison now also checks live buffer slots. Synthetic
+cases cover dead reads, retained writes, dynamic indices and texture/sampler
+selection. Passing these checks does not establish correct rendered pixels;
+the next hardware trial must confirm compositor output and interaction.

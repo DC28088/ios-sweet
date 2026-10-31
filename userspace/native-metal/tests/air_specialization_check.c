@@ -33,6 +33,7 @@
 #include <unistd.h>
 
 #include "nir.h"
+#include "nir_builder.h"
 #include "nir_air.h"
 #include "util/ralloc.h"
 
@@ -171,23 +172,7 @@ texop_name(nir_texop op)
    }
 }
 
-static void
-optimize(nir_shader *s)
-{
-   bool progress;
-   do {
-      progress = false;
-      NIR_PASS(progress, s, nir_lower_vars_to_ssa);
-      NIR_PASS(progress, s, nir_copy_prop);
-      NIR_PASS(progress, s, nir_opt_dce);
-      NIR_PASS(progress, s, nir_opt_constant_folding);
-      NIR_PASS(progress, s, nir_opt_algebraic);
-      NIR_PASS(progress, s, nir_opt_dead_cf);
-      NIR_PASS(progress, s, nir_opt_cse);
-      NIR_PASS(progress, s, nir_opt_if, 0);
-      NIR_PASS(progress, s, nir_opt_peephole_select, 8, true, true);
-   } while (progress);
-}
+#include "air_live_resources.inc"
 
 static int
 compare_lines(const void *a, const void *b)
@@ -223,6 +208,21 @@ tex_signature(void *ctx, nir_shader *s, const struct air_shader_info *info, unsi
          }
       }
    }
+   struct native_resource_use buffers = native_resource_usage(s);
+   for (unsigned i = 0; i < 64; i++) {
+      if (buffers.ubo & (UINT64_C(1) << i)) {
+         lines = reralloc(ctx, lines, char *, n + 1);
+         lines[n++] = ralloc_asprintf(ctx, "ubo b%u", i);
+      }
+      if (buffers.ssbo & (UINT64_C(1) << i)) {
+         lines = reralloc(ctx, lines, char *, n + 1);
+         lines[n++] = ralloc_asprintf(ctx, "ssbo b%u", i);
+      }
+   }
+   if (buffers.any_ubo || buffers.any_ssbo) {
+      lines = reralloc(ctx, lines, char *, n + 1);
+      lines[n++] = ralloc_asprintf(ctx, "dynamic ubo=%u ssbo=%u", buffers.any_ubo, buffers.any_ssbo);
+   }
    *count = n;
    qsort(lines, n, sizeof(*lines), compare_lines);
    char *sig = ralloc_strdup(ctx, "");
@@ -251,9 +251,76 @@ translate(void *ctx, const void *bc, size_t size, const struct air_constant_valu
    nir_shader *s = air_to_nir(ctx, bc, size, NULL, &o, &options, info, err);
    if (s) {
       nir_validate_shader(s, "after air_to_nir");
-      optimize(s);
+      native_prune_direct_resources(s, info);
    }
    return s;
+}
+
+static bool
+check_buffer_liveness(void)
+{
+   struct air_resource resources[3] = {
+      {.kind=AIR_RESOURCE_CONSTANT_BUFFER,.index=0,.argbuf_set=~0u},
+      {.kind=AIR_RESOURCE_CONSTANT_BUFFER,.index=1,.argbuf_set=~0u},
+      {.kind=AIR_RESOURCE_DEVICE_BUFFER,.index=2,.argbuf_set=~0u},
+   };
+   for (unsigned dynamic = 0; dynamic < 2; dynamic++) {
+      nir_builder b = nir_builder_init_simple_shader(MESA_SHADER_COMPUTE, &options, "buffer liveness");
+      nir_def *zero = nir_imm_int(&b, 0);
+      /* This discarded read must not impose an API binding. */
+      nir_load_ubo(&b, 1, 32, zero, zero, .align_mul=4, .range=4);
+      nir_def *index = dynamic ? nir_load_local_invocation_index(&b) : nir_imm_int(&b, 1);
+      nir_def *live = nir_load_ubo(&b, 1, 32, index, zero, .align_mul=4, .range=4);
+      nir_store_ssbo(&b, live, nir_imm_int(&b, 2), zero, .align_mul=4, .write_mask=1);
+      struct air_resource copy[3];memcpy(copy,resources,sizeof copy);
+      struct air_shader_info info = {.resources=copy,.num_resources=3};
+      unsigned removed = native_prune_direct_resources(b.shader, &info);
+      struct native_resource_use use = native_resource_usage(b.shader);
+      bool ok = dynamic ? removed==0 && use.any_ubo
+                        : removed==1 && info.num_resources==2 && info.resources[0].index==1;
+      ok &= (use.ssbo & (UINT64_C(1)<<2)) != 0;
+      /* Argument-buffer members must retain their shared encoder layout. */
+      struct air_resource member=resources[0];member.argbuf_set=0;
+      ok &= native_resource_active(use,&member);
+      ralloc_free(b.shader);
+      if (!ok) {fprintf(stderr,"buffer liveness regression failed (dynamic=%u)\n",dynamic);return false;}
+   }
+   return true;
+}
+
+static bool
+check_texture_liveness(void)
+{
+   struct air_resource resources[5] = {
+      {.kind=AIR_RESOURCE_TEXTURE,.index=0,.argbuf_set=~0u},
+      {.kind=AIR_RESOURCE_TEXTURE,.index=5,.argbuf_set=~0u},
+      {.kind=AIR_RESOURCE_SAMPLER,.index=1,.argbuf_set=~0u},
+      {.kind=AIR_RESOURCE_SAMPLER,.index=3,.argbuf_set=~0u},
+      {.kind=AIR_RESOURCE_DEVICE_BUFFER,.index=2,.argbuf_set=~0u},
+   };
+   for (unsigned dynamic=0;dynamic<2;dynamic++) {
+      nir_builder b=nir_builder_init_simple_shader(MESA_SHADER_COMPUTE,&options,"texture liveness");
+      nir_tex_instr *t=nir_tex_instr_create(b.shader,dynamic?3:1);
+      t->op=nir_texop_tex;t->sampler_dim=GLSL_SAMPLER_DIM_2D;
+      t->dest_type=nir_type_float32;t->coord_components=2;
+      t->texture_index=0;t->sampler_index=1;
+      t->src[0].src_type=nir_tex_src_coord;
+      t->src[0].src=nir_src_for_ssa(nir_imm_vec2(&b,0.5,0.5));
+      if (dynamic) {
+         nir_def *offset=nir_load_local_invocation_index(&b);
+         t->src[1].src_type=nir_tex_src_texture_offset;t->src[1].src=nir_src_for_ssa(offset);
+         t->src[2].src_type=nir_tex_src_sampler_offset;t->src[2].src=nir_src_for_ssa(offset);
+      }
+      nir_def_init(&t->instr,&t->def,4,32);nir_builder_instr_insert(&b,&t->instr);
+      nir_store_ssbo(&b,&t->def,nir_imm_int(&b,2),nir_imm_int(&b,0),.align_mul=4,.write_mask=15);
+      struct air_resource copy[5];memcpy(copy,resources,sizeof copy);
+      struct air_shader_info info={.resources=copy,.num_resources=5};
+      unsigned removed=native_prune_direct_resources(b.shader,&info);
+      bool ok=dynamic ? removed==0 : removed==2 && info.num_resources==3;
+      ralloc_free(b.shader);
+      if (!ok) {fprintf(stderr,"texture liveness regression failed (dynamic=%u)\n",dynamic);return false;}
+   }
+   return true;
 }
 
 int
@@ -273,6 +340,7 @@ main(int argc, char **argv)
          only = atoi(argv[++a]);
    }
    glsl_type_singleton_init_or_ref();
+   if (!check_buffer_liveness() || !check_texture_liveness()) return 1;
    void *ctx = ralloc_context(NULL);
    const char *err;
 
@@ -378,9 +446,9 @@ main(int argc, char **argv)
       printf("\n");
       if (verbose || (a && b && strcmp(sa, sb))) {
          if (sa)
-            printf("  generic (%u tex):\n%s", na, sa);
+            printf("  generic (%u resources):\n%s", na, sa);
          if (sb)
-            printf("  apple   (%u tex):\n%s", nb, sb);
+            printf("  apple   (%u resources):\n%s", nb, sb);
       }
       ralloc_free(mctx);
    }

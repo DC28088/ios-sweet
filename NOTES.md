@@ -1,3 +1,24 @@
+## 2026-10-31: native draw resource correction prepared
+
+The e8c7631 draw error is caused by validating every AIR resource declaration,
+even after specialization makes some inputs unused. Local QuartzCore entry4
+fixed_frag_lph_cph has zero live resource reads in both generic and Apple
+specialized NIR, despite its declared buffer arguments. Added pipeline-local
+optimization and live resource filtering in air_live_resources.inc for direct
+UBOs/SSBOs/textures/samplers/images. Binding numbers and NIR resource counts
+stay unchanged. Dynamic/unknown indexing conservatively keeps declarations;
+argument-buffer members retain their shared layout. Both validation and binding
+use this filtered pipeline metadata; genuinely required reads are not bypassed.
+Host comparison now includes live buffer slots as well as texture/sampler
+selection: all451 generic/specialized pipelines match, no translation failures.
+Synthetic cases check dead loads, side-effecting stores, dynamic resource
+indices and argument-buffer preservation. Reports are under
+research/native-resume-20261031/resource-*.log. This is offline evidence only;
+full pixel accuracy, iOS build and hardware trial remain required.
+Phone remains on approved0172 with stable original graphics bundle restored.
+Do not boot another image without asking. Live bundle trial can use retained
+backups; old raw userdata deltas are stale and must never be applied.
+
 ## 2026-10-31: e8c7631 hardware trial passed compiler, failed draw binding; restored
 
 User approved temporary0172 boot from FASTBOOT. Exact image SHA verified;
