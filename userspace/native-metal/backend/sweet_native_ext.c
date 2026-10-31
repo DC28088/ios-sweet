@@ -95,6 +95,7 @@ int rwa_render_draw(struct rwa_render *render,const struct rwa_draw *draw,char *
 int rwa_command_begin(struct rwa_device *d,char *why,size_t n)
 {
    if(!d || d->lost || d->in_command){say(why,n,"device lost or command buffer already executing");return -1;}
+   if(sweet_transport_command_begin()){say(why,n,"transport transaction already active");return -1;}
    memset(d->native_cb_valid,0,sizeof(d->native_cb_valid));
    d->native_begin_ns=native_now_ns();
    if(!d->native_window_ns)d->native_window_ns=d->native_begin_ns;
@@ -109,6 +110,7 @@ int rwa_command_end(struct rwa_device *d,char *why,size_t n)
    d->pipe->set_framebuffer_state(d->pipe,&(struct pipe_framebuffer_state){0});
    util_unreference_framebuffer_state(&d->batch_fb);
    int result=finish_or_say_why(d,false,"command buffer",why,n);
+   sweet_transport_command_end();
    // Work objects still retain every sampler/texture here. Clear raw sampler
    // state pointers before returning control to callers that can destroy them.
    d->in_command=false;

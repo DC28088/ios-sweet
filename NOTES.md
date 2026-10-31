@@ -1,3 +1,19 @@
+## 2026-10-31:028a491 installed; still slow; scope surface cache ownership to command
+
+CI41223793542 PASSED. Six hashes/arm64/constant marker verified; active2263e39
+manifest matched; pre-028a491 host/phone backups saved, staged/readback/SYNC and
+BackBoard5350 restart completed. User still slow. Constant reuse is real:825/1558
+in one sample; active busiest window4857draws/5s,1276134us bindings,2124643us
+VBO,2125790us transport submit. Cache maintenance walked10761MiB in5s.
+Preparing command-scoped imported cache ownership: publish each imported surface
+once per transaction; defer CPU acquire until real final fence; explicit CPU_PREP
+still waits/acquires and revokes publication, free still waits/acquires. First
+publication conservatively waits latest GPU fence to include alternate handles;
+IOSurface ID aliases share publication state. New imports inherit published
+alias state. No unfinished buffer is acquired on timeout. No device update yet.
+All CPU clients must honor Metal command ownership; existing frontend retains
+resources and serializes object access throughout execution. Current028a491.
+
 ## 2026-10-31:2263e39 installed; constant binding follow-up
 
 CI41223001204 PASSED; six hashes, arm64 binaries, phase and VPC markers verified.

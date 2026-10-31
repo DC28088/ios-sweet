@@ -20,6 +20,8 @@ int rwa_set_constants(struct rwa_device *, unsigned stage, const struct rwa_cons
 /* One context transaction per committed Metal command buffer. end waits once,
  * including the prefix of a command buffer whose later encoding was refused. */
 int rwa_barrier(struct rwa_device *, char *, size_t);
+int sweet_transport_command_begin(void);
+void sweet_transport_command_end(void);
 int rwa_command_begin(struct rwa_device *, char *, size_t);
 int rwa_command_end(struct rwa_device *, char *, size_t);
 int rwa_clear(struct rwa_device *, struct rwa_texture *const *, unsigned, unsigned,

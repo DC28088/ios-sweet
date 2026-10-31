@@ -28,9 +28,9 @@ constexpr uint64_t WaitNS = 5000000000ull;
 struct Buffer {
     uint64_t kernel = 0, iova = 0, size = 0, cpu = 0, last = 0;
     IOSurfaceRef surface = nullptr;
-    uint32_t flags = 0, cpu_token = 0;
+    uint32_t flags = 0, cpu_token = 0, surface_id = 0;
     bool cpu_lease = false, cpu_mapped = false;
-    bool closing = false, gpu_dirty = false;
+    bool closing = false, gpu_dirty = false, imported_published = false;
     std::vector<uint8_t> metadata;
 };
 struct Fence { uint32_t number; uint64_t kernel, queue; };
@@ -44,7 +44,7 @@ struct State {
     uint64_t completed = 0;
     uint32_t next = 1;
     uint64_t queues[NativeAdrenoAbiMaxQueues]{};
-    bool lost = false;
+    bool lost = false, command_active = false;
 };
 // Kept for process lifetime: closing one Gallium fd must not invalidate another
 // screen or IOSurface. In-flight storage is never freed after an unknown timeout.
@@ -129,7 +129,7 @@ int wait(uint64_t fence, uint64_t ns) {
     if (!e) {
         // Only after a real GPU fence. Before-submit maintenance removed CPU
         // dirty lines, so this cannot write stale CPU data over device output.
-        for(auto &b:state.buffers) if(b.kernel && b.gpu_dirty && b.last<=fence) {
+        for(auto &b:state.buffers) if(!state.command_active && b.kernel && b.gpu_dirty && b.last<=fence) {
             cache_clean_invalidate(b);
             b.gpu_dirty=false;
         }
@@ -166,6 +166,7 @@ uint64_t reserve(uint64_t bytes) {
 int release(Buffer &b) {
     int e=wait(b.last,WaitNS);
     if (e) { b.closing=true; return e; } // retained/quarantined; no use-after-free
+    if(b.gpu_dirty) {cache_clean_invalidate(b);b.gpu_dirty=false;}
     if (b.cpu_mapped) {
         e=error(IOConnectUnmapMemory64(state.connection,b.cpu_token,
                                       mach_task_self(),b.cpu));
@@ -231,7 +232,10 @@ int allocate(uint64_t bytes,uint32_t flags,IOSurfaceRef s,uint32_t *handle) {
     int e=0;
     if(s) {
         b.cpu=(uintptr_t)IOSurfaceGetBaseAddress(s)&~(HostPage-1);
-        b.surface=s;CFRetain(s);
+        b.surface=s;CFRetain(s);b.surface_id=IOSurfaceGetID(s);
+        if(state.command_active)for(auto &alias:state.buffers)
+            if(alias.kernel && alias.surface_id==b.surface_id && alias.imported_published)
+                b.imported_published=true;
         NativeAdrenoAbiBoImport req{b.cpu,bytes};
         e=call(NativeAdrenoMethodBoImport,&req,sizeof req,&reply,sizeof reply);
     } else {
@@ -362,17 +366,22 @@ int submit(drm_msm_gem_submit *s) {
     }
     if(ibs.empty()&&!e)e=EINVAL;
     timings.ibs+=ibs.size();
-    // Only cached imported surfaces need a CPU/GPU ownership transition here.
-    // Private BOs use the kernel's publication path and ordered GPU execution;
-    // waiting for an unrelated previous job prevents normal batch pipelining.
-    uint64_t imported_fence=0;
+    // Publish cached pages once per Metal transaction. Intermediate waits do
+    // not transfer ownership back to the CPU. A first publication waits all
+    // previous GPU work, including possible alternate handles for these pages.
+    bool publish=false;
     if(!e)for(unsigned i=0;i<s->nr_bos;++i) {
         Buffer *b=buffer(bos[i].handle);
-        if(b->surface)imported_fence=std::max(imported_fence,b->last);
+        publish |= b->surface && (!state.command_active || !b->imported_published);
     }
-    if(!e && imported_fence)e=wait(imported_fence,WaitNS);
-    if(!e)for(unsigned i=0;i<s->nr_bos;++i)
-        cache_clean_invalidate(*buffer(bos[i].handle));
+    if(!e && publish && !state.fences.empty())e=wait(state.fences.back().kernel,WaitNS);
+    if(!e)for(unsigned i=0;i<s->nr_bos;++i) {
+        Buffer *b=buffer(bos[i].handle);
+        if(!b->surface || (state.command_active && b->imported_published))continue;
+        cache_clean_invalidate(*b);
+        if(state.command_active)for(auto &alias:state.buffers)
+            if(alias.kernel && alias.surface_id==b->surface_id)alias.imported_published=true;
+    }
     // WC command and upload stores must reach the device even when the
     // submission contains no imported surfaces and hence no cache walk.
     __asm__ volatile("dsb sy" ::: "memory");
@@ -438,6 +447,11 @@ int dispatch(unsigned n,void *data,size_t bytes) {
         auto b=buffer(p->handle);if(!b)return ENOENT;
         if(p->op&~MSM_PREP_FLAGS)return EINVAL;
         int e=wait(b->last,p->op&MSM_PREP_NOSYNC?0:remaining(p->timeout));
+        if(!e) {
+            if(b->gpu_dirty){cache_clean_invalidate(*b);b->gpu_dirty=false;}
+            for(auto &alias:state.buffers)if(alias.kernel && b->surface && alias.surface_id==b->surface_id)
+                alias.imported_published=false;
+        }
         return (e==ETIMEDOUT && (p->op&MSM_PREP_NOSYNC))?EBUSY:e)
     REQUEST(DRM_MSM_GEM_CPU_FINI,drm_msm_gem_cpu_fini,return buffer(p->handle)?0:ENOENT)
     REQUEST(DRM_MSM_GEM_SUBMIT,drm_msm_gem_submit,return submit(p))
@@ -470,6 +484,21 @@ int dispatch(unsigned n,void *data,size_t bytes) {
 #undef REQUEST
 }
 } // namespace
+
+// Called only by the native backend's serialized command transaction.
+extern "C" int sweet_transport_command_begin(void) {
+    Lock lock;if(state.command_active)return EBUSY;
+    for(auto &b:state.buffers)b.imported_published=false;
+    state.command_active=true;return 0;
+}
+extern "C" void sweet_transport_command_end(void) {
+    Lock lock;state.command_active=false;
+    // The backend has waited its real Gallium fence. Never acquire unfinished
+    // pages after an error/timeout; those retain dirty state and stay pinned.
+    for(auto &b:state.buffers)if(b.kernel && b.gpu_dirty && b.last<=state.completed) {
+        cache_clean_invalidate(b);b.gpu_dirty=false;
+    }
+}
 
 extern "C" int drmOpenWithType(const char *name,const char *,int type) {
     Lock lock;
