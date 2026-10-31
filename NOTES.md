@@ -1,3 +1,14 @@
+## 2026-10-31:9dff3a6 user reports no restart so far
+
+User used launcher/apps after lifetime fix and reports "No restart so far".
+This is a short positive stability observation, not proof of indefinite stability.
+Saved live-9dff3a6-stability.log for comparison. Keep this build as current
+stability baseline. Resume performance work while preserving reference-counted
+sampler-view release and native symbols. Pendingcd9c9e9 texture state reuse was
+never installed and is deferred in local snapshots, not in current source.
+Current session again restricted network/approval-never; no phone mutation made
+in this turn. Do not claim performance improved based on stability response.
+
 ## 2026-10-31: sampler-view correction9dff3a6 installed live
 
 CI41226882019 PASSED. Six artifact hashes, arm64/load-base markers and backend/
