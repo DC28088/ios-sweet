@@ -1,3 +1,5 @@
+#include <unistd.h>
+
 /* SPDX-License-Identifier: MIT
  * Metal libraries/functions backed by the AIR reader, without Apple's compiler
  * service or a Vulkan specialization step. Included in SweetNativeMetal.m. */
@@ -147,11 +149,34 @@ static unsigned native_constant_bytes(NSUInteger type) {
     return [self newFunctionWithName:d.name constantValues:d.constantValues error:e];
 }
 @end
+/* Explicitly opt-in local capture. Never dump Apple AIR into public CI/logs.
+ * Captures immutable shader/constant snapshots, not application buffer contents.
+ */
+static void native_capture_function(SweetNativeFunction *function,unsigned stage) {
+    if(stage>=3 || access("/private/var/tmp/sweet-native-capture",F_OK))return;
+    if(![function->_nativeName hasPrefix:@"fixed_"])return;
+    static unsigned counts[3];
+    if(counts[stage]>=16)return;
+    unsigned index=counts[stage]++;
+    NSString *base=[NSString stringWithFormat:@"/private/var/tmp/sweet-native-%d-%u-%u",getpid(),stage,index];
+    NSMutableArray *constants=[NSMutableArray array];
+    for(NSDictionary *value in function->_nativeConstants) {
+        NSData *bytes=value[@"bytes"];
+        [constants addObject:@{@"key":value[@"key"],@"base64":[bytes base64EncodedStringWithOptions:0]}];
+    }
+    NSDictionary *record=@{@"function":function->_nativeName,@"stage":@(stage),@"constants":constants};
+    NSError *error=nil;
+    NSData *json=[NSJSONSerialization dataWithJSONObject:record options:NSJSONWritingPrettyPrinted error:&error];
+    BOOL ok=json && [function->_nativeAIR writeToFile:[base stringByAppendingString:@".air"] atomically:YES] &&
+                   [json writeToFile:[base stringByAppendingString:@".json"] atomically:YES];
+    rw_print("shader capture %s: %s\n",[base UTF8String],ok?"saved":"failed");
+}
 static BOOL native_specialize(struct rwa_device *device,id function,unsigned stage,char *why,size_t n) {
     if(!function)return rwa_set_constants(device,stage,NULL,0,why,n)==0;
     if(![function isKindOfClass:[SweetNativeFunction class]]) {
         snprintf(why,n,"pipeline function was not created by SweetNativeMetal");return NO;
     }
+    native_capture_function((SweetNativeFunction *)function,stage);
     NSArray *values=((SweetNativeFunction *)function)->_nativeConstants;
     if([values count]>256){snprintf(why,n,"too many function constants");return NO;}
     struct rwa_constant packed[256]={0};unsigned i=0;

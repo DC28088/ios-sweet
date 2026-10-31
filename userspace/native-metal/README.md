@@ -211,3 +211,12 @@ The Gallium handoff also gathers shader information and calls the screen's NIR
 finalizer before creating shader state. Freedreno's early finalizer and its later
 post-finalizer are separate passes; shader creation alone does not run both.
 Finalization errors are propagated to the Metal pipeline/command error path.
+
+## Local shader capture
+
+Creating `/private/var/tmp/sweet-native-capture` enables bounded captures of
+`fixed_` AIR functions and immutable specialization constants (up to16 per
+stage/process). Files are written under `/private/var/tmp/sweet-native-*` as
+`.air` and `.json`. Remove the enable file to stop capture. These Apple shader
+inputs stay local and must not be committed or uploaded to public CI. Capture
+records do not include application buffer contents.
