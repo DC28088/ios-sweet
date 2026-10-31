@@ -1,3 +1,16 @@
+## 2026-10-31: screen NIR finalization callback was skipped
+
+Further source review: air_metal.c finalize_for_gallium never calls
+screen->finalize_nir. Mesa25 freedreno's ir3_screen_finalize_nir runs
+ir3_nir_lower_io_to_temporaries and ir3_finalize_nir; create shader state only
+runs ir3_nir_post_finalize later, not the missing callback. Native shader
+creation therefore bypasses the driver's required early lowering/optimization.
+Preparing explicit shader-info gathering and screen finalization before IO
+intrinsics lowering, with errors propagated for both render and compute paths.
+Semantic-link correction ec92d85 already pushed; combine finalizer correction
+before next live trial. Cache-fix trial still visually failed; stable renderer
+has been restored. No new image boot is authorized without asking.
+
 ## 2026-10-31: cache correction runs but visuals still fail; stage linking missing
 
 01604ef CI41167149140 PASSED. Six hashes/arm64/cache marker verified. Live
