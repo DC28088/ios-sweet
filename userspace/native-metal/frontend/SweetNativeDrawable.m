@@ -19,18 +19,19 @@ struct rwa_texture *rwd_texture_for_surface(struct rwa_device *device,void *surf
     size_t width=IOSurfaceGetWidth(s),height=IOSurfaceGetHeight(s),pitch=IOSurfaceGetBytesPerRow(s);
     unsigned bpp=0;uint32_t fourcc=0;
     switch(want->pixel_format) {
-    case 10:fourcc='A008';bpp=1;break;
+    case 1:case 10:fourcc='A008';bpp=1;break;
+    case 30:fourcc='LA08';bpp=2;break;
     case 70:case 71:fourcc='RGBA';bpp=4;break;
     case 80:case 81:fourcc='BGRA';bpp=4;break;
     case 115:fourcc='RGhA';bpp=8;break;
-    default:REFUSE("interface: Metal pixel format %u is not a supported linear IOSurface format",want->pixel_format);
+    default:REFUSE("interface: Metal format %u / IOSurface %#x (%zux%zu pitch %zu) is not a supported linear import",want->pixel_format,IOSurfaceGetPixelFormat(s),width,height,pitch);
     }
     if(want->width!=width || want->height!=height || want->type!=2 || want->depth>1 ||
        want->array_length>1 || want->mip_levels>1 || want->sample_count>1)
         REFUSE("interface: IOSurface texture must match a single 2D plane, mip and sample");
     if(IOSurfaceGetPixelFormat(s)!=fourcc || width>UINT32_MAX || height>UINT32_MAX ||
        pitch>UINT32_MAX || width>SIZE_MAX/bpp || pitch<width*bpp || (pitch&63))
-        REFUSE("interface: IOSurface format/row pitch does not match the A618 linear texture layout");
+        REFUSE("interface: IOSurface %#x for Metal %u expected %#x, %zux%zu pitch %zu; incompatible A618 linear layout",IOSurfaceGetPixelFormat(s),want->pixel_format,fourcc,width,height,pitch);
     uintptr_t pixels=(uintptr_t)IOSurfaceGetBaseAddress(s),base=pixels&~(uintptr_t)16383;
     size_t bytes=IOSurfaceGetAllocSize(s),offset=pixels-base;
     if(!base || offset>=bytes || (height && pitch>(bytes-offset)/height))
@@ -41,6 +42,9 @@ struct rwa_texture *rwd_texture_for_surface(struct rwa_device *device,void *surf
     // mapping through ABI selector16 and retains the surface through GEM_CLOSE.
     struct rwa_texture *texture=rwa_texture_from_surface(device,(const struct rwa_texture_shape*)want,
                                                          id,(unsigned)offset,(unsigned)pitch,why,n);
+    static unsigned rg8_imports;
+    if(texture && want->pixel_format==30 && rg8_imports++<4)
+        fprintf(stderr,"SweetNativeMetal: RG8 IOSurface %u imported, %zux%zu pitch %zu\n",id,width,height,pitch);
     if(texture && took)*took=(struct rwd_surface){id,0,bytes,(unsigned)offset,(unsigned)pitch,
                                                 (unsigned)width,(unsigned)height,fourcc,0};
     return texture;
