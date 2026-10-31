@@ -1,3 +1,19 @@
+## 2026-10-31: b70ea81 user reports WORSE; rollback blocked by session sandbox
+
+Saved live-b70ea81-regression.log. Interaction transport windows show roughly
+0.60-1.04s submit CPU per5s,0.21-0.36s cache maintenance and0.31-0.58s fence
+calls (categories overlap; fence totals include calls outside submit). This
+still does not explain the entire UI frame budget. Do not call trial successful.
+Attempted rollback to0c298b7 from phone sweet-native-stable-pre-6194c4f,
+retaining active b70ea81 as sweet-native-regressed-b70ea81. SSH NEVER CONNECTED:
+first system ssh config permissions error, then explicit -F /dev/null attempt
+failed socket Operation not permitted. Current session reverted to restricted
+network with approval policy never. NO phone mutations happened; b70ea81 is
+still active. Must restore access before claiming rollback or restarting UI.
+Next rollback safely with directory swap rollback-on-failure, file-server SYNC,
+restart BackBoard, verify0c298b7 manifest. Native0c was main rendering correct
+but slow; original pre0c stable renderer remains a separate backup.
+
 ## 2026-10-31: scoped-wait performance trial b70ea81 installed live
 
 CI41201550845 PASSED; all six hashes, arm64 and correction/timing markers
