@@ -1,3 +1,24 @@
+## 2026-10-31: user approved snapshots; captured half vertex export mismatch
+
+Explicit user consent received for local AIR/constant copy. SSH tar succeeded;
+64 files extracted safely under research/native-resume-20261031/live-shaders-323.
+Keep Apple AIR local, out of git/public CI. 13/16 first captured fragment states
+match Apple's pipelines.desc constant sets exactly; runtime capture includes58
+named constants per fragment and4 per fixed vertex specialization.
+Captured fixed_vert_lph_spc case0 has all four constants0, matching existing
+host air2nir default-zero inspection. NIR saved runtime-vertex0.nir shows
+color#2 shader_out f16vec4 receiving16-bit %39, while texture coordinates are32.
+Mesa25 ir3_compiler_nir.c setup_output preserves source register width;
+outputs[].half records it, but ir3_shader.h ir3_link_shaders passes only regid.
+A6xx SP_VS_OUT_REG A_REGID field is bits0..7, no half bit; FS color exports have
+separate half handling. Therefore direct half VS exports select full-register
+contents instead of half color values. Preparing post-IO-lowering vertex-only
+16->32 export conversion. Internal half arithmetic and fragment outputs stay
+as requested; actual rendered result still requires qualification.
+Phone remains on approved0172 with stable original graphics bundle restored;
+SHA verified b1f1e3d65e43371b58f4382cf4b31ec830ff4a19f86e067c0352b79f38d4dccc.
+Do not boot another image without user consent. Live bundle trial is reversible.
+
 ## 2026-10-31: approved0172 boot done; live snapshots saved, transfer approval pending
 
 Phone detected after reconnect. User-authorized fastboot boot of verified0172

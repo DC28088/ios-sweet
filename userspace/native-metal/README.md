@@ -220,3 +220,11 @@ stage/process). Files are written under `/private/var/tmp/sweet-native-*` as
 `.air` and `.json`. Remove the enable file to stop capture. These Apple shader
 inputs stay local and must not be committed or uploaded to public CI. Capture
 records do not include application buffer contents.
+
+## A6xx vertex exports
+
+Explicit16-bit AIR vertex outputs are converted to32-bit when lowering output
+stores for A6xx VPC. Its linkage selects full registers and does not encode the
+half-register flag recorded by ir3. The conversion preserves the half value's
+numeric result; it does not promote the shader's internal arithmetic or alter
+fragment render-target export precision.
