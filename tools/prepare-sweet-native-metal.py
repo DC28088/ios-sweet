@@ -382,6 +382,9 @@ native_render_surface(struct rwa_texture *texture)
    bool in_command, lost;
    uint64_t native_begin_ns, native_window_ns, native_draw_ns, native_encode_ns, native_finish_ns;
    uint64_t native_draw_count, native_command_count, native_phase_ns[4];
+   struct pipe_constant_buffer native_cb[PIPE_SHADER_TYPES][PIPE_MAX_CONSTANT_BUFFERS];
+   bool native_cb_valid[PIPE_SHADER_TYPES][PIPE_MAX_CONSTANT_BUFFERS], native_buffer_writes;
+   uint64_t native_cb_calls, native_cb_reused;
    unsigned native_pending_views[PIPE_SHADER_TYPES], native_pending_images[PIPE_SHADER_TYPES];
    unsigned native_pending_samplers[PIPE_SHADER_TYPES];
    struct pipe_framebuffer_state batch_fb;
@@ -431,6 +434,34 @@ native_render_draw(''')
                 '   native_draw_checkpoint(device,&native_phase_at,2);\n   /* clear_color NULL is MTLLoadActionLoad:')
     s=replace(s,'unbind:\n   unbind_stage(device, PIPE_SHADER_FRAGMENT, &fbound);',
                 'unbind:\n   native_draw_checkpoint(device,&native_phase_at,3);\n   unbind_stage(device, PIPE_SHADER_FRAGMENT, &fbound);')
+    # Gallium constant bindings persist. Do not re-upload an unchanged unaligned
+    # user constant range for every adjacent CA draw in the same transaction.
+    s=replace(s,'static int\nbind_stage(','''static void
+native_bind_constant(struct rwa_device *d, enum pipe_shader_type stage,unsigned slot,
+                     const struct pipe_constant_buffer *cb)
+{
+   d->native_cb_calls++;
+   const struct pipe_constant_buffer *old=&d->native_cb[stage][slot];
+   if(d->in_command && d->native_cb_valid[stage][slot] &&
+      old->buffer==cb->buffer && old->user_buffer==cb->user_buffer &&
+      old->buffer_offset==cb->buffer_offset && old->buffer_size==cb->buffer_size) {
+      d->native_cb_reused++;return;
+   }
+   d->pipe->set_constant_buffer(d->pipe,stage,slot,false,cb);
+   d->native_cb[stage][slot]=*cb;d->native_cb_valid[stage][slot]=true;
+}
+
+static int
+bind_stage(''')
+    s=replace(s,'         pipe->set_constant_buffer(pipe, stage, r->index, false, &cb);',
+                '         native_bind_constant(device,stage,r->index,&cb);')
+    s=replace(s,'         if (r->write)\n            writable |= 1u << r->index;','''         if (r->write) {
+            writable |= 1u << r->index;
+            device->native_buffer_writes=true;
+            memset(device->native_cb_valid,0,sizeof(device->native_cb_valid));
+         }''')
+    s=replace(s,'   const char *name = compute->info.entry_point ? compute->info.entry_point',
+                '   memset(device->native_cb_valid,0,sizeof(device->native_cb_valid));\n   const char *name = compute->info.entry_point ? compute->info.entry_point')
     # GPU-only build. Keeping a CPU fallback here would disguise failed bring-up.
     s=replace(s,'   bool software = debug_get_bool_option("RWA_SOFTWARE", false);','   bool software = false;')
     s=replace(s,'   if (!device->screen)\n      device->screen = sw_screen_create(null_sw_create());','')

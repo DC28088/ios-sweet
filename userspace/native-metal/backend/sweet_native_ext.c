@@ -73,6 +73,7 @@ static unsigned native_constants(struct rwa_device *d,unsigned stage,void *ctx,c
 int rwa_barrier(struct rwa_device *d,char *why,size_t n)
 {
    if(!d || d->lost){say(why,n,"device lost while encoding memory barrier");return -1;}
+   memset(d->native_cb_valid,0,sizeof(d->native_cb_valid));
    d->pipe->memory_barrier(d->pipe,PIPE_BARRIER_ALL);return 0;
 }
 static uint64_t native_now_ns(void)
@@ -83,7 +84,10 @@ static uint64_t native_now_ns(void)
 int rwa_render_draw(struct rwa_render *render,const struct rwa_draw *draw,char *why,size_t n)
 {
    uint64_t began=native_now_ns();
+   render->device->native_buffer_writes=false;
    int result=native_render_draw(render,draw,why,n);
+   if(render->device->native_buffer_writes)
+      memset(render->device->native_cb_valid,0,sizeof(render->device->native_cb_valid));
    render->device->native_draw_ns+=native_now_ns()-began;
    render->device->native_draw_count++;
    return result;
@@ -91,6 +95,7 @@ int rwa_render_draw(struct rwa_render *render,const struct rwa_draw *draw,char *
 int rwa_command_begin(struct rwa_device *d,char *why,size_t n)
 {
    if(!d || d->lost || d->in_command){say(why,n,"device lost or command buffer already executing");return -1;}
+   memset(d->native_cb_valid,0,sizeof(d->native_cb_valid));
    d->native_begin_ns=native_now_ns();
    if(!d->native_window_ns)d->native_window_ns=d->native_begin_ns;
    d->in_command=true;return 0;
@@ -126,6 +131,9 @@ int rwa_command_end(struct rwa_device *d,char *why,size_t n)
       fprintf(stderr,"SweetNativeMetal: draw phases validation_surface_us=%llu fixed_state_us=%llu bindings_us=%llu draw_vbo_us=%llu\n",
          (unsigned long long)(d->native_phase_ns[0]/1000),(unsigned long long)(d->native_phase_ns[1]/1000),
          (unsigned long long)(d->native_phase_ns[2]/1000),(unsigned long long)(d->native_phase_ns[3]/1000));
+      fprintf(stderr,"SweetNativeMetal: constant bindings calls=%llu reused=%llu\n",
+         (unsigned long long)d->native_cb_calls,(unsigned long long)d->native_cb_reused);
+      d->native_cb_calls=d->native_cb_reused=0;
       memset(d->native_phase_ns,0,sizeof(d->native_phase_ns));
       d->native_window_ns=ended;d->native_command_count=d->native_draw_count=0;
       d->native_encode_ns=d->native_draw_ns=d->native_finish_ns=0;

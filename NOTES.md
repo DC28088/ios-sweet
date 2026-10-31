@@ -1,3 +1,18 @@
+## 2026-10-31:2263e39 installed; constant binding follow-up
+
+CI41223001204 PASSED; six hashes, arm64 binaries, phase and VPC markers verified.
+Installed live against339f9ba manifest, host/phone pre-2263e39 backups saved,
+staged readbacks/SYNC verified and BackBoard5167 restarted. User: still slow,
+rendering unchanged. Phase window5035ms:4250 draws,3813919us draw CPU,
+2080123us bindings,1692994us draw_vbo; validation28231us/fixedstate10301us.
+Binding/unbinding change has not solved frame rate. No rollback.
+Follow-up caches identical Gallium constant bindings within a command, avoiding
+repeated set_constant_buffer and unaligned user-buffer uploads. Cache keys cover
+resource, CPU pointer, offset and size; invalidate at command begin, barriers,
+compute entry and before/after GPU buffer-write draws. Existing resource lifetime
+retention remains. Reports constant binding calls/reuse. Host C syntax compile
+passed; runtime reuse/hit rate and performance unverified. Current phone2263e39.
+
 ## 2026-10-31:339f9ba unchanged; draw processing dominates measured active window
 
 User reports unchanged performance. Saved live-339f9ba-unchanged.log.
