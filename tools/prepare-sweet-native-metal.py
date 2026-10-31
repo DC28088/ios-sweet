@@ -340,6 +340,16 @@ air2nir = executable(""")
                 '   native_prune_direct_resources(compute->nir, &compute->info);\n   if (compute->info.stage != MESA_SHADER_COMPUTE) {')
     s=replace(s,'   render->fs_cso = make_stage_cso(device, fs, why, why_size);',
                 '   if (!render->generated_vertex && !native_link_stages(vs, &render->vinfo, fs, &render->finfo, why, why_size))\n      goto fail;\n   render->fs_cso = make_stage_cso(device, fs, why, why_size);')
+    # Gallium frontends must run the screen's NIR finalizer before creating
+    # shader state. ir3's later post-finalizer does not replace this callback.
+    s=replace(s,'static void\nfinalize_for_gallium(nir_shader *nir, struct pipe_screen *screen)\n{',
+                'static bool\nfinalize_for_gallium(nir_shader *nir, struct pipe_screen *screen, char *why, size_t why_size)\n{')
+    s=replace(s,'   NIR_PASS(_, nir, nir_lower_io, nir_var_shader_in | nir_var_shader_out,\n            type_size_vec4, nir_lower_io_use_interpolated_input_intrinsics);\n}',
+                '   nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));\n   if (screen->finalize_nir) {\n      char *error = screen->finalize_nir(screen, nir);\n      if (error) {say(why, why_size, "NIR finalization: %s", error);free(error);return false;}\n   }\n   NIR_PASS(_, nir, nir_lower_io, nir_var_shader_in | nir_var_shader_out,\n            type_size_vec4, nir_lower_io_use_interpolated_input_intrinsics);\n   nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));\n   return true;\n}')
+    s=replace(s,'   finalize_for_gallium(cs, device->screen);',
+                '   if (!finalize_for_gallium(cs, device->screen, why, why_size)) {ralloc_free(cs);return NULL;}')
+    s=replace(s,'   finalize_for_gallium(clone, device->screen);',
+                '   if (!finalize_for_gallium(clone, device->screen, why, why_size)) {ralloc_free(clone);return NULL;}')
     s=replace(s,'   bool software;','''   bool software;
    bool in_command, lost;
    struct pipe_framebuffer_state batch_fb;

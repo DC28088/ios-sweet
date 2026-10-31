@@ -206,3 +206,8 @@ used as the link key. Unused fragment inputs are removed first; live inputs need
 a matching vertex output with compatible width and component count. A bounded
 startup log records actual stage pairings and remapped inputs. Built-in locations
 are left to Gallium. This does not replace pixel-level runtime qualification.
+
+The Gallium handoff also gathers shader information and calls the screen's NIR
+finalizer before creating shader state. Freedreno's early finalizer and its later
+post-finalizer are separate passes; shader creation alone does not run both.
+Finalization errors are propagated to the Metal pipeline/command error path.
