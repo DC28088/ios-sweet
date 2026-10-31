@@ -1,3 +1,19 @@
+## 2026-10-31:339f9ba unchanged; draw processing dominates measured active window
+
+User reports unchanged performance. Saved live-339f9ba-unchanged.log.
+Active window5187ms:51 commands3454 draws,encode3774586us,draw3728517us,
+finish416672us. Corresponding transport window5031ms:357 submits,1511372us
+submit CPU,544673us cache,704981us fence (overlap; not additive). Draw processing
+is now measured as a substantial bottleneck, not just idle GPU guesswork.
+Next change defers per-draw sampler/view/image unbinding to command completion,
+while frontend work objects retain resources. Clears trailing bindings when a
+new shader uses fewer slots, then clears union of touched slots after the fence
+before resources can be released. Adds draw phase timing (validation/surface,
+fixed state, bindings, draw_vbo) to narrow residual costs. Existing shader,
+IOSurface cache ownership and completion semantics retained. Host Mesa C syntax
+compilation passed; source generation from pristine pinned donor succeeded.
+No device update yet; current phone339f9ba remains running. No rollback requested.
+
 ## 2026-10-31: full access restored; surface cache339f9ba installed live
 
 User restored full access. CI41204242223 PASSED for339f9ba; all six hashes,

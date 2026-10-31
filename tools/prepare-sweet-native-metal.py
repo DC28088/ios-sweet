@@ -381,7 +381,9 @@ native_render_surface(struct rwa_texture *texture)
     s=replace(s,'   bool software;','''   bool software;
    bool in_command, lost;
    uint64_t native_begin_ns, native_window_ns, native_draw_ns, native_encode_ns, native_finish_ns;
-   uint64_t native_draw_count, native_command_count;
+   uint64_t native_draw_count, native_command_count, native_phase_ns[4];
+   unsigned native_pending_views[PIPE_SHADER_TYPES], native_pending_images[PIPE_SHADER_TYPES];
+   unsigned native_pending_samplers[PIPE_SHADER_TYPES];
    struct pipe_framebuffer_state batch_fb;
    struct rwa_constant constants[3][256];
    unsigned constant_count[3];''')
@@ -389,6 +391,46 @@ native_render_surface(struct rwa_texture *texture)
                                   size_t, struct air_constant_value **);
 
 /* PRINTFLIKE,''')
+    # All command work retains its resources until command_end. Avoid clearing
+    # sampler/image bindings between adjacent draws; clear the union at the end.
+    s=replace(s,'   struct pipe_context *pipe = device->pipe;\n   if (bound->num_views)','''   if (device->in_command) {
+      device->native_pending_views[stage]=MAX2(device->native_pending_views[stage],bound->num_views);
+      device->native_pending_images[stage]=MAX2(device->native_pending_images[stage],bound->num_images);
+      device->native_pending_samplers[stage]=MAX2(device->native_pending_samplers[stage],bound->num_samplers);
+      return;
+   }
+   struct pipe_context *pipe = device->pipe;
+   if (bound->num_views)''')
+    # Clear stale trailing slots when a new shader uses fewer resources. The
+    # remaining bindings are reused, not blindly unbound and rebound per draw.
+    s=replace(s,'   if (num_views)\n      pipe->set_sampler_views(pipe, stage, 0, num_views, 0, false, views);','''   unsigned old_views=device->native_pending_views[stage];
+   if (num_views || old_views)
+      pipe->set_sampler_views(pipe, stage, 0, num_views,
+         old_views>num_views?old_views-num_views:0, false, views);''')
+    s=replace(s,'   if (num_images)\n      pipe->set_shader_images(pipe, stage, 0, num_images, 0, images);','''   unsigned old_images=device->native_pending_images[stage];
+   if (num_images || old_images)
+      pipe->set_shader_images(pipe, stage, 0, num_images,
+         old_images>num_images?old_images-num_images:0, images);''')
+    s=replace(s,'   if (num_samplers)\n      pipe->bind_sampler_states(pipe, stage, 0, num_samplers, samplers);','''   unsigned sampler_slots=MAX2(num_samplers,device->native_pending_samplers[stage]);
+   if (sampler_slots)
+      pipe->bind_sampler_states(pipe, stage, 0, sampler_slots, samplers);''')
+    s=replace(s,'static int\nnative_render_draw(','''static uint64_t native_now_ns(void);
+static void native_draw_checkpoint(struct rwa_device *d,uint64_t *at,unsigned phase)
+{
+   uint64_t now=native_now_ns();d->native_phase_ns[phase]+=now-*at;*at=now;
+}
+static int
+native_render_draw(''')
+    s=replace(s,'   const char *fname = render->finfo.entry_point ? render->finfo.entry_point',
+                '   uint64_t native_phase_at=native_now_ns();\n   const char *fname = render->finfo.entry_point ? render->finfo.entry_point')
+    s=replace(s,'   float znear = draw->depth_range ? draw->depth_range[0] : 0.0f;',
+                '   native_draw_checkpoint(device,&native_phase_at,0);\n   float znear = draw->depth_range ? draw->depth_range[0] : 0.0f;')
+    s=replace(s,'   struct rwa_bound fbound = { 0 }, vbound = { 0 };',
+                '   native_draw_checkpoint(device,&native_phase_at,1);\n   struct rwa_bound fbound = { 0 }, vbound = { 0 };')
+    s=replace(s,'   /* clear_color NULL is MTLLoadActionLoad:',
+                '   native_draw_checkpoint(device,&native_phase_at,2);\n   /* clear_color NULL is MTLLoadActionLoad:')
+    s=replace(s,'unbind:\n   unbind_stage(device, PIPE_SHADER_FRAGMENT, &fbound);',
+                'unbind:\n   native_draw_checkpoint(device,&native_phase_at,3);\n   unbind_stage(device, PIPE_SHADER_FRAGMENT, &fbound);')
     # GPU-only build. Keeping a CPU fallback here would disguise failed bring-up.
     s=replace(s,'   bool software = debug_get_bool_option("RWA_SOFTWARE", false);','   bool software = false;')
     s=replace(s,'   if (!device->screen)\n      device->screen = sw_screen_create(null_sw_create());','')

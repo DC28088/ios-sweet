@@ -104,6 +104,17 @@ int rwa_command_end(struct rwa_device *d,char *why,size_t n)
    d->pipe->set_framebuffer_state(d->pipe,&(struct pipe_framebuffer_state){0});
    util_unreference_framebuffer_state(&d->batch_fb);
    int result=finish_or_say_why(d,false,"command buffer",why,n);
+   // Work objects still retain every sampler/texture here. Clear raw sampler
+   // state pointers before returning control to callers that can destroy them.
+   d->in_command=false;
+   for(unsigned stage=0;stage<PIPE_SHADER_TYPES;stage++) {
+      struct rwa_bound pending={0};
+      pending.num_views=d->native_pending_views[stage];
+      pending.num_images=d->native_pending_images[stage];
+      pending.num_samplers=d->native_pending_samplers[stage];
+      unbind_stage(d,(enum pipe_shader_type)stage,&pending);
+      d->native_pending_views[stage]=d->native_pending_images[stage]=d->native_pending_samplers[stage]=0;
+   }
    uint64_t ended=native_now_ns();
    d->native_finish_ns+=ended-encoded;d->native_command_count++;
    if(ended-d->native_window_ns>=5000000000ull) {
@@ -112,6 +123,10 @@ int rwa_command_end(struct rwa_device *d,char *why,size_t n)
          (unsigned long long)d->native_command_count,(unsigned long long)d->native_draw_count,
          (unsigned long long)(d->native_encode_ns/1000),(unsigned long long)(d->native_draw_ns/1000),
          (unsigned long long)(d->native_finish_ns/1000));
+      fprintf(stderr,"SweetNativeMetal: draw phases validation_surface_us=%llu fixed_state_us=%llu bindings_us=%llu draw_vbo_us=%llu\n",
+         (unsigned long long)(d->native_phase_ns[0]/1000),(unsigned long long)(d->native_phase_ns[1]/1000),
+         (unsigned long long)(d->native_phase_ns[2]/1000),(unsigned long long)(d->native_phase_ns[3]/1000));
+      memset(d->native_phase_ns,0,sizeof(d->native_phase_ns));
       d->native_window_ns=ended;d->native_command_count=d->native_draw_count=0;
       d->native_encode_ns=d->native_draw_ns=d->native_finish_ns=0;
    }
