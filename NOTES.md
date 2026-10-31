@@ -1,3 +1,32 @@
+## 2026-10-31: approved0172 boot done; live snapshots saved, transfer approval pending
+
+Phone detected after reconnect. User-authorized fastboot boot of verified0172
+returned send/boot OKAY. Existing UDP5140 receiver258634 retained. Active fa1b6d4
+executable readback matched artifact. Shader capture6ee0df7 CI41193556590 PASSED;
+six hashes/arm64 verified. Live install checked current fa1b6d4 six-file manifest
+(not original12), backed it up at sweet-native-stable-pre-6ee0df7, staged six
+capture files, readback verified, SYNC and restarted BackBoard259 ->323.
+Snapshots saved on phone /private/var/tmp/sweet-native-323-{0,1}-{0..15}.{air,json}.
+Capture enable flag removed afterward. No further image boot.
+Automatic approval review REJECTED copying snapshots locally: requires explicit
+user consent for private AIR/constant payload and local destination. Asked user
+via request_user_input_async; response still pending. Do NOT bypass rejection
+with a different transfer method. Planned host path is this checkout's
+research/native-resume-20261031/. No successful snapshot transfer yet.
+
+Restored ORIGINAL working frontend from sweet-native-stable-pre-fa1b6d4 to
+active, retained diagnostic bundle at sweet-native-trial-6ee0df7, SYNC and
+restarted BackBoard323. The pre-6ee backup contains fa1b6d4, NOT stable original.
+Avoid confusion during further rollbacks. Native rendering remains unqualified.
+Next: after explicit consent, copy snapshots locally, inspect actual constants/
+AIR and isolate rendering fault. /bin/launchctl does not exist on the phone.
+
+User reference janhurn9400/hackios-xnu-kernel read via GitHub API (redirected
+parent oosexgang/hakios-xnu-kernel). README explicitly lists Adreno Mesa/OpenGL
+ES working, Metal NOT YET (shader compiler, no Metal). Public kernel sources
+saved locally janhurn-adreno.c/janhurn-gpu.cpp; GPU is not a turnkey native Metal
+frontend. Do not repeat the unsupported claim of full Metal acceleration.
+
 ## Continuation after DeepSeek fa1b6d4: boot requested, USB absent
 
 User explicitly authorized temporary image boot and driver work. Checked clean
