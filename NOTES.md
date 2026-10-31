@@ -1,3 +1,31 @@
+## 2026-10-31: e8c7631 hardware trial passed compiler, failed draw binding; restored
+
+User approved temporary0172 boot from FASTBOOT. Exact image SHA verified;
+fastboot send+boot OKAY. Live installer checked all12 working bundle hashes,
+saved host pre-hotfix-e8c7631 and phone sweet-native-stable-pre-e8c7631,
+staged6 new files and readback verified, swapped, file-server SYNC and restarted
+BackBoard269. Native BackBoard284 stayed alive; no previous AIR pointer-store
+rejection/crash in observed trial. Real scoped submissions occurred (184 calls
+in first63s); not proof of correct draw output. User lockscreen froze then black.
+New repeatable error: "the draw failed: fixed_frag_lph_cph reads buffer 0 and
+2 buffers were bound". User requested SpringBoard restart; TERM286 succeeded,
+error persisted. Saved logs research/native-resume-20261031/live-e8c7631.log.
+Recovered live by moving trial bundle to /private/var/db/sweet-native-trial-e8c7631
+and restoring saved working bundle; file-server SYNC then restarted BackBoard284.
+Active restored executable SHA256 b1f1e3d65e43371b58f4382cf4b31ec830ff4a19f86e067c0352b79f38d4dccc
+readback verified. Frames resumed:151-167 presents/10s latest windows. User
+interaction confirmation still pending. No further image boot after approved0172.
+Next investigate check_bindings in donor air_metal.c: it requires every resource
+listed in air_shader_info, while specialized shaders can leave declared inputs
+unused. HYPOTHESIS only: slot0 may be inactive after function-constant pruning;
+alternatively frontend failed to retain/bind it. Prove live NIR buffer use and
+actual encoded bindings before changing validation. Do NOT fabricate buffer0 or
+skip required reads. Host checker currently compares texture/sampler bindings,
+not live buffer usage or pixel accuracy. Native frontend inactive after recovery.
+Current raw delta scripts remain stale; use live bundle backups, never old raw
+blocks against the now-mutated filesystem. Restore scripts must use current
+paths; sweet-native-stable-pre-e8c7631 was moved back to active during recovery.
+
 ## 2026-10-31: native pointer-cell bundle built and verified; awaiting boot approval
 
 Source e8c7631; CI41163489105 PASSED. Artifact downloaded to
