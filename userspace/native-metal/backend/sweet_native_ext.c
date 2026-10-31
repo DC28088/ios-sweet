@@ -75,18 +75,46 @@ int rwa_barrier(struct rwa_device *d,char *why,size_t n)
    if(!d || d->lost){say(why,n,"device lost while encoding memory barrier");return -1;}
    d->pipe->memory_barrier(d->pipe,PIPE_BARRIER_ALL);return 0;
 }
+static uint64_t native_now_ns(void)
+{
+   struct timespec now;clock_gettime(CLOCK_MONOTONIC_RAW,&now);
+   return (uint64_t)now.tv_sec*1000000000ull+now.tv_nsec;
+}
+int rwa_render_draw(struct rwa_render *render,const struct rwa_draw *draw,char *why,size_t n)
+{
+   uint64_t began=native_now_ns();
+   int result=native_render_draw(render,draw,why,n);
+   render->device->native_draw_ns+=native_now_ns()-began;
+   render->device->native_draw_count++;
+   return result;
+}
 int rwa_command_begin(struct rwa_device *d,char *why,size_t n)
 {
    if(!d || d->lost || d->in_command){say(why,n,"device lost or command buffer already executing");return -1;}
+   d->native_begin_ns=native_now_ns();
+   if(!d->native_window_ns)d->native_window_ns=d->native_begin_ns;
    d->in_command=true;return 0;
 }
 int rwa_command_end(struct rwa_device *d,char *why,size_t n)
 {
    if(!d || !d->in_command){say(why,n,"no command buffer is executing");return -1;}
+   uint64_t encoded=native_now_ns();
+   d->native_encode_ns+=encoded-d->native_begin_ns;
    // Changing/unbinding framebuffer closes its Gallium batch; no per-draw flush.
    d->pipe->set_framebuffer_state(d->pipe,&(struct pipe_framebuffer_state){0});
    util_unreference_framebuffer_state(&d->batch_fb);
    int result=finish_or_say_why(d,false,"command buffer",why,n);
+   uint64_t ended=native_now_ns();
+   d->native_finish_ns+=ended-encoded;d->native_command_count++;
+   if(ended-d->native_window_ns>=5000000000ull) {
+      fprintf(stderr,"SweetNativeMetal: frontend window_ms=%llu commands=%llu draws=%llu encode_us=%llu draw_us=%llu finish_us=%llu\n",
+         (unsigned long long)((ended-d->native_window_ns)/1000000),
+         (unsigned long long)d->native_command_count,(unsigned long long)d->native_draw_count,
+         (unsigned long long)(d->native_encode_ns/1000),(unsigned long long)(d->native_draw_ns/1000),
+         (unsigned long long)(d->native_finish_ns/1000));
+      d->native_window_ns=ended;d->native_command_count=d->native_draw_count=0;
+      d->native_encode_ns=d->native_draw_ns=d->native_finish_ns=0;
+   }
    d->in_command=false;
    if(result)d->lost=true;
    return result;
@@ -102,7 +130,7 @@ int rwa_clear(struct rwa_device *d,struct rwa_texture *const *color,unsigned cou
       if(!(res->bind&PIPE_BIND_RENDER_TARGET) || util_format_is_pure_integer(res->format)) {
          say(why,n,"interface: clear requires a floating-point or normalized render target");return -1;
       }
-      struct pipe_surface *surface=d->pipe->create_surface(d->pipe,res,&(struct pipe_surface){.format=res->format});
+      struct pipe_surface *surface=native_render_surface(color[i]);
       if(!surface){say(why,n,"failed to create clear surface");return -1;}
       union pipe_color_union value;
       memcpy(value.f,values[i],sizeof(value.f));
@@ -116,7 +144,7 @@ int rwa_clear(struct rwa_device *d,struct rwa_texture *const *color,unsigned cou
       if((z&&!format_has_depth(res->format)) || (s&&!format_has_stencil(res->format))) {
          say(why,n,"depth/stencil clear aspect absent from format");return -1;
       }
-      struct pipe_surface *surface=d->pipe->create_surface(d->pipe,res,&(struct pipe_surface){.format=res->format});
+      struct pipe_surface *surface=native_render_surface(depth);
       if(!surface){say(why,n,"failed to create depth clear surface");return -1;}
       d->pipe->clear_depth_stencil(d->pipe,surface,flags,z?*z:0,s?*s:0,0,0,res->width0,res->height0,false);
       pipe_surface_reference(&surface,NULL);
