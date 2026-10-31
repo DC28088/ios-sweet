@@ -1,3 +1,21 @@
+## 2026-10-31: vertex export correction0c298b7 installed live, visuals pending
+
+CI41196402093 PASSED source0c298b7. Artifact six hashes, arm64 headers and VPC
+marker verified. Live installer checked original12-file stable manifest,
+backed up host pre-hotfix-0c298b7 and phone sweet-native-stable-pre-0c298b7,
+staged/readback verified six files, SYNC and restarted BackBoard400 ->1224.
+Live trace confirms "widened 1 half vertex exports to full VPC registers"
+eight bounded messages, native FD618 and successful scoped submissions.
+No observed pipeline/draw/import error in sampled fresh trace. User screen
+observation requested; not yet received. DO NOT mark rendering fixed yet.
+No image boot performed for this live update. Research live-0c298b7.log,
+install-0c298b7.log and0c298b7-trial-start.json preserve evidence.
+If reverting, working ORIGINAL is sweet-native-stable-pre-0c298b7; preserve
+current trial under a unique path and restart BackBoard after file-server SYNC.
+User now explicitly says no further permission questions are needed for this
+ongoing work; proceed with reversible updates. Preserve backups/Android and
+handle sandbox authorization requirements normally.
+
 ## 2026-10-31: user approved snapshots; captured half vertex export mismatch
 
 Explicit user consent received for local AIR/constant copy. SSH tar succeeded;
