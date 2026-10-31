@@ -1,126 +1,282 @@
-# iOS 16 on sweet — status, working features and roadmap
+## 2026-10-31: native draw resource correction prepared
 
-Updated 2026-10-31. This is the public status of the project. The dated log
-below is a research record, not an installation guide. Hardware trials are
-temporary and reversible; the bootloader, recovery, modem, persist and backup
-partitions are never modified. Flashing and raw-partition procedures are
-intentionally not published here.
+The e8c7631 draw error is caused by validating every AIR resource declaration,
+even after specialization makes some inputs unused. Local QuartzCore entry4
+fixed_frag_lph_cph has zero live resource reads in both generic and Apple
+specialized NIR, despite its declared buffer arguments. Added pipeline-local
+optimization and live resource filtering in air_live_resources.inc for direct
+UBOs/SSBOs/textures/samplers/images. Binding numbers and NIR resource counts
+stay unchanged. Dynamic/unknown indexing conservatively keeps declarations;
+argument-buffer members retain their shared layout. Both validation and binding
+use this filtered pipeline metadata; genuinely required reads are not bypassed.
+Host comparison now includes live buffer slots as well as texture/sampler
+selection: all451 generic/specialized pipelines match, no translation failures.
+Synthetic cases check dead loads, side-effecting stores, dynamic resource
+indices and argument-buffer preservation. Reports are under
+research/native-resume-20261031/resource-*.log. This is offline evidence only;
+full pixel accuracy, iOS build and hardware trial remain required.
+Phone remains on approved0172 with stable original graphics bundle restored.
+Do not boot another image without asking. Live bundle trial can use retained
+backups; old raw userdata deltas are stale and must never be applied.
 
-## What works
+## 2026-10-31: e8c7631 hardware trial passed compiler, failed draw binding; restored
 
-| Area | State |
-| --- | --- |
-| Boot | Stock Xiaomi ABL -> our shim -> XNU 8796 (iOS 16 generation), then the unmodified iPhone X 16.7.16 (20H392) userland |
-| CPU | 6 Cortex-A55 cores via PSCI, 16K pages, GICv3 and arch timers; the 2 Cortex-A76 cores are not used yet |
-| Memory | About 3.95 GiB of the upper DDR bank |
-| Storage | Own UFS host driver; journaled HFS+ iOS root in `userdata`, read/write; journal replay and read-only fsck tooling |
-| iOS userland | launchd, the system daemons, the dyld shared cache, backboardd and SpringBoard run from the real iPhone X root |
-| Display | AppleCLCD + IOMobileFramebuffer; iPhone X 1125x2436 presented and scaled to the 1080x2400 panel; beam-raced scanout copy; 120 Hz panel timing measured |
-| GUI | Lock screen, home screen, gestures, app switcher, Control Center, Notification Center, Settings |
-| Touch | Goodix GT9896 over I2C (GENI), RPMh rail, HID digitizer events |
-| Buttons | Power and volume up/down through the PMIC/SPMI as HID consumer keys; lock/wake works |
-| Battery | PM6150 QG voltage/current, charge counting, stable percentage, plug/unplug detection and an SDAM seed; the PM6150 RTC sets the calendar |
-| Wi-Fi | WCN3990: radio and firmware up, scans, joins WPA2, DHCP, web pages load |
-| Bluetooth | WCN3990 UART transport and firmware download; pairs with a laptop and headphones (no headphone audio yet) |
-| USB networking | SSH (dropbear, key-only) and a kernel file server over the USB Ethernet link |
-| Haptics | AW8624 driver, `/dev/sweet-haptic`, chip ID and buzz commands report done; the feel test is not confirmed |
-| Device identity | iPhone X (`iPhone10,3` / `D22AP`) |
-| Activation | Native Hactivation path through mobileactivationd; no Apple servers involved |
-| GPU kernel driver | Adreno 618: rings, GMEM, fences, scoped submissions, BO pool, write-combined BOs, SMMU streams, 800 MHz, GPUCC readback and 10 s telemetry |
-| GPU userspace (current) | Metal -> Vulkan (Turnip) bridge: wallpaper, UI and apps render on the GPU at roughly 12-30 fps depending on content |
-| Native Metal (experimental) | Direct AIR -> NIR -> freedreno/ir3 backend, metallib and function-constant parsing, specialization, command batching, viewport/scissor/clear, MSM ABI1 transport and IOSurface import; offline QuartzCore corpus 451/451 |
+User approved temporary0172 boot from FASTBOOT. Exact image SHA verified;
+fastboot send+boot OKAY. Live installer checked all12 working bundle hashes,
+saved host pre-hotfix-e8c7631 and phone sweet-native-stable-pre-e8c7631,
+staged6 new files and readback verified, swapped, file-server SYNC and restarted
+BackBoard269. Native BackBoard284 stayed alive; no previous AIR pointer-store
+rejection/crash in observed trial. Real scoped submissions occurred (184 calls
+in first63s); not proof of correct draw output. User lockscreen froze then black.
+New repeatable error: "the draw failed: fixed_frag_lph_cph reads buffer 0 and
+2 buffers were bound". User requested SpringBoard restart; TERM286 succeeded,
+error persisted. Saved logs research/native-resume-20261031/live-e8c7631.log.
+Recovered live by moving trial bundle to /private/var/db/sweet-native-trial-e8c7631
+and restoring saved working bundle; file-server SYNC then restarted BackBoard284.
+Active restored executable SHA256 b1f1e3d65e43371b58f4382cf4b31ec830ff4a19f86e067c0352b79f38d4dccc
+readback verified. Frames resumed:151-167 presents/10s latest windows. User
+interaction confirmation still pending. No further image boot after approved0172.
+Next investigate check_bindings in donor air_metal.c: it requires every resource
+listed in air_shader_info, while specialized shaders can leave declared inputs
+unused. HYPOTHESIS only: slot0 may be inactive after function-constant pruning;
+alternatively frontend failed to retain/bind it. Prove live NIR buffer use and
+actual encoded bindings before changing validation. Do NOT fabricate buffer0 or
+skip required reads. Host checker currently compares texture/sampler bindings,
+not live buffer usage or pixel accuracy. Native frontend inactive after recovery.
+Current raw delta scripts remain stale; use live bundle backups, never old raw
+blocks against the now-mutated filesystem. Restore scripts must use current
+paths; sweet-native-stable-pre-e8c7631 was moved back to active during recovery.
 
-## What does not work yet
+## 2026-10-31: native pointer-cell bundle built and verified; awaiting boot approval
 
-- Audio output (speaker and headphones) and video playback.
-- Cellular modem, Apple ID and the App Store.
-- Cameras, sensors, GPS, SEP / Face ID.
-- Sleep and power management.
-- Wi-Fi/Bluetooth coexistence: scans can fail while Bluetooth is on.
-- Haptics feel confirmation.
-- Control Center glyph corruption. Some A8 mask textures use a layout Turnip
-  refuses and are shadowed; the vibrant/memoryless attachment is a second
-  suspect.
-- Performance: the UI is GPU-bound at 12-30 fps. Full-screen 1125x2436 passes
-  cost about 3.2 ms/Mpx; blur and compositing dominate.
-- 120 Hz UI. The panel timing is 120 Hz; the UI is not.
-- Boot time of about 4-5 minutes on the Apple logo.
-- Security: permissive AMFI and sandbox, a stub AppleKeyStore and no data
-  protection. Do not put personal data on the device.
+Source e8c7631; CI41163489105 PASSED. Artifact downloaded to
+research/native-metal-artifact-e8c7631/native-legacy/SweetMetal2.bundle.
+All six manifest hashes, both arm64 Mach-O headers and dependency list verified.
+Offline451 specialization resource-binding comparisons pass; hardware execution
+and pixel accuracy remain unqualified. No Vulkan/Turnip frontend dependency.
+Phone currently seen FASTBOOT. No phone modifications or boot this continuation.
+Existing0172 image rehashed unchanged: b988abd8a03ce5cd75667a6e3dfb38e9121daf51533cf734ec023f73f343c5e2.
+Trial plan research/native-resume-20261031/trial-plan.json. Prepared install-live.py
+there, NOT EXECUTED: checks stable original12-file manifest, preserves host and
+phone bundle backup, stages new files, verifies readback, switches directories,
+uses kernel file-server SYNC (toybox sync unavailable), restarts BackBoard.
+Ask user before temporarily booting existing0172 for the live frontend trial.
+Keep ios-sweet baseline and its working device features; UEFI migration adds
+unrelated bring-up work. Do not claim improved performance before measurement.
 
-## Native Metal frontend: current blocker
+## 2026-10-31: continued Claude native AIR work; offline reproduction PASSES
 
-The native path removes the Vulkan/Turnip bridge: Metal AIR is translated
-directly to NIR and compiled by freedreno/ir3 for the A618. The compiler now
-translates QuartzCore's generic shaders, including the sampler pointer cells
-that previously failed, and the offline specialization comparison matches
-Apple's own pre-specialized modules for all 451 recorded pipelines. That is a
-compiler and resource-selection result, not a hardware or pixel result.
+Found Claude's uncommitted prepare script + air_pointer_cells.inc and
+host specialization check. Preserved and reviewed them. Claude scratchpad:
+/tmp/claude-1000/-home-dan-Documents-Codex-2026-10-19-https-github-com-dc28088-ios-sweet-native-metal-work/963822f7-47a1-423c-84e8-31ee825be375/scratchpad
+contains extracted local QuartzCore corpus and existing Mesa25 host build.
+Fresh pinned donor export /tmp/sweet-native-resume-20261031 prepared, copied
+into host Mesa AIR sources and rebuilt with ninja (exit0, not masked by grep).
+Reproduced c734767 pointer-store failure on generic fixed_frag_lph_cp{h,f};
+new compiler translates both. Ran full offline specialization comparison:
+451 entries /451 specialized modules, match451, mismatch0, genericfail0,
+referencefail0. It compares texture/sampler resource selection after folding;
+NOT numerical equivalence or hardware rendering. Fixed checker return status
+to fail on reference failures and empty corpus as well. Four imageblock compute
+shaders still refused. Reports research/native-resume-20261031/{baseline,current,
+specializations}.log and summary.json (Apple binaries kept out of git).
+Implementation handles one-store entry-block pointer cells across zero-offset
+aliases/selects; constant sampler wrappers and constant globals; static-init
+shadows + function-constant CFG pruning. Remaining dynamic pointers refused.
+Next: iOS CI build and qualify native frontend API/actual render output before
+claiming a GPU fix. No phone access/change/boot in this continuation yet.
+Recommendation to user: retain ios-sweet working hardware baseline; HakiOS UEFI
+migration does not address the compiler blocker. Ask before any image boot.
 
-The latest hardware trial (artifact e8c7631, CI 41163489105) loaded the native
-plugin and submitted real draws, but the compositor stopped on a draw
-validation error:
+## 2026-10-30: user confirms interaction RECOVERED
 
-    the draw failed: fixed_frag_lph_cph reads buffer 0 and 2 buffers were bound
+After restoring the original graphics bundle live, user confirms "yeah its
+working normally now." Touch/buttons usable again; no image boot was needed.
+Native frontend is inactive and remains unqualified. Keep this working state.
+Next native work must first reproduce the exact AIR shader rejection offline;
+do not reinstall the same restricted pointer-local fix as if it were complete.
 
-The shader declares a direct buffer that the application does not bind. Local
-inspection shows that QuartzCore entry 4 `fixed_frag_lph_cph` has zero live
-resource reads in both the generic and Apple's specialized NIR, despite its
-declared buffer arguments. The correction in progress validates and binds
-according to executable NIR instead of every AIR declaration: direct UBOs,
-SSBOs, textures, samplers and images with no live access are filtered, while
-binding numbers, NIR resource counts, argument-buffer layouts and every slot
-reached by a dynamic index are preserved. Genuinely required reads are not
-bypassed. The host comparison includes live buffer slots as well as
-texture/sampler selection: 451/451 generic and specialized pipelines match,
-with no translation failures. Synthetic cases cover dead loads, side-effecting
-stores, dynamic resource indices and argument-buffer preservation. Reports are
-under `research/native-resume-20261031/resource-*.log`. This is offline
-evidence only; the iOS build, hardware trial and pixel accuracy remain.
+## 2026-10-30: native hotfix still failed; ORIGINAL frontend restored live
 
-The active device is on the original working graphics bundle (restored
-executable SHA256 `b1f1e3d65e43371b58f4382cf4b31ec830ff4a19f86e067c0352b79f38d4dccc`);
-interaction was confirmed normal after the trial was rolled back. The native
-frontend is inactive and remains unqualified.
+c734767 CI41095763883 PASSED; downloaded and verified legacy bundle. Used live
+file server to stage six files, readback-verified every hash, refused concurrent
+changes against5d3b2bb. Swapped bundle over SSH; toybox sync command unavailable,
+so kernel file-server SYNC used instead. Active corrected backend readback hash
+matched c734767 manifest. Restarted BackBoard. Same pointer-store rejection
+continued: restricted non-escaping-local promotion does NOT cover failing AIR.
+To recover user interaction, restored full original pre-native bundle LIVE from
+/private/var/db/sweet-native-backup-5d3b2bb to active SweetMetal2.bundle, saving
+c734767 in /private/var/db/sweet-native-trial-c734767. Original native5d3b2bb
+retained /private/var/db/sweet-native-trial-5d3b2bb. Kernel file server SYNC done;
+active original executable readback SHA256 b1f1e3d65e43371b58f4382cf4b31ec830ff4a19f86e067c0352b79f38d4dccc
+matches pre-native snapshot. Restarted BackBoard PID696 overSSH; live GPU methods
+resumed. User interaction confirmation pending. NO new image boot/reboot.
+Do not describe this rollback as a native acceleration fix. Native compiler
+needs exact failing shader dump + pointer-store destination/use graph analysis.
+Current raw delta restore scripts are stale after live filesystem changes;
+NEVER apply old block delta against the now-mutated filesystem. Use bundle-based
+rollback/installation and fresh read-only snapshots for future raw changes.
 
-## Planned next
+## 2026-10-30: requested SpringBoard restart sent over USB SSH
 
-1. Finish and review the NIR-liveness filtering, build the iOS bundle, and run
-   a reversible hardware trial only with user approval.
-2. Prove the draw binding is correct, then check pixel accuracy against the
-   working bridge before claiming a rendering result.
-3. Measure the native path (per-pass GPU cost, presents, fence latency) before
-   any performance claim.
-4. Reduce full-screen pass cost: fewer and smaller blur/compositing passes,
-   then evaluate 120 Hz and the remaining GPU clock headroom (about 825 MHz).
-5. Video playback.
-6. Audio (speaker/headphone routing, CoreAudio HAL) and end-to-end haptics.
-7. Sleep/wake and power management.
-8. Wi-Fi/Bluetooth coexistence, then modem/cellular and Apple ID.
-9. Cameras and sensors.
-10. Control Center glyph fix: A8 texture layout and the memoryless attachment
-    clear.
-11. Remaining native Metal API gaps: larger constants, texture views,
-    blits/events/heaps/resolve, imageblock compute, argument-buffer edge cases
-    and dynamic pointers.
-12. Boot-time reduction.
-13. Optional UEFI (HakiOS) migration. This is separate bring-up work and does
-    not address the native compiler blocker.
+User explicitly asked to restart SpringBoard. USB SSH works with original
+research/ssh key/known_hosts (read only). Sent TERM only to the dynamically
+located /System/Library/CoreServices/SpringBoard.app/SpringBoard, PID447.
+Command succeeded; did not kill BackBoard, reboot or boot another image.
+Existing repeated BackBoard AIR pipeline failure remains unresolved; restarting
+SpringBoard is not evidence of a rendering fix. Compiler correction c734767
+committed, git push still pending session48772 at this handoff.
 
-## Native Metal history (condensed)
+## 2026-10-30: native trial FAILED compositor startup; input hardware alive
 
-- 2026-10-30: first isolated native frontend implementation; host contract
-  tests and an iOS build passed; no device trial.
-- 2026-10-30: first hardware trial failed at compositor startup with a
-  pointer-store AIR error; the original graphics bundle was restored and
-  interaction recovered.
-- 2026-10-30/31: pointer-cell and constant-global translation added; the
-  offline QuartzCore corpus reproduced the failure and then matched all 451
-  specializations.
-- 2026-10-31: the e8c7631 trial passed the compiler and failed at draw binding
-  validation; the original bundle was restored and interaction confirmed.
-- 2026-10-31: resource-liveness filtering prepared and checked offline
-  451/451; the iOS build, hardware trial and pixel accuracy are pending.
+User: reached lock screen, touch/buttons unresponsive. Fresh live USB logging
+resumed in existing original receiver. Saved snapshot to isolated
+research/native-install-0172/live-native-metal-observed.log. Repeated BackBoard
+crashes: "Metal failed to build render pipeline", immediately preceded by
+native AIR error "a store of a pointer into memory" at block0 instruction2
+opcode16. Kernel still logs fresh SWEET HID touch down/up; cannot classify this
+as a dead touch driver. GPU busy0/no presents during observed crash windows.
+Native plugin definitely loaded (SweetNativeMetal-prefixed pipeline logs).
+No recovery reboot or further image boot issued. Need permission before any
+additional image boot; original bundle/backing blocks remain available.
+Compiler change prepared: promote pointer locals only if count1 pointer alloca,
+all uses direct nonvolatile loads/stores in its allocation block; reject escapes,
+GEP/cast/call and cross-block state; reject uninitialized loads. Preserve pointer
+resolution and do not invent GPU pointer bytes. Fresh pinned source preparation
+passes; CI compilation/runtime still pending. This may cover the observed shape
+but actual offending module coverage is not yet established.
+
+## 2026-10-30: native frontend INSTALLED and temporary 0172 boot issued
+
+User explicitly approved: "yes write it and boot the image". Fresh preflight
+passed all24 original chunks. apply-delta.py completed: all24 written and fully
+readback verified, state installed-readback-verified. Data 9,895,936 bytes;
+complete original blocks and 12-file original bundle retained for rollback.
+Executed adb reboot bootloader, then fastboot boot exact existing image
+/home/dan/ios-sweet/shim/out/shim-boot-0172-rbbm.img, SHA256 b988abd8a03ce5cd75667a6e3dfb38e9121daf51533cf734ec023f73f343c5e2.
+Fastboot sending and booting both OKAY. No persistent boot/recovery flash.
+Screen outcome PENDING user response; do not claim successful iOS rendering.
+Own USB receiver could not bind UDP5140 because existing receiver PID258634
+(from original checkout, logs/live-0172-membus.txt) owns it. Left that process
+untouched. Existing log has not gained fresh boot output; host currently has
+no phone USB Ethernet interface. Need user screen report and fresh runtime logs.
+No additional image boot authorized by this approval without asking again.
+Local install workspace research/native-install-0172 has manifests, delta,
+apply-delta.log and backups. Installation.json records boot issued, not qualified.
+
+## 2026-10-30: native frontend installation READY; awaiting approval
+
+Corrected 16 GiB overlay passed full fsck; six native bundle hashes passed from
+read-only mount; cleanly unmounted. Final delta research/native-install-0172/delta.json:
+24 chunks, 9,895,936 bytes (9.4375 MiB), all within 17,179,869,184-byte iOS volume.
+Fresh preflight PASSED against every original phone block. No phone write or
+boot. Whole old bundle saved share/original-bundle (12 files, hash manifest),
+also retained in overlay private/var/db/sweet-native-backup-5d3b2bb; complete
+original block data saved in delta/*.before for raw rollback. Discarded earlier
+out-of-bounds delta is diagnostic only. Corrected overlay export session76039;
+read-only root export session90495. No VM running now.
+Await user approval for this raw userdata delta (AGENTS requirement) and temporary
+boot of existing shim-boot-0172-rbbm.img (user boot permission requirement).
+After approval rerun preflight immediately, apply-delta.py with full readback,
+then adb reboot bootloader and fastboot boot the exact manifest image. Preserve
+kernel/image SHA256 b988abd8a03ce5cd75667a6e3dfb38e9121daf51533cf734ec023f73f343c5e2.
+No speed or successful rendering claim; this is first native frontend trial.
+
+## 2026-10-30: staging boundary correction (no phone writes)
+
+Initial local VM filesystem verification passed and native files matched hashes,
+but delta preflight correctly rejected one chunk beyond the 16 GiB HFS volume.
+Cause: local qcow2 exposed the whole 114970046464-byte userdata partition;
+fsck wrote an alternate HFS header at its end. Old delta is retained ONLY as
+rejected diagnostics: research/native-install-0172/delta-unbounded{,.json}.
+Do NOT apply it. Local qcow2 was shrunk to 16 GiB; verification-only VM now
+session30207, guest-volume-check.log. Phone remains untouched in OrangeFox.
+Once verified, regenerate delta, require every chunk within volume_bytes and
+run preflight again. Complete original bundle is saved on host (12-file hash
+manifest) and retained inside overlay at private/var/db/sweet-native-backup-5d3b2bb.
+
+## 2026-10-30: native legacy bundle downloaded, recovery staging underway
+
+CI 41090364656 PASSED at 5d3b2bb. Artifact downloaded to
+research/native-metal-artifact-5d3b2bb; all six legacy bundle file hashes match
+native-legacy/build.json. Mach-O symbol table contains both SweetMTL2Device
+and SweetNativeMetalDevice. Read-only ADB sees recovery and iOS16.7.16/20H392.
+Original active executable SHA256 b1f1e3d65e43371b58f4382cf4b31ec830ff4a19f86e067c0352b79f38d4dccc.
+Staging workspace research/native-install-0172, read-only nbdkit session90495
+socket /tmp/sweet-native172-root.sock. Local TCG VM session75484 edits only
+root-overlay.qcow2. Guest init uses root-owned cpio entries (otherwise setuid
+mount drops to host uid). Initial fsck found minor volume-header repair, applied
+ONLY to overlay and is rechecking. No phone filesystem writes. Native bundle
+and original bundle backup are staged via VM share once check completes.
+Source image /home/dan/ios-sweet/shim/out/shim-boot-0172-rbbm.img SHA256
+b988abd8a03ce5cd75667a6e3dfb38e9121daf51533cf734ec023f73f343c5e2.
+Its embedded XNU arguments include sweetmtl=2 sweetgles=0; kernel unchanged.
+Phone remains OrangeFox. Do not apply a delta until fully staged/preflighted;
+confirm any raw partition write per AGENTS and ask before image boot per user.
+
+## 2026-10-30: older-kernel native compatibility build
+
+User requested using the older XNU artifact. Read-only inspection of original
+xnu/out-0172/kernel.development.sweet confirms SweetMetal2/SweetMTL2Device and
+scoped submission. Build now emits separate native-legacy/SweetMetal2.bundle
+with an actual Objective-C SweetMTL2Device subclass of SweetNativeMetalDevice,
+the same backend, matching plist, fresh signatures and hash report. This avoids
+kernel patching/rebuild; requires sweetmtl=2 sweetgles=0 and runtime ABI checks.
+Build pending. Do NOT use the existing fixed-Vulkan-file installer for it.
+No phone access or installation. User still requires permission before boot.
+
+## 2026-10-30: matching native kernel build queued
+
+User reports FASTBOOT; no device command was sent. Dispatched xnu.yml on
+codex/native-adreno-metal at 6c8f2b9: run 41090044142, macos-14,
+DEVELOPMENT/SWEET, iOS16-era XNU13.5; portable tests disabled for this build.
+Status at handoff: queued. Native bundle remains compiled/downloaded as below.
+No matching image is packaged and no root installation is staged. Do not boot
+until user grants permission for the specific prepared image. FASTBOOT readiness
+is not boot permission. Next inspect CI, download kernel if successful, package
+against the current known-good shim and preserve the original boot arguments
+plus sweetnative=1; reconcile Claude's active changes before any installation.
+
+## 2026-10-30: isolated native Metal frontend implementation
+
+User requested a native Metal frontend while Claude continues the active original
+checkout. Work is isolated at `native-metal-work`, branch
+`codex/native-adreno-metal`, based on `3c12309`. No device access or original
+checkout edits. Do not merge blindly over Claude's ongoing pass audit.
+
+Implemented direct Sweet ABI1 MSM transport, pinned HakiOS AIR/Gallium adaptation,
+shared frontend/backend ABI, native metallib/functions and specialization,
+command-buffer batching/lifetime, viewport/scissor and pass-clear corrections,
+separate build workflow and opt-in `sweetnative=1` plugin selection (0173).
+Keep `sweetmtl=2` for aligned owned rows; its existing meaning is preserved.
+User explicitly requires permission before booting any new image (latest instruction).
+See `userspace/native-metal/README.md` for actual capabilities and remaining gaps.
+
+Validation: pinned source export/preparation and Python compilation pass. Five
+host transport contract cases pass (split residency/fence mapping, whole-list
+validation, IOSurface offset/retention, timeout quarantine, partial-submit loss).
+These use mock IOKit/Mach and execute no GPU commands. GCC warning-clean syntax
+check also passed against Mesa DRM headers.
+
+Native userspace build PASSED: CI 41086252203, source
+`d1ee31905116aa08a94da296c93db317408e78ba`. Both Objective-C objects and
+Mesa AIR/freedreno backend compiled and linked for iOS 16 arm64. Earlier runs
+41084159383/41084956259 exposed unavailable iOS headers/Mach APIs; fixed using
+IOSurfaceRef.h and public vm_allocate/vm_region_64 APIs. Queue slot waits no
+longer hold the global context lock.
+Downloaded artifact: `research/native-metal-artifact-d1ee319/`.
+All six file SHA256 values match native-metal-build.json. Dependency report has
+no Vulkan/Turnip/metal2vulkan library; both binaries are arm64 Mach-O.
+Bundle SHA256: 9001bb76759f856f1bebad34090ec97096cb47d3eb7d55f45081e353fd85980f.
+Backend SHA256: 4ea65603211d141ef3411a8650e1538c0496184a63866576a62985c6677cde85.
+The kernel opt-in correction preserves existing sweetmtl=2 and separately uses
+sweetnative=1. A matching kernel/boot image is NOT built or staged yet.
+No installation, partition write, phone access or boot occurred. Ask the user
+before booting any new image. Next: fill remaining compositor API gaps, build
+the opt-in kernel, then stage a reversible root installation and request boot
+permission. The successfully compiled bundle alone is not a completed GPU fix.
+No hardware rendering/performance claim. Larger constants, texture views,
+blits/events/heaps/resolve and remaining CoreAnimation shader coverage need work.
 
 ## 2026-10-30 (later): 0171 block profile, 0172 forced write-back: neither helps
 
@@ -139,8 +295,8 @@ Both memory-attribute experiments (0170 walks, 0172 buffers) made it slower. GPU
 is already used; pinned table only adds 825 MHz (TURBO_L1, speedbins 0x11): ~3%, not worth it.
 Remaining lever = less GPU work per frame (76% of GPU time in 1125x2436 passes, ~3.2 ms/Mpx):
 count/skip/shrink full-screen passes in the Metal frontend (userland; backboardd restart only).
-Kernel changes always need a reboot; only the graphics bundle can be swapped
-live.
+Kernel changes always need a reboot (fastboot boot); only the graphics bundle can be swapped
+live (tools/sweet-install-metal2.sh).
 
 ## 2026-10-30: GPU fill-rate A/B on image 0159/0170 (returned to ios-sweet from the HackOS port)
 
