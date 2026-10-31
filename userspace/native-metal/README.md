@@ -197,3 +197,12 @@ a real fence completes. This uses the same EL0 `dc civac` operation as the
 working SweetMetal2 frontend. LibSystem cache stubs are insufficient here.
 Serialization is intentional until correct rendering is established; it is not
 a performance optimization.
+
+## Interstage semantics
+
+Real vertex/fragment pipelines are linked by AIR's generated interstage semantic
+before Gallium IO lowering. Declaration positions are independent and cannot be
+used as the link key. Unused fragment inputs are removed first; live inputs need
+a matching vertex output with compatible width and component count. A bounded
+startup log records actual stage pairings and remapped inputs. Built-in locations
+are left to Gallium. This does not replace pixel-level runtime qualification.

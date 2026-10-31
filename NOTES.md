@@ -1,3 +1,25 @@
+## 2026-10-31: cache correction runs but visuals still fail; stage linking missing
+
+01604ef CI41167149140 PASSED. Six hashes/arm64/cache marker verified. Live
+installation backed up stable12 files and verified six new files, restarted
+BackBoard903. New BackBoard1088 logs explicit cache ownership and renders, no
+observed fence/draw errors. User: same colorful flicker, black app windows,
+dock rectangle with little blur. Cache omission was real but not the sufficient
+visual fix. Restored stable bundle live, retained trial at
+/private/var/db/sweet-native-trial-01604ef, restarted1088; no reboot.
+
+Source inspection finds a separate missing link step: donor assigns vertex
+outputs and fragment inputs VARYING_SLOT_VAR0+declaration ordinal independently,
+but never links real stages by AIR semantic. Fragment info even recorded the
+argument's display name instead of air.fragment_input's generated semantic.
+Preparing semantic matching of live fragment inputs to vertex outputs before
+Gallium IO lowering, with type checks and a bounded record of actual pairings.
+This prevents declaration-order inputs from being fed a different varying.
+Concrete corpus interfaces saved in research/native-resume-20261031: VS uses
+"generated(5colorDv4_f)" etc; fragment metadata carries exact generated keys.
+Do not claim this is the hardware cause until actual paired-stage logs/visuals.
+Phone remains on approved0172 with stable frontend. New image boots need consent.
+
 ## 2026-10-31: b824dcf renders but corrupts; missing import cache ownership found
 
 CI41166004454 PASSED b824dcf. Downloaded and verified six file hashes, arm64

@@ -298,6 +298,8 @@ air2nir = executable(""")
             a = air_val_ptr(c, rp);
          }
          air_set(c, &f->args[i], a);   /* the caller's own resolution */''')
+    s=replace(s,'         add_varying(c, name, slot, air_nir_components(t), node);',
+                '         add_varying(c, md_key_str(node, "air.fragment_input"), slot, air_nir_components(t), node);')
     p.write_text(s)
     p=air/'air_intrinsics.c';s=p.read_text()
     s=replace(s,'   struct air_tex_name t;\n   if (!parse_tex_name(n->part[0], &t))\n','''   /* metal::texture2d() and its kin: a NULL handle, which is no binding. Every
@@ -315,6 +317,7 @@ air2nir = executable(""")
 ''')
     p.write_text(s)
     shutil.copy2(NATIVE/'backend/air_live_resources.inc',air/'air_live_resources.inc')
+    shutil.copy2(NATIVE/'backend/air_stage_link.inc',air/'air_stage_link.inc')
     for name in ('sweet_native_ext.h','sweet_native_ext.c'):shutil.copy2(NATIVE/'backend'/name,air/name)
     p=air/'air_metal.h';s=p.read_text()
     s=replace(s,'\tunsigned fragment_buffer_table_count;\n};', '''\tunsigned fragment_buffer_table_count;
@@ -328,13 +331,15 @@ air2nir = executable(""")
     p.write_text(s)
     p=air/'air_metal.c';s=p.read_text()
     s=replace(s,'#include "air_metal.h"','#include "sweet_native_ext.h"\n#include "util/u_framebuffer.h"\n#include <math.h>')
-    s=replace(s,'#include "nir_air.h"','#include "nir_air.h"\n#include "air_live_resources.inc"')
+    s=replace(s,'#include "nir_air.h"','#include "nir_air.h"\n#include "air_live_resources.inc"\n#include "air_stage_link.inc"')
     s=replace(s,'   slot_shapes(fs, render->frag_slots, render->frag_compare_sampler);',
                 '   native_prune_direct_resources(fs, &render->finfo);\n   slot_shapes(fs, render->frag_slots, render->frag_compare_sampler);')
     s=replace(s,'      if (render->vinfo.stage != MESA_SHADER_VERTEX) {',
                 '      native_prune_direct_resources(vs, &render->vinfo);\n      if (render->vinfo.stage != MESA_SHADER_VERTEX) {')
     s=replace(s,'   if (compute->info.stage != MESA_SHADER_COMPUTE) {',
                 '   native_prune_direct_resources(compute->nir, &compute->info);\n   if (compute->info.stage != MESA_SHADER_COMPUTE) {')
+    s=replace(s,'   render->fs_cso = make_stage_cso(device, fs, why, why_size);',
+                '   if (!render->generated_vertex && !native_link_stages(vs, &render->vinfo, fs, &render->finfo, why, why_size))\n      goto fail;\n   render->fs_cso = make_stage_cso(device, fs, why, why_size);')
     s=replace(s,'   bool software;','''   bool software;
    bool in_command, lost;
    struct pipe_framebuffer_state batch_fb;
