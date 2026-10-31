@@ -1,3 +1,22 @@
+## 2026-10-31: scoped-wait performance trial b70ea81 installed live
+
+CI41201550845 PASSED; all six hashes, arm64 and correction/timing markers
+verified. Live installer matched6194c4f active manifest and saved it on host
+pre-hotfix-b70ea81 and phone sweet-native-stable-pre-b70ea81; staged readbacks,
+SYNC, directory swap and BackBoard1673 restart completed. No image boot.
+USB timed out during investigation; user reconnected and access/logs resumed.
+Fresh startup transport window6294ms:138 submits/312IBs,275157us inside submit,
+192254us fence calls (also outside submits),199124us cache ops,2947MiB cache
+walked,150225us submit ioctl. Categories overlap, not additive. Transport alone
+is a small share of that startup wall interval; cannot establish interaction FPS
+or claim CPU frontend is proved without active-use sample. User asked via async
+to unlock/swipe/open-close for20sec; feedback pending. Current source isb70ea81.
+Saved research/native-resume-20261031/live-b70ea81.log and trial-start offset.
+Next use interaction timings to decide between cache/submit and frontend work.
+Potential CPU overhead: donor scans mapped index buffers per indexed draw and
+creates/releases pipe_surfaces per draw; hypotheses, not measured bottlenecks.
+Keep half-export fix and shared-surface ownership; no return to broad guesses.
+
 ## 2026-10-31: private BO trial installed; user still reports under15fps
 
 6194c4f CI41200530247 PASSED. Six artifact hashes, arm64 binaries and prior
