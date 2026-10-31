@@ -1,3 +1,15 @@
+## 2026-10-31: full access restored; surface cache339f9ba installed live
+
+User restored full access. CI41204242223 PASSED for339f9ba; all six hashes,
+arm64 binaries, frontend timing marker and previous half-export fix verified.
+Live installer verified activeb70ea81 manifest, saved host pre-hotfix-339f9ba
+and phone sweet-native-stable-pre-339f9ba, staged/readback verified, SYNC,
+swapped directories and restarted BackBoard1870. No new image boot; no rollback.
+User interaction feedback requested asynchronously; pending. Do not claim FPS
+improvement until observed. Fresh log snapshot live-339f9ba.log and offset in
+339f9ba-trial-start.json. Next compare frontend encode/draw/finish timings with
+transport counters during interactions. Retain current bundle unless directed.
+
 ## 2026-10-31: user says NO rollback; continue forward performance fixes
 
 Latest instruction overrides rollback plan below: leave current b70ea81 active.
