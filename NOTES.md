@@ -1,3 +1,20 @@
+## 2026-10-31: native pointer-cell bundle built and verified; awaiting boot approval
+
+Source e8c7631; CI41163489105 PASSED. Artifact downloaded to
+research/native-metal-artifact-e8c7631/native-legacy/SweetMetal2.bundle.
+All six manifest hashes, both arm64 Mach-O headers and dependency list verified.
+Offline451 specialization resource-binding comparisons pass; hardware execution
+and pixel accuracy remain unqualified. No Vulkan/Turnip frontend dependency.
+Phone currently seen FASTBOOT. No phone modifications or boot this continuation.
+Existing0172 image rehashed unchanged: b988abd8a03ce5cd75667a6e3dfb38e9121daf51533cf734ec023f73f343c5e2.
+Trial plan research/native-resume-20261031/trial-plan.json. Prepared install-live.py
+there, NOT EXECUTED: checks stable original12-file manifest, preserves host and
+phone bundle backup, stages new files, verifies readback, switches directories,
+uses kernel file-server SYNC (toybox sync unavailable), restarts BackBoard.
+Ask user before temporarily booting existing0172 for the live frontend trial.
+Keep ios-sweet baseline and its working device features; UEFI migration adds
+unrelated bring-up work. Do not claim improved performance before measurement.
+
 ## 2026-10-31: continued Claude native AIR work; offline reproduction PASSES
 
 Found Claude's uncommitted prepare script + air_pointer_cells.inc and
