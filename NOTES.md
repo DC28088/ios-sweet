@@ -1,3 +1,25 @@
+## 2026-10-31: b0fdd3f still corrupt; explicit RG8 import refusal identified
+
+Combined shader-finalization/semantic-link CI41169637835 PASSED. Bundle verified
+and installed live, all stable12 files backed up; BackBoard1150 restarted into
+native1671. User video VID_20261031_103721127.mp4 explicitly recorded AFTER this
+restart shows colored rectangles over glyphs/icons, black app regions; wallpaper
+largely intact. Extracted local frames research/native-resume-20261031/video.
+No shader-finalization or stage-link errors observed. Bounded actual pairs all
+remapped0: semantic linkage is valid but not shown to explain this visual bug.
+Trace includes backlog replay, so old PIDs/lines recur: do not count them as new
+crashes. No GPU timeout found (timeout=0 was backlight telemetry).
+Concrete repeated refusal in native1671: "no drawable: interface: Metal pixel
+format 30 is not a supported linear IOSurface format". Format30=RG8Unorm;
+backend supports it, frontend import whitelist omitted it. Preparing correct
+LA08 / two-byte row import plus A8 case1 and detailed format/layout refusals.
+Stable bridge log evidence: surface 'LA08' bpe2 230x186 bpr512 -> Metal format30,
+swizzle identity 2345 (live-0172-membus.txt).
+No format reinterpretation or pitch relaxation. Full rendering still unqualified.
+Restored stable bundle live after one automatic review timeout; retry succeeded,
+kept native trial in /private/var/db/sweet-native-trial-b0fdd3f and restarted1671.
+No image boot this turn.
+
 ## 2026-10-31: screen NIR finalization callback was skipped
 
 Further source review: air_metal.c finalize_for_gallium never calls
