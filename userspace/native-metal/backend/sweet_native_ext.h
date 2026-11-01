@@ -2,6 +2,8 @@
 #ifndef SWEET_NATIVE_METAL_EXT_H
 #define SWEET_NATIVE_METAL_EXT_H
 #include "air_metal.h"
+#include <stdbool.h>
+#include <stdint.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
