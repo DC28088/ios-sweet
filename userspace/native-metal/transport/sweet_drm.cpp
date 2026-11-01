@@ -53,6 +53,7 @@ struct State {
     bool lost = false, command_active = false;
     bool strict_publish = false;   // /var/local/sweet-native-strict-publish
     bool always_clean = false;     // /var/local/sweet-native-always-clean
+    bool eager_retire = false;     // /var/local/sweet-native-eager-retire
     uint64_t cleans = 0, clean_skips = 0;
 };
 // Kept for process lifetime: closing one Gallium fd must not invalidate another
@@ -140,6 +141,12 @@ void cache_clean_invalidate(const Buffer &b) {
 // Another handle of the same IOSurface may still be in flight under an
 // asynchronous commit; its pages stay untouched until that use retires too.
 void retire_dirty(uint64_t fence) {
+    // Lazy by default: a GPU-written IOSurface keeps gpu_dirty and is cleaned
+    // when the CPU asks for it through this driver (CPU_PREP) or when it is
+    // freed; the kernel's present acquire cleans the swap surface itself.
+    // Eager walks ran on the completion thread under the transport lock and
+    // blocked CoreAnimation's render thread (~10% of a 240 s sample).
+    if(!state.eager_retire)return;
     for(auto &b:state.buffers) {
         if(!b.kernel || !b.gpu_dirty || b.last>fence)continue;
         bool busy=false;
@@ -364,6 +371,11 @@ int open_gpu() {
     fprintf(stderr,"SweetNativeMetal: deferred submit merging includes shared IOSurface batches, <=16 IBs/1024 BOs per ioctl\n");
     state.strict_publish=!access("/var/local/sweet-native-strict-publish",F_OK);
     state.always_clean=!access("/var/local/sweet-native-always-clean",F_OK);
+    state.eager_retire=!access("/var/local/sweet-native-eager-retire",F_OK);
+    fprintf(stderr,state.eager_retire
+        ?"SweetNativeMetal: GPU-written IOSurfaces are cache-cleaned as soon as they retire (eager-retire)\n"
+        :"SweetNativeMetal: GPU-written IOSurfaces are cache-cleaned on CPU access or free, not on retire "
+         "(touch /var/local/sweet-native-eager-retire to restore)\n");
     fprintf(stderr,state.always_clean
         ?"SweetNativeMetal: every IOSurface publication cleans (always-clean)\n"
         :"SweetNativeMetal: IOSurface publication skips the clean while the surface seed is unchanged "
