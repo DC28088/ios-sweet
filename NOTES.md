@@ -1,3 +1,7 @@
+## 2026-11-01: 3e2cc01 (per-CPU accounting) installed live; kernel 0176 (A76 binding) building
+- Bundle CI 41298294772 success; install-live-3e2cc01.py (ae71977 hashes checked; backup sweet-native-stable-pre-3e2cc01); BackBoard 1111. Startup window already shows the render thread on every core: commands=3,7,13,5,5,5,52,50 (cpu0-7).
+- Kernel patch xnu/patches/0176-sweet-bind-render-threads-to-a76.patch (written against the exact 0175 CI xnu-buildtree, artifact 13077654281): SubmitResources callers thread_bind to cpu7, framebuffer present thread to cpu6 once processor_avail_count==8; same thread_bind/thread_block pattern as SweetCPU.cpp; boot-arg sweetbigbind=0 disables. Kernel CI xnu 41298690546 dispatched. Booting it needs user approval.
+
 ## 2026-11-01: ae71977 result: first opens still stutter; CPU topology suspect (instrumentation CI pending)
 - USER (ae71977): "the first opens are still stuttering heavily. but after opening it one or two time its smooth,same with control centre."
 - spin-first.txt process CPU over 240 s: spindump itself 209 s (sampler distorts!), backboardd 153 s, SpringBoard 109 s, kernel_task 63 s, apps ~3 s each.
