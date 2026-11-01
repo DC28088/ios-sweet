@@ -62,6 +62,104 @@ def export_donor(repo):
     run(sys.executable,ROOT/'tools/prepare-sweet-native-metal.py',donor)
     return donor
 
+def exact(text,old,new,count=1):
+    if text.count(old)!=count:raise SystemExit(f'Mesa context changed ({text.count(old)} matches): {old[:90]!r}')
+    return text.replace(old,new)
+
+def adapt_submit_merging(mesa):
+    """Merge a Metal command's Gallium batch submits into one NativeAdreno ioctl.
+
+    1a6b5dd active traces: ~7 ioctls per command buffer, 2.0s of 5s inside the
+    submit ioctl. 0172 SubmitResources publishes every listed resource on every
+    call, walking each imported IOSurface's pages (kernelMaintainsImport only
+    covers the legacy publishMapped path), so per-ioctl cost is fixed and large.
+    Upstream refuses to defer submits naming shared BOs (implicit-sync rule) or
+    more than 30 BOs, so CoreAnimation batches were never merged.
+    NativeAdreno has no kernel implicit sync. CPU access still flushes deferred
+    work first (fd_bo_cpu_prep -> bo_flush), and fence waits flush through
+    fd_pipe_wait; no_implicit_sync stays false so shared-BO CPU_PREP still
+    reaches the transport's cache ownership path. Deferred submits keep their
+    BO references until merged. A merged list stays within one ABI request
+    (16 IBs) and the 1024-entry resource table, so the transport never resends
+    a resource list for a second chunk.
+    """
+    p=mesa/'src/freedreno/drm/freedreno_ringbuffer_sp.c';s=p.read_text()
+    s=exact(s,'''static bool
+should_defer(struct fd_submit *submit)
+{
+   struct fd_submit_sp *fd_submit = to_fd_submit_sp(submit);
+
+   /* if too many bo's, it may not be worth the CPU cost of submit merging: */
+   if (fd_submit->nr_bos > 30)
+      return false;
+
+   /* On the kernel side, with 32K ringbuffer, we have an upper limit of 2k
+    * cmds before we exceed the size of the ringbuffer, which results in
+    * deadlock writing into the RB (ie. kernel doesn't finish writing into
+    * the RB so it doesn't kick the GPU to start consuming from the RB)
+    */
+   if (submit->pipe->dev->deferred_cmds > 128)
+      return false;
+
+   return true;
+}
+''','''/* Sweet NativeAdreno: one SubmitResources request carries 16 IBs and 1024
+ * resources. Every request revalidates and cache-publishes its whole list.
+ */
+#define SWEET_MERGE_MAX_CMDS 16
+#define SWEET_MERGE_MAX_BOS 1024
+
+/* Upper bound of the merged resource table if this not-yet-prepared submit
+ * joined the deferred list: flush_prep appends one ring BO per cmd.
+ */
+static bool
+sweet_merge_overflows(struct fd_device *dev, struct fd_submit *submit)
+{
+   if (list_is_empty(&dev->deferred_submits))
+      return false;
+   unsigned cmds = fd_ringbuffer_cmd_count(submit->primary);
+   unsigned bos = to_fd_submit_sp(submit)->nr_bos + cmds;
+   foreach_submit (deferred, &dev->deferred_submits)
+      bos += to_fd_submit_sp(deferred)->nr_bos;
+   return dev->deferred_cmds + cmds > SWEET_MERGE_MAX_CMDS ||
+          bos > SWEET_MERGE_MAX_BOS;
+}
+
+static bool
+should_defer(struct fd_submit *submit)
+{
+   struct fd_submit_sp *fd_submit = to_fd_submit_sp(submit);
+   struct fd_device *dev = submit->pipe->dev;
+
+   /* Earlier deferred work was flushed by sweet_merge_overflows() when this
+    * submit would not fit beside it; refuse only a submit too large alone.
+    */
+   if (dev->deferred_cmds + fd_ringbuffer_cmd_count(submit->primary) > SWEET_MERGE_MAX_CMDS)
+      return false;
+   if (fd_submit->nr_bos > SWEET_MERGE_MAX_BOS)
+      return false;
+
+   return true;
+}
+''')
+    s=exact(s,'''   if (!list_is_empty(&dev->deferred_submits) &&
+       (last_submit(&dev->deferred_submits)->pipe != submit->pipe)) {
+      flush_deferred_submits(dev);
+   }
+''','''   if (!list_is_empty(&dev->deferred_submits) &&
+       ((last_submit(&dev->deferred_submits)->pipe != submit->pipe) ||
+        sweet_merge_overflows(dev, submit))) {
+      flush_deferred_submits(dev);
+   }
+''')
+    s=exact(s,'''   if (!use_fence_fd && !has_shared && should_defer(submit)) {''',
+'''   /* Sweet: shared IOSurface BOs are not a deferral barrier; see
+    * build-sweet-native-metal.py adapt_submit_merging for the ordering rules.
+    */
+   (void)has_shared;
+   if (!use_fence_fd && should_defer(submit)) {''')
+    p.write_text(s)
+
 def prepare_mesa(donor,archive):
     if archive is None:
         archive=WORK/('mesa-'+INPUTS['mesa_version']+'.tar.xz')
@@ -77,6 +175,7 @@ def prepare_mesa(donor,archive):
                  'ir3-shift-split.patch','ir3-ssbo-subdword.patch'):
         with (donor/'tools/mesa'/name).open('rb') as patch:
             run('patch','--batch','--forward','--fuzz=0','-p1',cwd=mesa,stdin=patch)
+    adapt_submit_merging(mesa)
     shutil.copytree(donor/'tools/mesa/air',mesa/'src/compiler/air')
     shutil.copytree(NATIVE/'transport',mesa/'src/redwood-drm')
     # Header reconstructed from the same tracked kernel patch series as Metal2.

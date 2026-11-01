@@ -296,6 +296,7 @@ int open_gpu() {
     if(e){IOServiceClose(state.connection);state.connection=0;return e;}
     fprintf(stderr,"SweetNativeMetal: NativeAdreno ABI1 A618 chip=%#x GMEM=%u scoped residency\n",chip,state.info.gmem_bytes);
     fprintf(stderr,"SweetNativeMetal: kernel-owned private BOs with CPU map leases; imported IOSurface cache ownership\n");
+    fprintf(stderr,"SweetNativeMetal: deferred submit merging includes shared IOSurface batches, <=16 IBs/1024 BOs per ioctl\n");
     return 0;
 }
 int get_param(drm_msm_param *p) {
