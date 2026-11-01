@@ -1,3 +1,9 @@
+## 2026-11-01: 0177 result "still delay while opening apps" -> A/B sweetpresentcpu=4 BOOTED (user approved), awaiting interaction
+- USER (0177): "there are still delay while opening apps."
+- Observed 0177 busy 10 s windows (l177 from 0177-boot-start offset): presents 393-512 per 10 s (0176: 210-419), copy_avg 4.2-6.7 ms, beam_skips 59-420 per window (still high), gate 3-6.3 ms, present max 31-41 ms. Render thread all on cpu7, encode 1.1-2.5 s / 5 s (cpu7 ~50%+ busy).
+- Hypothesis (unverified): SpringBoard main thread (pri 47, ~80-100 ms of work per tap/swipe) gets little A76 time: cpu7 = render thread (54-63), cpu6 = present thread (81) which copies 4-7 ms per frame AND polls the GPU gate with IODelay(50) (~120 block/wake cycles per frame, each preempting cpu6).
+- A/B (no rebuild): same 0177 kernel + `sweetpresentcpu=4` (present thread on an A55). shim/out/payload-0177-present4.bin 3f2b18baa1ae..., shim/out/shim-boot-0177-present4.img 7d6e0734d88a... `fastboot boot` OKAY; 0177-present4-boot-start.json. Boot args show sweetpresentcpu=4, touch bound to cpu 5, BackBoard up. Watch: copy_avg/beam_skips (tearing risk) and the user's open-delay feel.
+
 ## 2026-11-01: kernel 0177 (kernel pollers off the A76s) BOOTED with user approval, awaiting interaction
 - macos-14 runner brownout (images retired 2026-11-02) cancelled xnu 41322845287 after 1 s; re-dispatched with `-f runner=macos-15`: xnu 41322973942 SUCCESS (head a1dbd21 = 6118d7c + notes). Use runner=macos-15 from now on (or change the workflow default).
 - Artifact xnu-kernel 13090688379 (API redirect + curl -C - resumes) -> /home/dan/ios-sweet/xnu/out-0177, SHA256SUMS OK, kernel b32d92e32b10...; strings contain the 0177 log lines and boot-args.
