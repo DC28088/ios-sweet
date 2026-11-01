@@ -1,3 +1,9 @@
+## 2026-11-01: kernel 0174 BOOTED (fastboot boot, no flash), awaiting interaction
+- 12:05 IST: fastboot product sweetin, image shim-boot-0174-imports.img sha e4418c38...a53c1c verified, `fastboot boot` OK (research/native-resume-20261031/fastboot-0174-boot.log; start offset in 0174-boot-start.json).
+- Observed: launchd boot-args include sweetbuild=174 (no sweetimportsync => 0, client maintains imports); BackBoard PID 261 loaded bundle 1df4ee1 (merge marker present), compiling CA pipelines, no crash seen so far.
+- First idle/startup transport window: submits=140 submit_ioctl_us=36089 (~258 us/ioctl vs ~2400 us on 0172+1df4ee1). Not an interaction measurement yet.
+- Interaction trial start offset: research/native-resume-20261031/0174-trial-start.json (24367286). Next: same interaction test, compare vs 1df4ee1/0172 table below. Fallback: boot shim-boot-0172-rbbm.img (b988abd8...).
+
 ## 2026-11-01: 0174 image packaged; user APPROVED boot of 0174
 
 Kernel CI41270082742 PASSED; /home/dan/ios-sweet/xnu/out-0174 SHA256SUMS OK
