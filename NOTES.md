@@ -1,3 +1,9 @@
+## 2026-11-01: f206bc5 result: "feels better" but TEARING -> kernel 0175 beam-race fix (CI pending)
+- USER (f206bc5): "it feel better. but there are tearing happening in recent menu and while app opening and closiing animation".
+- Observed (live-f206bc5.log, BackBoard 2626): presents 29.2/s, present max 26-33 ms (was 22-39), cache walks 2.25 GB/5 s (was 4.1; surface_cleans 0-8 vs skips 95-454 per window), completion polls 1066/5 s (was 3657). beam_skips 48 in 10 busy windows = 16.4 per 1000 presents (0.3-1.3 before); copy_avg 3.56 ms (2.6-3.1 before). Every logged "gave up" read line 2432 = total lines (vertical blanking) and broke out at once.
+- Cause (analysis of 0145 beamWait, panel 2432 lines, active 12-2412, line 3426 ns, copy ~0.85-1.6 us/row): a copy begun at scan row b crosses the scan at b/(1-c/s); rows below that show the new frame in the current refresh -> tear unless b >= rows*(1-c/s). 0145 inflated c by 1.5x, which LOWERS that bound: starts at ~1311-1517 cross the scan around row ~1900-2000 at real copy speed = tear in the lower fifth on every motion frame. Plus the vblank give-up = unsynchronised copies.
+- Fix: xnu/patches/0175-sweet-beam-race-tear-fix.patch: start row for a copy 1.5x FASTER than average (window ~1943-2396), slow-copy check unchanged, vblank reading waits from the wrap, loop bounded by two refreshes. Applies on the series (reconstructed SweetFramebuffer.cpp from 0119-buildtree + repo patches = earlier reconstruction, md5 8774028195e8...). Needs a NEW KERNEL IMAGE = user approval before boot.
+
 ## 2026-11-01: bundle f206bc5 INSTALLED live (CI 41291238000), awaiting interaction
 - install-live-f206bc5.py (3016190 hashes checked; backup sweet-native-stable-pre-f206bc5); BackBoard 2626. Markers: seed-gated clean + strict publish + sysmem env. First window: surface_cleans=2 vs skips=144 (cache walk remaining 1.5 GB/6 s is retire/CPU_PREP side). Interaction offset in f206bc5-trial-start.json.
 
