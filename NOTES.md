@@ -1,3 +1,23 @@
+## 2026-11-01: kernel 0174 (scoped submits skip client-maintained imports) building
+
+xnu/patches/0174-sweet-scoped-submit-client-imports.patch: publishHandle and
+acquireHandle return early for imports where !kernelMaintainsImport (same rule
+as publishMapped/acquireImported; <sweetimportmin 2MiB still kernel-maintained).
+Counts in native_adreno_coherent_skips[2]/[3]. Rollback without new image:
+boot-arg sweetimportsync=1. GLES client (userspace/gles) relies on kernel
+maintenance -> GLES boots MUST use sweetimportsync=1 with 0174+.
+Verified: patches 0000-0172 byte-identical to running kernel source
+(adreno-power-audit 4593b00, CI40990286076); only extra inputs 0173 (plugin
+choice only when sweetnative=1; cmdline lacks it -> still SweetMetal2) + 0174.
+Patch applies to post-0172 reference tree. NOTE /home/dan/ios-sweet branch has
+a DIFFERENT 0173 (bus votes, no help); numbering diverges across branches.
+Kernel CI xnu.yml run 41270082742 dispatched on codex/native-adreno-metal.
+(41090044142 earlier failed only for runner capacity.) Payload recipe checked
+byte-identical: tools/mkpayload.py xnu/out-0172/kernel.development.sweet
+shim/out/sweet-0152-haptics.adt OUT --cmdline "<payload-0172 cmdline>"; for 0174
+change only sweetbuild=172 -> 174; then bash shim/build.sh <payload>.
+NOT booted. Boot requires explicit user approval of the specific image.
+
 ## 2026-11-01: 1df4ee1 interaction result: slightly smoother, still under 30fps
 
 User: "slightly smoother but still under 30fps". PID13337, no BackBoard crash,
