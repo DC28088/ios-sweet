@@ -32,6 +32,11 @@ struct Buffer {
     uint32_t flags = 0, cpu_token = 0, surface_id = 0;
     bool cpu_lease = false, cpu_mapped = false;
     bool closing = false, gpu_dirty = false, imported_published = false;
+    // IOSurface seed at this handle's last pre-submit clean. CPU writers bump
+    // the seed when they unlock; CPU access through this driver clears
+    // clean_valid. Unchanged seed = no CPU data to publish.
+    bool clean_valid = false;
+    uint32_t clean_seed = 0;
     std::vector<uint8_t> metadata;
 };
 struct Fence { uint32_t number; uint64_t kernel, queue; };
@@ -47,6 +52,8 @@ struct State {
     uint64_t queues[NativeAdrenoAbiMaxQueues]{};
     bool lost = false, command_active = false;
     bool strict_publish = false;   // /var/local/sweet-native-strict-publish
+    bool always_clean = false;     // /var/local/sweet-native-always-clean
+    uint64_t cleans = 0, clean_skips = 0;
 };
 // Kept for process lifetime: closing one Gallium fd must not invalidate another
 // screen or IOSurface. In-flight storage is never freed after an unknown timeout.
@@ -71,14 +78,15 @@ struct SubmitTiming {
         const uint64_t now=clock_ns();
         timings.total+=now-began;++timings.submits;
         if(now-timings.began<5000000000ull)return;
-        fprintf(stderr,"SweetNativeMetal: transport window_ms=%llu submits=%llu ibs=%llu submit_cpu_us=%llu fence_us=%llu cache_us=%llu cache_MiB=%llu submit_ioctl_us=%llu bo_pool_hits=%llu bo_pool_misses=%llu bo_pool_MiB=%llu\n",
+        fprintf(stderr,"SweetNativeMetal: transport window_ms=%llu submits=%llu ibs=%llu submit_cpu_us=%llu fence_us=%llu cache_us=%llu cache_MiB=%llu submit_ioctl_us=%llu bo_pool_hits=%llu bo_pool_misses=%llu bo_pool_MiB=%llu surface_cleans=%llu surface_clean_skips=%llu\n",
             (unsigned long long)((now-timings.began)/1000000),
             (unsigned long long)timings.submits,(unsigned long long)timings.ibs,
             (unsigned long long)(timings.total/1000),(unsigned long long)(timings.wait/1000),
             (unsigned long long)(timings.cache/1000),(unsigned long long)(timings.cache_bytes>>20),
             (unsigned long long)(timings.ioctl/1000),
-            (unsigned long long)pool_hits,(unsigned long long)pool_misses,(unsigned long long)(pool_bytes>>20));
-        pool_hits=pool_misses=0;
+            (unsigned long long)pool_hits,(unsigned long long)pool_misses,(unsigned long long)(pool_bytes>>20),
+            (unsigned long long)state.cleans,(unsigned long long)state.clean_skips);
+        pool_hits=pool_misses=0;state.cleans=state.clean_skips=0;
         timings=Timings{};timings.began=now;
     }
 };
@@ -355,6 +363,11 @@ int open_gpu() {
     fprintf(stderr,"SweetNativeMetal: kernel-owned private BOs with CPU map leases; imported IOSurface cache ownership\n");
     fprintf(stderr,"SweetNativeMetal: deferred submit merging includes shared IOSurface batches, <=16 IBs/1024 BOs per ioctl\n");
     state.strict_publish=!access("/var/local/sweet-native-strict-publish",F_OK);
+    state.always_clean=!access("/var/local/sweet-native-always-clean",F_OK);
+    fprintf(stderr,state.always_clean
+        ?"SweetNativeMetal: every IOSurface publication cleans (always-clean)\n"
+        :"SweetNativeMetal: IOSurface publication skips the clean while the surface seed is unchanged "
+         "(touch /var/local/sweet-native-always-clean to restore)\n");
     fprintf(stderr,state.strict_publish
         ?"SweetNativeMetal: strict IOSurface publication (waits all GPU work, cleans every surface)\n"
         :"SweetNativeMetal: IOSurface publication without GPU drain; surfaces with an in-flight GPU write are not cleaned "
@@ -454,7 +467,12 @@ int submit(drm_msm_gem_submit *s) {
     if(!e)for(unsigned i=0;i<s->nr_bos;++i) {
         Buffer *b=buffer(bos[i].handle);
         if(!b->surface || (state.command_active && b->imported_published))continue;
-        if(state.strict_publish || !writing(*b))cache_clean_invalidate(*b);
+        if(state.strict_publish || !writing(*b)) {
+            const uint32_t seed=IOSurfaceGetSeed(b->surface);
+            if(state.always_clean || !b->clean_valid || b->clean_seed!=seed){cache_clean_invalidate(*b);++state.cleans;}
+            else ++state.clean_skips;
+            b->clean_seed=seed;b->clean_valid=true;
+        }
         if(state.command_active)for(auto &alias:state.buffers)
             if(alias.kernel && alias.surface_id==b->surface_id)alias.imported_published=true;
     }
@@ -529,6 +547,10 @@ int dispatch(unsigned n,void *data,size_t bytes) {
     REQUEST(DRM_MSM_GEM_CPU_PREP,drm_msm_gem_cpu_prep,
         auto b=buffer(p->handle);if(!b)return ENOENT;
         if(p->op&~MSM_PREP_FLAGS)return EINVAL;
+        // The CPU may write these pages now without touching the seed.
+        b->clean_valid=false;
+        if(b->surface)for(auto &alias:state.buffers)
+            if(alias.kernel && alias.surface_id==b->surface_id)alias.clean_valid=false;
         uint64_t last=b->last;bool dirty=b->gpu_dirty;
         if(b->surface)for(auto &alias:state.buffers)
             if(alias.kernel && alias.surface_id==b->surface_id) {

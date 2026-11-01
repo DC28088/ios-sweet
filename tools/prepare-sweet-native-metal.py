@@ -641,12 +641,17 @@ static void native_completion_finish(struct native_completion *item)
         char why[512]={0};
         const uint64_t began=native_completion_now();
         int rc;
+        /* Each poll takes the kernel's GPU lock, which the render thread's
+         * submits need too: back off 250 us -> 2 ms instead of a fixed 200 us
+         * (CA commands run ~15-25 ms on the GPU). */
+        useconds_t pause=250;
         for(;;) {
             const bool give_up=native_completion_now()-began>=2000000000ull;
             rc=rwa_command_poll(item->device,item->fence,give_up,why,sizeof why);
             native_completion_stats.polls++;
             if(rc!=1)break;
-            usleep(200);
+            usleep(pause);
+            if(pause<2000)pause*=2;
         }
         if(rc)rw_print("command buffer completion: %s\n",why);
         dispatch_queue_t queue=NULL;
