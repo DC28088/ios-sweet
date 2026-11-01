@@ -129,10 +129,57 @@ native_resource_active(struct native_resource_use use, const struct air_resource
    return true;
 }
 
+/* Only trim direct UBOs when EVERY access to that slot is a known byte load
+ * at a constant offset. Unknown operations, indirect slots/offsets and vec4
+ * offset semantics retain the full original range. AIR's required API size is
+ * unchanged; this only limits a redundant CPU upload after validation. */
+static void
+native_constant_read_extents(nir_shader *s,struct air_shader_info *info)
+{
+   uint32_t end[64]={0};bool unknown[64]={0},unknown_all=false;
+   for(unsigned i=0;i<info->num_resources;i++)info->resources[i].native_read_bytes=0;
+   nir_foreach_function_impl(impl,s) {
+      nir_foreach_block(block,impl) {
+         nir_foreach_instr(instr,block) {
+            if(instr->type!=nir_instr_type_intrinsic)continue;
+            nir_intrinsic_instr *in=nir_instr_as_intrinsic(instr);
+            if(!strstr(nir_intrinsic_infos[in->intrinsic].name,"ubo"))continue;
+            if((in->intrinsic!=nir_intrinsic_load_ubo && in->intrinsic!=nir_intrinsic_load_ubo_vec4) ||
+               !nir_src_is_const(in->src[0]) || in->src[0].ssa->bit_size>32) {
+               unknown_all=true;continue;
+            }
+            unsigned slot=nir_src_as_uint(in->src[0]);
+            if(slot>=64){unknown_all=true;continue;}
+            if(in->intrinsic!=nir_intrinsic_load_ubo || !nir_src_is_const(in->src[1]) ||
+               in->src[1].ssa->bit_size>32 || !in->def.bit_size || (in->def.bit_size&7)) {
+               unknown[slot]=true;continue;
+            }
+            uint64_t bytes=(uint64_t)nir_src_as_uint(in->src[1])+
+                           (uint64_t)in->def.num_components*(in->def.bit_size/8);
+            if(!bytes || bytes>UINT32_MAX-63){unknown[slot]=true;continue;}
+            end[slot]=MAX2(end[slot],(uint32_t)((bytes+63)&~UINT64_C(63)));
+         }
+      }
+   }
+   if(unknown_all)return;
+   unsigned proved=0;
+   for(unsigned i=0;i<info->num_resources;i++) {
+      struct air_resource *r=&info->resources[i];
+      if(r->kind==AIR_RESOURCE_CONSTANT_BUFFER && r->argbuf_set==~0u && r->index<64 &&
+         !unknown[r->index] && end[r->index]) {
+         r->native_read_bytes=end[r->index];proved++;
+      }
+   }
+   static unsigned reports;
+   if(proved && reports++<8)
+      fprintf(stderr,"SweetNativeMetal: proved static byte extents for %u direct UBOs\n",proved);
+}
+
 static unsigned
 native_prune_direct_resources(nir_shader *s, struct air_shader_info *info)
 {
    native_optimize_bindings(s);
+   native_constant_read_extents(s,info);
    struct native_resource_use use = native_resource_usage(s);
    unsigned kept = 0, old_count = info->num_resources;
    for (unsigned i = 0; i < old_count; i++)

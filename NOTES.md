@@ -1,3 +1,22 @@
+## 2026-11-01: user confirms751e784 and0741b70 still slow, stable
+
+Both pending answers received: still slow; stable for texture-state reuse and
+constant-upload cache. Current phone0741b70; no performance success claimed.
+Saved live-0741b70-still-slow-stable.log. Prepare conservative static UBO upload
+extents: optimized NIR scanned for direct load_ubo constant byte offsets, maximum
+exclusive read rounded64. Any dynamic offset, indirect UBO index, unknown UBO op,
+vec4 offset semantics or arithmetic overflow disables trimming for affected slot
+(or all slots when binding unknown). Argument-buffer members keep original range.
+New internal air_resource.native_read_bytes is appended, reset for each scan;
+AIR declared size validation unchanged. Only unaligned CPU upload length may
+shrink, only if proven bound is smaller than existing want. No arbitrary cap,
+shader edits, dynamic vertex guesses, or resource removal. Counts actual avoided
+bytes. Sampler-view reference fix, symbol artifacts and cache invalidations kept.
+Pristine source preparation and host C syntax compilation passed. Current session
+restricted network/approval-never again. No new build/install yet; next push CI
+and qualify byte/time savings on hardware. Dynamic captured vertex accesses with
+range=-1 intentionally retain old full upload length.
+
 ## 2026-11-01:0741b70 first sample exposes oversized constant copy ranges
 
 First startup sample: upload hits160,misses470,copy305463us,77459660 bytes.

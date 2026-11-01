@@ -148,6 +148,9 @@ int rwa_command_end(struct rwa_device *d,char *why,size_t n)
       fprintf(stderr,"SweetNativeMetal: constant uploads hits=%llu misses=%llu copy_us=%llu bytes=%llu\n",
          (unsigned long long)d->native_upload_hits,(unsigned long long)d->native_upload_misses,
          (unsigned long long)(d->native_upload_ns/1000),(unsigned long long)d->native_upload_bytes);
+      fprintf(stderr,"SweetNativeMetal: bounded constant uploads count=%llu avoided_bytes=%llu\n",
+         (unsigned long long)d->native_uniform_trimmed,(unsigned long long)d->native_uniform_trim_bytes);
+      d->native_uniform_trimmed=d->native_uniform_trim_bytes=0;
       d->native_upload_hits=d->native_upload_misses=d->native_upload_ns=d->native_upload_bytes=0;
       d->native_cb_ns=d->native_views_ns=d->native_images_ns=d->native_samplers_ns=d->native_binding_reused=0;
       d->native_cb_calls=d->native_cb_reused=0;

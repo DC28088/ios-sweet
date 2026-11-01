@@ -20,6 +20,8 @@ def replace(s,old,new,count=1):
 def adapt_backend(donor):
     air=donor/'tools/mesa/air'
     p=air/'nir_air.h';s=p.read_text()
+    s=replace(s,'   unsigned argbuf_id;\n};',
+                '   unsigned argbuf_id;\n   unsigned native_read_bytes; /* proved constant-offset UBO extent, zero = unknown */\n};')
     s=replace(s,'   uint64_t bits;      /* its value, as the bits of its type */',
                 '   uint64_t bits;      /* little-endian packed scalar/small-vector value */\n   const char *name;    /* declared Metal function-constant name */')
     p.write_text(s)
@@ -398,6 +400,7 @@ native_render_surface(struct rwa_texture *texture)
    } native_uploads[256];
    unsigned native_upload_count;
    uint64_t native_upload_generation, native_upload_hits, native_upload_misses, native_upload_ns, native_upload_bytes;
+   uint64_t native_uniform_trimmed, native_uniform_trim_bytes;
    struct pipe_sampler_view *native_views[PIPE_SHADER_TYPES][RWA_MAX_TEXTURES];
    struct pipe_image_view native_images[PIPE_SHADER_TYPES][RWA_MAX_TEXTURES];
    void *native_samplers[PIPE_SHADER_TYPES][RWA_MAX_TEXTURES];
@@ -535,6 +538,12 @@ bind_stage(''')
          }''')
     s=replace(s,'   const char *name = compute->info.entry_point ? compute->info.entry_point',
                 '   native_invalidate_constants(device);\n   const char *name = compute->info.entry_point ? compute->info.entry_point')
+    s=replace(s,'            size_t want = r->size && r->size <= left ? r->size : left;','''            size_t want = r->size && r->size <= left ? r->size : left;
+            if(r->native_read_bytes && r->native_read_bytes<want) {
+               device->native_uniform_trimmed++;
+               device->native_uniform_trim_bytes+=want-r->native_read_bytes;
+               want=r->native_read_bytes;
+            }''')
     # GPU-only build. Keeping a CPU fallback here would disguise failed bring-up.
     s=replace(s,'   bool software = debug_get_bool_option("RWA_SOFTWARE", false);','   bool software = false;')
     s=replace(s,'   if (!device->screen)\n      device->screen = sw_screen_create(null_sw_create());','')
