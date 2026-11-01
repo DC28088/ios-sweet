@@ -331,7 +331,7 @@ air2nir = executable(""")
 };''')
     p.write_text(s)
     p=air/'air_metal.c';s=p.read_text()
-    s=replace(s,'#include "air_metal.h"','#include "sweet_native_ext.h"\n#include "util/u_framebuffer.h"\n#include <math.h>\n#include <time.h>')
+    s=replace(s,'#include "air_metal.h"','#include "sweet_native_ext.h"\n#include "util/u_framebuffer.h"\n#include <math.h>\n#include <time.h>\n#include "util/u_upload_mgr.h"')
     s=replace(s,'#include "nir_air.h"','#include "nir_air.h"\n#include "air_live_resources.inc"\n#include "air_stage_link.inc"\n#include "air_vertex_exports.inc"')
     s=replace(s,'   slot_shapes(fs, render->frag_slots, render->frag_compare_sampler);',
                 '   native_prune_direct_resources(fs, &render->finfo);\n   slot_shapes(fs, render->frag_slots, render->frag_compare_sampler);')
@@ -390,6 +390,14 @@ native_render_surface(struct rwa_texture *texture)
    struct pipe_constant_buffer native_cb[PIPE_SHADER_TYPES][PIPE_MAX_CONSTANT_BUFFERS];
    bool native_cb_valid[PIPE_SHADER_TYPES][PIPE_MAX_CONSTANT_BUFFERS], native_buffer_writes;
    uint64_t native_cb_calls, native_cb_reused, native_cb_ns;
+   struct {
+      const void *source;
+      unsigned bytes;
+      uint64_t generation;
+      struct pipe_constant_buffer cb;
+   } native_uploads[256];
+   unsigned native_upload_count;
+   uint64_t native_upload_generation, native_upload_hits, native_upload_misses, native_upload_ns, native_upload_bytes;
    struct pipe_sampler_view *native_views[PIPE_SHADER_TYPES][RWA_MAX_TEXTURES];
    struct pipe_image_view native_images[PIPE_SHADER_TYPES][RWA_MAX_TEXTURES];
    void *native_samplers[PIPE_SHADER_TYPES][RWA_MAX_TEXTURES];
@@ -467,11 +475,43 @@ native_render_draw(''')
     # Gallium constant bindings persist. Do not re-upload an unchanged unaligned
     # user constant range for every adjacent CA draw in the same transaction.
     s=replace(s,'static int\nbind_stage(','''static uint64_t native_now_ns(void);
+static void native_invalidate_constants(struct rwa_device *d)
+{
+   memset(d->native_cb_valid,0,sizeof(d->native_cb_valid));
+   d->native_upload_generation++;
+}
 static void
 native_bind_constant(struct rwa_device *d, enum pipe_shader_type stage,unsigned slot,
                      const struct pipe_constant_buffer *cb)
 {
    d->native_cb_calls++;
+   struct pipe_constant_buffer resolved=*cb;
+   if(d->in_command && cb->user_buffer && cb->buffer_size) {
+      unsigned i=0;
+      while(i<d->native_upload_count &&
+         !(d->native_uploads[i].generation==d->native_upload_generation &&
+           d->native_uploads[i].source==cb->user_buffer && d->native_uploads[i].bytes==cb->buffer_size))i++;
+      if(i<d->native_upload_count) {
+         resolved=d->native_uploads[i].cb;d->native_upload_hits++;
+      } else if(i<ARRAY_SIZE(d->native_uploads)) {
+         uint64_t began=native_now_ns();
+         struct pipe_constant_buffer uploaded={.buffer_size=cb->buffer_size};
+         // Exactly freedreno's existing user-constant upload path, but retain
+         // its aligned GPU range for other slots/stages/draws in this command.
+         u_upload_data(d->pipe->stream_uploader,0,cb->buffer_size,64,cb->user_buffer,
+                       &uploaded.buffer_offset,&uploaded.buffer);
+         d->native_upload_ns+=native_now_ns()-began;
+         if(uploaded.buffer) {
+            d->native_uploads[i].source=cb->user_buffer;d->native_uploads[i].bytes=cb->buffer_size;
+            d->native_uploads[i].generation=d->native_upload_generation;d->native_uploads[i].cb=uploaded;
+            d->native_upload_count++;d->native_upload_misses++;d->native_upload_bytes+=cb->buffer_size;
+            resolved=uploaded;
+         }
+         // If allocation fails or the bounded cache is full, the original
+         // driver path still handles this binding. Never return invented data.
+      }
+   }
+   cb=&resolved;
    const struct pipe_constant_buffer *old=&d->native_cb[stage][slot];
    if(d->in_command && d->native_cb_valid[stage][slot] &&
       old->buffer==cb->buffer && old->user_buffer==cb->user_buffer &&
@@ -491,10 +531,10 @@ bind_stage(''')
     s=replace(s,'         if (r->write)\n            writable |= 1u << r->index;','''         if (r->write) {
             writable |= 1u << r->index;
             device->native_buffer_writes=true;
-            memset(device->native_cb_valid,0,sizeof(device->native_cb_valid));
+            native_invalidate_constants(device);
          }''')
     s=replace(s,'   const char *name = compute->info.entry_point ? compute->info.entry_point',
-                '   memset(device->native_cb_valid,0,sizeof(device->native_cb_valid));\n   const char *name = compute->info.entry_point ? compute->info.entry_point')
+                '   native_invalidate_constants(device);\n   const char *name = compute->info.entry_point ? compute->info.entry_point')
     # GPU-only build. Keeping a CPU fallback here would disguise failed bring-up.
     s=replace(s,'   bool software = debug_get_bool_option("RWA_SOFTWARE", false);','   bool software = false;')
     s=replace(s,'   if (!device->screen)\n      device->screen = sw_screen_create(null_sw_create());','')

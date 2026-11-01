@@ -1,3 +1,20 @@
+## 2026-11-01: binding counters identify constants; cache repeated aligned uploads
+
+751e784 is installed. Startup/early-use binding driver counters: constants208344us,
+views494us,images10us,samplers46us; constant path dominates measured driver binding
+cost. Not evidence of achieved FPS. User interaction result still pending.
+Prepared bounded per-command256-entry cache for unaligned constant user-buffer
+uploads. Reuses freedreno's same stream_uploader (alignment64), retains returned
+GPU resource/range and keys by source pointer/size/invalidation generation. Shares
+copies across binding slots/stages/nonadjacent draws. Invalidates generations at
+barriers,compute entry and GPU buffer writes, retaining old allocations through
+real command completion. Releases cached own resource references after final
+fence; overflow/allocation failure uses original driver binding path. Existing
+last-binding cache and sampler-view reference fix retained. Counts upload hits,
+misses,copy time and bytes separately from driver binding time to avoid hiding cost.
+Pristine source prep and host C syntax compilation passed. No installation of
+this follow-up yet; current phone751e784. Need validate reuse/performance/glitches.
+
 ## 2026-11-01:751e784 texture-state reuse installed live
 
 Full access restored by user. Push succeeded. CI41264954930 PASSED for751e784.

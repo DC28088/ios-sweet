@@ -73,7 +73,7 @@ static unsigned native_constants(struct rwa_device *d,unsigned stage,void *ctx,c
 int rwa_barrier(struct rwa_device *d,char *why,size_t n)
 {
    if(!d || d->lost){say(why,n,"device lost while encoding memory barrier");return -1;}
-   memset(d->native_cb_valid,0,sizeof(d->native_cb_valid));
+   native_invalidate_constants(d);
    d->pipe->memory_barrier(d->pipe,PIPE_BARRIER_ALL);return 0;
 }
 static uint64_t native_now_ns(void)
@@ -87,7 +87,7 @@ int rwa_render_draw(struct rwa_render *render,const struct rwa_draw *draw,char *
    render->device->native_buffer_writes=false;
    int result=native_render_draw(render,draw,why,n);
    if(render->device->native_buffer_writes)
-      memset(render->device->native_cb_valid,0,sizeof(render->device->native_cb_valid));
+      native_invalidate_constants(render->device);
    render->device->native_draw_ns+=native_now_ns()-began;
    render->device->native_draw_count++;
    return result;
@@ -96,7 +96,7 @@ int rwa_command_begin(struct rwa_device *d,char *why,size_t n)
 {
    if(!d || d->lost || d->in_command){say(why,n,"device lost or command buffer already executing");return -1;}
    if(sweet_transport_command_begin()){say(why,n,"transport transaction already active");return -1;}
-   memset(d->native_cb_valid,0,sizeof(d->native_cb_valid));
+   native_invalidate_constants(d);
    memset(d->native_views_valid,0,sizeof(d->native_views_valid));
    memset(d->native_images_valid,0,sizeof(d->native_images_valid));
    memset(d->native_samplers_valid,0,sizeof(d->native_samplers_valid));
@@ -114,6 +114,9 @@ int rwa_command_end(struct rwa_device *d,char *why,size_t n)
    util_unreference_framebuffer_state(&d->batch_fb);
    int result=finish_or_say_why(d,false,"command buffer",why,n);
    sweet_transport_command_end();
+   for(unsigned i=0;i<d->native_upload_count;i++)
+      pipe_resource_reference(&d->native_uploads[i].cb.buffer,NULL);
+   d->native_upload_count=0;
    // Work objects still retain every sampler/texture here. Clear raw sampler
    // state pointers before returning control to callers that can destroy them.
    d->in_command=false;
@@ -142,6 +145,10 @@ int rwa_command_end(struct rwa_device *d,char *why,size_t n)
          (unsigned long long)(d->native_cb_ns/1000),(unsigned long long)(d->native_views_ns/1000),
          (unsigned long long)(d->native_images_ns/1000),(unsigned long long)(d->native_samplers_ns/1000),
          (unsigned long long)d->native_binding_reused);
+      fprintf(stderr,"SweetNativeMetal: constant uploads hits=%llu misses=%llu copy_us=%llu bytes=%llu\n",
+         (unsigned long long)d->native_upload_hits,(unsigned long long)d->native_upload_misses,
+         (unsigned long long)(d->native_upload_ns/1000),(unsigned long long)d->native_upload_bytes);
+      d->native_upload_hits=d->native_upload_misses=d->native_upload_ns=d->native_upload_bytes=0;
       d->native_cb_ns=d->native_views_ns=d->native_images_ns=d->native_samplers_ns=d->native_binding_reused=0;
       d->native_cb_calls=d->native_cb_reused=0;
       memset(d->native_phase_ns,0,sizeof(d->native_phase_ns));
