@@ -1,3 +1,9 @@
+## 2026-11-01: 6bddd96 interaction result: worse pacing -> strict publish restored; GPU is the limit
+- USER (6bddd96): "its slightly worse than earlier.. tho some parts of the UI feels smooth. still very stuttery."
+- Observed (9-12 busy windows, live-6bddd96.log, BackBoard 1546, no replay): render-thread fence 0.05 s/5 s (was 0.63), encode 2.08 s (was 2.50), but GPU busy 62-67% (was 54), present gate 7-12 ms, present avg 12-17 ms / max 39-90 ms, coalesced (dropped) swaps 2-67 per 10 s (was 0), presents 23.5/s. Cache walks unchanged ~3.5 GB/5 s (the in-flight-write skip rarely applied).
+- Interpretation: removing the drain let the CPU queue more GPU work; the GPU (~20 ms GPU per command, ~28 ms per frame) is now the cap and the deeper queue made pacing uneven. ACTION: touched /var/local/sweet-native-strict-publish on the phone and restarted BackBoard (strict marker confirmed) = 3ed81f4 publication + async completion + oldest-job EBUSY wait. 6bddd96 binary remains installed.
+- Next (this commit, transport only): /var/local/sweet-native-env (KEY=VALUE, FD_/IR3_/MESA_/GALLIUM_ only) applied in drmOpenWithType before freedreno reads its options, for per-pass GPU timing (MESA_GPU_TRACES=print + MESA_GPU_TRACEFILE) and FD_MESA_DEBUG sysmem/nobypass A/B without rebuilds. Not yet built.
+
 ## 2026-11-01: bundle 6bddd96 (no publication drain) INSTALLED live on 0174, awaiting interaction
 - CI 41287261092 success; artifact research/native-metal-artifact-6bddd96 (source 6bddd965358..., not hardware-qualified). install-live-6bddd96.py: 3ed81f4 hashes checked, backup /private/var/db/sweet-native-stable-pre-6bddd96, files read back; BackBoard restarted -> PID 1546, SpringBoard 1548. No image boot.
 - Observed markers: "IOSurface publication without GPU drain" + async completion thread; first window failures=0, transport fence_us=0.

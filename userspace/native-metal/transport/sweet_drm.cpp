@@ -567,8 +567,32 @@ extern "C" int sweet_transport_poll_fence(uint64_t fence) {
     return 0;
 }
 
+// Diagnostics without a rebuild: /var/local/sweet-native-env holds KEY=VALUE
+// lines for Mesa (FD_*, IR3_*, MESA_*, GALLIUM_*), applied before freedreno
+// reads them at screen creation. Absent file = no change.
+static void load_debug_environment() {
+    static bool loaded=false;
+    if(loaded)return;
+    loaded=true;
+    FILE *f=fopen("/var/local/sweet-native-env","r");
+    if(!f)return;
+    char line[512];
+    while(fgets(line,sizeof line,f)) {
+        line[strcspn(line,"\r\n")]=0;
+        char *eq=strchr(line,'=');
+        if(!eq || line[0]=='#')continue;
+        *eq=0;
+        if(strncmp(line,"FD_",3) && strncmp(line,"IR3_",4) && strncmp(line,"MESA_",5) && strncmp(line,"GALLIUM_",8)) {
+            fprintf(stderr,"SweetNativeMetal: env file ignores %s\n",line);continue;
+        }
+        setenv(line,eq+1,1);
+        fprintf(stderr,"SweetNativeMetal: env file sets %s=%s\n",line,eq+1);
+    }
+    fclose(f);
+}
 extern "C" int drmOpenWithType(const char *name,const char *,int type) {
     Lock lock;
+    load_debug_environment();
     if(!name || strcmp(name,"msm") || type!=DRM_NODE_RENDER){errno=ENODEV;return -1;}
     int e=open_gpu();
     if(e){errno=e;return -1;}
