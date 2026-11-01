@@ -1,3 +1,18 @@
+## 2026-11-01:0741b70 first sample exposes oversized constant copy ranges
+
+First startup sample: upload hits160,misses470,copy305463us,77459660 bytes.
+Driver constant calls376us versus copy305ms; do NOT call this a total cost fix
+just because driver_us fell: work now appears in explicit copy_us. Reuse helps
+only repeated source/length within a command. Actual animation result pending.
+Potential next optimization: tighten uploaded UBO bytes to shader-proven ranges,
+keeping full spans for dynamic/unknown access. Captured runtime-vertex0.nir
+load_ubo offsets are dynamic with range=-1; cannot safely trim these based on a
+constant-only guess. Do not cap uniform uploads arbitrarily or alter shader
+semantics for FPS. Need binding source/size ranges and proven NIR/draw bounds
+before implementing trimming. No trimming code has been added yet.
+Snapshot live-0741b70.log updated; user feedback question explicitly targets0741.
+Previous pending751 question must not be mistaken for0741 result. Current0741.
+
 ## 2026-11-01:0741b70 upload cache installed live, interaction pending
 
 CI41266007772 PASSED; source commit, six hashes/arm64/VPC/upload-cache marker
