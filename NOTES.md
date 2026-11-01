@@ -11,6 +11,9 @@ e4418c38acb4d11ff7d54e5e7d0afc101e4e0b1c890da2b00429f73b0ba53c1c; ramdisk ==
 payload verified. User said "approved, boot 0174 when it's ready". Phone must be
 put in FASTBOOT manually (no recorded iOS->fastboot path). Bundle stays 1df4ee1.
 Fallback: fastboot boot shim-boot-0172-rbbm.img (or sweetimportsync=1 image).
+First fastboot watcher (product sweetin + image hash check, then fastboot boot)
+timed out 10:19 IST with no fastboot device; NO boot. Phone still iOS 0172,
+BackBoard13337/1df4ee1. Watcher re-armed; still waiting for user FASTBOOT.
 
 ## 2026-11-01: kernel 0174 (scoped submits skip client-maintained imports) building
 
