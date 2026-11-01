@@ -21,8 +21,8 @@ on:
         type: boolean
         default: false
       runner:
-        description: GitHub runner label (macos-14 is arm64 and is sometimes out of capacity; macos-13 is Intel)
-        default: macos-14
+        description: GitHub runner label (macos-14 images retired 2026-11-02; macos-15 built and booted kernel 0177)
+        default: macos-15
       run_tests:
         description: Run portable Adreno regression tests
         type: boolean
@@ -50,9 +50,10 @@ env:
 jobs:
   build:
     if: ${{ inputs.graphics_only != true && inputs.gles_only != true }}
-    # macos-14 still ships Xcode 15.x: its iig matches the xnu-8796 IORPC ABI
-    # (Xcode 16's iig emits IORPC.kernelContent, which this xnu lacks)
-    runs-on: ${{ inputs.runner || 'macos-14' }}
+    # macos-14 shipped Xcode 15.x (iig matching the xnu-8796 IORPC ABI) but its
+    # images were retired on 2026-11-02. macos-15 (oldest Xcode 16.0, picked
+    # below) built kernel 0177 (run 41322973942), which booted and ran normally.
+    runs-on: ${{ inputs.runner || 'macos-15' }}
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
