@@ -5,6 +5,8 @@
 - Cause: transport reserve() restarted a scan of all 4096 slots after each VA collision (O(n^2) in live buffers; freedreno's BO cache keeps thousands). CA allocates textures in bursts when animations start (app open/close, Control Center) -> CPU spikes = stutter candidates.
 - Fix (this commit): ordered std::map iova->size of live/quarantined buffers, one first-fit pass with the identical 64 KiB alignment and guard rule. Host simulation: identical addresses to the old search over 4000 random alloc/free steps.
 - Control Centre icons missing since the first native build: known rendering bug, deferred at the user's request (performance first).
+- Second fix (next commit): owned-buffer recycle pool in the transport. Kernel stats per busy 10 s: alloc ~376 x 213 us, map ~392 x 560 us, free ~381 x 1.3 ms (BoFree waits for the GPU). Retired non-IOSurface BOs (last fence waited, still CPU+GPU mapped at their VA) are kept up to 64 MiB (<=16 MiB each) and reused for an exact-size allocation with no kernel calls; transport line gains bo_pool_hits/misses/MiB. Host syntax check with stub headers: no errors in the new code.
+
 
 ## 2026-11-01: per-pass GPU trace (efbea0e) -> GMEM load/store dominates; FD_MESA_DEBUG=sysmem A/B live
 - USER (strict publish restored): "feels about the same as 3ed81f4 now, tho slightly worse. go ahead and fix all the stutters".

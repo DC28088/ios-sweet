@@ -51,6 +51,10 @@ struct State {
 // Kept for process lifetime: closing one Gallium fd must not invalidate another
 // screen or IOSurface. In-flight storage is never freed after an unknown timeout.
 State state;
+// Owned-buffer recycle pool (see release()).
+constexpr uint64_t PoolBytes=64ull<<20, PoolMaxBuffer=16ull<<20;
+std::vector<Buffer> pool;
+uint64_t pool_bytes=0, pool_hits=0, pool_misses=0;
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 struct Lock { Lock(){pthread_mutex_lock(&mutex);} ~Lock(){pthread_mutex_unlock(&mutex);} };
 uint64_t clock_ns() {
@@ -67,12 +71,14 @@ struct SubmitTiming {
         const uint64_t now=clock_ns();
         timings.total+=now-began;++timings.submits;
         if(now-timings.began<5000000000ull)return;
-        fprintf(stderr,"SweetNativeMetal: transport window_ms=%llu submits=%llu ibs=%llu submit_cpu_us=%llu fence_us=%llu cache_us=%llu cache_MiB=%llu submit_ioctl_us=%llu\n",
+        fprintf(stderr,"SweetNativeMetal: transport window_ms=%llu submits=%llu ibs=%llu submit_cpu_us=%llu fence_us=%llu cache_us=%llu cache_MiB=%llu submit_ioctl_us=%llu bo_pool_hits=%llu bo_pool_misses=%llu bo_pool_MiB=%llu\n",
             (unsigned long long)((now-timings.began)/1000000),
             (unsigned long long)timings.submits,(unsigned long long)timings.ibs,
             (unsigned long long)(timings.total/1000),(unsigned long long)(timings.wait/1000),
             (unsigned long long)(timings.cache/1000),(unsigned long long)(timings.cache_bytes>>20),
-            (unsigned long long)(timings.ioctl/1000));
+            (unsigned long long)(timings.ioctl/1000),
+            (unsigned long long)pool_hits,(unsigned long long)pool_misses,(unsigned long long)(pool_bytes>>20));
+        pool_hits=pool_misses=0;
         timings=Timings{};timings.began=now;
     }
 };
@@ -180,10 +186,32 @@ uint64_t reserve(uint64_t bytes) {
     }
     return fits() ? at : 0;
 }
+// Retired owned buffers, still allocated, CPU-mapped and GPU-mapped at their
+// VA. BoAlloc+BoMap+BoCpuMap cost ~0.8 ms and BoFree waits for the GPU
+// (~1.3 ms, more while a frame is in flight); CoreAnimation frees and
+// allocates same-sized textures every animation. Only buffers whose last GPU
+// use has retired enter the pool; contents are not cleared (freedreno's own
+// BO cache never clears either).
+int destroy(Buffer &b);
 int release(Buffer &b) {
     int e=wait(b.last,WaitNS);
     if (e) { b.closing=true; return e; } // retained/quarantined; no use-after-free
     if(b.gpu_dirty) {cache_clean_invalidate(b);b.gpu_dirty=false;}
+    if(!b.surface && b.cpu_mapped && b.cpu_lease && b.iova && !b.closing && b.size<=PoolMaxBuffer && !state.lost) {
+        while(pool_bytes+b.size>PoolBytes && !pool.empty()) {
+            Buffer old=std::move(pool.front());
+            pool.erase(pool.begin());pool_bytes-=old.size;
+            destroy(old); // a failure leaks this one buffer's storage, never reuses it
+        }
+        b.metadata.clear();b.last=0;b.imported_published=false;
+        pool_bytes+=b.size;pool.push_back(std::move(b));
+        b=Buffer{};
+        return 0;
+    }
+    return destroy(b);
+}
+int destroy(Buffer &b) {
+    int e=0;
     if (b.cpu_mapped) {
         e=error(IOConnectUnmapMemory64(state.connection,b.cpu_token,
                                       mach_task_self(),b.cpu));
@@ -242,6 +270,17 @@ int allocate(uint64_t bytes,uint32_t flags,IOSurfaceRef s,uint32_t *handle) {
     bytes=rounded(bytes);
     if (index==MaxBO) return ENOSPC;
     if (!bytes || bytes>state.params.max_bo_bytes) return EINVAL;
+    if(!s) {
+        for(size_t i=pool.size();i--;) if(pool[i].size==bytes) {
+            pool_bytes-=bytes;++pool_hits;
+            state.buffers[index]=std::move(pool[i]);
+            pool.erase(pool.begin()+i);
+            state.buffers[index].flags=flags;
+            *handle=index+1;
+            return 0;
+        }
+        ++pool_misses;
+    }
     uint64_t va=reserve(bytes);
     if (!va) return ENOSPC;
     Buffer b;
