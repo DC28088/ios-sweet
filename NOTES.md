@@ -1,3 +1,17 @@
+## 2026-11-01: 0174 image packaged; user APPROVED boot of 0174
+
+Kernel CI41270082742 PASSED; /home/dan/ios-sweet/xnu/out-0174 SHA256SUMS OK
+(kernel 02fb74b2...). Mach-O symtab: publishHandle 180->244 and acquireHandle
+168->232 bytes vs out-0172 (+16 insns each), symbol count equal (71881).
+Packaging in scratch copy of shim/ reproduced shim-boot-0172-rbbm.img
+byte-identically (b988abd8...) first. Payload shim/out/payload-0174-imports.bin
+(c0851d36...) = 0172 cmdline with only sweetbuild=174. Image
+/home/dan/ios-sweet/shim/out/shim-boot-0174-imports.img SHA256
+e4418c38acb4d11ff7d54e5e7d0afc101e4e0b1c890da2b00429f73b0ba53c1c; ramdisk ==
+payload verified. User said "approved, boot 0174 when it's ready". Phone must be
+put in FASTBOOT manually (no recorded iOS->fastboot path). Bundle stays 1df4ee1.
+Fallback: fastboot boot shim-boot-0172-rbbm.img (or sweetimportsync=1 image).
+
 ## 2026-11-01: kernel 0174 (scoped submits skip client-maintained imports) building
 
 xnu/patches/0174-sweet-scoped-submit-client-imports.patch: publishHandle and
