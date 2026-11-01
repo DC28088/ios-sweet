@@ -1,3 +1,41 @@
+## 2026-11-01: 1a6b5dd active trace -> submit ioctl bottleneck; 1df4ee1 merges submits, installed
+
+MEASURED 1a6b5dd busy 5s windows (live-1a6b5dd-active.log, PID13033, no BackBoard
+crash; only pre-existing assetsd abort): 446-888 submits for 85-150 commands
+(5-9 ioctls/command), submit_ioctl_us 0.9-2.0s/5s (~2.2ms each), encode 2.0-3.1s,
+draw_vbo 1.6-2.6s (contains batch flushes/submits; overlapping), finish 0.6-1.5s.
+Kernel scoped submit total_us 0.7-3.3ms, NOT correlated with IB count.
+Cause (code reading of 0117/0132/0140): SubmitResources -> publishHandle ->
+publishForDevice walks EVERY imported IOSurface's physical pages on EVERY call;
+kernelMaintainsImport/sweetimportsync only gate legacy publishMapped. Release
+also acquireHandle-walks written imports. Upstream freedreno never merged CA
+submits: should_defer refuses shared BOs (implicit-sync rule) and >30 BOs.
+Kernel also: SubmitMaxJobs=8 (EBUSY -> transport waits latest fence), BoFree
+drains GPU (~1.25ms avg). Kernel 10s method line truncates at 320 chars before
+submit-res; not visible there.
+Presentation: vsync timer 120 callbacks/s, missed_deadlines=0, but only 11-22
+presents/s in use; present path ~5-6ms kernel CPU copy (copy~2.5ms, beam
+1.2-2.4ms, acquire~0.85ms). Panel INTF_1 earlier MEASURED 8.333ms (120Hz).
+Frame rate limited by rendering, not vsync; present copy matters for 120Hz later.
+1df4ee1 (tools/build-sweet-native-metal.py adapt_submit_merging, exact-context
+Mesa edit of freedreno_ringbuffer_sp.c): shared BOs no longer block deferral;
+30-BO cutoff replaced by merged caps 16 IBs (one ABI request, no resent lists)
+and 1024 BOs; pending list flushed first if a submit would overflow.
+no_implicit_sync stays false so shared-BO cpu_prep still reaches transport
+CPU_PREP; bo_flush/fd_fence_flush flush deferred work before CPU access/waits;
+deferred submits hold BO refs. Host -Wall syntax compile clean
+(submit-merge-host-compile.log). CI41268911551 PASSED; artifact
+research/native-metal-artifact-1df4ee1, six hashes/arm64/marker/symbols checked.
+Installer matched 1a6b5dd manifest, saved host pre-hotfix-1df4ee1 and phone
+/private/var/db/sweet-native-stable-pre-1df4ee1, readbacks+SYNC, swap, restarted
+BackBoard13033 -> 13337. No image boot. Offset 1df4ee1-trial-start.json.
+First startup window: 147 commands -> 147 submits/331 IBs (was ~5-9/command).
+Startup only, NOT interaction result. Pending: same active interaction compare
+(submits/command, submit_ioctl_us, encode/finish, presents/10s) + user feel.
+Possible next (needs boot approval): kernel publishHandle/acquireHandle honor
+kernelMaintainsImport for client-maintained imports; method line buffer size.
+Not prepared. Longer term: CPU/GPU overlap (frontend waits each command).
+
 ## 2026-11-01:1a6b5dd static UBO upload bounds installed live
 
 CI41267543131 PASSED. Source commit, six hashes/arm64/static-bound counters/VPC
