@@ -93,8 +93,19 @@ int rwa_render_draw(struct rwa_render *render,const struct rwa_draw *draw,char *
    render->device->native_draw_count++;
    return result;
 }
+/* Which core runs the render thread. The ADT describes the six Cortex-A55
+ * and two Cortex-A76 as one homogeneous cluster, so XNU places it anywhere.
+ * TPIDR_EL0 bits 0-11 hold the current CPU number on this kernel. */
+static unsigned native_cpu(void)
+{
+   uint64_t v;__asm__ volatile("mrs %0, TPIDR_EL0":"=r"(v));
+   return (unsigned)(v&0xfff)&7;
+}
+static unsigned native_begin_cpu;
+static uint64_t native_cpu_commands[8],native_cpu_encode_ns[8],native_cpu_draws[8],native_cpu_draw_count_at_begin;
 int rwa_command_begin(struct rwa_device *d,char *why,size_t n)
 {
+   native_begin_cpu=native_cpu();native_cpu_draw_count_at_begin=d?d->native_draw_count:0;
    if(!d || d->lost || d->in_command){say(why,n,"device lost or command buffer already executing");return -1;}
    if(sweet_transport_command_begin()){say(why,n,"transport transaction already active");return -1;}
    native_invalidate_constants(d);
@@ -110,6 +121,9 @@ static int native_command_end(struct rwa_device *d,uint64_t *submitted,char *why
    if(!d || !d->in_command){say(why,n,"no command buffer is executing");return -1;}
    uint64_t encoded=native_now_ns();
    d->native_encode_ns+=encoded-d->native_begin_ns;
+   native_cpu_commands[native_begin_cpu]++;
+   native_cpu_encode_ns[native_begin_cpu]+=encoded-d->native_begin_ns;
+   native_cpu_draws[native_begin_cpu]+=d->native_draw_count-native_cpu_draw_count_at_begin;
    // Changing/unbinding framebuffer closes its Gallium batch; no per-draw flush.
    d->pipe->set_framebuffer_state(d->pipe,&(struct pipe_framebuffer_state){0});
    util_unreference_framebuffer_state(&d->batch_fb);
@@ -149,6 +163,14 @@ static int native_command_end(struct rwa_device *d,uint64_t *submitted,char *why
          (unsigned long long)d->native_command_count,(unsigned long long)d->native_draw_count,
          (unsigned long long)(d->native_encode_ns/1000),(unsigned long long)(d->native_draw_ns/1000),
          (unsigned long long)(d->native_finish_ns/1000));
+      fprintf(stderr,"SweetNativeMetal: render cpu commands=%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu encode_ms=%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu draws=%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu (cpu0-5 A55, cpu6-7 A76)\n",
+         (unsigned long long)native_cpu_commands[0],(unsigned long long)native_cpu_commands[1],(unsigned long long)native_cpu_commands[2],(unsigned long long)native_cpu_commands[3],
+         (unsigned long long)native_cpu_commands[4],(unsigned long long)native_cpu_commands[5],(unsigned long long)native_cpu_commands[6],(unsigned long long)native_cpu_commands[7],
+         (unsigned long long)(native_cpu_encode_ns[0]/1000000),(unsigned long long)(native_cpu_encode_ns[1]/1000000),(unsigned long long)(native_cpu_encode_ns[2]/1000000),(unsigned long long)(native_cpu_encode_ns[3]/1000000),
+         (unsigned long long)(native_cpu_encode_ns[4]/1000000),(unsigned long long)(native_cpu_encode_ns[5]/1000000),(unsigned long long)(native_cpu_encode_ns[6]/1000000),(unsigned long long)(native_cpu_encode_ns[7]/1000000),
+         (unsigned long long)native_cpu_draws[0],(unsigned long long)native_cpu_draws[1],(unsigned long long)native_cpu_draws[2],(unsigned long long)native_cpu_draws[3],
+         (unsigned long long)native_cpu_draws[4],(unsigned long long)native_cpu_draws[5],(unsigned long long)native_cpu_draws[6],(unsigned long long)native_cpu_draws[7]);
+      memset(native_cpu_commands,0,sizeof native_cpu_commands);memset(native_cpu_encode_ns,0,sizeof native_cpu_encode_ns);memset(native_cpu_draws,0,sizeof native_cpu_draws);
       fprintf(stderr,"SweetNativeMetal: draw phases validation_surface_us=%llu fixed_state_us=%llu bindings_us=%llu draw_vbo_us=%llu\n",
          (unsigned long long)(d->native_phase_ns[0]/1000),(unsigned long long)(d->native_phase_ns[1]/1000),
          (unsigned long long)(d->native_phase_ns[2]/1000),(unsigned long long)(d->native_phase_ns[3]/1000));

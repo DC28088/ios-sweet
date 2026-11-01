@@ -1,3 +1,10 @@
+## 2026-11-01: ae71977 result: first opens still stutter; CPU topology suspect (instrumentation CI pending)
+- USER (ae71977): "the first opens are still stuttering heavily. but after opening it one or two time its smooth,same with control centre."
+- spin-first.txt process CPU over 240 s: spindump itself 209 s (sampler distorts!), backboardd 153 s, SpringBoard 109 s, kernel_task 63 s, apps ~3 s each.
+- Found: tools/mkadt.py (/home/dan/ios-sweet) describes cpu0-7 as ONE homogeneous cluster ("cluster-type 0 ... homogeneous CLUSTER_TYPE_SMP, not AMP"); board_config SWEET has MAX_CPU_CLUSTERS 1 and no __AMP__. cpu0-5 = Cortex-A55 1.8 GHz, cpu6-7 = Cortex-A76 2.3 GHz. Hypothesis (unverified): CA's render thread runs on A55s much of the time, worst when SpringBoard/app launch work competes (first opens).
+- This commit (backend only): per-CPU render accounting from TPIDR_EL0 bits 0-11 (cpu number on this kernel): "SweetNativeMetal: render cpu commands=... encode_ms=... draws=..." per 5 s window.
+- Candidate fix (kernel, needs boot): bind the render (submitting) thread and the kernel present thread to the A76 cores.
+
 ## 2026-11-01: bundle ae71977 (lazy retire) INSTALLED live on 0175, awaiting interaction
 - CI 41296936734 success; install-live-ae71977.py (f206bc5 hashes checked, backup sweet-native-stable-pre-ae71977); BackBoard 869. Startup window cache_us 3.7 ms (was ~190 ms). Strict publish + sysmem + seed-gated cleans unchanged. Interaction offset in ae71977-trial-start.json.
 
