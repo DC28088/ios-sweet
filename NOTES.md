@@ -1,3 +1,16 @@
+## 2026-11-01:0741b70 upload cache installed live, interaction pending
+
+CI41266007772 PASSED; source commit, six hashes/arm64/VPC/upload-cache marker
+and symbols verified. Installer checked751e784 active manifest, saved host
+pre-hotfix-0741b70 and phone sweet-native-stable-pre-0741b70, staged/readback
+verified and SYNC, then swapped/restarted BackBoard12536. No image boot.
+Current phone0741b70. Previous751e784 trial had no matching crash record for
+PID12536 but no user active performance report yet. New async question explicitly
+names0741b70 to avoid mixing pending751 feedback. Need check upload hit/miss and
+copy_us plus driver_us; then interaction/stability result. No FPS claim.
+Snapshot live-0741b70.log and trial-start byte offset retained. Preserve lifetime
+fix, symbols, command cache ownership, real final fences and resource retention.
+
 ## 2026-11-01: binding counters identify constants; cache repeated aligned uploads
 
 751e784 is installed. Startup/early-use binding driver counters: constants208344us,
