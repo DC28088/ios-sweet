@@ -45,6 +45,7 @@ struct State {
     uint32_t next = 1;
     uint64_t queues[NativeAdrenoAbiMaxQueues]{};
     bool lost = false, command_active = false;
+    bool strict_publish = false;   // /var/local/sweet-native-strict-publish
 };
 // Kept for process lifetime: closing one Gallium fd must not invalidate another
 // screen or IOSurface. In-flight storage is never freed after an unknown timeout.
@@ -308,6 +309,11 @@ int open_gpu() {
     fprintf(stderr,"SweetNativeMetal: NativeAdreno ABI1 A618 chip=%#x GMEM=%u scoped residency\n",chip,state.info.gmem_bytes);
     fprintf(stderr,"SweetNativeMetal: kernel-owned private BOs with CPU map leases; imported IOSurface cache ownership\n");
     fprintf(stderr,"SweetNativeMetal: deferred submit merging includes shared IOSurface batches, <=16 IBs/1024 BOs per ioctl\n");
+    state.strict_publish=!access("/var/local/sweet-native-strict-publish",F_OK);
+    fprintf(stderr,state.strict_publish
+        ?"SweetNativeMetal: strict IOSurface publication (waits all GPU work, cleans every surface)\n"
+        :"SweetNativeMetal: IOSurface publication without GPU drain; surfaces with an in-flight GPU write are not cleaned "
+         "(touch /var/local/sweet-native-strict-publish to restore)\n");
     return 0;
 }
 int get_param(drm_msm_param *p) {
@@ -379,18 +385,31 @@ int submit(drm_msm_gem_submit *s) {
     if(ibs.empty()&&!e)e=EINVAL;
     timings.ibs+=ibs.size();
     // Publish cached pages once per Metal transaction. Intermediate waits do
-    // not transfer ownership back to the CPU. A first publication waits all
-    // previous GPU work, including possible alternate handles for these pages.
+    // not transfer ownership back to the CPU.
+    // Strict mode: a first publication waits all previous GPU work, including
+    // possible alternate handles for these pages, then cleans every surface.
+    // Default: the clean only exists for CPU-written contents (app layers).
+    // A surface whose GPU write is still in flight (CoreAnimation's render
+    // targets, the swap surface) has no CPU data to publish, and cleaning it
+    // before the write retires could never be both correct and useful, so it
+    // is skipped and nothing waits. Its stale lines are dropped when its last
+    // use retires (retire_dirty), on CPU access (CPU_PREP) or by the kernel's
+    // present acquire. Cleaning a surface the GPU is only reading is harmless.
+    auto writing=[](const Buffer &b) {
+        for(auto &alias:state.buffers)
+            if(alias.kernel && alias.surface_id==b.surface_id && alias.gpu_dirty && alias.last>state.completed)return true;
+        return false;
+    };
     bool publish=false;
     if(!e)for(unsigned i=0;i<s->nr_bos;++i) {
         Buffer *b=buffer(bos[i].handle);
         publish |= b->surface && (!state.command_active || !b->imported_published);
     }
-    if(!e && publish && !state.fences.empty())e=wait(state.fences.back().kernel,WaitNS);
+    if(!e && publish && state.strict_publish && !state.fences.empty())e=wait(state.fences.back().kernel,WaitNS);
     if(!e)for(unsigned i=0;i<s->nr_bos;++i) {
         Buffer *b=buffer(bos[i].handle);
         if(!b->surface || (state.command_active && b->imported_published))continue;
-        cache_clean_invalidate(*b);
+        if(state.strict_publish || !writing(*b))cache_clean_invalidate(*b);
         if(state.command_active)for(auto &alias:state.buffers)
             if(alias.kernel && alias.surface_id==b->surface_id)alias.imported_published=true;
     }
@@ -403,8 +422,14 @@ int submit(drm_msm_gem_submit *s) {
         std::copy_n(ibs.data()+at,req->commands.buffer_count,req->commands.buffers);
         NativeAdrenoAbiSubmitReply reply{};
         e=call(NativeAdrenoMethodSubmitResources,req,sizeof *req,&reply,sizeof reply);
-        if(e==EBUSY && !state.fences.empty()) {
-            e=wait(state.fences.back().kernel,WaitNS);
+        // Kernel job slots are full: retire the oldest outstanding job, not
+        // the whole queue, so asynchronous commits keep the GPU fed.
+        for(unsigned tries=0;e==EBUSY && tries<8;++tries) {
+            uint64_t oldest=0;
+            for(auto &f:state.fences)if(f.kernel>state.completed && (!oldest || f.kernel<oldest))oldest=f.kernel;
+            if(!oldest && last>state.completed)oldest=last;
+            if(!oldest)break;
+            e=wait(oldest,WaitNS);
             if(!e)e=call(NativeAdrenoMethodSubmitResources,req,sizeof *req,&reply,sizeof reply);
         }
         if(!e && !reply.fence)e=EPROTO;
