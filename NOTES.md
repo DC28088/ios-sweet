@@ -1,3 +1,6 @@
+## 2026-11-01: bundle f206bc5 INSTALLED live (CI 41291238000), awaiting interaction
+- install-live-f206bc5.py (3016190 hashes checked; backup sweet-native-stable-pre-f206bc5); BackBoard 2626. Markers: seed-gated clean + strict publish + sysmem env. First window: surface_cleans=2 vs skips=144 (cache walk remaining 1.5 GB/6 s is retire/CPU_PREP side). Interaction offset in f206bc5-trial-start.json.
+
 ## 2026-11-01: 3016190 measured (+46% presents); next: seed-gated surface cleans + completion poll backoff (CI pending)
 - Observed 3016190 busy windows (live-3016190.log, BackBoard 2443, sysmem+strict): presents 29.3/s (was 20.1), more commands/draws per 5 s, failures 0, present max 22-39 ms (still hitches). BO pool 41-181 hits per 5 s, pool 32-63 MiB; kernel alloc calls 18-297/10 s (was ~376), free 1-194 (was ~381). User feel: not yet reported.
 - Remaining render-thread submit path ~1.2 s/5 s: cache walks 0.51 s (4.1 GB), ioctl 0.45 s (~750 us each, kernel scoped submit ~5 us/BO), publication wait 0.37 s. Kernel WaitFence 3300-3500 calls/10 s at ~176 us (completion-thread polls contending for the kernel GPU lock).
