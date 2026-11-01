@@ -6,6 +6,7 @@
   - sched_prim.c: sweet_big_init() (adds boot-arg sweetbigpull, default 1); sweet_big_should_leave() (A55 + unbound user thread pri sweetbigpri..63 + any recommended A76 idle in cpu_state_map) called from sched_clutch_thread_avoid_processor -> thread_select/csw_check re-dispatch -> 0167 choose_big picks the idle A76; sweet_big_balance() at the top of sched_SMT_balance: an A76 going idle IPIs (SCHED_IPI_EVENT_REBALANCE) the A55 with the highest such current_pri; accounting in thread_dispatch (computation slice) of unbound user UI-thread time per core type.
   - SweetFramebuffer: every 10 s "SWEET SCHED: window_ms= ui_run_us a55= a76= big_pulls= big_leaves=" (answers directly which cores the UI threads use).
   - Workflow: xnu.yml default runner macos-15 (Xcode 16.0 picked; 0177 built with it and runs normally despite the old iig comment).
+- sweetpresentcpu=4 measured (0177-present4 offset): copy_avg 5.8-8.6 ms (cpu6 on 0177: 4.2-6.7), beam_skips on most frames (no tearing seen by user), one early window present_max 1.4 s / coalesced 165 (unexplained). => A55 copy is slower; 0178 goes back to the default present cpu 6.
 - Kernel CI xnu 41328511819 dispatched. Next: package with the 0177 cmdline + sweetbuild=178 (keep sweetpresentcpu=4? user saw no tearing; decide by measurement), boot needs user approval.
 
 ## 2026-11-01: 0177 result "still delay while opening apps" -> A/B sweetpresentcpu=4 BOOTED (user approved), awaiting interaction
