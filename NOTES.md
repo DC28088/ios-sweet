@@ -1,3 +1,9 @@
+## 2026-11-01: bundle 3ed81f4 (async command completion) INSTALLED live on 0174, awaiting interaction
+- c8eae3b CI 41282865117 FAILED (backend header used bool without stdbool.h); fix 3ed81f4, CI 41283247403 success. Artifact research/native-metal-artifact-3ed81f4 (source 3ed81f416a3c..., not hardware-qualified).
+- Installed with research/native-resume-20261031/install-live-3ed81f4.py (prior bundle 1df4ee1 hashes checked, backup /private/var/db/sweet-native-stable-pre-3ed81f4, staged files read back and hash-verified), BackBoard restarted: new PID 741, SpringBoard 743. No image boot.
+- Observed: marker "command buffers complete asynchronously on a completion thread"; first busy window: 145 commands completed, latency avg 2.3 ms / max 17.8 ms, 1 handler per command, failures=0, **wait_until_completed=0** (CoreAnimation does not block on completion), transport fence_us=2 ms (was hundreds of ms per window).
+- Interaction offset: 24936980 (3ed81f4-trial-start.json). Rollback: touch /var/local/sweet-native-sync-commit + restart backboardd, or restore the backup bundle.
+
 ## 2026-11-01: 0174 interaction measured; async command completion implemented (CI pending)
 - USER (0174 + bundle 1df4ee1): "scrolling in recent menu feels like 50fps, settings page: 40fps. everything else (app opening and closing, control centre drag down, up, app centre) is still under 30fps. but still better than earlier".
 - Observed busy-window means (trace from offset 24367286; BackBoard 261, no crash):
