@@ -1,3 +1,10 @@
+## 2026-11-01: kernel 0176 (A76 binding) BOOTED with user approval, awaiting interaction
+- Artifact xnu-kernel 13080851092 fetched via API redirect + curl -C - (6 resumes) -> /home/dan/ios-sweet/xnu/out-0176, SHA256SUMS OK, kernel 4ffac75aff86573d...
+- Payload shim/out/payload-0176-bigbind.bin 6e451f5a6bc2... (0172 cmdline, only sweetbuild=176; sweet-0152-haptics.adt), image shim/out/shim-boot-0176-bigbind.img f38368c8aa854b8a... (ramdisk == payload). `fastboot boot` OKAY (no flash). research/native-resume-20261031/0176-boot-start.json.
+- Observed: sweetbuild=176, "SWEET CPU: big-core binding on", BackBoard 260 with bundle 3e2cc01. Startup render cpu commands=0,0,0,0,0,0,0,150 (all on cpu7; on 0175 startup was 3,7,13,5,5,5,52,50). Boot crash set (assetsd x4, bluetoothd x3, driverkitd x1) identical to the 0175 boot, so not caused by 0176.
+- Fallbacks: shim-boot-0175-beam.img (1035c296...), shim-boot-0174-imports.img; boot-arg sweetbigbind=0 disables binding.
+- Open risk (guess): every SubmitResources caller is bound to cpu7, so if several processes render at once they share one core; watch for that in the interaction run.
+
 ## 2026-11-01: 3e2cc01 interaction measured -> render thread 57% on A55; kernel 0176 approved for boot
 - User ran first-time opens / repeat opens / CC / Recents on 3e2cc01 (BackBoard 1111, log offset 31220902..), then "approved boot 0176". Device in fastboot.
 - Observed (sum of all `render cpu` windows): commands 570,264,130,76,42,31,440,516; encode_ms 5730,3135,1414,860,458,333,4131,4826 (cpu0-7). A55 (cpu0-5) = 57% of encode time, 54% of commands. Busy windows during launches put 30-60% of commands on cpu0-2. Per-draw encode A55 171 us vs A76 142 us averaged; in lighter windows cpu0 235 us/draw vs cpu6/7 75-100 us/draw (content differs per window, so this is indicative only).
