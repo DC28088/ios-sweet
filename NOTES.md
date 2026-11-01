@@ -1,3 +1,7 @@
+## 2026-11-01: 0175 result "it still feels the ssme"; non-strict publish A/B started
+- Observed (live-0175.log, BackBoard 260, only 2 busy FB windows): presents 33.8/s, beam_skips still 17.8 per 1000 presents (0174+f206bc5: 16.4) although no "gave up" lines (log limit already used at boot) -> remaining skips come from another beamWait exit (slow-copy check on EMA spikes, or the 2-refresh timeout); unverified which. copy 3.67 ms, beam wait 1.8 ms avg. Render thread: encode 2.41 s/5 s, submit path 0.94 s (fence 0.35, cache 0.30, ioctl 0.42).
+- A/B now (no rebuild): /var/local/sweet-native-strict-publish -> .strict-publish.off, BackBoard 420 = non-strict publication with sysmem (6bddd96's pacing regression was with GMEM). Offset research/native-resume-20261031/0175-nonstrict-offset.txt. Asked user whether tearing persists.
+
 ## 2026-11-01: kernel 0175 (beam-race tear fix) BOOTED with user approval, awaiting interaction
 - Kernel CI xnu 41292268733 success; artifact xnu-kernel (gh run download timed out 4x; fetched via artifacts API zip with curl -C - resume + fresh signed URL) -> /home/dan/ios-sweet/xnu/out-0175, SHA256SUMS OK, kernel ea5319541e5a2deb...; beamWait 908 -> 576 bytes vs 0174.
 - Payload shim/out/payload-0175-beam.bin 4b7af6fa60c4... (0172 cmdline, only sweetbuild=175; tools/mkpayload.py + sweet-0152-haptics.adt), image shim/out/shim-boot-0175-beam.img 1035c296f57c4c05... (scratch shim build.sh; ramdisk == payload). fastboot product sweetin; `fastboot boot` OKAY (no flash). research/native-resume-20261031/0175-boot-start.json.
