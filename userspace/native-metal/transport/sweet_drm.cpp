@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <new>
 #include <vector>
 
@@ -159,21 +160,25 @@ uint64_t remaining(const drm_msm_timespec &absolute) {
     if (seconds>UINT64_MAX/1000000000ull-1) return UINT64_MAX;
     return seconds*1000000000ull+absolute.tv_nsec-now.tv_nsec;
 }
+// GPU VA of every live (or quarantined) buffer: iova -> size. Kept exactly in
+// step with Buffer::iova so reserve() is one ordered pass over the gaps. The
+// previous search rescanned all 4096 slots after every collision (quadratic in
+// live buffers); with freedreno's BO cache holding thousands of buffers it was
+// ~20% of BackBoard's render thread while animations allocated textures.
+std::map<uint64_t,uint64_t> ranges;
 uint64_t reserve(uint64_t bytes) {
     uint64_t end=state.info.va_start+state.info.va_size;
     if (end<state.info.va_start) return 0;
     uint64_t at=rounded(state.info.va_start,65536);
-    for (unsigned tries=0;tries<=MaxBO;++tries) {
-        if (!at || at>=end || bytes>end-at || GuardBytes>end-at-bytes) return 0;
-        uint64_t next=at;
-        for (auto &b:state.buffers) if (b.kernel && b.iova) {
-            if (at<b.iova+b.size+GuardBytes && b.iova<at+bytes+GuardBytes)
-                next=std::max(next,rounded(b.iova+b.size+GuardBytes,65536));
-        }
-        if (next==at) return at;
-        at=next;
+    auto fits=[&]{return at && at<end && bytes<=end-at && GuardBytes<=end-at-bytes;};
+    for (auto &r:ranges) {
+        if (!fits()) return 0;
+        // Same rule as before: a guard page on both sides of every buffer.
+        if (at+bytes+GuardBytes<=r.first) return at;
+        uint64_t after=rounded(r.first+r.second+GuardBytes,65536);
+        if (after>at) at=after;
     }
-    return 0;
+    return fits() ? at : 0;
 }
 int release(Buffer &b) {
     int e=wait(b.last,WaitNS);
@@ -195,6 +200,7 @@ int release(Buffer &b) {
     e=call(NativeAdrenoMethodBoFree,&req,sizeof req);
     if (e) { b.closing=true; return e; }
     if (b.surface) CFRelease(b.surface);
+    if (b.iova) ranges.erase(b.iova);
     b=Buffer{};
     return 0;
 }
@@ -265,7 +271,7 @@ int allocate(uint64_t bytes,uint32_t flags,IOSurfaceRef s,uint32_t *handle) {
     e=call(NativeAdrenoMethodBoMap,&map,sizeof map,&mapped,sizeof mapped);
     if(!e && mapped.iova!=va)e=EPROTO;
     if(e){release(live);return e;}
-    live.iova=va;
+    live.iova=va;ranges[va]=live.size;
     if(!s) {
         NativeAdrenoAbiBoCpuMap req{live.kernel};
         NativeAdrenoAbiBoCpuMapReply mapped_cpu{};

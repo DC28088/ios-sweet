@@ -1,3 +1,11 @@
+## 2026-11-01: sysmem A/B + render-thread CPU profile -> quadratic GPU-VA search fixed (CI pending)
+- USER (FD_MESA_DEBUG=sysmem): "still feels very stuttery.. also icons are missing from control centre (it was like that since the biginning of nativbe driver build). lets focus on fixing the performance".
+- Observed sysmem vs GMEM-strict (live-sysmem.log): GPU completion latency 16 vs 22 ms, present gate 1.6-5.8 vs 6-12 ms, present max 21-36 vs 25-58 ms, coalesced 0; presents 20/s (content-dependent). GPU no longer the main limit. sysmem env still active on the phone (/var/local/sweet-native-env = FD_MESA_DEBUG=sysmem); trace env parked at /var/local/sweet-native-env.trace-off.
+- spindump backboardd 300 s during interaction (research/native-resume-20261031/spin-sysmem.txt; profiler tools/sweet-spindump-profile.py symbolizes with the artifact's native-metal-symbols): rendering is on CA thread "com.apple.coreanimation.display.primary" (21.5 s CPU; render-server 1.1 s; completion 2.5 s). Of 925 busy samples: commit 453, drmCommandWriteRead 379, texture creation newTextureWithDescriptor->fd_resource_create->msm_bo_new->transport allocate 208 (**163 self in allocate = inlined reserve()**), flush_deferred_submits 195, fd_draw_vbo 260, CA itself ~470.
+- Cause: transport reserve() restarted a scan of all 4096 slots after each VA collision (O(n^2) in live buffers; freedreno's BO cache keeps thousands). CA allocates textures in bursts when animations start (app open/close, Control Center) -> CPU spikes = stutter candidates.
+- Fix (this commit): ordered std::map iova->size of live/quarantined buffers, one first-fit pass with the identical 64 KiB alignment and guard rule. Host simulation: identical addresses to the old search over 4000 random alloc/free steps.
+- Control Centre icons missing since the first native build: known rendering bug, deferred at the user's request (performance first).
+
 ## 2026-11-01: per-pass GPU trace (efbea0e) -> GMEM load/store dominates; FD_MESA_DEBUG=sysmem A/B live
 - USER (strict publish restored): "feels about the same as 3ed81f4 now, tho slightly worse. go ahead and fix all the stutters".
 - efbea0e (CI 41288327280) installed live (install-live-efbea0e.py; backup sweet-native-stable-pre-efbea0e). /var/local/sweet-native-env works (marker "env file sets ..."). Strict publish flag still set.
