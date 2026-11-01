@@ -1,3 +1,13 @@
+## 2026-11-01: per-pass GPU trace (efbea0e) -> GMEM load/store dominates; FD_MESA_DEBUG=sysmem A/B live
+- USER (strict publish restored): "feels about the same as 3ed81f4 now, tho slightly worse. go ahead and fix all the stutters".
+- efbea0e (CI 41288327280) installed live (install-live-efbea0e.py; backup sweet-native-stable-pre-efbea0e). /var/local/sweet-native-env works (marker "env file sets ..."). Strict publish flag still set.
+- GPU TRACE (MESA_GPU_TRACES=print, ~190 s incl. user interaction, BackBoard 1797; local research/native-resume-20261031/gputrace/efbea0e-trace.txt, git-ignored; summariser tools/sweet-gputrace-sum.py): 93771 passes, pass GPU time 80.2 s = 42% of span. Phases: draw_ib 45.2 s, tile_stores 16.8 s, tile_loads 14.6 s, binning 0.4 s.
+  - 1125x2436 mrts=2 GMEM 54 bins (192x288): 14135 passes, 64.0 s = **80% of GPU time**, 4.53 ms/pass = draw 2.15 + stores 1.16 (store 0xc = COLOR0+COLOR1) + loads 1.01 (load 0xc mostly).
+  - 1125x2436 mrts=2 SYSMEM (autotune bypass): 4815 passes, 1.36 ms/pass (content may differ: selection bias).
+  - Nearly every CA pass binds a 2nd colour attachment (RGBA16F per pipeline logs, often writeMask 0); freedreno loads+stores every bound valid cbuf regardless of colormask; the frontend ignores Metal load/store actions (setColorStoreAction: is a no-op).
+- A/B started: /var/local/sweet-native-env = FD_MESA_DEBUG=sysmem (tracing off; trace env saved as /var/local/sweet-native-env.trace-off), BackBoard 2037. Offset research/native-resume-20261031/sysmem-offset.txt.
+- Planned fix if GMEM must stay: honour MTLStoreActionDontCare/MTLLoadActionDontCare via pipe->invalidate_resource (freedreno clears resolve/restore bits).
+
 ## 2026-11-01: 6bddd96 interaction result: worse pacing -> strict publish restored; GPU is the limit
 - USER (6bddd96): "its slightly worse than earlier.. tho some parts of the UI feels smooth. still very stuttery."
 - Observed (9-12 busy windows, live-6bddd96.log, BackBoard 1546, no replay): render-thread fence 0.05 s/5 s (was 0.63), encode 2.08 s (was 2.50), but GPU busy 62-67% (was 54), present gate 7-12 ms, present avg 12-17 ms / max 39-90 ms, coalesced (dropped) swaps 2-67 per 10 s (was 0), presents 23.5/s. Cache walks unchanged ~3.5 GB/5 s (the in-flight-write skip rarely applied).
