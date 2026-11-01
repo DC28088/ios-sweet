@@ -1,3 +1,8 @@
+## 2026-11-01: bundle 6bddd96 (no publication drain) INSTALLED live on 0174, awaiting interaction
+- CI 41287261092 success; artifact research/native-metal-artifact-6bddd96 (source 6bddd965358..., not hardware-qualified). install-live-6bddd96.py: 3ed81f4 hashes checked, backup /private/var/db/sweet-native-stable-pre-6bddd96, files read back; BackBoard restarted -> PID 1546, SpringBoard 1548. No image boot.
+- Observed markers: "IOSurface publication without GPU drain" + async completion thread; first window failures=0, transport fence_us=0.
+- Interaction offset 26443442 (6bddd96-trial-start.json).
+
 ## 2026-11-01: 3ed81f4 interaction result; next: no publication drain (CI pending)
 - USER (3ed81f4 on 0174): "feels smoother now (sub 50fps and stutters here and ther)". BackBoard 741 up 49 min, no graphics crash, completion failures=0. (assetsd crash loop sig 6 is pre-existing/unrelated. USB replayed an old boot log block of BackBoard 261 mid-trace; trace research/native-resume-20261031/live-3ed81f4.log, analysis excluded lines ~3316-11800.)
 - Observed, 3 busy 5 s windows (mean): commands 149, draws 13.8k, encode 2.50 s (draw_vbo ~2.0 s), finish 0.25 s (was 1.90 s), completion latency avg 23 ms / max 111 ms, wait_until_completed 4.7. Transport: 616 submits, submit_cpu 1.31 s = fence 0.63 + cache 0.45 (4.2 GB) + ioctl 0.35. Presents 146-225 per 10 s; present gate now 6-7 ms (present thread waits the GPU, expected), present max 24-33 ms. gpu_busy 54%.
