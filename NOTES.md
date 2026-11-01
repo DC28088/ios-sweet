@@ -1,3 +1,8 @@
+## 2026-11-01: 3e2cc01 interaction measured -> render thread 57% on A55; kernel 0176 approved for boot
+- User ran first-time opens / repeat opens / CC / Recents on 3e2cc01 (BackBoard 1111, log offset 31220902..), then "approved boot 0176". Device in fastboot.
+- Observed (sum of all `render cpu` windows): commands 570,264,130,76,42,31,440,516; encode_ms 5730,3135,1414,860,458,333,4131,4826 (cpu0-7). A55 (cpu0-5) = 57% of encode time, 54% of commands. Busy windows during launches put 30-60% of commands on cpu0-2. Per-draw encode A55 171 us vs A76 142 us averaged; in lighter windows cpu0 235 us/draw vs cpu6/7 75-100 us/draw (content differs per window, so this is indicative only).
+- Kernel CI xnu 41298690546 success (head 7d1ee98), artifact xnu-kernel 13080851092.
+
 ## 2026-11-01: 3e2cc01 (per-CPU accounting) installed live; kernel 0176 (A76 binding) building
 - Bundle CI 41298294772 success; install-live-3e2cc01.py (ae71977 hashes checked; backup sweet-native-stable-pre-3e2cc01); BackBoard 1111. Startup window already shows the render thread on every core: commands=3,7,13,5,5,5,52,50 (cpu0-7).
 - Kernel patch xnu/patches/0176-sweet-bind-render-threads-to-a76.patch (written against the exact 0175 CI xnu-buildtree, artifact 13077654281): SubmitResources callers thread_bind to cpu7, framebuffer present thread to cpu6 once processor_avail_count==8; same thread_bind/thread_block pattern as SweetCPU.cpp; boot-arg sweetbigbind=0 disables. Kernel CI xnu 41298690546 dispatched. Booting it needs user approval.
