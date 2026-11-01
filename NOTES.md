@@ -1,3 +1,9 @@
+## 2026-11-01: kernel 0175 (beam-race tear fix) BOOTED with user approval, awaiting interaction
+- Kernel CI xnu 41292268733 success; artifact xnu-kernel (gh run download timed out 4x; fetched via artifacts API zip with curl -C - resume + fresh signed URL) -> /home/dan/ios-sweet/xnu/out-0175, SHA256SUMS OK, kernel ea5319541e5a2deb...; beamWait 908 -> 576 bytes vs 0174.
+- Payload shim/out/payload-0175-beam.bin 4b7af6fa60c4... (0172 cmdline, only sweetbuild=175; tools/mkpayload.py + sweet-0152-haptics.adt), image shim/out/shim-boot-0175-beam.img 1035c296f57c4c05... (scratch shim build.sh; ramdisk == payload). fastboot product sweetin; `fastboot boot` OKAY (no flash). research/native-resume-20261031/0175-boot-start.json.
+- Observed: sweetbuild=175, BackBoard 260 with bundle f206bc5 (sysmem env, seed-gated cleans, strict publish, async completion all carried over). Beam windows now start ~1764-1979 (0145: ~1311-1517), all logged waits "ok", some waits 6-7 ms (expected: start window is later).
+- Fallback image: shim/out/shim-boot-0174-imports.img (e4418c38...).
+
 ## 2026-11-01: f206bc5 result: "feels better" but TEARING -> kernel 0175 beam-race fix (CI pending)
 - USER (f206bc5): "it feel better. but there are tearing happening in recent menu and while app opening and closiing animation".
 - Observed (live-f206bc5.log, BackBoard 2626): presents 29.2/s, present max 26-33 ms (was 22-39), cache walks 2.25 GB/5 s (was 4.1; surface_cleans 0-8 vs skips 95-454 per window), completion polls 1066/5 s (was 3657). beam_skips 48 in 10 busy windows = 16.4 per 1000 presents (0.3-1.3 before); copy_avg 3.56 ms (2.6-3.1 before). Every logged "gave up" read line 2432 = total lines (vertical blanking) and broke out at once.
