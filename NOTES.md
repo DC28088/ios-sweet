@@ -1,3 +1,6 @@
+## 2026-11-01: bundle ae71977 (lazy retire) INSTALLED live on 0175, awaiting interaction
+- CI 41296936734 success; install-live-ae71977.py (f206bc5 hashes checked, backup sweet-native-stable-pre-ae71977); BackBoard 869. Startup window cache_us 3.7 ms (was ~190 ms). Strict publish + sysmem + seed-gated cleans unchanged. Interaction offset in ae71977-trial-start.json.
+
 ## 2026-11-01: tearing GONE on 0175; first-open stutter profiled -> lazy surface retire (CI pending)
 - USER (0175 + non-strict A/B): "tearing is no longer present. animation feels the same.. opening an app for the first time shows extreme stuttering, but opening andd closing it mutliple times make it knda smooth".
 - Non-strict publish with sysmem again dropped frames (coalesced 20-61/10 s, present max 65 ms) -> strict restored (/var/local/sweet-native-strict-publish back), BackBoard 478.
