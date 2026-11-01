@@ -1,3 +1,24 @@
+## 2026-11-01: 1df4ee1 interaction result: slightly smoother, still under 30fps
+
+User: "slightly smoother but still under 30fps". PID13337, no BackBoard crash,
+no submit failure. Saved live-1df4ee1.log. Busy 5s windows (draws>=5000) mean,
+1a6b5dd (52 windows) -> 1df4ee1 (6): submits/command 6.9 -> 3.8; submit ioctl
+1530 -> 1128ms; commands 107 -> 123; encode 2333 -> 2065ms; finish 977 -> 1391ms;
+fence 646 -> 956ms; us/ioctl 2199 -> 2409; presents/s 17.0 -> 16.7 (FB 10s).
+Per command encode+finish ~30.9 -> ~28.1ms. Interpretation: per-ioctl cost
+ROSE with merged lists, consistent with kernel cost scaling with imported bytes
+listed per call (IOSurface walks), not per call. Deferring every batch to the
+end also removed in-command CPU/GPU overlap, so the final wait grew. Merged
+submits cluster at IBs=8-9: fd_ringbuffer_cmd_count overcounts (+1 each) so the
+16-IB cap closes early; not changed. Boot log: sweetimportsync=0, sweetgpuwb=0,
+native_adreno_io_coherent never set -> SubmitResources walks imports each call.
+Remaining evidenced costs: kernel per-submit import walks ~1.1s/5s, GPU fence
+wait ~1.0s/5s (frontend completes each command synchronously).
+Next: kernel 0174 so publishHandle/acquireHandle skip imports the client
+maintains (kernelMaintainsImport), keeping <2MiB kernel-maintained imports.
+Build allowed; BOOT NEEDS USER APPROVAL. New kernel would also include 0173
+(opt-in sweetnative=1). Then consider asynchronous command completion.
+
 ## 2026-11-01: 1a6b5dd active trace -> submit ioctl bottleneck; 1df4ee1 merges submits, installed
 
 MEASURED 1a6b5dd busy 5s windows (live-1a6b5dd-active.log, PID13033, no BackBoard
