@@ -22,8 +22,16 @@ int rwa_set_constants(struct rwa_device *, unsigned stage, const struct rwa_cons
 int rwa_barrier(struct rwa_device *, char *, size_t);
 int sweet_transport_command_begin(void);
 void sweet_transport_command_end(void);
+uint64_t sweet_transport_submitted_fence(void);
+int sweet_transport_poll_fence(uint64_t);
 int rwa_command_begin(struct rwa_device *, char *, size_t);
 int rwa_command_end(struct rwa_device *, char *, size_t);
+/* Asynchronous end: hands the transaction to the GPU without waiting and
+ * returns the kernel fence that retires it. rwa_command_poll answers 0 when
+ * that fence has retired (GPU-written imports returned to the CPU), 1 while
+ * pending, -1 on failure or when give_up is set and it is still pending. */
+int rwa_command_submit(struct rwa_device *, uint64_t *, char *, size_t);
+int rwa_command_poll(struct rwa_device *, uint64_t, bool, char *, size_t);
 int rwa_clear(struct rwa_device *, struct rwa_texture *const *, unsigned, unsigned,
               const float [8][4], struct rwa_texture *, const float *, const unsigned *, char *, size_t);
 #ifdef __cplusplus

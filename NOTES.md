@@ -1,3 +1,23 @@
+## 2026-11-01: 0174 interaction measured; async command completion implemented (CI pending)
+- USER (0174 + bundle 1df4ee1): "scrolling in recent menu feels like 50fps, settings page: 40fps. everything else (app opening and closing, control centre drag down, up, app centre) is still under 30fps. but still better than earlier".
+- Observed busy-window means (trace from offset 24367286; BackBoard 261, no crash):
+  | metric | 1a6b5dd/0172 | 1df4ee1/0172 | 1df4ee1/0174 |
+  |---|---|---|---|
+  | us per submit ioctl | 2199 | 2409 | **605** |
+  | submit ioctl ms /5 s | 1530 | 1128 | 277 |
+  | transport fence ms /5 s | 646 | 956 | **1577** |
+  | frontend encode / finish ms /5 s | 2333/977 | 2065/1391 | 1462/1897 |
+  | presents/s (10 s windows >=100) | 17.0 | 16.7 | **23.7** (21-31) |
+  Kernel: gpu_busy_pct 27-46, RBBM idle=0% while a fence is out; present thread avg 6.5-7.0 ms (gate ~0.05, acquire 0.8, copy 2.5, beam 3.0).
+- Conclusion: 0174 removed the kernel import walks (4x cheaper ioctl). The largest remaining item on BackBoard's render thread is the synchronous GPU wait inside every -commit (rwa_command_end -> fence_finish, ~1.6-1.9 s per 5 s), serialized with encode (~1.5 s) under one global object lock: CPU and GPU take turns. The kernel present already runs on its own thread (0128; swap only records), so the commit wait is pure render-thread loss.
+- Change (this commit): asynchronous command completion.
+  - backend: rwa_command_submit flushes and forces freedreno's deferred submits into the kernel (fence_finish timeout 0 = flush, no wait) and returns the newest kernel fence; rwa_command_poll.
+  - transport: sweet_transport_poll_fence does the WaitFence(timeout 0) IOKit call WITHOUT the transport mutex, then retires GPU-written imports. New retire_dirty() skips a surface while any alias handle is still in flight (used by wait/command_end/poll).
+  - frontend: commit stays SCHEDULED; a QoS user-interactive completion thread polls (200 us) in commit order, sets COMPLETED, delivers completed handlers OUTSIDE the object lock (dispatch_async to the queue's completion queue if set). 2 s timeout -> error + device lost, as before. Stats line "SweetNativeMetal: async completion ... wait_until_completed=N".
+  - In-flight bound is the existing transport rule: the first submit of a command that publishes an imported IOSurface waits all earlier GPU work. So encode of N+1 overlaps GPU N, ~1 command in flight.
+  - Rollback without reinstall: `touch /var/local/sweet-native-sync-commit` + restart backboardd = old synchronous commit.
+- Known risks (unverified): app-owned IOSurfaces are not marked GPU-in-use by this driver, so an app could redraw a surface the render server's GPU is still sampling (one-frame artifact). In-flight BO frees now wait in release() (transport) instead of never waiting.
+
 ## 2026-11-01: kernel 0174 BOOTED (fastboot boot, no flash), awaiting interaction
 - 12:05 IST: fastboot product sweetin, image shim-boot-0174-imports.img sha e4418c38...a53c1c verified, `fastboot boot` OK (research/native-resume-20261031/fastboot-0174-boot.log; start offset in 0174-boot-start.json).
 - Observed: launchd boot-args include sweetbuild=174 (no sweetimportsync => 0, client maintains imports); BackBoard PID 261 loaded bundle 1df4ee1 (merge marker present), compiling CA pipelines, no crash seen so far.

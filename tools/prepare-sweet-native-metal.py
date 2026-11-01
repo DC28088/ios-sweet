@@ -612,12 +612,151 @@ bind_stage(''')
     s+='\n#include "sweet_native_ext.c"\n'
     p.write_text(s)
 
+# Asynchronous command completion. -commit hands the transaction to the GPU and
+# returns; this thread polls the kernel fence (no Gallium access, no object
+# lock while waiting) and completes command buffers in commit order. Completed
+# handlers run outside the object lock: a handler that takes a CoreAnimation
+# lock must not be able to deadlock against a render thread inside Metal.
+NATIVE_COMPLETION=r'''
+struct native_completion {
+    struct native_completion *next;
+    id commandBuffer;
+    struct rwa_device *device;
+    uint64_t fence, queued_ns;
+};
+static pthread_mutex_t native_completion_lock=PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t native_completion_ready=PTHREAD_COND_INITIALIZER;
+static struct native_completion *native_completion_head,*native_completion_tail;
+static uint64_t native_completion_now(void)
+{
+    struct timespec now;clock_gettime(CLOCK_MONOTONIC_RAW,&now);
+    return (uint64_t)now.tv_sec*1000000000ull+now.tv_nsec;
+}
+static struct {
+    uint64_t window,count,latency,latency_max,polls,handlers,failures;
+} native_completion_stats;
+static void native_completion_finish(struct native_completion *item)
+{
+    @autoreleasepool {
+        char why[512]={0};
+        const uint64_t began=native_completion_now();
+        int rc;
+        for(;;) {
+            const bool give_up=native_completion_now()-began>=2000000000ull;
+            rc=rwa_command_poll(item->device,item->fence,give_up,why,sizeof why);
+            native_completion_stats.polls++;
+            if(rc!=1)break;
+            usleep(200);
+        }
+        if(rc)rw_print("command buffer completion: %s\n",why);
+        dispatch_queue_t queue=NULL;
+        id commandBuffer=item->commandBuffer;
+        NSArray *completed=[(RedwoodMetalCommandBuffer *)commandBuffer nativeTakeCompleted:rc why:why queue:&queue];
+        for(id handler in completed) {
+            void (^block)(id)=(void (^)(id))handler;
+            if(queue)dispatch_async(queue,^{block(commandBuffer);});
+            else block(commandBuffer);
+            native_completion_stats.handlers++;
+        }
+        [completed release];
+        if(queue)dispatch_release(queue);
+        const uint64_t done=native_completion_now(),waited=done-item->queued_ns;
+        native_completion_stats.count++;native_completion_stats.failures+=rc!=0;
+        native_completion_stats.latency+=waited;
+        if(waited>native_completion_stats.latency_max)native_completion_stats.latency_max=waited;
+        if(!native_completion_stats.window)native_completion_stats.window=done;
+        if(done-native_completion_stats.window>=5000000000ull) {
+            const uint64_t n=native_completion_stats.count;
+            fprintf(stderr,"SweetNativeMetal: async completion window_ms=%llu completed=%llu latency_avg_us=%llu latency_max_us=%llu polls=%llu handlers=%llu failures=%llu wait_until_completed=%llu\n",
+                (unsigned long long)((done-native_completion_stats.window)/1000000),(unsigned long long)n,
+                (unsigned long long)(n?native_completion_stats.latency/n/1000:0),
+                (unsigned long long)(native_completion_stats.latency_max/1000),
+                (unsigned long long)native_completion_stats.polls,(unsigned long long)native_completion_stats.handlers,
+                (unsigned long long)native_completion_stats.failures,
+                (unsigned long long)atomic_exchange(&native_wait_until_completed,0));
+            memset(&native_completion_stats,0,sizeof native_completion_stats);
+            native_completion_stats.window=done;
+        }
+        [commandBuffer release];
+    }
+}
+static void *native_completion_main(void *unused)
+{
+    (void)unused;
+    pthread_setname_np("SweetNativeMetal completion");
+    for(;;) {
+        pthread_mutex_lock(&native_completion_lock);
+        while(!native_completion_head)pthread_cond_wait(&native_completion_ready,&native_completion_lock);
+        struct native_completion *item=native_completion_head;
+        native_completion_head=item->next;
+        if(!native_completion_head)native_completion_tail=NULL;
+        pthread_mutex_unlock(&native_completion_lock);
+        native_completion_finish(item);
+        free(item);
+    }
+    return NULL;
+}
+/* Called once, under the object lock, by the first commit. */
+static bool native_async_commits(void)
+{
+    static int enabled=-1;
+    if(enabled>=0)return enabled;
+    enabled=0;
+    if(!access("/var/local/sweet-native-sync-commit",F_OK)) {
+        rw_print("command buffers wait for the GPU at commit (/var/local/sweet-native-sync-commit)\n");
+        return false;
+    }
+    pthread_attr_t attr;pthread_t thread;
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr,PTHREAD_CREATE_DETACHED);
+    pthread_attr_set_qos_class_np(&attr,QOS_CLASS_USER_INTERACTIVE,0);
+    if(pthread_create(&thread,&attr,native_completion_main,NULL))
+        rw_print("no completion thread; command buffers wait for the GPU at commit\n");
+    else {
+        enabled=1;
+        rw_print("command buffers complete asynchronously on a completion thread "
+                 "(create /var/local/sweet-native-sync-commit and restart backboardd to wait at commit)\n");
+    }
+    pthread_attr_destroy(&attr);
+    return enabled;
+}
+static void native_completion_enqueue(id commandBuffer,struct rwa_device *device,uint64_t fence)
+{
+    struct native_completion *item=calloc(1,sizeof *item);
+    if(!item) {
+        /* No memory for the queue: complete it here, as a synchronous commit. */
+        struct native_completion local={NULL,[commandBuffer retain],device,fence,native_completion_now()};
+        native_completion_finish(&local);
+        return;
+    }
+    item->commandBuffer=[commandBuffer retain];item->device=device;
+    item->fence=fence;item->queued_ns=native_completion_now();
+    pthread_mutex_lock(&native_completion_lock);
+    if(native_completion_tail)native_completion_tail->next=item;
+    else native_completion_head=item;
+    native_completion_tail=item;
+    pthread_cond_signal(&native_completion_ready);
+    pthread_mutex_unlock(&native_completion_lock);
+}
+'''
+
 def adapt_frontend(donor):
     src=donor/'userland/src'
     p=src/'redwoodmetal.m';s=p.read_text()
     begin=s.index('struct rwa_device;')
     end=s.index('_Static_assert(',begin)
-    s=s[:begin]+'#include "sweet_native_ext.h"\n#include <pthread.h>\n#include <math.h>\n\n'+s[end:]
+    s=s[:begin]+'''#include "sweet_native_ext.h"
+#include <pthread.h>
+#include <pthread/qos.h>
+#include <stdatomic.h>
+#include <unistd.h>
+#include <math.h>
+
+static bool native_async_commits(void);
+static void native_completion_enqueue(id commandBuffer,struct rwa_device *device,uint64_t fence);
+static _Atomic unsigned long long native_wait_until_completed;
+
+'''+s[end:]
     # Resolve the same-build C ABI directly at load time. No weak or stale backend.
     s=replace(s,'\tmesa.handle = dlopen("/redwood/lib/libredwoodair.dylib", RTLD_NOW);',
                 '\tmesa.handle = rwa_native_abi()==SWEET_NATIVE_METAL_ABI ? (void *)1 : NULL;')
@@ -744,13 +883,42 @@ def adapt_frontend(donor):
     s=replace(s,'done:\n\t/* The queue\'s slot goes back here', '''done:
     {
         char completionWhy[512]={0};
-        if(rwa_command_end([[_queue device] mesaDevice],completionWhy,sizeof completionWhy))
+        // A failed encoding still waits its submitted prefix before reporting.
+        if(_status!=RW_CB_ERROR && native_async_commits()) {
+            uint64_t nativeFence=0;
+            if(rwa_command_submit([[_queue device] mesaDevice],&nativeFence,completionWhy,sizeof completionWhy))
+                [self failWith:completionWhy];
+            else {
+                // Stays scheduled; the completion thread completes it.
+                _nativePending=YES;
+                native_completion_enqueue(self,[[_queue device] mesaDevice],nativeFence);
+            }
+        } else if(rwa_command_end([[_queue device] mesaDevice],completionWhy,sizeof completionWhy))
             [self failWith:completionWhy];
         else if(_status!=RW_CB_ERROR)_status=RW_CB_COMPLETED;
     }
 \t/* The queue's slot goes back here''')
     s=replace(s,'\tif (_status == RW_CB_ERROR) {\n\t\treturn;\n\t}',
-                '\tif (_status == RW_CB_ERROR || _status == RW_CB_COMPLETED) {\n\t\treturn;\n\t}')
+                '\tif (_status == RW_CB_ERROR || _status == RW_CB_COMPLETED) {\n\t\treturn;\n\t}\n    atomic_fetch_add(&native_wait_until_completed,1);')
+    # Asynchronous commits: completed handlers belong to the completion thread,
+    # which delivers them after the fence and outside the object lock.
+    s=replace(s,'\tNSMutableArray *_scheduled, *_completed;   /* handler blocks, copied to the heap */',
+                '\tNSMutableArray *_scheduled, *_completed;   /* handler blocks, copied to the heap */\n\tBOOL _nativePending;   /* submitted asynchronously, fence not yet retired */')
+    s=replace(s,'\tNSArray *completed = _completed;\n\n\t_scheduled = nil;\n\t_completed = nil;',
+                '\tNSArray *completed = _nativePending ? nil : _completed;\n\n\t_scheduled = nil;\n\tif (!_nativePending)\n\t\t_completed = nil;')
+    s=replace(s,'- (void)redwoodDeliverHandlers\n{','''- (NSArray *)nativeTakeCompleted:(int)rc why:(const char *)why queue:(dispatch_queue_t *)queue
+{
+    NSArray *completed=_completed;
+    _completed=nil;_nativePending=NO;
+    if(rc)[self failWith:why];
+    else if(_status!=RW_CB_ERROR)_status=RW_CB_COMPLETED;
+    *queue=[_queue redwoodCompletionQueue];
+    if(*queue)dispatch_retain(*queue);
+    return completed;
+}
+
+- (void)redwoodDeliverHandlers
+{''')
     s=replace(s,'\tif (_status >= RW_CB_SCHEDULED) {\n\t\t[self redwoodDeliver:handler];\n\t\treturn;\n\t}\n\tif (_completed == nil)',
                 '\tif (_status >= RW_CB_COMPLETED) {\n\t\t[self redwoodDeliver:handler];\n\t\treturn;\n\t}\n\tif (_completed == nil)')
     # Draw state is appended to the shared C ABI and recorded at encode time.
@@ -905,6 +1073,7 @@ ensure_function_encoder(void)
     /* SweetNativeFunction owns this API; no process-wide Objective-C swizzle. */
 }
 '''
+    s+=NATIVE_COMPLETION
     s=s.replace('RedwoodMetal','SweetNativeMetal')
     s=s.replace('redwoodmetal[','SweetNativeMetal[')
     p.write_text(s)

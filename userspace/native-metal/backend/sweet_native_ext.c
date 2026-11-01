@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT
  * Included after air_metal.c; Gallium/NIR stay inside this library. */
+#include <errno.h>
 unsigned rwa_native_abi(void) { return SWEET_NATIVE_METAL_ABI; }
 struct rwa_library {
    void *ctx;
@@ -104,7 +105,7 @@ int rwa_command_begin(struct rwa_device *d,char *why,size_t n)
    if(!d->native_window_ns)d->native_window_ns=d->native_begin_ns;
    d->in_command=true;return 0;
 }
-int rwa_command_end(struct rwa_device *d,char *why,size_t n)
+static int native_command_end(struct rwa_device *d,uint64_t *submitted,char *why,size_t n)
 {
    if(!d || !d->in_command){say(why,n,"no command buffer is executing");return -1;}
    uint64_t encoded=native_now_ns();
@@ -112,8 +113,20 @@ int rwa_command_end(struct rwa_device *d,char *why,size_t n)
    // Changing/unbinding framebuffer closes its Gallium batch; no per-draw flush.
    d->pipe->set_framebuffer_state(d->pipe,&(struct pipe_framebuffer_state){0});
    util_unreference_framebuffer_state(&d->batch_fb);
-   int result=finish_or_say_why(d,false,"command buffer",why,n);
+   int result=0;
+   if(submitted) {
+      struct pipe_fence_handle *fence=NULL;
+      d->pipe->flush(d->pipe,&fence,0);
+      if(fence) {
+         /* Timeout 0 still flushes freedreno's deferred submits into the
+          * kernel (non-threaded msm fences are always "ready"); it only skips
+          * the wait. The completion thread waits for the kernel fence. */
+         d->screen->fence_finish(d->screen,NULL,fence,0);
+         d->screen->fence_reference(d->screen,&fence,NULL);
+      }
+   } else result=finish_or_say_why(d,false,"command buffer",why,n);
    sweet_transport_command_end();
+   if(submitted)*submitted=sweet_transport_submitted_fence();
    for(unsigned i=0;i<d->native_upload_count;i++)
       pipe_resource_reference(&d->native_uploads[i].cb.buffer,NULL);
    d->native_upload_count=0;
@@ -161,6 +174,30 @@ int rwa_command_end(struct rwa_device *d,char *why,size_t n)
    d->in_command=false;
    if(result)d->lost=true;
    return result;
+}
+int rwa_command_end(struct rwa_device *d,char *why,size_t n)
+{
+   return native_command_end(d,NULL,why,n);
+}
+int rwa_command_submit(struct rwa_device *d,uint64_t *fence,char *why,size_t n)
+{
+   if(!fence){say(why,n,"asynchronous command end needs a fence result");return -1;}
+   *fence=0;
+   return native_command_end(d,fence,why,n);
+}
+int rwa_command_poll(struct rwa_device *d,uint64_t fence,bool give_up,char *why,size_t n)
+{
+   if(!d){say(why,n,"no device for command completion");return -1;}
+   int e=sweet_transport_poll_fence(fence);
+   if(!e)return 0;
+   if(e==ETIMEDOUT && !give_up)return 1;
+   d->lost=true;
+   if(e==ETIMEDOUT)
+      say(why,n,"the GPU did not finish a command buffer within two seconds; its "
+                "results are not what the shaders computed and the GPU is wedged");
+   else
+      say(why,n,"waiting for a command buffer's GPU fence failed (errno %d)",e);
+   return -1;
 }
 int rwa_clear(struct rwa_device *d,struct rwa_texture *const *color,unsigned count,unsigned mask,
                const float values[8][4],struct rwa_texture *depth,const float *z,const unsigned *s,

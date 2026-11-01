@@ -41,7 +41,7 @@ struct State {
     NativeAdrenoAbiDeviceInfo info{};
     Buffer buffers[MaxBO];
     std::vector<Fence> fences;
-    uint64_t completed = 0;
+    uint64_t completed = 0, submitted = 0;
     uint32_t next = 1;
     uint64_t queues[NativeAdrenoAbiMaxQueues]{};
     bool lost = false, command_active = false;
@@ -120,6 +120,20 @@ void cache_clean_invalidate(const Buffer &b) {
     __asm__ volatile("dsb sy" ::: "memory");
     timings.cache+=clock_ns()-began;timings.cache_bytes+=b.size;
 }
+// Return GPU-written imported pages to the CPU once their last use retired.
+// Another handle of the same IOSurface may still be in flight under an
+// asynchronous commit; its pages stay untouched until that use retires too.
+void retire_dirty(uint64_t fence) {
+    for(auto &b:state.buffers) {
+        if(!b.kernel || !b.gpu_dirty || b.last>fence)continue;
+        bool busy=false;
+        if(b.surface)for(auto &alias:state.buffers)
+            if(alias.kernel && alias.surface_id==b.surface_id && alias.last>fence){busy=true;break;}
+        if(busy)continue;
+        cache_clean_invalidate(b);
+        b.gpu_dirty=false;
+    }
+}
 int wait(uint64_t fence, uint64_t ns) {
     if (!fence || fence<=state.completed) return 0;
     NativeAdrenoAbiWaitFence req{fence,ns};
@@ -129,11 +143,8 @@ int wait(uint64_t fence, uint64_t ns) {
     if (!e) {
         // Only after a real GPU fence. Before-submit maintenance removed CPU
         // dirty lines, so this cannot write stale CPU data over device output.
-        for(auto &b:state.buffers) if(!state.command_active && b.kernel && b.gpu_dirty && b.last<=fence) {
-            cache_clean_invalidate(b);
-            b.gpu_dirty=false;
-        }
         state.completed=std::max(state.completed,fence);
+        if(!state.command_active)retire_dirty(state.completed);
     }
     return e;
 }
@@ -415,6 +426,7 @@ int submit(drm_msm_gem_submit *s) {
     }
     state.fences.erase(std::remove_if(state.fences.begin(),state.fences.end(),[](const Fence &f){return f.kernel<=state.completed;}),state.fences.end());
     if(state.fences.size()>=4096){state.lost=true;return ENOSPC;}
+    state.submitted=std::max(state.submitted,last);
     s->fence=state.next++;s->fence_fd=-1;
     state.fences.push_back({s->fence,last,s->queueid});
     return 0;
@@ -501,11 +513,33 @@ extern "C" int sweet_transport_command_begin(void) {
 }
 extern "C" void sweet_transport_command_end(void) {
     Lock lock;state.command_active=false;
-    // The backend has waited its real Gallium fence. Never acquire unfinished
-    // pages after an error/timeout; those retain dirty state and stay pinned.
-    for(auto &b:state.buffers)if(b.kernel && b.gpu_dirty && b.last<=state.completed) {
-        cache_clean_invalidate(b);b.gpu_dirty=false;
+    // Only pages whose GPU use has retired. Never acquire unfinished pages
+    // after an error/timeout; those retain dirty state and stay pinned.
+    retire_dirty(state.completed);
+}
+// Newest kernel fence handed to the GPU. One ring retires in order, so it
+// covers every submission of the command that has just been flushed.
+extern "C" uint64_t sweet_transport_submitted_fence(void) {
+    Lock lock;return state.submitted;
+}
+// Non-blocking completion check for the asynchronous completion thread. The
+// kernel call runs without the transport lock, so a check never stalls the
+// render thread's submissions; only the bookkeeping after it is serialized.
+extern "C" int sweet_transport_poll_fence(uint64_t fence) {
+    io_connect_t connection;
+    {
+        Lock lock;
+        if(!state.connection || state.lost)return EIO;
+        if(!fence || fence<=state.completed){retire_dirty(state.completed);return 0;}
+        connection=state.connection;
     }
+    NativeAdrenoAbiWaitFence req{fence,0};
+    int e=error(IOConnectCallStructMethod(connection,NativeAdrenoMethodWaitFence,&req,sizeof req,nullptr,nullptr));
+    if(e)return e;
+    Lock lock;
+    state.completed=std::max(state.completed,fence);
+    retire_dirty(state.completed);
+    return 0;
 }
 
 extern "C" int drmOpenWithType(const char *name,const char *,int type) {
