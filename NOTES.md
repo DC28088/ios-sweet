@@ -1,3 +1,15 @@
+## 2026-11-01:751e784 texture-state reuse installed live
+
+Full access restored by user. Push succeeded. CI41264954930 PASSED for751e784.
+Six hashes/arm64/VPC/binding marker verified; pre-strip symbol artifacts present.
+Installer matched9dff3a6 active manifest, saved host pre-hotfix-751e784 and phone
+sweet-native-stable-pre-751e784, staged/readback verified and SYNC, then swapped
+and restarted BackBoard6202. No boot image/partition changes. Current751e784.
+User interaction feedback requested asynchronously (performance and stability);
+pending. No FPS improvement claimed. Snapshot live-751e784.log; trial-start
+contains initial byte offset. Keep sampler-view reference correction, inspect
+binding driver_us breakdown to choose next measured optimization.
+
 ## 2026-11-01: continue performance work on stable9dff3a6 baseline
 
 Filtered live-9dff3a6-current.log by new build load-base records: PID6202 only;
