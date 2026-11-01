@@ -1,3 +1,6 @@
+## 2026-11-01: bundle 3016190 (VA fix + BO pool) INSTALLED live on 0174, awaiting interaction
+- CI 41290677888 success (62000b6 alone: CI 41290540871 success, not installed). install-live-3016190.py: efbea0e hashes checked, backup /private/var/db/sweet-native-stable-pre-3016190. Old BackBoard 2037 took ~2 min to exit; new BackBoard 2443. Env still FD_MESA_DEBUG=sysmem + strict publish. Interaction offset in 3016190-trial-start.json.
+
 ## 2026-11-01: sysmem A/B + render-thread CPU profile -> quadratic GPU-VA search fixed (CI pending)
 - USER (FD_MESA_DEBUG=sysmem): "still feels very stuttery.. also icons are missing from control centre (it was like that since the biginning of nativbe driver build). lets focus on fixing the performance".
 - Observed sysmem vs GMEM-strict (live-sysmem.log): GPU completion latency 16 vs 22 ms, present gate 1.6-5.8 vs 6-12 ms, present max 21-36 vs 25-58 ms, coalesced 0; presents 20/s (content-dependent). GPU no longer the main limit. sysmem env still active on the phone (/var/local/sweet-native-env = FD_MESA_DEBUG=sysmem); trace env parked at /var/local/sweet-native-env.trace-off.
