@@ -1,3 +1,19 @@
+## 2026-11-01: continue performance work on stable9dff3a6 baseline
+
+Filtered live-9dff3a6-current.log by new build load-base records: PID6202 only;
+no CRASH backboardd[6202] line. Prior unfiltered stability snapshot contained
+replayed older crash PIDs5715-5918: do NOT call those new-build crashes.
+User earlier reports no restart so far. Main rendering/performance still slow.
+Reapplied deferredcd9c9e9 texture/image/sampler state reuse onto current source,
+preserving sampler-view reference release, surface cleanup, image base logging
+and pre-strip symbols. Cache lives within command retention scope; final cleanup
+and next-command invalidation retained. Adds per-binding driver call time/reuse
+counts. Pristine pinned donor generation succeeded, host C syntax compile passed,
+explicit sampler/surface release checks passed. No hardware qualification or
+new installation yet. Current phone9dff3a6. Latest session restricted network.
+Next push CI, verify symbols/hash/source, install reversibly against9dff manifest,
+then compare active driver binding categories without mixing startup/idle windows.
+
 ## 2026-10-31:9dff3a6 user reports no restart so far
 
 User used launcher/apps after lifetime fix and reports "No restart so far".
