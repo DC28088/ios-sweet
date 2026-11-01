@@ -14,6 +14,9 @@ Fallback: fastboot boot shim-boot-0172-rbbm.img (or sweetimportsync=1 image).
 First fastboot watcher (product sweetin + image hash check, then fastboot boot)
 timed out 10:19 IST with no fastboot device; NO boot. Phone still iOS 0172,
 BackBoard13337/1df4ee1. Watcher re-armed; still waiting for user FASTBOOT.
+Second watcher also timed out 11:09 IST; NO boot; phone still iOS 0172,
+BackBoard13337. Not re-armed; resume when user reports FASTBOOT (approval for
+this exact image e4418c38... stands; re-verify product/hash before boot).
 
 ## 2026-11-01: kernel 0174 (scoped submits skip client-maintained imports) building
 
