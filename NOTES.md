@@ -1,3 +1,19 @@
+## 2026-11-01:1a6b5dd static UBO upload bounds installed live
+
+CI41267543131 PASSED. Source commit, six hashes/arm64/static-bound counters/VPC
+marker and native symbols verified. Installer checked0741b70 manifest, saved host
+pre-hotfix-1a6b5dd and phone sweet-native-stable-pre-1a6b5dd, verified readbacks,
+SYNC and swapped; restarted BackBoard12691. No boot image/partition change.
+Current phone1a6b5dd. User interaction/performance/stability question explicitly
+names1a6b5dd; pending. Snapshot live-1a6b5dd.log and trial-start offset saved.
+Do not claim FPS solved. Need actual avoided_bytes,copy_us and active result.
+Possible future direction for dynamic unaligned UBOs: GPU-side aligned copies or
+read-only SSBO lowering with per-binding byte bias. IMPORTANT both A6xx UBO and
+SSBO offset alignment caps are64, so naïvely changing UBO to SSBO will NOT solve
+unaligned Metal offsets. Such a redesign needs checked reserved-slot availability,
+NIR resource collision handling, bias table and retained fence/resource semantics;
+not implemented. Current static-only proof deliberately avoids those changes.
+
 ## 2026-11-01: user confirms751e784 and0741b70 still slow, stable
 
 Both pending answers received: still slow; stable for texture-state reuse and
