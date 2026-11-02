@@ -30,8 +30,21 @@ struct rwa_texture *rwd_texture_for_surface(struct rwa_device *device,void *surf
        want->array_length>1 || want->mip_levels>1 || want->sample_count>1)
         REFUSE("interface: IOSurface texture must match a single 2D plane, mip and sample");
     if(IOSurfaceGetPixelFormat(s)!=fourcc || width>UINT32_MAX || height>UINT32_MAX ||
-       pitch>UINT32_MAX || width>SIZE_MAX/bpp || pitch<width*bpp || (pitch&63))
+       pitch>UINT32_MAX-63 || width>SIZE_MAX/bpp || pitch<width*bpp)
         REFUSE("interface: IOSurface %#x for Metal %u expected %#x, %zux%zu pitch %zu; incompatible A618 linear layout",IOSurfaceGetPixelFormat(s),want->pixel_format,fourcc,width,height,pitch);
+    // A618 samples linear rows only at 64-byte pitches. A surface another
+    // process laid out with a shorter row (SpringBoard's LA08 glyphs ask for
+    // 210/224 bytes) is read through a shadow at the rounded pitch, which the
+    // transport refills from the surface whenever its seed changes (the same
+    // rounding rule is in sweet_drm.cpp surface_description). Only for
+    // textures the GPU reads: a GPU write would not reach the surface.
+    size_t gpu_pitch=pitch;
+    if(pitch&63) {
+        if(want->usage&(2|4))
+            REFUSE("interface: IOSurface %u %zux%zu pitch %zu is not 64-byte aligned and the texture is written (usage %#x); a read-only shadow cannot carry GPU writes back",
+                   IOSurfaceGetID(s),width,height,pitch,want->usage);
+        gpu_pitch=(pitch+63)&~(size_t)63;
+    }
     uintptr_t pixels=(uintptr_t)IOSurfaceGetBaseAddress(s),base=pixels&~(uintptr_t)16383;
     size_t bytes=IOSurfaceGetAllocSize(s),offset=pixels-base;
     if(!base || offset>=bytes || (height && pitch>(bytes-offset)/height))
@@ -41,11 +54,15 @@ struct rwa_texture *rwd_texture_for_surface(struct rwa_device *device,void *surf
     // The winsys looks up this ID only inside this process, pins its actual CPU
     // mapping through ABI selector16 and retains the surface through GEM_CLOSE.
     struct rwa_texture *texture=rwa_texture_from_surface(device,(const struct rwa_texture_shape*)want,
-                                                         id,(unsigned)offset,(unsigned)pitch,why,n);
+                                                         id,(unsigned)offset,(unsigned)gpu_pitch,why,n);
+    static unsigned shadow_imports;
+    if(texture && gpu_pitch!=pitch && shadow_imports++<16)
+        fprintf(stderr,"SweetNativeMetal: IOSurface %u %#x %zux%zu pitch %zu read through a %zu-byte-row shadow\n",
+                id,fourcc,width,height,pitch,gpu_pitch);
     static unsigned rg8_imports;
     if(texture && want->pixel_format==30 && rg8_imports++<4)
         fprintf(stderr,"SweetNativeMetal: RG8 IOSurface %u imported, %zux%zu pitch %zu\n",id,width,height,pitch);
-    if(texture && took)*took=(struct rwd_surface){id,0,bytes,(unsigned)offset,(unsigned)pitch,
+    if(texture && took)*took=(struct rwd_surface){id,0,bytes,(unsigned)offset,(unsigned)gpu_pitch,
                                                 (unsigned)width,(unsigned)height,fourcc,0};
     return texture;
 #undef REFUSE

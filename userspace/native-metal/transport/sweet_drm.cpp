@@ -38,6 +38,13 @@ struct Buffer {
     bool clean_valid = false;
     uint32_t clean_seed = 0;
     std::vector<uint8_t> metadata;
+    // Shadow of an IOSurface whose rows are not 64-byte aligned (A618 linear
+    // sampling needs that): an owned BO at the rounded pitch, refilled from
+    // the surface on the CPU when its seed changes (see shadow_refill()).
+    IOSurfaceRef shadow_src = nullptr;
+    uint32_t shadow_id = 0, shadow_src_pitch = 0, shadow_pitch = 0, shadow_offset = 0;
+    uint32_t shadow_rows = 0, shadow_row_bytes = 0, shadow_seed = 0;
+    bool shadow_valid = false;
 };
 struct Fence { uint32_t number; uint64_t kernel, queue; };
 struct State {
@@ -55,6 +62,7 @@ struct State {
     bool always_clean = false;     // /var/local/sweet-native-always-clean
     bool eager_retire = false;     // /var/local/sweet-native-eager-retire
     uint64_t cleans = 0, clean_skips = 0;
+    uint64_t shadow_fills = 0, shadow_fill_bytes = 0, shadow_waits = 0;
 };
 // Kept for process lifetime: closing one Gallium fd must not invalidate another
 // screen or IOSurface. In-flight storage is never freed after an unknown timeout.
@@ -87,6 +95,11 @@ struct SubmitTiming {
             (unsigned long long)(timings.ioctl/1000),
             (unsigned long long)pool_hits,(unsigned long long)pool_misses,(unsigned long long)(pool_bytes>>20),
             (unsigned long long)state.cleans,(unsigned long long)state.clean_skips);
+        if(state.shadow_fills || state.shadow_waits)
+            fprintf(stderr,"SweetNativeMetal: shadow surfaces refilled=%llu bytes=%llu gpu_waits=%llu\n",
+                (unsigned long long)state.shadow_fills,(unsigned long long)state.shadow_fill_bytes,
+                (unsigned long long)state.shadow_waits);
+        state.shadow_fills=state.shadow_fill_bytes=state.shadow_waits=0;
         pool_hits=pool_misses=0;state.cleans=state.clean_skips=0;
         timings=Timings{};timings.began=now;
     }
@@ -211,6 +224,9 @@ int destroy(Buffer &b);
 int release(Buffer &b) {
     int e=wait(b.last,WaitNS);
     if (e) { b.closing=true; return e; } // retained/quarantined; no use-after-free
+    if(b.shadow_src) {
+        CFRelease(b.shadow_src);b.shadow_src=nullptr;b.shadow_id=0;b.shadow_valid=false;
+    }
     if(b.gpu_dirty) {cache_clean_invalidate(b);b.gpu_dirty=false;}
     if(!b.surface && b.cpu_mapped && b.cpu_lease && b.iova && !b.closing && b.size<=PoolMaxBuffer && !state.lost) {
         while(pool_bytes+b.size>PoolBytes && !pool.empty()) {
@@ -271,6 +287,14 @@ int surface_description(uint32_t id, struct redwood_drm_surface *out, IOSurfaceR
         if (object) mach_port_deallocate(mach_task_self(),object);
         if (kr || region>base || length<base-region || bytes>length-(base-region) ||
             !(info.protection&VM_PROT_READ) || !(info.protection&VM_PROT_WRITE)) e=EINVAL;
+    }
+    if (!e && (pitch&63)) {
+        // Shadow layout (frontend SweetNativeDrawable.m uses the same rule):
+        // same in-page offset, rows rounded to 64 bytes, owned storage.
+        const uint64_t aligned=(uint64_t(pitch)+63)&~uint64_t(63);
+        const uint64_t need=rounded((pixel-base)+aligned*height);
+        if(aligned>UINT32_MAX || !need || need>state.params.max_bo_bytes)e=EINVAL;
+        else {pitch=size_t(aligned);bytes=need;}
     }
     if (!e) {
         *out={id,0,bytes,uint32_t(pixel-base),uint32_t(pitch),uint32_t(width),uint32_t(height),
@@ -418,6 +442,33 @@ int get_param(drm_msm_param *p) {
     }
     return 0;
 }
+// Copy the shadow's source rows to the rounded pitch when the surface changed.
+// Writers bump the seed on unlock; the seed is read before the copy, so a write
+// racing the copy leaves a newer seed and a refill at the next submission. A
+// shadow the GPU may still be reading is waited for first (glyph surfaces
+// change rarely). The submission's dsb publishes these WC stores.
+int shadow_refill(Buffer &b) {
+    uint32_t seed=IOSurfaceGetSeed(b.shadow_src);
+    if(b.shadow_valid && seed==b.shadow_seed)return 0;
+    if(b.last>state.completed) {
+        int e=wait(b.last,WaitNS);
+        if(e)return e;
+        ++state.shadow_waits;
+    }
+    // Best effort: a refused lock still copies (the seed check repeats it).
+    const bool locked=IOSurfaceLock(b.shadow_src,kIOSurfaceLockReadOnly,nullptr)==kIOReturnSuccess;
+    const uint8_t *src=(const uint8_t*)IOSurfaceGetBaseAddress(b.shadow_src);
+    uint8_t *dst=(uint8_t*)(uintptr_t)b.cpu+b.shadow_offset;
+    const bool fits=uint64_t(b.shadow_offset)+uint64_t(b.shadow_pitch)*b.shadow_rows<=b.size;
+    if(src && b.cpu && fits)
+        for(uint32_t y=0;y<b.shadow_rows;++y)
+            memcpy(dst+uint64_t(y)*b.shadow_pitch,src+uint64_t(y)*b.shadow_src_pitch,b.shadow_row_bytes);
+    if(locked)IOSurfaceUnlock(b.shadow_src,kIOSurfaceLockReadOnly,nullptr);
+    if(!src || !b.cpu || !fits)return 0;    // keeps the old contents; never fails the frame
+    b.shadow_seed=seed;b.shadow_valid=true;
+    ++state.shadow_fills;state.shadow_fill_bytes+=uint64_t(b.shadow_row_bytes)*b.shadow_rows;
+    return 0;
+}
 int submit(drm_msm_gem_submit *s) {
     SubmitTiming profile;
     if ((s->flags&MSM_PIPE_ID_MASK)!=MSM_PIPE_3D0 ||
@@ -454,6 +505,10 @@ int submit(drm_msm_gem_submit *s) {
     }
     if(ibs.empty()&&!e)e=EINVAL;
     timings.ibs+=ibs.size();
+    for(unsigned i=0;i<s->nr_bos && !e;++i) {
+        Buffer *b=buffer(bos[i].handle);
+        if(b->shadow_src)e=shadow_refill(*b);
+    }
     // Publish cached pages once per Metal transaction. Intermediate waits do
     // not transfer ownership back to the CPU.
     // Strict mode: a first publication waits all previous GPU work, including
@@ -727,9 +782,27 @@ extern "C" int drmPrimeFDToHandle(int,int surface,uint32_t *handle) {
     // freedreno's handle table serializes repeat imports of one surface.
     for(unsigned i=0;i<MaxBO;++i)if(state.buffers[i].surface && !state.buffers[i].closing &&
         IOSurfaceGetID(state.buffers[i].surface)==uint32_t(surface)){*handle=i+1;return 0;}
+    for(unsigned i=0;i<MaxBO;++i)if(state.buffers[i].shadow_src && !state.buffers[i].closing &&
+        state.buffers[i].shadow_id==uint32_t(surface)){*handle=i+1;return 0;}
     struct redwood_drm_surface info{};IOSurfaceRef s=nullptr;
     int e=surface_description(surface,&info,&s);
-    if(!e){e=allocate(info.size,MSM_BO_WC,s,handle);CFRelease(s);}
+    const size_t src_pitch=s?IOSurfaceGetBytesPerRow(s):0;
+    if(!e && (src_pitch&63)) {
+        // Owned BO; the surface stays retained as the shadow's source.
+        e=allocate(info.size,MSM_BO_WC,nullptr,handle);
+        Buffer *b=e?nullptr:buffer(*handle);
+        const size_t bpe=IOSurfaceGetBytesPerElement(s);
+        if(b && bpe && info.width<=src_pitch/bpe) {
+            b->shadow_src=s;CFRetain(s);b->shadow_id=uint32_t(surface);
+            b->shadow_src_pitch=uint32_t(src_pitch);b->shadow_pitch=info.row_bytes;
+            b->shadow_offset=info.offset;b->shadow_rows=info.height;
+            b->shadow_row_bytes=uint32_t(info.width*bpe);b->shadow_valid=false;
+            static unsigned logged;
+            if(logged++<16)fprintf(stderr,"SweetNativeMetal: shadow BO %u for IOSurface %u %ux%u rows %zu -> %u bytes\n",
+                *handle,uint32_t(surface),info.width,info.height,src_pitch,info.row_bytes);
+        } else if(b) {release(*b);e=EINVAL;}
+    } else if(!e)e=allocate(info.size,MSM_BO_WC,s,handle);
+    if(s)CFRelease(s);
     if(e){errno=e;return -1;}return 0;
 }
 static int unsupported(){errno=ENOTSUP;return -1;}
