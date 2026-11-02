@@ -335,6 +335,52 @@ air2nir = executable(""")
     p=air/'air_metal.c';s=p.read_text()
     s=replace(s,'#include "air_metal.h"','#include "sweet_native_ext.h"\n#include "util/u_framebuffer.h"\n#include <math.h>\n#include <time.h>\n#include "util/u_upload_mgr.h"')
     s=replace(s,'#include "nir_air.h"','#include "nir_air.h"\n#include "air_live_resources.inc"\n#include "air_stage_link.inc"\n#include "air_vertex_exports.inc"')
+    # Metal ALWAYS enables primitive restart for indexed strip draws (0xFFFF /
+    # 0xFFFFFFFF), the donor turned it off ("Metal has no restart index"). The
+    # restart value then counted as vertex 65535 in index_range, the vertex
+    # stream bounds check refused the whole draw, and every stroked path
+    # CoreAnimation draws as a restart-separated strip vanished (Control Centre
+    # glyph outlines, status-bar battery outline, battery widget ring).
+    s=replace(s,"""static void
+index_range(const uint8_t *indices, unsigned count, unsigned index_size, unsigned *min_out,
+            unsigned *max_out)
+{
+   unsigned min = UINT32_MAX, max = 0;""","""static void
+index_range(const uint8_t *indices, unsigned count, unsigned index_size, bool restart,
+            unsigned *min_out, unsigned *max_out)
+{
+   const unsigned restart_index = index_size == 2 ? 0xffffu : 0xffffffffu;
+   unsigned min = UINT32_MAX, max = 0;""")
+    s=replace(s,"""         memcpy(&u, indices + (size_t)i * 4, sizeof(u));
+         v = u;
+      }
+      if (v < min)""","""         memcpy(&u, indices + (size_t)i * 4, sizeof(u));
+         v = u;
+      }
+      if (restart && v == restart_index)
+         continue;
+      if (v < min)""")
+    s=replace(s,"""   *min_out = min;
+   *max_out = max;
+}""","""   if (min > max)
+      min = max = 0;   /* nothing but restarts: draws nothing */
+   *min_out = min;
+   *max_out = max;
+}""")
+    s=replace(s,"""      index_range((const uint8_t *)rwa_buffer_map(draw->index_buffer) +
+                  draw->index_buffer_offset, draw->vertex_count, index_size, &min_index,
+                  &max_index);""","""      index_range((const uint8_t *)rwa_buffer_map(draw->index_buffer) +
+                  draw->index_buffer_offset, draw->vertex_count, index_size,
+                  prim == MESA_PRIM_LINE_STRIP || prim == MESA_PRIM_TRIANGLE_STRIP,
+                  &min_index, &max_index);""")
+    s=replace(s,"""      struct pipe_draw_info info = {
+         .mode = prim, .index_bounds_valid = true,
+         .index_size = (uint16_t)index_size,""","""      const bool strip = prim == MESA_PRIM_LINE_STRIP || prim == MESA_PRIM_TRIANGLE_STRIP;
+      struct pipe_draw_info info = {
+         .mode = prim, .index_bounds_valid = true,
+         .index_size = (uint16_t)index_size,
+         .primitive_restart = index_size && strip,
+         .restart_index = index_size == 2 ? 0xffffu : 0xffffffffu,""")
     # Diagnostics for missing Control Centre vector glyphs (2026-11-02): the
     # first uploads into one-byte textures (CoreAnimation's coverage masks)
     # with their geometry and how many texels are non-zero.
