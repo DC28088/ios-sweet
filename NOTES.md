@@ -1,3 +1,9 @@
+## 2026-11-02: kernel 0179 (per-tap probe) BOOTED with user approval, awaiting interaction
+- CI xnu 41381020045 success (head 743c5a6), artifact xnu-kernel 13113850006 -> /home/dan/ios-sweet/xnu/out-0179, SHA256SUMS OK, kernel 9aa34c4382ea...; strings contain "SWEET TAP: n=".
+- Payload shim/out/payload-0179-tap.bin 1596ef2335a1... (0178 cmdline, sweetbuild=179), image shim/out/shim-boot-0179-tap.img fb22b6cec774... (ramdisk == payload). `fastboot boot` OKAY (no flash); research/native-resume-20261031/0179-boot-start.json (log_offset 35922449).
+- Observed: sweetbuild=179, SpringBoard exec'd, touch bound to cpu 5; crash set so far assetsd 3, bluetoothd 3, driverkitd 1. Read results with: tail -c +35922450 logs/live-0172-membus.txt | grep -a "SWEET TAP".
+- Suggested to the user (not verified): AegirPoster (believed to be the Astronomy poster extension) crash-loops and each relaunch makes PosterBoard create 2-3 new 11 MB 1125x2436 surfaces; a plain wallpaper may remove that churn.
+
 ## 2026-11-02: 0178 result "still delay while opening apps" -> kernel 0179 per-tap probe (CI pending)
 - USER (0178): "still delay while opening apps, check the logs".
 - Observed 0178 busy 10 s windows (log from 0178-boot-start offset 34969185): UI threads (unbound user pri 46-63) a55 4.8-9.2 s vs a76 2.8-7.2 s per window = still ~60% on A55; big_pulls 15-29k / 10 s (~2.7k IPIs/s), big_leaves 28-54k. Render thread all on cpu7: encode 2.2-3.1 s per 5 s + transport submit_cpu 1.5-1.7 s per 5 s (fence 0.85-1.16 s, ioctl 0.33-0.55 s; 680-984 submits) -> cpu7 ~90% busy. draw_vbo 1.6-2.3 s / 5 s for 16-23k draws (~100 us/draw, includes submits). gpu_busy 72-83%, async completion latency avg 18-21 ms, max 47-72 ms. Present: 380-520 per 10 s, copy_avg 5.8-6.5 ms, gate 5.2-8.0 ms, present max 31-42 ms, beam_skips 160-360 (no tearing reported).
