@@ -1,3 +1,13 @@
+## 2026-11-02: public README status refresh
+
+- Updated the default-branch README to reflect user-confirmed touch/buttons,
+  Metal GPU acceleration, Wi-Fi, Bluetooth, live USB debugging and charging state.
+- Documented the native AIR/NIR/freedreno path, kernel bring-up, WLAN/BT integration,
+  input/battery changes and remaining performance/graphics limitations.
+- Linked implementation and current engineering notes on codex/native-adreno-metal;
+  this documentation update does not merge experimental source into main.
+- Documentation only; no builds, tests, device writes or reboots performed.
+
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
 ## Agent handoff / active work (2026-10-15, latest)

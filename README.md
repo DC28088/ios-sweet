@@ -4,34 +4,73 @@
 
 This project ports Apple's open-source XNU kernel (xnu-8796, the iOS 16 generation) to the Xiaomi Redmi Note 10 Pro (`sweet`, Qualcomm SM7150 / Snapdragon 732G). On top of it runs the **unmodified iOS 16.7.16 (20H392) userland of the iPhone X**: launchd, the system daemons, backboardd, SpringBoard and the stock apps.
 
-As of **2026-10-18** the phone boots to the **iOS home screen**. You can unlock it, open Settings, pull down Control Center and the notification center, and use the touchscreen and the hardware buttons. Rendering runs entirely on the CPU; there is no GPU driver.
+As of **2026-11-02**, the phone boots to the **iOS home screen with Metal GPU acceleration, working touch and hardware buttons, Wi-Fi, Bluetooth, live USB debugging, and battery/charging state**. The graphics stack now includes a native Metal frontend for the Adreno 618. Animation performance is still being improved; GPU acceleration does not yet deliver consistently smooth 60 or 120 fps.
 
-> Experimental bring-up, not a usable phone OS. Many things are missing or stubbed (see below), and Apple's security model is mostly switched off. It installs into the `userdata` partition and so **erases Android's user data**.
+> Experimental bring-up, not a daily-driver phone OS. Apple's security model is largely disabled. The iOS root occupies `userdata` and replaces Android's user data. Keep partition backups and do not store personal data on this installation.
 
 ## What works
 
-| Area | State |
+These are results from the development phone, not a compatibility guarantee for every build. The implementation is being developed on [`codex/native-adreno-metal`](https://github.com/DC28088/ios-sweet/tree/codex/native-adreno-metal); the default branch does not yet contain all of that work.
+
+| Area | Current result |
 | --- | --- |
-| Boot | Stock Xiaomi bootloader → `fastboot boot` of our shim → XNU. Nothing is flashed to the boot partitions |
-| CPU | 6 of the 8 cores (the six Cortex-A55s) via PSCI, 16K pages, GICv3 interrupts, timers |
-| Memory | About 3.95 GiB of the upper DDR bank |
-| Storage | Own UFS host driver; the iOS root is a journaled HFS+ volume in `userdata`, read/write |
-| iOS userland | Real iPhone X 16.7.16 root filesystem and shared cache; launchd and the system daemons run |
-| Display | Kernel IOSurface + IOMobileFramebuffer (`AppleCLCD`) services; CoreAnimation renders in software; frames are copied into the bootloader's framebuffer. Presented to iOS as an iPhone X panel (1125×2436) |
-| GUI | backboardd, SpringBoard, lock screen, home screen, Control Center, notification center, Settings; home swipe and app switcher |
-| Touch | Goodix GT9896 over I²C (GENI), rail enabled through RPMh, delivered as HID digitizer events |
-| Buttons | Power, volume up/down (PMIC through SPMI) as HID consumer keys; lock/wake works |
-| Battery | IOPMPowerSource service (static 100 %, charging icon; real fuel-gauge readout prepared) |
-| Device identity | iPhone X (`iPhone10,3` / `D22AP`): no Home button, gesture UI |
-| Activation | Native "Hactivation" path of mobileactivationd, chosen through device-tree security status. No Apple servers involved |
+| Boot and iOS | Stock Xiaomi bootloader → custom shim → XNU → iPhone X iOS 16.7.16 userland; lock screen, SpringBoard, Settings and stock apps |
+| Touch | Goodix GT9896 touchscreen over GENI I²C, with RPMh power and HID digitizer events; gestures work |
+| Hardware buttons | Power and volume buttons through PMIC/SPMI and HID consumer keys; lock/wake works |
+| GPU / Metal | Adreno 618 executes real GPU rendering for the iOS UI. Native Metal objects, AIR → NIR → freedreno/ir3 shader compilation, command submission and IOSurface integration are operational |
+| Wi-Fi | WCN3990 scans, joins WPA2 networks, obtains a DHCP address and loads web pages |
+| Bluetooth | WCN3990 UART transport and firmware initialization; pairing with a laptop and headphones confirmed. Bluetooth audio remains unfinished |
+| Live USB debugging | Kernel console streamed over USB CDC-ECM networking; SSH and a kernel file server support live diagnosis and userspace updates |
+| Battery and charging | PM6150 fuel-gauge voltage/current, charge counting and battery percentage; charger plug/unplug state is reported |
+| Storage | Custom UFS host driver; writable, journaled HFS+ iOS root in `userdata` |
+| CPU and memory | PSCI SMP bring-up, GICv3 interrupts and architectural timers; development builds also enable the Cortex-A76 cores. Approximately 3.95 GiB upper-bank RAM |
+| Display | IOSurface + IOMobileFramebuffer (`AppleCLCD`); iPhone X logical display scaled to the 1080×2400 panel |
+| Device identity | iPhone X (`iPhone10,3` / `D22AP`), with gesture navigation |
 
-## What does not work (yet)
+## What changed to make this work
 
-- **No Wi-Fi, Bluetooth, cellular, audio, camera, sensors, GPS or SEP / Face ID.** Daemons for them start and fail or keep relaunching.
-- **No GPU.** Everything is drawn by the CPU at roughly 20–30 fps. The two Cortex-A76 cores are not used yet.
-- **Few apps.** The image has only what is on the system volume. There is no App Store, no Apple ID, and some Settings pages are empty.
-- **Slow boot:** about 4 minutes on the Apple logo.
-- **Security is off:** permissive code signing (AMFI) and sandbox policies, a stub AppleKeyStore, no data protection. Do not put anything personal on it.
+### Native Adreno / Metal graphics
+
+The project progressed from CPU rendering to a Metal → Vulkan/Turnip bridge, then to a native Metal frontend. The native path is:
+
+```text
+Core Animation / Metal
+  → SweetNativeMetal API objects
+  → Metal AIR → NIR → Mesa freedreno/ir3
+  → NativeAdreno kernel interface
+  → Adreno 618
+```
+
+The kernel work brings up GPU power/clocks, GMU firmware, CP/SQE command processing, SMMU mappings, rings, buffer objects and completion fences. Userspace adds Metal devices/queues/pipelines, shader specialization, resource bindings and IOSurface handoff.
+
+Recent rendering corrections widen half-precision vertex outputs for A6xx exports and fix sampler-view reference lifetimes. Performance work reuses render surfaces and bindings, uses kernel-owned GPU buffers, scopes imported-buffer cache ownership, and caches aligned constant uploads. Shader-proven UBO bounds remove unnecessary constant-buffer copying while preserving full ranges for unknown or dynamic accesses.
+
+GPU rendering and blur effects work. Some icons/masks and widgets still have visual defects. Recent interaction traces show roughly 35–40 presentations per second in some windows, but app launches and other animations remain sluggish. This is not a sustained frame-rate claim. **120 Hz panel timing is not the same as a 120 fps UI.** Current work measures CPU encoding, SpringBoard execution, submission/fence latency and presentation costs separately.
+
+### Wi-Fi and Bluetooth
+
+Wi-Fi required Sweet-specific power/clock votes, a kernel-configured WLAN SMMU stream, board firmware/data selection, the `wland` userspace path, an Apple device-tree WLAN node, and a working `configd` network service for DHCP/routing.
+
+Bluetooth adds the WCN3990 UART/H4 transport, firmware download, in-band sleep handling, the iOS Bluetooth service/transport integration and daemon bootstrap configuration. Pairing works; headphone pairing does not imply working audio. Wi-Fi/Bluetooth coexistence still needs work: Wi-Fi scans have failed while Bluetooth is enabled.
+
+### Input, charging and live diagnosis
+
+Touch uses the Goodix protocol over GENI I²C with its regulator enabled through RPMh. Power/volume keys are translated from PMIC/SPMI events into iOS HID events. The battery implementation replaces the early static battery placeholder with PM6150 measurements, charge counting and charger-state reporting.
+
+USB CDC-ECM provides a live network connection for streamed kernel logs, key-based SSH and file transfer. Persistent kernel logs remain available from recovery when the live link fails. This makes it possible to diagnose the running compositor and update userspace bundles without rebuilding the root image each time.
+
+Source and engineering history: [development branch](https://github.com/DC28088/ios-sweet/tree/codex/native-adreno-metal), [native Metal implementation](https://github.com/DC28088/ios-sweet/tree/codex/native-adreno-metal/userspace/native-metal), [kernel patches](https://github.com/DC28088/ios-sweet/tree/codex/native-adreno-metal/xnu/patches), and [dated development notes](https://github.com/DC28088/ios-sweet/blob/codex/native-adreno-metal/NOTES.md).
+
+## Still unfinished
+
+- Consistently smooth animations and fast app opening; sustained 60/120 fps is not achieved.
+- Remaining graphics defects in battery/icon masks, widgets and some Control Center elements. Wallpaper support has received fixes, but poster-extension stability is still under investigation.
+- Speaker/headphone audio, Bluetooth audio and video playback.
+- Wi-Fi/Bluetooth coexistence and daemon stability.
+- End-to-end haptics: an AW8624 driver/probe exists, but normal iOS haptic behavior is not confirmed.
+- Cellular, cameras, sensors, GPS, SEP / Face ID, Apple ID and App Store integration.
+- Reliable sleep, power management and shorter boot time.
+- Production security: permissive AMFI/sandbox behavior, a stub AppleKeyStore and no normal data protection.
 
 ## How it boots
 
@@ -195,7 +234,7 @@ Not in git: partition backups, live device trees, recovery images, Apple firmwar
 - Touch: Goodix GT9896 at I²C `0x5d` on QUP SE7 (`0xa84000`), powered by PM6150L LDO11 through RPMh.
 - Buttons: power and volume down on the PM6150 PON block, volume up on PM6150L GPIO2 (SPMI SID 4).
 
-More in [`NOTES.md`](NOTES.md).
+More in the [current development notes](https://github.com/DC28088/ios-sweet/blob/codex/native-adreno-metal/NOTES.md).
 
 ## Credits
 
