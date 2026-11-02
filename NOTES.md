@@ -1,3 +1,7 @@
+## 2026-11-02: A/B 0179 + sweetpresentcpu=4 BOOTED (user approved); SpringBoard restarted on request
+- Payload shim/out/payload-0179-present4.bin ad48338fd159..., image shim/out/shim-boot-0179-present4.img 419d0c9f7aec... (0179 cmdline + sweetpresentcpu=4). `fastboot boot` OKAY; research/native-resume-20261031/0179-present4-boot-start.json (log_offset 36835928). Boot args confirmed, touch bound cpu 5, crash set so far driverkitd 1.
+- USER: "do a springboard restart. the lockscreen swipe up isn't working nor swipign down control centre (touch is working fine)". Sent TERM to SpringBoard pid 26 over SSH (user-requested); launchd relaunched it as pid 312 (log "exec SpringBoard"). Cause of the stuck edge gestures UNKNOWN (not seen on 0179 without present4; could be unrelated).
+
 ## 2026-11-02: SpringBoard spindump during taps on 0179 -> SB main thread = diffuse UIKit work; A76 capacity is the lever
 - spindump SpringBoard 60 s 10 ms during user app opens (files research/native-resume-20261031/spin-tap-0179/{raw.spindump,heavy.txt,sb.txt,main.txt,bb.txt,kt.txt}, git-ignored; phone copies /var/tmp/sb179*.spindump/txt). Scratch tools: leaves.py (leaf samples by library), kleaves.py (kernel leaves by calling user frame), ksym.py (kernel symbols: __TEXT_EXEC vmaddr 0xfffffe00072f8000 + offset, LC_SYMTAB).
 - CPU in 60 s: SpringBoard 53.0 s, backboardd 48.2 s, kernel_task 38.2 s, spindump 15.9 s, runningboardd 7.0, contextstored 6.7, biomed 5.7, launched apps 3-6 s each.
