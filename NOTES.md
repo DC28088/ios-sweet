@@ -1,3 +1,8 @@
+## 2026-11-02: 0181 page flip -> "extreme flickering" (BLACK FLASHES); reverted to 0180; GPU-copy work PARKED; next: Control Centre glitches
+- 0181 booted (0181-boot-start.json, log_offset 39286621): "SWEET FLIP: on: buffers 0x9c000000 0x9c9f0000 (0x9f0000 bytes), vig0 -> ctl0 flush 0x20041". Busy window: flips=391 = presents 391, latch wait avg 1.4 ms max 8.3 ms, timeouts 0; copy_avg 7.6 ms, beam 0.
+- USER: "extreme flickering happening" -> asked: "Black flashes". So the flush latches (bits clear within a frame) but the screen blanks. Guesses, untested: flushing LM0 (bit 6) + CTL (bit 17) each frame re-latches/restarts the mixer/ctl path (ABL may have different pending values) or causes an underrun frame (border colour black); or SSPP prefetch (programmable fetch starts in VBP) reads the new address mid-setup. Next attempt when resumed: make the flush mask a boot-arg (try VIG0 bit 0 only), read MDP INTR_STATUS underrun bits around a flip, compare SSPP SRC_ADDR_SW_STATUS.
+- USER: "boot back to the previous image and now lets focus on fixing control centre graphic glitches." Booting shim-boot-0180-dpudump.img (flip off). GPU copy step 3 not started.
+
 ## 2026-11-02: kernel 0181 (page-flip present, sweetfbflip=1) built; user approved boot; waiting for fastboot
 - Patch xnu/patches/0181-sweet-page-flip-present.patch (commit 5ddf2d6, on 0180). CI xnu 41388281059 success, artifact 13116870607 -> /home/dan/ios-sweet/xnu/out-0181, kernel 06eadfe0b833....
 - Payload shim/out/payload-0181-flip.bin feaa79bd282b... (0180 cmdline + sweetfbflip=1, sweetbuild=181, sweetpresentcpu=4), image shim/out/shim-boot-0181-flip.img c88e8d0b4086... (ramdisk == payload). 0181-boot-start.json written at boot.
