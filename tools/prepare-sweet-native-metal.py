@@ -1155,8 +1155,26 @@ ensure_function_encoder(void)
     s+=NATIVE_COMPLETION
     s=s.replace('RedwoodMetal','SweetNativeMetal')
     s=s.replace('redwoodmetal[','SweetNativeMetal[')
+    # Draw log (frontend/SweetNativeDrawLog.inc): /var/local/sweet-native-drawlog.
+    s=replace(s,'static struct {\n\tvoid *handle;','#include "SweetNativeDrawLog.inc"\n\nstatic struct {\n\tvoid *handle;')
+    s=replace(s,'\treturn [[SweetNativeMetalRenderPipeline alloc] initWithRedwoodDevice:self\n',
+        '\tnative_drawlog_remember(render, [[descriptor label] UTF8String],\n'
+        '\t    vertex != nil ? [[vertex name] UTF8String] : "(generated)", [[fragment name] UTF8String]);\n'
+        '\treturn [[SweetNativeMetalRenderPipeline alloc] initWithRedwoodDevice:self\n')
+    s=replace(s,'\tif (mesa.render_draw([work->render render], &draw, why, size) != 0) {',
+        '\t{\n'
+        '\t\tconst unsigned dl = native_drawlog_next();\n'
+        '\t\tif (dl)\n'
+        '\t\t\tnative_drawlog_draw(dl, [work->render render], (unsigned)work->primitive,\n'
+        '\t\t\t    (unsigned)work->vertexStart, (unsigned)work->vertexCount, work->indexBuffer != nil,\n'
+        '\t\t\t    (unsigned)work->indexType, (size_t)work->indexBufferOffset, (unsigned)work->instanceCount,\n'
+        '\t\t\t    work->color, work->colorCount, work->depth, work->depthStencilState != nil,\n'
+        '\t\t\t    work->stencilReference[0], work->textures, work->textureCount);\n'
+        '\t}\n'
+        '\tif (mesa.render_draw([work->render render], &draw, why, size) != 0) {')
     p.write_text(s)
     shutil.copy2(NATIVE/'frontend/SweetNativeLibrary.inc',src/'SweetNativeLibrary.inc')
+    shutil.copy2(NATIVE/'frontend/SweetNativeDrawLog.inc',src/'SweetNativeDrawLog.inc')
     shutil.copy2(NATIVE/'frontend/SweetNativeDrawable.m',src/'redwooddrawable.m')
     # The donor includes structs by hand in two files; only the drawable shim's
     # geometry record remains local. The AIR header itself is shared above.
