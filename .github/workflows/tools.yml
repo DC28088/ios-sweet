@@ -1,9 +1,13 @@
 name: sweet-tools
 
 # Small iOS 16 command-line tools for the phone (ad-hoc signed, same
-# entitlements as the SSH tools). Built only on request.
+# entitlements as the SSH tools). Built when the tools change.
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - "userspace/tools/**"
+      - ".github/workflows/tools.yml"
 
 jobs:
   build:
