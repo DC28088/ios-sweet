@@ -335,6 +335,34 @@ air2nir = executable(""")
     p=air/'air_metal.c';s=p.read_text()
     s=replace(s,'#include "air_metal.h"','#include "sweet_native_ext.h"\n#include "util/u_framebuffer.h"\n#include <math.h>\n#include <time.h>\n#include "util/u_upload_mgr.h"')
     s=replace(s,'#include "nir_air.h"','#include "nir_air.h"\n#include "air_live_resources.inc"\n#include "air_stage_link.inc"\n#include "air_vertex_exports.inc"')
+    # Diagnostics for missing Control Centre vector glyphs (2026-11-02): the
+    # first uploads into one-byte textures (CoreAnimation's coverage masks)
+    # with their geometry and how many texels are non-zero.
+    s=replace(s,'''   texture->device->pipe->texture_subdata(texture->device->pipe, texture->res, level,
+                                          PIPE_MAP_WRITE, &box, bytes, row,
+                                          row * box.height);
+   return 0;
+}''','''   if (util_format_get_blocksize(texture->res->format) == 1) {
+      static unsigned logged;
+      if (logged < 48) {
+         unsigned nonzero = 0, maxv = 0;
+         for (int y = 0; y < box.height; y++)
+            for (int x = 0; x < box.width; x++) {
+               unsigned v = ((const uint8_t *)bytes)[(size_t)y * row + x];
+               nonzero += v != 0;
+               maxv = v > maxv ? v : maxv;
+            }
+         logged++;
+         fprintf(stderr, "SweetNativeMetal: 1-byte upload %s %ux%u level %u region %d,%d %dx%d stride %zu nonzero %u max %u\\n",
+                 texture->format_name, texture->res->width0, texture->res->height0, level,
+                 box.x, box.y, box.width, box.height, row, nonzero, maxv);
+      }
+   }
+   texture->device->pipe->texture_subdata(texture->device->pipe, texture->res, level,
+                                          PIPE_MAP_WRITE, &box, bytes, row,
+                                          row * box.height);
+   return 0;
+}''')
     s=replace(s,'   slot_shapes(fs, render->frag_slots, render->frag_compare_sampler);',
                 '   native_prune_direct_resources(fs, &render->finfo);\n   slot_shapes(fs, render->frag_slots, render->frag_compare_sampler);')
     s=replace(s,'      if (render->vinfo.stage != MESA_SHADER_VERTEX) {',
