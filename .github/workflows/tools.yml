@@ -1,0 +1,35 @@
+name: sweet-tools
+
+# Small iOS 16 command-line tools for the phone (ad-hoc signed, same
+# entitlements as the SSH tools). Built only on request.
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: |
+          mkdir -p out
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          CC="$(xcrun --sdk iphoneos --find clang)"
+          for src in userspace/tools/*.c; do
+            b=$(basename "$src" .c)
+            "$CC" -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -O2 -Wall -Werror -o "out/$b" "$src"
+          done
+      - name: Sign
+        run: |
+          cd out
+          for b in *; do
+            codesign --force --sign - --pagesize 4096 --entitlements ../userspace/ssh/tools.entitlements "$b"
+            codesign --verify --strict "$b"
+          done
+          shasum -a 256 * > SHA256SUMS
+          cat SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sweet-tools-ios16
+          path: out/
