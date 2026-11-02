@@ -1,3 +1,8 @@
+## 2026-11-02: kernel 0181 (page-flip present, sweetfbflip=1) built; user approved boot; waiting for fastboot
+- Patch xnu/patches/0181-sweet-page-flip-present.patch (commit 5ddf2d6, on 0180). CI xnu 41388281059 success, artifact 13116870607 -> /home/dan/ios-sweet/xnu/out-0181, kernel 06eadfe0b833....
+- Payload shim/out/payload-0181-flip.bin feaa79bd282b... (0180 cmdline + sweetfbflip=1, sweetbuild=181, sweetpresentcpu=4), image shim/out/shim-boot-0181-flip.img c88e8d0b4086... (ramdisk == payload). 0181-boot-start.json written at boot.
+- Expected log: "SWEET FLIP: on: buffers 0x9c000000 0x9c9f0000 ..." then every 10 s "SWEET FLIP: flips= wait_avg_us= wait_max_us= timeouts= scan= on=". Failure modes: "SWEET FLIP: off: ..." (falls back to single buffer). Fallback image without flip: shim-boot-0180-dpudump.img (same kernel family, flip default off) or shim-boot-0179-present4.img.
+
 ## 2026-11-02: 0180 booted (user approved); display pipeline dumped; lock-screen stuck again -> SpringBoard restarted
 - 0180 `fastboot boot` OKAY (0180-boot-start.json, log_offset 38636498). Dump (observed):
   - MDSS stream: SMR5 0x84400800 S2CR 0x3 -> CB3, CBAR 0x1f000, SCTLR 0xe0 (M=0: no translation) => scanout addresses are PHYSICAL. FSR 0x400 (format field only, no fault).
