@@ -381,6 +381,18 @@ index_range(const uint8_t *indices, unsigned count, unsigned index_size, bool re
          .index_size = (uint16_t)index_size,
          .primitive_restart = index_size && strip,
          .restart_index = index_size == 2 ? 0xffffu : 0xffffffffu,""")
+    # Metal lines are one pixel wide; the donor's rasterizer state left
+    # line_width at 0 and freedreno programs GRAS_SU_CNTL.LINEHALFWIDTH from it,
+    # so every MTLPrimitiveTypeLine draw rasterised nothing. CoreAnimation
+    # draws the edges of vector shapes as lines into coverage masks
+    # (com.apple.coreanimation.draw.*Tcma*Lln* pipelines, prim 1 in the draw
+    # log): Control Centre glyphs, status-bar battery outline, widget rings.
+    s=replace(s,"""      &(struct pipe_rasterizer_state){
+         .cull_face = PIPE_FACE_NONE, .half_pixel_center = 1, .bottom_edge_rule = 1,
+""","""      &(struct pipe_rasterizer_state){
+         .cull_face = PIPE_FACE_NONE, .half_pixel_center = 1, .bottom_edge_rule = 1,
+         .line_width = 1.0f, .point_size = 1.0f,
+""")
     # Diagnostics for missing Control Centre vector glyphs (2026-11-02): the
     # first uploads into one-byte textures (CoreAnimation's coverage masks)
     # with their geometry and how many texels are non-zero.
