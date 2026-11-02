@@ -1191,7 +1191,7 @@ ensure_function_encoder(void)
     s=replace(s,'static struct {\n\tvoid *handle;','#include "SweetNativeDrawLog.inc"\n\nstatic struct {\n\tvoid *handle;')
     s=replace(s,'\treturn [[SweetNativeMetalRenderPipeline alloc] initWithRedwoodDevice:self\n',
         '\tnative_drawlog_remember(render, [[descriptor label] UTF8String],\n'
-        '\t    vertex != nil ? [[vertex name] UTF8String] : "(generated)", [[fragment name] UTF8String]);\n'
+        '\t    vertex != nil ? [[vertex name] UTF8String] : "(generated)", [[fragment name] UTF8String], descriptor);\n'
         '\treturn [[SweetNativeMetalRenderPipeline alloc] initWithRedwoodDevice:self\n')
     s=replace(s,'\tif (mesa.render_draw([work->render render], &draw, why, size) != 0) {',
         '\t{\n'
@@ -1202,6 +1202,12 @@ ensure_function_encoder(void)
         '\t\t\t    (unsigned)work->indexType, (size_t)work->indexBufferOffset, (unsigned)work->instanceCount,\n'
         '\t\t\t    work->color, work->colorCount, work->depth, work->depthStencilState != nil,\n'
         '\t\t\t    work->stencilReference[0], work->textures, work->textureCount);\n'
+        '\t\tif (dl)\n'
+        '\t\t\tnative_drawlog_detail(dl, [work->render render], work->colorCount ? work->color[0] : nil,\n'
+        '\t\t\t    (unsigned)work->vertexStart, (unsigned)work->vertexCount, work->indexBuffer,\n'
+        '\t\t\t    (unsigned)work->indexType, (size_t)work->indexBufferOffset, work->baseVertex,\n'
+        '\t\t\t    work->vertexBuffers, work->vertexBufferOffsets, work->vertexBufferCount,\n'
+        '\t\t\t    work->buffers, work->bufferOffsets, work->count);\n'
         '\t}\n'
         '\tif (mesa.render_draw([work->render render], &draw, why, size) != 0) {')
     p.write_text(s)
