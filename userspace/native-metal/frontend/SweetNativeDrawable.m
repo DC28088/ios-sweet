@@ -59,6 +59,9 @@ struct rwa_texture *rwd_texture_for_surface(struct rwa_device *device,void *surf
     if(texture && gpu_pitch!=pitch && shadow_imports++<16)
         fprintf(stderr,"SweetNativeMetal: IOSurface %u %#x %zux%zu pitch %zu read through a %zu-byte-row shadow\n",
                 id,fourcc,width,height,pitch,gpu_pitch);
+    static unsigned rgha_imports;
+    if(texture && want->pixel_format==115 && rgha_imports++<8)
+        fprintf(stderr,"SweetNativeMetal: RGBA16F IOSurface %u imported, %zux%zu pitch %zu usage %#x\n",id,width,height,pitch,want->usage);
     static unsigned rg8_imports;
     if(texture && want->pixel_format==30 && rg8_imports++<4)
         fprintf(stderr,"SweetNativeMetal: RG8 IOSurface %u imported, %zux%zu pitch %zu\n",id,width,height,pitch);

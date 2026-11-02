@@ -416,6 +416,26 @@ index_range(const uint8_t *indices, unsigned count, unsigned index_size, bool re
                  box.x, box.y, box.width, box.height, row, nonzero, maxv);
       }
    }
+   if (texture->res->format == PIPE_FORMAT_R16G16B16A16_FLOAT) {
+      static unsigned logged16;
+      if (logged16 < 24) {
+         logged16++;
+         const uint16_t *h = (const uint16_t *)bytes;
+         const unsigned w = box.width, last = w ? w - 1 : 0;
+         const unsigned at[4] = { 0, w / 4, w / 2, last };
+         char vals[256] = "";
+         for (unsigned k = 0; k < 4; k++) {
+            const uint16_t *t = h + (size_t)at[k] * 4;
+            size_t used = strlen(vals);
+            snprintf(vals + used, sizeof(vals) - used, " [%u]=%.3f,%.3f,%.3f,%.3f", at[k],
+                     _mesa_half_to_float(t[0]), _mesa_half_to_float(t[1]),
+                     _mesa_half_to_float(t[2]), _mesa_half_to_float(t[3]));
+         }
+         fprintf(stderr, "SweetNativeMetal: f16 upload %ux%u region %d,%d %dx%d stride %zu%s\\n",
+                 texture->res->width0, texture->res->height0, box.x, box.y, box.width,
+                 box.height, row, vals);
+      }
+   }
    texture->device->pipe->texture_subdata(texture->device->pipe, texture->res, level,
                                           PIPE_MAP_WRITE, &box, bytes, row,
                                           row * box.height);
