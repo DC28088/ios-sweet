@@ -1,0 +1,47 @@
+--- a/iokit/Kernel/arm/SweetBaseband.inc
++++ b/iokit/Kernel/arm/SweetBaseband.inc
+@@ -448,6 +448,36 @@
+   }
+ }
+ 
++// Sweet: CommCenter's carrier-file push (QMIBasebandSettingsDriver::sendSegmentWithData_sync, libCommCenterMCommandDrivers): BSP
++// SendFile 0xa000 per segment, TLV 0x10 FileTransferInfo {u8 file type (bsp::QMIFileType: 3 PRI, 6 GRI, 7/8 DER PRI/GRI, ...), u8,
++// u16 segment number from 0, u16 total segments, data}, a signature on the last one; done when the baseband sends FileTransferStatus
++// 0xa001 with TLV 0x01 {u8 file type, u8 result, 0 = FILE_TRANSFER_SUCCESS}. This modem runs its own Qualcomm configuration, so the
++// files are taken and dropped. Unanswered, every push failed and CommCenter reset the baseband after each round (an endless loop).
++#define BB_BSP_SEND_FILE 0xa000u
++#define BB_BSP_FILE_TRANSFER_STATUS 0xa001u
++static uint32_t bb_files_logged;
++static int bb_send_file(uint32_t channel, const struct cbq_result &r, const uint8_t *sdu)
++{
++  uint32_t len = 0;
++  const uint8_t *info = cbd_find(sdu, r.len, 0x10u, &len);
++  const uint32_t type = info && len >= 6 ? info[0] : 0, segment = info && len >= 6 ? cbd_rd16(info + 2) : 0,
++                 total = info && len >= 6 ? cbd_rd16(info + 4) : 0;
++  uint32_t n = cbq_private_answer(sdu, r.service, r.cid, 0, nullptr, 0, bb_out, sizeof bb_out);
++  if (n) bb_push(channel, bb_out, n);
++  const bool last = info && len >= 6 && segment + 1u >= total;
++  if (bb_files_logged < 24 && (segment == 0 || last)) {
++    bb_files_logged++;
++    printf("SWEET BB: carrier file type %u segment %u of %u accepted%s
++", type, segment, total, last ? ", transfer done" : "");
++  }
++  if (last) {
++    const uint8_t status[] = { 0x01, 0x02, 0x00, (uint8_t)type, 0x00 };
++    n = cbq_private_indication(BB_BSP_FILE_TRANSFER_STATUS, r.service, r.cid, status, sizeof status, bb_out, sizeof bb_out);
++    if (n) bb_push(channel, bb_out, n);
++  }
++  return 1;
++}
++
+ // A private request the bridge answers itself: 1 when it did.
+ static int bb_private_answer(uint32_t channel, const struct cbq_result &r, const uint8_t *sdu)
+ {
+@@ -460,6 +490,7 @@
+     if (n != CBE_DEFERRED) bb_push(channel, bb_out, n);
+     return 1;
+   }
++  if (r.service == CBD_SVC_BSP && message == BB_BSP_SEND_FILE && r.len >= 7u) return bb_send_file(channel, r, sdu);
+   if (r.service == CBD_SVC_BSP && message == CBD_BSP_ACTIVATION_REGISTER) {
+     const uint32_t n = cbq_private_answer(sdu, r.service, r.cid, 0, 0, 0, bb_out, sizeof bb_out);
+     if (n) bb_push(channel, bb_out, n);
