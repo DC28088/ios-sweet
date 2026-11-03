@@ -1,3 +1,6 @@
+## 2026-11-03 19:45 IST: **ABM BOOTS THE BASEBAND -> status bar "SOS"**; next: "No SIM" (private QMI activation)
+- Device-specific cellular/location/call observations omitted for privacy.
+
 ## 2026-11-03 19:05 IST: logging reboot prepared (user: "go ahead with the logging reboot")
 - **OS_ACTIVITY_DT_MODE alone cannot work on our kernel (static RE, libsystem_trace .09, _libtrace_init ~0x19c9c2ac8):**
   ACTIVITY_LOG_STDERR / CFLOG_FORCE_STDERR (byte +0x1e) and OS_ACTIVITY_DT_MODE (byte +0x1f, 0x1e1d3a000 page) are
