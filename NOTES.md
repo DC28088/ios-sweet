@@ -1,3 +1,23 @@
+## 2026-11-03 19:05 IST: logging reboot prepared (user: "go ahead with the logging reboot")
+- **OS_ACTIVITY_DT_MODE alone cannot work on our kernel (static RE, libsystem_trace .09, _libtrace_init ~0x19c9c2ac8):**
+  ACTIVITY_LOG_STDERR / CFLOG_FORCE_STDERR (byte +0x1e) and OS_ACTIVITY_DT_MODE (byte +0x1f, 0x1e1d3a000 page) are
+  honoured only if gate byte 0x1dd444850 != 0. The gate (dispatch_once block 0x19c9cc400) =
+  `__mac_syscall("AMFI", 0x5a, {in 0, &out}) == 0 && (out & 0x100)` (fn 0x19c9cae50 = amfi_check_dyld_policy_self).
+  Also skipped entirely when not P_TRACED and an arg-less libsystem_kernel call (0x1c26144c0, subcache .19 not local;
+  presumably issetugid) returns non-zero, and when commpage 0xfffffc104 bit 8 (ATM trace disable) is set. Our AMFI
+  policy (0115) answered 0x5a only for backboardd with sweetgles=1, and with 0x7b (no 0x100) -> this is also why the
+  0048n backboardd test printed no NSException reason.
+- **xnu 0185** (`xnu/patches/0185-sweet-oslog-to-stderr-policy.patch`, commit 0d75254, applies on the 0178 buildtree
+  sweet_amfi.c; no later patch touches it; not compiled locally): boot-arg `sweetoslog=NAME,...` -> those processes get
+  0x5a flags 0x7b|0x100; the backboardd/sweetgles case is unchanged; everything else still ENOPOLICY. CI xnu
+  **41644550073** (dispatched on codex/cellular). Fetch script research/gpu/fetch-kernel-0185.py (needs
+  research/gpu/0185-kernel-artifact.json from the run's artifact list).
+- launchd.plist on the phone NOW = research/cell-install-0184/launchd/launchd.plist.commcenter-oslog 90a99987... (CommCenter
+  job + EnvironmentVariables {OS_ACTIVITY_DT_MODE: YES}; round-trip checked, nothing else changed). On-phone backup
+  /System/Library/xpc/launchd.plist.pre-oslog = c65c3a90 (with-commcenter). Harmless on the 0184 kernel (gate stays 0).
+- Planned image 0185-oslog: 0185 kernel + sweet-0185-baseband.adt + 0184-bbadt cmdline with sweetnull=backboardd,CommCenter,
+  sweetoslog=CommCenter, sweetbuild=185. Then: receiver first, fastboot boot, read `|CommCenter|` lines for BBUpdater.
+
 ## 2026-11-03 17:07 IST: boot 0184-bbadt -> CommCenter (cellular) RUNS, opens AppleBaseband; ABM: "Baseband Firmware Path Not Found"
 - Device-specific cellular/location/call observations omitted for privacy.
 
