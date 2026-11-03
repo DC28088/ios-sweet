@@ -16,6 +16,29 @@
   cached commit views; rewriting branches cannot erase external copies.
 - No device writes, boots, or driver changes performed.
 
+## 2026-11-03 20:45 IST: kernel 0186 booted: CommCenter sees the SIM, then a reset loop -> wland fix 0004
+- xnu 0186 (`xnu/patches/0186-sweet-baseband-sim-activation.patch`, commit b4dd285; CI 41655332168 macos-15-intel ->
+  xnu/out-0186 a66a56af...): SweetBaseband.inc = UniXNU/QcomBaseband 43d85fb08d + the Sweet delta (header, sweetbb
+  boot-arg, SWEET BB prefixes, /dev/sweet-bb glue; bb_esim_step called from sweet_bb_wland_read), PDP interfaces stubbed
+  (no IPA data hooks); new coachz_bb_data.h/esim.h/pdp.h, qmux.h updated. Upstream host model test passes locally
+  (gcc needs -Wno-type-limits). Image shim/out/shim-boot-0186.img 2e9e2c54... (payload 55c9f975...; 0185-oslog
+  cmdline with sweetbuild=186). Log logs/boot-0186.txt (local only; contains identifiers).
+- Result (technical): full ABM boot exchange (pbl register reads, sendImage dropped, sahara image 0x15 read and
+  finished, qmux1/qmux2/refs opened), BSP activation register answered, eSIM slot discovery event, DPM open + WDA data
+  format OK, activation indication re-sent once the card identity was read (values never logged), CommCenter reports a
+  present SIM in state Ready. Then a reset loop: CommCenter `ATCS_TIMEOUT` resets every ~26 s on NAS 0x34/0x45 and
+  WDS 0xa2 requests that were never answered; registration and voice unusable during the loop.
+- Bridge QMI trace (WDS/UIM traced on every message): WDS 0xa2 142 requests / 91 answers, 0x4d 135/120, UIM 0x20 37/31;
+  losses in bursts (10 WDS binds within 5 ms, ~4 never answered). wland.log also had `cell: bb record type 0 ignored`.
+- ROOT CAUSE (code reading, donor link.c): link_send waits for a modem GLINK intent with link_poll(1), whose idle hook
+  runs cell_poll -> bb_poll -> qrtr_send again (nested). qrtr_send built every packet in ONE static 64 KiB buffer, so the
+  nested packet overwrote the waiting one (that request never reached the modem), and the nested bb_poll read new kernel
+  records into the bb_buf the outer loop was still parsing (the "type 0" record, more lost requests).
+- FIX: wland patch `userspace/wifi/patches/0004-sweet-reentrant-qrtr-send.patch`: qrtr_send uses a per-call buffer
+  (2 KiB stack, malloc above), cell_poll has a reentrancy guard. Chain 0001-0004 verified on a fresh donor checkout.
+  NEXT: CI build (wifi.yml on push), install wland (keep a backup of the current one), reboot, check that the
+  ATCS_TIMEOUT resets stop. Later: call audio, haptics, the incoming-call UI.
+
 ## 2026-11-03 19:45 IST: **ABM BOOTS THE BASEBAND -> status bar "SOS"**; next: "No SIM" (private QMI activation)
 - Device-specific cellular/location/call observations omitted for privacy.
 
