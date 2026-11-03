@@ -36,8 +36,16 @@
   records into the bb_buf the outer loop was still parsing (the "type 0" record, more lost requests).
 - FIX: wland patch `userspace/wifi/patches/0004-sweet-reentrant-qrtr-send.patch`: qrtr_send uses a per-call buffer
   (2 KiB stack, malloc above), cell_poll has a reentrancy guard. Chain 0001-0004 verified on a fresh donor checkout.
-  NEXT: CI build (wifi.yml on push), install wland (keep a backup of the current one), reboot, check that the
-  ATCS_TIMEOUT resets stop. Later: call audio, haptics, the incoming-call UI.
+- Later in that boot wland CRASHED (kernel log: `CRASH wland sig 11`, far just below the stack bottom = stack
+  overflow; backtrace the same three frames repeated = the link_send -> link_poll -> cell_poll -> qrtr_send ->
+  link_send recursion while all 256 remote intents were busy; wland.log ends with 43x `glink: cannot send N bytes
+  (intents 256)`). After that the modem link was dead (every CommCenter request timed out). wland refuses a second
+  start in the same boot (/var/local/wland.boot), so it needs a reboot.
+- wland 0004 built: CI 41660951350 (push, commit 6801938) -> research/cell-install-0184/wifi-41660951350/wland
+  ef9a6d24... INSTALLED as /var/local/bin/wland (755, sync, readback OK). Previous: 784faed6, backup
+  research/cell-install-0184/wland.before-0004. Kernel/image unchanged: boot shim/out/shim-boot-0186.img again.
+  NEXT: reboot via fastboot, check that the ATCS_TIMEOUT resets and the intent exhaustion stop. Later: call audio,
+  haptics, the incoming-call UI.
 
 ## 2026-11-03 19:45 IST: **ABM BOOTS THE BASEBAND -> status bar "SOS"**; next: "No SIM" (private QMI activation)
 - Device-specific cellular/location/call observations omitted for privacy.
