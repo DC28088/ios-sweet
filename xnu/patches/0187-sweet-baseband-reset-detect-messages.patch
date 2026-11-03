@@ -1,0 +1,55 @@
+--- a/iokit/Kernel/arm/SweetBaseband.inc
++++ b/iokit/Kernel/arm/SweetBaseband.inc
+@@ -972,6 +972,36 @@
+ OSDefineMetaClassAndStructors(AppleBasebandPCIControl, IOService)
+ 
+ // ------------------------------------------------------------------ AppleBaseband
++// Sweet: after a soft reset ABM waits for the AppleBaseband service to say so: libBasebandManager's IOGeneralInterest handler
++// takes 0xe3ff8000 as "baseband reset detected" and 0xe3ff8001 as "baseband alive detected" (Apple's driver sends them from the
++// modem's reset-detect line; libTelephonyBaseband handles 0xe3ff8007 wake and 0xe3ff800d coredump itself and passes the rest on).
++// Without them a reset (the carrier-bundle push resets once per SIM) ends in "Soft reset failed; timeout waiting for reset detection"
++// and the radio stays down. The modem here never resets: say it did, then that it is alive again for the next SendImage.
++#define BB_MSG_RESET_DETECTED 0xe3ff8000u
++#define BB_MSG_ALIVE 0xe3ff8001u
++static IOService *bb_baseband_service;
++static thread_call_t bb_alive_call;
++static uint32_t bb_reset_messages;
++static void bb_alive(thread_call_param_t, thread_call_param_t)
++{
++  if (!bb_baseband_service) return;
++  const IOReturn r = bb_baseband_service->messageClients(BB_MSG_ALIVE);
++  if (bb_reset_messages <= 8) printf("SWEET BB: alive message sent (0x%x)
++", r);
++}
++static void bb_reset_detected(IOService *service)
++{
++  if (!service) return;
++  bb_baseband_service = service;
++  const IOReturn r = service->messageClients(BB_MSG_RESET_DETECTED);
++  if (++bb_reset_messages <= 8) printf("SWEET BB: reset detected message sent (0x%x), alive in 100 ms
++", r);
++  if (!bb_alive_call) bb_alive_call = thread_call_allocate(bb_alive, nullptr);
++  uint64_t deadline;
++  clock_interval_to_deadline(100, kMillisecondScale, &deadline);
++  if (bb_alive_call) thread_call_enter_delayed(bb_alive_call, deadline);
++}
++
+ class AppleBasebandUserClient : public IOUserClient {
+   OSDeclareDefaultStructors(AppleBasebandUserClient)
+ public:
+@@ -988,11 +1018,14 @@
+     IOLockLock(bb_lock);
+     const int result = cbc_call(&bb_control, selector, args->scalarInput, args->scalarInputCount, out, &nout);
+     // A reset or power-on goes back to before SendImage: nothing greets until the next one.
+-    if (!result && (selector == CBC_RESET_MODEM || selector == CBC_POWERCYCLE || (selector == CBC_POWER && args->scalarInputCount && args->scalarInput[0]))) {
++    const bool reset = !result && (selector == CBC_RESET_MODEM || selector == CBC_POWERCYCLE ||
++                                   (selector == CBC_POWER && args->scalarInputCount && args->scalarInput[0]));
++    if (reset) {
+       bb_boot_image_sent = false;
+       bb_flush(CBH_SAHARA);
+     }
+     IOLockUnlock(bb_lock);
++    if (reset) bb_reset_detected(getProvider());
+     if (result == CBC_UNSUPPORTED) printf("SWEET BB: AppleBaseband selector %u unsupported\n", selector);
+     for (uint32_t i = 0; i < nout; i++) args->scalarOutput[i] = out[i];
+     args->scalarOutputCount = nout;
