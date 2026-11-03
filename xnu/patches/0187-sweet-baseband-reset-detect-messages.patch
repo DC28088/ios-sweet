@@ -1,6 +1,6 @@
 --- a/iokit/Kernel/arm/SweetBaseband.inc
 +++ b/iokit/Kernel/arm/SweetBaseband.inc
-@@ -972,6 +972,36 @@
+@@ -972,6 +972,34 @@
  OSDefineMetaClassAndStructors(AppleBasebandPCIControl, IOService)
  
  // ------------------------------------------------------------------ AppleBaseband
@@ -18,16 +18,14 @@
 +{
 +  if (!bb_baseband_service) return;
 +  const IOReturn r = bb_baseband_service->messageClients(BB_MSG_ALIVE);
-+  if (bb_reset_messages <= 8) printf("SWEET BB: alive message sent (0x%x)
-+", r);
++  if (bb_reset_messages <= 8) printf("SWEET BB: alive message sent (0x%x)\n", r);
 +}
 +static void bb_reset_detected(IOService *service)
 +{
 +  if (!service) return;
 +  bb_baseband_service = service;
 +  const IOReturn r = service->messageClients(BB_MSG_RESET_DETECTED);
-+  if (++bb_reset_messages <= 8) printf("SWEET BB: reset detected message sent (0x%x), alive in 100 ms
-+", r);
++  if (++bb_reset_messages <= 8) printf("SWEET BB: reset detected message sent (0x%x), alive in 100 ms\n", r);
 +  if (!bb_alive_call) bb_alive_call = thread_call_allocate(bb_alive, nullptr);
 +  uint64_t deadline;
 +  clock_interval_to_deadline(100, kMillisecondScale, &deadline);
@@ -37,7 +35,7 @@
  class AppleBasebandUserClient : public IOUserClient {
    OSDeclareDefaultStructors(AppleBasebandUserClient)
  public:
-@@ -988,11 +1018,14 @@
+@@ -988,11 +1016,14 @@
      IOLockLock(bb_lock);
      const int result = cbc_call(&bb_control, selector, args->scalarInput, args->scalarInputCount, out, &nout);
      // A reset or power-on goes back to before SendImage: nothing greets until the next one.

@@ -1,6 +1,6 @@
 --- a/iokit/Kernel/arm/SweetBaseband.inc
 +++ b/iokit/Kernel/arm/SweetBaseband.inc
-@@ -448,6 +448,36 @@
+@@ -448,6 +448,35 @@
    }
  }
  
@@ -23,8 +23,7 @@
 +  const bool last = info && len >= 6 && segment + 1u >= total;
 +  if (bb_files_logged < 24 && (segment == 0 || last)) {
 +    bb_files_logged++;
-+    printf("SWEET BB: carrier file type %u segment %u of %u accepted%s
-+", type, segment, total, last ? ", transfer done" : "");
++    printf("SWEET BB: carrier file type %u segment %u of %u accepted%s\n", type, segment, total, last ? ", transfer done" : "");
 +  }
 +  if (last) {
 +    const uint8_t status[] = { 0x01, 0x02, 0x00, (uint8_t)type, 0x00 };
@@ -37,7 +36,7 @@
  // A private request the bridge answers itself: 1 when it did.
  static int bb_private_answer(uint32_t channel, const struct cbq_result &r, const uint8_t *sdu)
  {
-@@ -460,6 +490,7 @@
+@@ -460,6 +489,7 @@
      if (n != CBE_DEFERRED) bb_push(channel, bb_out, n);
      return 1;
    }
