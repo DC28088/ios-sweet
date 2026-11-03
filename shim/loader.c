@@ -76,6 +76,36 @@ static int magic_ok(const char *m)
 
 typedef void (*xnu_entry_t)(uint64_t boot_args_pa);
 
+/*
+ * tools/adt-add-serial.py leaves 32-byte root properties (serial-number, mlb-serial-number) holding
+ * SERIAL_PLACEHOLDER; this fills them with ABL's androidboot.serialno (zeros when ABL gave none),
+ * so the phone's serial reaches MobileGestalt without ever being in a build artifact.
+ * ADT property: char name[32], u32 length (bit 31 = placeholder flag), value padded to 4.
+ */
+#define SERIAL_PLACEHOLDER "SWEET-SERIAL-FROM-ABL"
+static int adt_fill_serial(uintptr_t adt, uint64_t size, const char *serial)
+{
+	static const char ph[] = SERIAL_PLACEHOLDER;
+	volatile uint8_t *a = (volatile uint8_t *)adt;
+	int filled = 0;
+	for (uint64_t o = 0; o + 36 + 32 <= size; o += 4) {
+		if (a[o + 32] != 32 || a[o + 33] || a[o + 34] || a[o + 35])
+			continue;
+		unsigned k = 0;
+		while (k < sizeof(ph) - 1 && a[o + 36 + k] == (uint8_t)ph[k])
+			k++;
+		if (k != sizeof(ph) - 1)
+			continue;
+		unsigned n = 0;
+		for (; n < 31 && serial[n]; n++)
+			a[o + 36 + n] = (uint8_t)serial[n];
+		for (; n < 32; n++)
+			a[o + 36 + n] = 0;
+		filled++;
+	}
+	return filled;
+}
+
 const char *loader_boot(uintptr_t dtb)
 {
 	uint64_t rd_start, rd_end;
@@ -112,6 +142,12 @@ const char *loader_boot(uintptr_t dtb)
 	/* ADT, then boot_args, behind the kernel; everything below topOfKernelData is ours. */
 	uintptr_t adt_pa = p->kernel_end + pa_of_va_base;
 	copy64(adt_pa, rd_start + p->adt_off, p->adt_size);
+	char serial[32];
+	int serial_len = fdt_bootarg(dtb, "androidboot.serialno=", serial, sizeof(serial));
+	if (!serial_len)
+		serial[0] = 0;
+	int filled = adt_fill_serial(adt_pa, p->adt_size, serial);
+	con_hex2("SERIAL", "len=", (uint64_t)serial_len, "props=", (uint64_t)filled);
 	uintptr_t ba_pa = (adt_pa + p->adt_size + PAGE_16K - 1) & ~(PAGE_16K - 1);
 	uintptr_t top = ba_pa + PAGE_16K;
 

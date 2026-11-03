@@ -36,6 +36,75 @@ static uintptr_t skip_str(uintptr_t p)
 	return p + 1;
 }
 
+/* /chosen property PROP: its value address and length (0 = found). */
+static int chosen_prop(uintptr_t fdt, const char *prop, uintptr_t *val_out, uint32_t *len_out)
+{
+	if (!fdt || be32(fdt) != FDT_MAGIC)
+		return -1;
+	uintptr_t p = fdt + be32(fdt + 8);
+	uintptr_t strings = fdt + be32(fdt + 12);
+	int depth = 0, in_chosen = 0;
+
+	for (;;) {
+		uint32_t tok = be32(p);
+		p += 4;
+		switch (tok) {
+		case FDT_BEGIN_NODE:
+			depth++;
+			in_chosen = depth == 2 && streq((const char *)p, "chosen");
+			p = align4(skip_str(p));
+			break;
+		case FDT_END_NODE:
+			if (in_chosen)
+				return -1;
+			depth--;
+			break;
+		case FDT_PROP: {
+			uint32_t len = be32(p), nameoff = be32(p + 4);
+			uintptr_t val = p + 8;
+			if (in_chosen && streq((const char *)(strings + nameoff), prop)) {
+				*val_out = val;
+				*len_out = len;
+				return 0;
+			}
+			p = align4(val + len);
+			break;
+		}
+		case FDT_NOP:
+			break;
+		default:
+			return -1;
+		}
+	}
+}
+
+int fdt_bootarg(uintptr_t fdt, const char *key, char *out, unsigned room)
+{
+	uintptr_t v;
+	uint32_t len;
+	unsigned klen = 0;
+	while (key[klen])
+		klen++;
+	if (!room || chosen_prop(fdt, "bootargs", &v, &len))
+		return 0;
+	const volatile char *s = (const volatile char *)v;
+	for (uint32_t i = 0; i + klen <= len; i++) {
+		if (i && s[i - 1] != ' ')
+			continue;
+		unsigned k = 0;
+		while (k < klen && s[i + k] == key[k])
+			k++;
+		if (k != klen)
+			continue;
+		unsigned n = 0;
+		for (uint32_t j = i + klen; j < len && s[j] && s[j] != ' ' && n + 1 < room; j++)
+			out[n++] = s[j];
+		out[n] = 0;
+		return (int)n;
+	}
+	return 0;
+}
+
 int fdt_chosen_u64(uintptr_t fdt, const char *prop, uint64_t *out)
 {
 	if (!fdt || be32(fdt) != FDT_MAGIC)
