@@ -1,0 +1,830 @@
+diff --git a/phone/wifi/cell.c b/phone/wifi/cell.c
+new file mode 100644
+index 0000000..2b448ce
+--- /dev/null
++++ b/phone/wifi/cell.c
+@@ -0,0 +1,751 @@
++/*
++ * cell: the modem's cellular side, seen from wland's QRTR link. The modem firmware wland boots for
++ * the WLAN PD is the whole MPSS image, so its QMI services (DMS 2, NAS 3, VOICE 9, UIM 0xb, ...)
++ * announce themselves on the same link. This is a small QMI client of four of them (message and TLV
++ * numbers from libqmi's data/qmi-service-*.json):
++ *   DMS   revision, IMEI/IMEISV/MEID, hardware revision, MSISDN, operating mode -> ONLINE
++ *   UIM   card status (and its indications)
++ *   NAS   serving system (registration, RAT, PLMN) and signal info, indications + a 10 s poll
++ *   VOICE call status indications: incoming calls are logged; answer/hang up/dial by command
++ * State goes to /var/local/cell.status (0600, full identifiers, on the phone only); wland.log gets
++ * masked identifiers. Commands: one line in /var/local/cell.cmd (answer | hangup | dial NUMBER |
++ * online | lpm | status), read and removed every second. Off: /var/local/cell.off or sweetcell=0.
++ * /var/local/cell.lpm keeps the modem in low power (no automatic ONLINE); /var/local/cell.noprov skips the SIM
++ * provisioning session (UIM 0x38) that a multi-SIM modem needs before it registers.
++ */
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <unistd.h>
++#include <fcntl.h>
++#include <sys/stat.h>
++#include <sys/sysctl.h>
++#include "cell.h"
++#include "qmi.h"
++
++enum { C_DMS, C_UIM, C_NAS, C_VOICE };
++static const uint32_t svc_id[CELL_PORTS] = { 0x02, 0x0b, 0x03, 0x09 };
++static const char *const svc_name[CELL_PORTS] = { "dms", "uim", "nas", "voice" };
++
++#define CELL_STATUS	"/var/local/cell.status"
++#define CELL_CMD	"/var/local/cell.cmd"
++
++static int cell_on = 1;
++static struct { int up; uint32_t node, port; uint16_t txn; } srv[CELL_PORTS];
++
++/* what we know */
++static char revision[128], hw_rev[64], imei[24], imeisv[8], meid[24], esn[24], msisdn[32];
++static int op_mode = -1, online_asked;
++static int card_state = -1, app_type = -1, app_state = -1, pin1_state = -1;
++static int reg_state = -1, cs_attach = -1, ps_attach = -1, rat = -1, roaming = -1;
++static int mcc = -1, mnc = -1;
++static char plmn_desc[64];
++static int lte_rssi = 1, lte_rsrq = 1, lte_rsrp = 1, lte_snr = 1, gsm_rssi = 1, wcdma_rssi = 1, wcdma_ecio = 1;
++struct call { int used, id, state, type, dir, mode; char number[48]; };
++static struct call calls[8];
++static uint64_t next_sig, next_srv, next_cmd, next_mode, status_dirty;
++
++static uint64_t now_ms(void) { return link_ms(); }
++
++/* ---------------------------------------------------------------- helpers */
++static void mask(const char *in, char *out, size_t room)
++{
++	size_t n = strlen(in);
++	if (n <= 4) {
++		snprintf(out, room, "%s", n ? "****" : "");
++		return;
++	}
++	size_t i = 0;
++	for (; i < n - 4 && i + 1 < room; i++)
++		out[i] = '*';
++	snprintf(out + i, room - i, "%s", in + n - 4);
++}
++
++static void tlv_str(const struct qmi_msg *m, uint8_t t, char *out, size_t room)
++{
++	uint16_t l = 0;
++	const uint8_t *p = qmi_get(m, t, &l);
++	if (!p)
++		return;
++	if (l >= room)
++		l = (uint16_t)(room - 1);
++	memcpy(out, p, l);
++	out[l] = 0;
++}
++
++static int send_req(int c, uint16_t msg, struct qmi_buf *q)
++{
++	if (!srv[c].up)
++		return -1;
++	(void)msg;
++	size_t n = qmi_finish(q);
++	if (!n)
++		return -1;
++	return qrtr_send(QRTR_TYPE_DATA, CELL_PORT0 + (uint32_t)c, srv[c].node, srv[c].port, q->b, (uint32_t)n);
++}
++
++static void req_start(int c, struct qmi_buf *q, uint16_t msg)
++{
++	if (!++srv[c].txn)
++		srv[c].txn = 1;
++	qmi_start(q, QMI_REQUEST, srv[c].txn, msg);
++}
++
++static int simple(int c, uint16_t msg)
++{
++	struct qmi_buf q;
++	req_start(c, &q, msg);
++	return send_req(c, msg, &q);
++}
++
++static int req_u8(int c, uint16_t msg, uint8_t t, uint8_t v)
++{
++	struct qmi_buf q;
++	req_start(c, &q, msg);
++	qmi_tlv_u8(&q, t, v);
++	return send_req(c, msg, &q);
++}
++
++static const char *rat_name(int r)
++{
++	switch (r) {
++	case 0: return "none";
++	case 1: return "cdma1x";
++	case 2: return "evdo";
++	case 4: return "gsm";
++	case 5: return "umts";
++	case 8: return "lte";
++	case 9: return "tdscdma";
++	case 12: return "nr5g";
++	default: return "?";
++	}
++}
++
++static const char *reg_name(int r)
++{
++	switch (r) {
++	case 0: return "not-registered";
++	case 1: return "registered";
++	case 2: return "searching";
++	case 3: return "denied";
++	case 4: return "unknown";
++	default: return "?";
++	}
++}
++
++static const char *call_state_name(int s)
++{
++	static const char *const n[] = { "unknown", "origination", "incoming", "conversation", "cc-in-progress", "alerting",
++					 "hold", "waiting", "disconnecting", "end", "setup", "pre-alerting" };
++	return s >= 0 && s < (int)(sizeof(n) / sizeof(n[0])) ? n[s] : "?";
++}
++
++/* Android's (SignalStrength) LTE RSRP levels, GSM/WCDMA RSSI dBm levels; 0..4 bars */
++static int bars(void)
++{
++	if (reg_state != 1)
++		return 0;
++	if (lte_rsrp < 0)
++		return lte_rsrp >= -85 ? 4 : lte_rsrp >= -95 ? 3 : lte_rsrp >= -105 ? 2 : lte_rsrp >= -115 ? 1 : 0;
++	int r = wcdma_rssi < 0 ? wcdma_rssi : gsm_rssi;
++	if (r < 0)
++		return r >= -89 ? 4 : r >= -97 ? 3 : r >= -103 ? 2 : r >= -107 ? 1 : 0;
++	return 0;
++}
++
++static void write_status(void)
++{
++	char tmp[] = CELL_STATUS ".tmp";
++	int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0600);
++	if (fd < 0)
++		return;
++	FILE *f = fdopen(fd, "w");
++	if (!f) {
++		close(fd);
++		return;
++	}
++	fprintf(f, "time_ms=%llu\n", (unsigned long long)now_ms());
++	fprintf(f, "revision=%s\nhardware=%s\nimei=%s\nimeisv=%s\nmeid=%s\nesn=%s\nmsisdn=%s\n", revision, hw_rev, imei, imeisv,
++		meid, esn, msisdn);
++	fprintf(f, "operating_mode=%d\n", op_mode);
++	fprintf(f, "sim_card_state=%d\nsim_app_type=%d\nsim_app_state=%d\nsim_pin1_state=%d\n", card_state, app_type, app_state,
++		pin1_state);
++	fprintf(f, "registration=%s\ncs_attach=%d\nps_attach=%d\nrat=%s\nroaming=%d\nmcc=%d\nmnc=%d\noperator=%s\n",
++		reg_name(reg_state), cs_attach, ps_attach, rat_name(rat), roaming, mcc, mnc, plmn_desc);
++	fprintf(f, "lte_rssi=%d\nlte_rsrq=%d\nlte_rsrp=%d\nlte_snr_tenths=%d\ngsm_rssi=%d\nwcdma_rssi=%d\nwcdma_ecio_halfdb=%d\nbars=%d\n",
++		lte_rssi, lte_rsrq, lte_rsrp, lte_snr, gsm_rssi, wcdma_rssi, wcdma_ecio, bars());
++	for (unsigned i = 0; i < sizeof(calls) / sizeof(calls[0]); i++)
++		if (calls[i].used)
++			fprintf(f, "call=%d %s %s %s\n", calls[i].id, call_state_name(calls[i].state), calls[i].dir == 2 ? "mt" : "mo",
++				calls[i].number);
++	fclose(f);
++	rename(tmp, CELL_STATUS);
++	status_dirty = 0;
++}
++
++/* ---------------------------------------------------------------- per-service start */
++static void start_service(int c)
++{
++	struct qmi_buf q;
++	switch (c) {
++	case C_DMS:
++		simple(C_DMS, 0x23);	/* Get Revision */
++		simple(C_DMS, 0x25);	/* Get IDs */
++		simple(C_DMS, 0x2c);	/* Get Hardware Revision */
++		simple(C_DMS, 0x24);	/* Get MSISDN */
++		simple(C_DMS, 0x2d);	/* Get Operating Mode */
++		break;
++	case C_UIM:
++		req_start(C_UIM, &q, 0x2e);	/* Register Events: card status */
++		qmi_tlv_u32(&q, 0x01, 1);
++		send_req(C_UIM, 0x2e, &q);
++		simple(C_UIM, 0x2f);	/* Get Card Status */
++		break;
++	case C_NAS:
++		req_start(C_NAS, &q, 0x03);	/* Register Indications: serving system, signal info */
++		qmi_tlv_u8(&q, 0x13, 1);
++		qmi_tlv_u8(&q, 0x19, 1);
++		send_req(C_NAS, 0x03, &q);
++		{
++			/*
++			 * Radio access preference (Set System Selection Preference 0x33, until the next modem boot). There
++			 * is no IMS/VoLTE here, so on LTE the phone cannot take calls (observed 0184: hopping GSM/UMTS/LTE,
++			 * callers heard "busy", no call indication). Default GSM+UMTS; /var/local/cell.lte adds LTE;
++			 * /var/local/cell.rat holds a hex QMI RAT mask (4 gsm, 8 umts, 0x10 lte) that wins. Service
++			 * domain CS+PS so packet attach is allowed too.
++			 */
++			uint16_t rat_mask = 0x0c;
++			if (!access("/var/local/cell.lte", F_OK))
++				rat_mask = 0x1c;
++			FILE *rf = fopen("/var/local/cell.rat", "r");
++			if (rf) {
++				unsigned v;
++				if (fscanf(rf, "%x", &v) == 1 && v && v < 0x80)
++					rat_mask = (uint16_t)v;
++				fclose(rf);
++			}
++			uint32_t domain = 2;
++			req_start(C_NAS, &q, 0x33);
++			qmi_tlv(&q, 0x11, &rat_mask, 2);
++			qmi_tlv_u8(&q, 0x17, 0);
++			qmi_tlv(&q, 0x18, &domain, 4);
++			printf("cell: radio preference mask %#x (%s%s%s), CS+PS, until the next modem boot\n", rat_mask,
++			       rat_mask & 4 ? "gsm " : "", rat_mask & 8 ? "umts " : "", rat_mask & 0x10 ? "lte" : "");
++			send_req(C_NAS, 0x33, &q);
++		}
++		simple(C_NAS, 0x24);	/* Get Serving System */
++		simple(C_NAS, 0x4f);	/* Get Signal Info */
++		next_sig = now_ms() + 10000;
++		next_srv = now_ms() + 30000;
++		break;
++	case C_VOICE:
++		req_u8(C_VOICE, 0x03, 0x13, 1);	/* Indication Register: call notification events */
++		break;
++	}
++}
++
++void cell_init(void)
++{
++	char args[1024] = "";
++	size_t n = sizeof(args) - 1;
++	sysctlbyname("kern.bootargs", args, &n, NULL, 0);
++	if (!access("/var/local/cell.off", F_OK) || strstr(args, "sweetcell=0")) {
++		cell_on = 0;
++		printf("cell: off (/var/local/cell.off or sweetcell=0)\n");
++		return;
++	}
++	printf("cell: QMI client for DMS/UIM/NAS/VOICE at ports %#x..%#x\n", CELL_PORT0, CELL_PORT0 + CELL_PORTS - 1);
++	unlink(CELL_STATUS);
++}
++
++void cell_new_server(uint32_t service, uint32_t version_instance, uint32_t node, uint32_t port)
++{
++	if (!cell_on)
++		return;
++	for (int c = 0; c < CELL_PORTS; c++) {
++		if (svc_id[c] != service || (srv[c].up && (version_instance >> 8) != 0))
++			continue;	/* the lowest instance (0) is the primary subscription's */
++		srv[c].up = 1;
++		srv[c].node = node;
++		srv[c].port = port;
++		printf("[%6llu] cell: %s service at %u:%x (version %u instance %u)\n", (unsigned long long)now_ms(), svc_name[c], node, port,
++		       version_instance & 0xff, version_instance >> 8);
++		start_service(c);
++	}
++}
++
++void cell_del_server(uint32_t service, uint32_t node, uint32_t port)
++{
++	for (int c = 0; c < CELL_PORTS; c++)
++		if (srv[c].up && svc_id[c] == service && srv[c].node == node && srv[c].port == port) {
++			srv[c].up = 0;
++			printf("[%6llu] cell: %s service gone\n", (unsigned long long)now_ms(), svc_name[c]);
++		}
++}
++
++/* ---------------------------------------------------------------- answers and indications */
++static int result_ok(const struct qmi_msg *m, int c, const char *what)
++{
++	uint16_t l = 0;
++	const uint8_t *p = qmi_get(m, 2, &l);
++	if (!p || l < 4)
++		return 1;	/* indications carry none */
++	uint16_t r, e;
++	memcpy(&r, p, 2);
++	memcpy(&e, p + 2, 2);
++	if (r) {
++		printf("[%6llu] cell: %s %s (msg %#x) failed: QMI error %u\n", (unsigned long long)now_ms(), svc_name[c], what, m->id, e);
++		return 0;
++	}
++	return 1;
++}
++
++static void dms_answer(const struct qmi_msg *m)
++{
++	char a[32], b[32];
++	switch (m->id) {
++	case 0x23:
++		if (result_ok(m, C_DMS, "get revision")) {
++			tlv_str(m, 1, revision, sizeof(revision));
++			printf("cell: modem firmware %s\n", revision);
++		}
++		break;
++	case 0x2c:
++		if (result_ok(m, C_DMS, "get hardware revision")) {
++			tlv_str(m, 1, hw_rev, sizeof(hw_rev));
++			printf("cell: modem hardware %s\n", hw_rev);
++		}
++		break;
++	case 0x25:
++		if (result_ok(m, C_DMS, "get ids")) {
++			tlv_str(m, 0x10, esn, sizeof(esn));
++			tlv_str(m, 0x11, imei, sizeof(imei));
++			tlv_str(m, 0x12, meid, sizeof(meid));
++			tlv_str(m, 0x13, imeisv, sizeof(imeisv));
++			mask(imei, a, sizeof(a));
++			mask(meid, b, sizeof(b));
++			printf("cell: IMEI %s (%zu digits) SVN %s MEID %s ESN %s\n", imei[0] ? a : "(none)", strlen(imei),
++			       imeisv[0] ? imeisv : "-", meid[0] ? b : "-", esn[0] ? "(set)" : "-");
++		}
++		break;
++	case 0x24:
++		if (result_ok(m, C_DMS, "get msisdn")) {
++			tlv_str(m, 1, msisdn, sizeof(msisdn));
++			mask(msisdn, a, sizeof(a));
++			printf("cell: MSISDN %s\n", msisdn[0] ? a : "(none on the SIM)");
++		}
++		break;
++	case 0x2d: {
++		uint8_t mode = 0xff;
++		uint16_t l = 0;
++		if (!result_ok(m, C_DMS, "get operating mode") || qmi_get_u8(m, 1, &mode))
++			break;
++		const uint8_t *why = qmi_get(m, 0x10, &l);
++		uint8_t hw = 0;
++		qmi_get_u8(m, 0x11, &hw);
++		op_mode = mode;
++		printf("cell: operating mode %u%s%s (offline reason %#x, hw restricted %u)\n", mode, mode == 0 ? " online" : "",
++		       mode == 1 ? " low-power" : mode == 6 ? " persistent-low-power" : mode == 3 ? " offline" : "",
++		       why && l >= 2 ? (unsigned)(why[0] | why[1] << 8) : 0u, hw);
++		if (mode != 0 && online_asked < 6 && access("/var/local/cell.lpm", F_OK)) {
++			online_asked++;
++			printf("cell: asking for ONLINE\n");
++			req_u8(C_DMS, 0x2e, 1, 0);
++		}
++		break;
++	}
++	case 0x2e:
++		if (result_ok(m, C_DMS, "set operating mode"))
++			printf("cell: operating mode change accepted\n");
++		else
++			next_mode = now_ms() + 5000;
++		simple(C_DMS, 0x2d);
++		break;
++	case 0x01:	/* Event Report indication (operating mode changes among them) */
++		break;
++	default:
++		qmi_dump(m);
++	}
++	status_dirty = 1;
++}
++
++/* UIM card status TLV 0x10: 4 x u16 indices (GW primary, 1x primary, GW secondary, 1x secondary: slot << 8 | app,
++ * 0xffff = no session), u8 cards, per card {state, upin state, upin/upuk retries, error, u8 apps, per app {type,
++ * state, perso state, perso feature, perso retries, perso unblock retries, u8 aid_len + aid, upin replaces pin1,
++ * pin1 state, pin1/puk1 retries, pin2 state, pin2/puk2 retries}}.
++ *
++ * A multi-SIM modem keeps every SIM application "detected" until the host activates a provisioning session on it
++ * (qcril's job on Android; UIM Change Provisioning Session 0x38): until then NAS only camps for emergency service.
++ * The first card with a USIM (else SIM) application gets the primary GW session, a second card the secondary. */
++static int prov_asked[2];	/* per session type (0 primary GW, 1 secondary GW): asked at ms+1 */
++
++static void provision(unsigned session, unsigned slot, const uint8_t *aid, unsigned aid_len)
++{
++	struct qmi_buf q;
++	uint8_t change[2] = { (uint8_t)(session ? 2 : 0), 1 };
++	uint8_t info[2 + 32];
++	if (aid_len > 32)
++		return;
++	info[0] = (uint8_t)slot;
++	info[1] = (uint8_t)aid_len;
++	memcpy(info + 2, aid, aid_len);
++	req_start(C_UIM, &q, 0x38);
++	qmi_tlv(&q, 0x01, change, 2);
++	qmi_tlv(&q, 0x10, info, (uint16_t)(2 + aid_len));
++	printf("[%6llu] cell: activating the %s GW provisioning session on SIM slot %u (AID %u bytes)\n",
++	       (unsigned long long)now_ms(), session ? "secondary" : "primary", slot, aid_len);
++	send_req(C_UIM, 0x38, &q);
++}
++
++static void uim_card_status(const struct qmi_msg *m)
++{
++	uint16_t l = 0;
++	const uint8_t *p = qmi_get(m, 0x10, &l), *e = p + l;
++	if (!p || l < 9)
++		return;
++	unsigned gw[2] = { (unsigned)(p[0] | p[1] << 8), (unsigned)(p[4] | p[5] << 8) };
++	p += 8;
++	unsigned ncards = *p++, sessions_wanted = 0;
++	int recorded = 0;
++	struct { unsigned slot, aid_len; uint8_t aid[32]; } want[2];
++	card_state = -1;
++	for (unsigned c = 0; c < ncards && p + 6 <= e; c++) {
++		unsigned state = p[0], err = p[4], napps = p[5];
++		p += 6;
++		printf("cell: SIM slot %u: card %s (error %u), %u application(s)\n", c + 1,
++		       state == 0 ? "absent" : state == 1 ? "present" : state == 2 ? "error" : "?", err, napps);
++		int gw_app = -1;
++		for (unsigned a = 0; a < napps && p + 7 <= e; a++) {
++			unsigned type = p[0], ast = p[1], aid = p[6];
++			if (p + 7 + aid + 7 > e)
++				return;
++			unsigned pin1 = p[7 + aid + 1];
++			static const char *const tn[] = { "unknown", "sim", "usim", "ruim", "csim", "isim" };
++			static const char *const sn[] = { "unknown", "detected", "pin1-required", "puk1-required", "check-perso",
++							  "pin1-blocked", "illegal", "ready" };
++			printf("cell:   app %u: %s %s (pin1 state %u)\n", a, type < 6 ? tn[type] : "?", ast < 8 ? sn[ast] : "?", pin1);
++			if ((type == 2 || (type == 1 && gw_app < 0)) && state == 1) {
++				if (gw_app < 0 && sessions_wanted < 2 && aid <= 32) {
++					want[sessions_wanted].slot = c + 1;
++					want[sessions_wanted].aid_len = aid;
++					memcpy(want[sessions_wanted].aid, p + 7, aid);
++					sessions_wanted++;
++				}
++				gw_app = (int)a;
++				if (!recorded) {
++					recorded = 1;
++					card_state = (int)state;
++					app_type = (int)type;
++					app_state = (int)ast;
++					pin1_state = (int)pin1;
++				}
++			}
++			p += 7 + aid + 7;
++		}
++		if (!recorded && state == 1)
++			card_state = 1;
++	}
++	if (card_state < 0)
++		card_state = 0;
++	printf("cell: provisioning sessions: GW primary %s, GW secondary %s\n", gw[0] == 0xffff ? "none" : "active",
++	       gw[1] == 0xffff ? "none" : "active");
++	for (unsigned s = 0; s < sessions_wanted; s++)
++		if (gw[s] == 0xffff && access("/var/local/cell.noprov", F_OK) &&
++		    (!prov_asked[s] || now_ms() + 1 > (uint64_t)prov_asked[s] + 15000)) {
++			prov_asked[s] = (int)now_ms() + 1;
++			provision(s, want[s].slot, want[s].aid, want[s].aid_len);
++		}
++	status_dirty = 1;
++}
++
++static void uim_answer(const struct qmi_msg *m)
++{
++	if (m->id == 0x2f) {
++		if (result_ok(m, C_UIM, "get card status"))
++			uim_card_status(m);
++	} else if (m->id == 0x32) {
++		uim_card_status(m);
++	} else if (m->id == 0x2e) {
++		result_ok(m, C_UIM, "register events");
++	} else if (m->id == 0x38) {
++		if (result_ok(m, C_UIM, "change provisioning session"))
++			printf("[%6llu] cell: provisioning session activated\n", (unsigned long long)now_ms());
++		simple(C_UIM, 0x2f);
++	} else {
++		qmi_dump(m);
++	}
++}
++
++static void nas_serving(const struct qmi_msg *m, int indication)
++{
++	uint16_t l = 0;
++	const uint8_t *p = qmi_get(m, 1, &l);
++	if (!p || l < 5)
++		return;
++	int old_reg = reg_state, old_rat = rat;
++	reg_state = p[0];
++	cs_attach = p[1];
++	ps_attach = p[2];
++	rat = p[4] && l >= 6 ? (int8_t)p[5] : 0;
++	for (unsigned i = 1; i < p[4] && 5u + i < l; i++)	/* prefer LTE when several are listed */
++		if ((int8_t)p[5 + i] == 8)
++			rat = 8;
++	uint8_t r;
++	if (!qmi_get_u8(m, 0x10, &r))
++		roaming = r;
++	const uint8_t *pl = qmi_get(m, 0x12, &l);
++	if (pl && l >= 5) {
++		mcc = pl[0] | pl[1] << 8;
++		mnc = pl[2] | pl[3] << 8;
++		unsigned dl = pl[4];
++		if (5 + dl > l)
++			dl = l - 5;
++		if (dl >= sizeof(plmn_desc))
++			dl = sizeof(plmn_desc) - 1;
++		memcpy(plmn_desc, pl + 5, dl);
++		plmn_desc[dl] = 0;
++		for (unsigned i = 0; i < dl; i++)
++			if (plmn_desc[i] < 0x20 || plmn_desc[i] > 0x7e) {
++				plmn_desc[0] = 0;	/* not ASCII (GSM 7-bit or UCS-2 coded): left out */
++				break;
++			}
++	}
++	if (old_reg != reg_state || old_rat != rat || !indication)
++		printf("[%6llu] cell: %s%s, cs %d ps %d, %s, PLMN %03d-%02d \"%s\"%s\n", (unsigned long long)now_ms(), reg_name(reg_state),
++		       indication ? "" : " (polled)", cs_attach, ps_attach, rat_name(rat), mcc, mnc, plmn_desc,
++		       roaming == 0 ? " roaming" : "");
++	status_dirty = 1;
++}
++
++static void nas_signal(const struct qmi_msg *m, int log)
++{
++	uint16_t l = 0;
++	const uint8_t *p;
++	lte_rssi = lte_rsrq = lte_rsrp = lte_snr = gsm_rssi = wcdma_rssi = wcdma_ecio = 1;
++	if ((p = qmi_get(m, 0x12, &l)) && l >= 1)
++		gsm_rssi = (int8_t)p[0];
++	if ((p = qmi_get(m, 0x13, &l)) && l >= 3) {
++		wcdma_rssi = (int8_t)p[0];
++		wcdma_ecio = (int16_t)(p[1] | p[2] << 8);
++	}
++	if ((p = qmi_get(m, 0x14, &l)) && l >= 6) {
++		lte_rssi = (int8_t)p[0];
++		lte_rsrq = (int8_t)p[1];
++		lte_rsrp = (int16_t)(p[2] | p[3] << 8);
++		lte_snr = (int16_t)(p[4] | p[5] << 8);
++	}
++	static int last_bars = -1;
++	int b = bars();
++	if (log || b != last_bars) {
++		if (lte_rsrp < 0)
++			printf("[%6llu] cell: signal LTE rssi %d rsrq %d rsrp %d snr %d.%d -> %d bar(s)\n", (unsigned long long)now_ms(), lte_rssi,
++			       lte_rsrq, lte_rsrp, lte_snr / 10, abs(lte_snr % 10), b);
++		else if (wcdma_rssi < 0)
++			printf("[%6llu] cell: signal WCDMA rssi %d ecio %d -> %d bar(s)\n", (unsigned long long)now_ms(), wcdma_rssi, wcdma_ecio, b);
++		else if (gsm_rssi < 0)
++			printf("[%6llu] cell: signal GSM rssi %d -> %d bar(s)\n", (unsigned long long)now_ms(), gsm_rssi, b);
++		else
++			printf("[%6llu] cell: no signal reported\n", (unsigned long long)now_ms());
++	}
++	last_bars = b;
++	status_dirty = 1;
++}
++
++static void nas_answer(const struct qmi_msg *m)
++{
++	static unsigned sig_logs;
++	switch (m->id) {
++	case 0x03:
++		result_ok(m, C_NAS, "register indications");
++		break;
++	case 0x33:
++		if (result_ok(m, C_NAS, "set system selection preference"))
++			printf("cell: radio preference accepted\n");
++		break;
++	case 0x24:
++		if (m->type == QMI_INDICATION)
++			nas_serving(m, 1);
++		else if (result_ok(m, C_NAS, "get serving system"))
++			nas_serving(m, 0);
++		break;
++	case 0x4f:
++		if (result_ok(m, C_NAS, "get signal info"))
++			nas_signal(m, sig_logs++ < 6 || !(sig_logs % 30));	/* first minute, then every 5 min */
++		break;
++	case 0x51:
++		nas_signal(m, 0);
++		break;
++	default:
++		if (m->type != QMI_INDICATION)
++			qmi_dump(m);
++	}
++}
++
++static struct call *call_slot(int id)
++{
++	struct call *free_slot = NULL;
++	for (unsigned i = 0; i < sizeof(calls) / sizeof(calls[0]); i++) {
++		if (calls[i].used && calls[i].id == id)
++			return &calls[i];
++		if (!calls[i].used && !free_slot)
++			free_slot = &calls[i];
++	}
++	if (free_slot) {
++		memset(free_slot, 0, sizeof(*free_slot));
++		free_slot->used = 1;
++		free_slot->id = id;
++	}
++	return free_slot;
++}
++
++/* All Call Status indication: TLV 1 {u8 n, n x {id, state, type, direction, mode, multipart, als}},
++ * TLV 0x10 {u8 n, n x {id, presentation, u8 len + number}} */
++static void voice_calls(const struct qmi_msg *m)
++{
++	uint16_t l = 0;
++	const uint8_t *p = qmi_get(m, 1, &l);
++	if (!p || l < 1)
++		return;
++	const uint8_t *np;
++	uint16_t nl = 0;
++	np = qmi_get(m, 0x10, &nl);
++	for (unsigned i = 0; i < p[0] && 1u + 7 * (i + 1) <= l; i++) {
++		const uint8_t *c = p + 1 + 7 * i;
++		struct call *k = call_slot(c[0]);
++		if (!k)
++			continue;
++		int old = k->state;
++		k->state = c[1];
++		k->type = c[2];
++		k->dir = c[3];
++		k->mode = c[4];
++		if (np && nl >= 1) {
++			unsigned o = 1;
++			for (unsigned j = 0; j < np[0] && o + 3 <= nl; j++) {
++				unsigned len = np[o + 2];
++				if (o + 3 + len > nl)
++					break;
++				if (np[o] == c[0]) {
++					if (len >= sizeof(k->number))
++						len = sizeof(k->number) - 1;
++					memcpy(k->number, np + o + 3, len);
++					k->number[len] = 0;
++				}
++				o += 3 + np[o + 2];
++			}
++		}
++		if (old != k->state) {
++			char a[48];
++			mask(k->number, a, sizeof(a));
++			printf("[%6llu] cell: call %d %s %s %s (%s, mode %d)%s%s\n", (unsigned long long)now_ms(), k->id, call_state_name(k->state),
++			       k->dir == 2 ? "from" : "to", k->number[0] ? a : "(number withheld)", k->type == 0 ? "voice" : "other",
++			       k->mode, k->state == 2 ? "  <<< RINGING" : "", k->state == 2 && !access("/var/local/cell.autoanswer", F_OK) ?
++			       " (auto-answer)" : "");
++			if (k->state == 2 && !access("/var/local/cell.autoanswer", F_OK))
++				req_u8(C_VOICE, 0x22, 1, (uint8_t)k->id);
++		}
++		if (k->state == 9)
++			k->used = 0;
++	}
++	status_dirty = 1;
++}
++
++static void voice_answer(const struct qmi_msg *m)
++{
++	switch (m->id) {
++	case 0x2e:
++		voice_calls(m);
++		break;
++	case 0x03:
++		result_ok(m, C_VOICE, "indication register");
++		break;
++	case 0x20:
++		result_ok(m, C_VOICE, "dial");
++		break;
++	case 0x21:
++		result_ok(m, C_VOICE, "end call");
++		break;
++	case 0x22:
++		if (result_ok(m, C_VOICE, "answer call"))
++			printf("cell: call answered (no audio path yet: ADSP/voice routing is not up)\n");
++		break;
++	default:
++		printf("[%6llu] cell: voice ", (unsigned long long)now_ms());
++		qmi_dump(m);
++	}
++}
++
++void cell_handle(const struct qrtr_hdr *h, const uint8_t *d, uint32_t n)
++{
++	struct qmi_msg m;
++	int c = (int)(h->dst_port - CELL_PORT0);
++	if (!cell_port(h->dst_port) || qmi_parse(d, n, &m))
++		return;
++	switch (c) {
++	case C_DMS: dms_answer(&m); break;
++	case C_UIM: uim_answer(&m); break;
++	case C_NAS: nas_answer(&m); break;
++	case C_VOICE: voice_answer(&m); break;
++	}
++}
++
++/* ---------------------------------------------------------------- commands and polling */
++static void command(char *line)
++{
++	line[strcspn(line, "\r\n")] = 0;
++	printf("[%6llu] cell: command \"%s\"\n", (unsigned long long)now_ms(), strncmp(line, "dial", 4) ? line : "dial ...");
++	if (!strcmp(line, "answer") || !strcmp(line, "hangup")) {
++		for (unsigned i = 0; i < sizeof(calls) / sizeof(calls[0]); i++)
++			if (calls[i].used && (line[0] == 'h' || calls[i].state == 2 || calls[i].state == 7)) {
++				req_u8(C_VOICE, line[0] == 'a' ? 0x22 : 0x21, 1, (uint8_t)calls[i].id);
++				if (line[0] == 'a')
++					break;
++			}
++	} else if (!strncmp(line, "dial ", 5)) {
++		struct qmi_buf q;
++		const char *num = line + 5;
++		req_start(C_VOICE, &q, 0x20);	/* Dial Call: TLV 1 the number (whole TLV) */
++		qmi_tlv(&q, 1, num, (uint16_t)strlen(num));
++		send_req(C_VOICE, 0x20, &q);
++	} else if (!strcmp(line, "online") || !strcmp(line, "lpm")) {
++		req_u8(C_DMS, 0x2e, 1, line[0] == 'o' ? 0 : 1);
++	} else if (!strcmp(line, "status")) {
++		simple(C_DMS, 0x2d);
++		simple(C_UIM, 0x2f);
++		simple(C_NAS, 0x24);
++		simple(C_NAS, 0x4f);
++	}
++}
++
++void cell_poll(void)
++{
++	if (!cell_on)
++		return;
++	uint64_t now = now_ms();
++	if (srv[C_NAS].up && now >= next_sig) {
++		simple(C_NAS, 0x4f);
++		next_sig = now + 10000;
++	}
++	if (srv[C_NAS].up && now >= next_srv) {
++		simple(C_NAS, 0x24);
++		next_srv = now + 60000;
++	}
++	if (srv[C_DMS].up && op_mode != 0 && now >= next_mode) {
++		simple(C_DMS, 0x2d);	/* not online yet ("device not ready" early in boot): ask again */
++		next_mode = now + 10000;
++	}
++	if (now >= next_cmd) {
++		next_cmd = now + 1000;
++		FILE *f = fopen(CELL_CMD, "r");
++		if (f) {
++			char line[96];
++			int got = fgets(line, sizeof(line), f) != NULL;
++			fclose(f);
++			unlink(CELL_CMD);
++			if (got)
++				command(line);
++		}
++		if (status_dirty)
++			write_status();
++	}
++}
+diff --git a/phone/wifi/cell.h b/phone/wifi/cell.h
+new file mode 100644
+index 0000000..0cd2baf
+--- /dev/null
++++ b/phone/wifi/cell.h
+@@ -0,0 +1,18 @@
++/* Cellular status over the modem's own QMI services (DMS, UIM, NAS, VOICE), on wland's QRTR link. */
++#ifndef CELL_H
++#define CELL_H
++#include <stdint.h>
++#include "link.h"
++
++#define CELL_PORT0	0x30	/* our client ports: 0x30 DMS, 0x31 UIM, 0x32 NAS, 0x33 VOICE */
++#define CELL_PORTS	4
++
++void cell_init(void);
++/* QRTR NEW_SERVER / DEL_SERVER from the modem (ctrl words 1-4) */
++void cell_new_server(uint32_t service, uint32_t version_instance, uint32_t node, uint32_t port);
++void cell_del_server(uint32_t service, uint32_t node, uint32_t port);
++static inline int cell_port(uint32_t port) { return port >= CELL_PORT0 && port < CELL_PORT0 + CELL_PORTS; }
++void cell_handle(const struct qrtr_hdr *h, const uint8_t *d, uint32_t n);
++void cell_poll(void);	/* every link poll round: periodic queries, /var/local/cell.cmd */
++
++#endif
+diff --git a/phone/wifi/wland.c b/phone/wifi/wland.c
+index a69979f..957d58c 100644
+--- a/phone/wifi/wland.c
++++ b/phone/wifi/wland.c
+@@ -37,6 +37,7 @@
+ #include "radio.h"
+ #include "ipnet.h"
+ #include "bridge.h"
++#include "cell.h"
+ 
+ /* cmd-db aux levels (as in the GPU's arc votes) */
+ /* Every cmd-db entry: name, RPMh slave (3 ARC, 4 VRM, 5 BCM), address. */
+@@ -555,6 +556,10 @@ static void net_cb(const struct qrtr_hdr *h, const uint8_t *d, uint32_t n)
+ 			wlfw_handle(h, d, n);
+ 			return;
+ 		}
++		if (cell_port(h->dst_port)) {
++			cell_handle(h, d, n);
++			return;
++		}
+ 		if (h->dst_port == PDMAPPER_PORT) {
+ 			pdmapper_handle(h, d, n);
+ 			return;
+@@ -575,6 +580,9 @@ static void net_cb(const struct qrtr_hdr *h, const uint8_t *d, uint32_t n)
+ 		printf("qrtr:   server service %#x instance %#x at %u:%x\n", w[1], w[2], w[3], w[4]);
+ 		if (w[1] == WLFW_SERVICE)
+ 			wlfw_new_server(w[3], w[4]);
++		cell_new_server(w[1], w[2], w[3], w[4]);
++	} else if (w[0] == QRTR_TYPE_DEL_SERVER) {
++		cell_del_server(w[1], w[3], w[4]);
+ 	}
+ }
+ 
+@@ -667,6 +675,7 @@ static void net_idle(void)
+ 	ipnet_poll();
+ 	bridge_poll();
+ 	join_poll();
++	cell_poll();
+ }
+ 
+ static int net(unsigned secs)
+@@ -683,6 +692,7 @@ static int net(unsigned secs)
+ 	if (pdmapper_init() || tftp_init())
+ 		printf("net: no pd-mapper/tftp\n");
+ 	read_conf();
++	cell_init();
+ 	uint64_t end = link_ms() + (uint64_t)secs * 1000, stats = link_ms() + 30000;
+ 	while (!secs || link_ms() < end) {
+ 		link_poll(100);

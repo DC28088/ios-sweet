@@ -1,3 +1,11 @@
+## 2026-11-03: BRANCH codex/cellular (from myfork/codex/native-adreno-metal c27b1a9 = kernel 0183)
+Cellular work continues here so kernel patches stack on the 0183 kernel the phone runs. Wi-Fi/shim
+changes came over from codex/adreno-power-audit (commits 099bf34..0d12f38 there).
+
+## 2026-11-03: CELLULAR phase 1 - wland QMI client + serial number (image 0184)
+
+- Device-specific cellular/location/call observations omitted for privacy.
+
 ## 2026-11-02: 0183 booted (user approved): App Library FIXED; search pull-down status bar still black "sometimes"
 - 0183 (shim/out/shim-boot-0183-rows.img 6e14e250d464..., kernel c74c894f4751..., 0183-boot-start.json log_offset 49451505): only LA08 surfaces keep rows (224/480/736), no "texture is written" refusals. USER: "the library issue is now fixed. the search pull down status bar is still black (sometimes)".
 - Capture shots/search.png: black band = top ~135 px (status bar) over an otherwise correct blurred backdrop. No refusals in the log. Draw log (20000, scratch draws3.txt) search backdrop chain (e.g. draws 18713-18722): TimgA2Xhf_Isrc n=54 (9 quads) 1125x2436 -> 565x1220; two PBGRAXm_A2Xhf n=24 solid fills into 565x1220 (margins?); Tds8 -> 146x310; Tn23 blur -> 569x1224 -> 565x1220; TimgA2Xhfn_IsrcCcl full-screen composite WITHOUT blending from 565x1220; Bsov tint. Black band = top rows of that blurred texture: either the captured strip is black (source not yet drawn, timing -> "sometimes") or a margin fill covers it. Next: extend the draw log with vertex positions/colours (first vertices of A2Xhf/Timg draws into 565x1220) to decide.
