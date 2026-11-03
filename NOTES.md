@@ -1,3 +1,7 @@
+## 2026-11-03: CELLULAR phase 1 - wland QMI client + serial number (image 0184)
+
+- Device-specific cellular/location/call observations omitted for privacy.
+
 ## 2026-10-30 (night): 0173 image packaged, not yet booted
 
 0173 (SH2/SH3 votes at max) CI run 41075906369 on DC28088/ios-sweet (use `gh -R DC28088/ios-sweet`; default
