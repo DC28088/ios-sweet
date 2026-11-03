@@ -1,3 +1,6 @@
+## 2026-11-03 17:07 IST: boot 0184-bbadt -> CommCenter (cellular) RUNS, opens AppleBaseband; ABM: "Baseband Firmware Path Not Found"
+- Device-specific cellular/location/call observations omitted for privacy.
+
 ## 2026-11-03 (evening): CELLULAR phase 2 iOS side in progress (user: "go ahead with the iOS side")
 - wland (5d30286, patch 0003 regenerated + verified): RAT retry (ecc1fd3) + /dev/sweet-bb bridge in cell.c:
   open O_RDWR|O_NONBLOCK in cell_init (off: /var/local/cell.nobb), all NEW/DEL_SERVER forwarded (bb_srv[128]
