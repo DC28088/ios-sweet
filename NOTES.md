@@ -46,8 +46,8 @@
 - Fallback image with SOS + incoming calls between push/reset cycles: shim/out/shim-boot-0186.img (kernel 0186).
 - Still to do after cellular: call audio (no audio route to the modem), incoming-call screen (InCallService runs, UI not
   presented), haptics in iOS (kernel AW8624 test buzz works every boot: "SWEET HAPTIC ... after buzz"), Settings/About.
-- Static-RE helpers live in the session scratchpad (not in git): re/abpdis.py (dsc disassembler), syms.py (local
-  symbols), macho.py (standalone Mach-O), cclog.py (joins |CommCenter| DT-mode lines). CommCenter binary pulled from
+- Static-RE helpers (git-ignored, local): research/re-tools/ abpdis.py (dsc disassembler: python3 abpdis.py SUBCACHE IMAGE_BASE), syms.py (local
+  symbols), macho.py (standalone Mach-O), cclog.py (joins |CommCenter| DT-mode lines), CommCenter.bin pulled from
   /System/Library/Frameworks/CoreTelephony.framework/Support/CommCenter.
 
 ## 2026-11-03 23:20 IST: 0188b boot -> reset storm; xnu 0189 (PRI version, no selector reset messages), CI 41687293245
