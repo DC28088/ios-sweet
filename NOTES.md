@@ -16,6 +16,26 @@
   cached commit views; rewriting branches cannot erase external copies.
 - No device writes, boots, or driver changes performed.
 
+## 2026-11-03 23:20 IST: 0188b boot -> reset storm; xnu 0189 (PRI version, no selector reset messages), CI 41687293245
+- 0188b (xnu/out-0188b d23c198e..., image shim/out/shim-boot-0188b.img 40a29869..., booted 22:52:57, log
+  logs/boot-0188b.txt): carrier file segments now parse ("type 9 segment 0 of 9", "type 8 segment 0 of 43"), but
+  CommCenter sends only segment 0 and reports "File transfer complete: failure" within ~90 ms (other BSP queries in the
+  push window, 0xe010/0xe012/0xe014/0xe009/0xe018/0xb001/0xb004/0xb008, are still answered not supported; the 0xa000
+  frames were past the trace budget). "DMS set operating mode 4 (reset): answered here" -> ABM: "Soft reset failed:
+  Baseband never started filesystem sync" (Mav soft reset = RFS sync over Apple's BBUFS server first, then reset; see
+  libBasebandManager strings "rfs sync", "BBUFSServerFlush"). Then 13x "baseband crash detected" resets ~1.5 s apart:
+  the delayed reset-detected message from the AppleBaseband selector (hard-reset fallback) arrived while ABM considered
+  the baseband up. USER: no SOS, no Cellular section.
+- Push decision (static RE, CommCenter binary): per file type 0x100c791b4 -> 0x100c78ffc -> model vtable+0x48 (virtual,
+  not followed). CFStrings InstalledPRIVersion/DerPriFileVersion/GRIVersion/PRIVersion_Major/_Minor/_ReleaseNo; the D22
+  overlay (/var/mobile/Library/Carrier Bundles/Overlay/device+carrier+Default.bundle+D22+54.0.1.plist, stock) has
+  DerPriFileVersion 0.1.144, DerPriFileName overrides_D22.der.pri, GRIVersion 9.2.1, GRIFileName global_setting_A.gri.
+- **xnu 0189** (`xnu/patches/0189-sweet-baseband-pri-version-no-reset-storm.patch`): activation indication + TLV 0x40
+  {0, 1, 144} (installed PRI = bundle version); AppleBaseband selector path no longer sends reset messages (DMS-reset
+  playback kept). Expectation (guess): PRI no longer pushed; GRI/IMSI_SWITCH/MULTI_PDN may still be.
+- Fallback if this does not settle: kernel 0186 image (shim/out/shim-boot-0186.img) + wland 0004 gave SOS and incoming
+  calls between push/reset cycles.
+
 ## 2026-11-03 22:45 IST: first 0188 boot (0187+0188) -> two fixes, revised 0188 building (CI 41680017657)
 - CI 41667413318 FAILED to compile: the Python edits for 0187/0188 ran in an unquoted shell heredoc, so "\\n" in new
   printf literals became real newlines (SweetBaseband.inc:470/1020 "expected expression", then the class cascade). Fixed
