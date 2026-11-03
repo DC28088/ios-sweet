@@ -16,6 +16,29 @@
   cached commit views; rewriting branches cannot erase external copies.
 - No device writes, boots, or driver changes performed.
 
+## 2026-11-03 21:05 IST: wland 0004 holds (no lost requests, no crash); new loop: carrier-file push + soft reset
+- Boot of shim-boot-0186.img with wland ef9a6d24 (20:43): wland alive, 0 `glink: cannot send`, no ATCS_TIMEOUT resets.
+  SIM Ready and registered after ABM boot, then CommCenter's carrier-file push (set.bb: 5 files, first
+  overrides_D22.der.pri FILETYPE_PRI) fails at once ("File transfer complete: failure ... soldiering on"), "All files
+  have been pushed" -> "Resetting baseband after pushing files (kCarrierBundleChange)" -> ABM "Soft reset failed; timeout
+  waiting for reset detection" -> fallback -> "Failed to get current operating mode: kCommandError" and the radio stays
+  down. A CommCenter restart repeats push + reset every ~12-25 s (the push never succeeds, so the check always says
+  the files need an update). Settings shows no Cellular section and no SOS while the radio is down.
+- Reset detection (static RE): libTelephonyBaseband registers IOGeneralInterest on AppleBaseband
+  (_TelephonyBasebandResetCallback handles 0xe3ff8007 wake, 0xe3ff800d coredump, forwards the rest);
+  libBasebandManager 0x1b7fa6dec: 0xe3ff8000 = "baseband reset detected", 0xe3ff8001 = "baseband alive detected".
+  "poll for reset detect" = AppleBaseband selector 3 (get reset). The bridge never sent these messages (upstream neither).
+  -> **xnu 0187** (`xnu/patches/0187-sweet-baseband-reset-detect-messages.patch`): after reset/powercycle/power-on the
+  user client does getProvider()->messageClients(0xe3ff8000), then 0xe3ff8001 100 ms later (thread call). CI 41663283500.
+- Carrier-file push protocol (static RE, libCommCenterMCommandDrivers .31 0x1f1919000 + CommCenter binary strings):
+  QMIBasebandSettingsDriver prepareFilePushTransaction/startFileTransfer/sendSegmentWithData over private service 0xe4
+  (0x1002 start, 0x1000 1500-byte segments; bridge answers 0x5e) and completion by indication
+  bsp::FileTransferStatus::Indication. The activation indication (QMIMav13ActivationCommandDriver bootstrap block_3)
+  parses TLVs 0x10 public key hash, 0x11 factory key hash, 0x12 IMEI, 0x13 MEID, 0x14 activation version, 0x15 mode,
+  0x16 factory debug, 0x52 manifest result, 0x40/0x41 ActivationPriVersionSlot1/2 ({u8,u8,u16}), 0x42/0x43 ICCID/IMSI
+  slot 1, 0x44/0x45 GID1/2, 0x50 card provisioned, 0x46-0x49 slot 2. NEXT: either report the bundle's PRI version in
+  TLV 0x40 (if that is what "need an update" compares) or emulate the 0xe4 transfer + FileTransferStatus indication.
+
 ## 2026-11-03 20:45 IST: kernel 0186 booted: CommCenter sees the SIM, then a reset loop -> wland fix 0004
 - xnu 0186 (`xnu/patches/0186-sweet-baseband-sim-activation.patch`, commit b4dd285; CI 41655332168 macos-15-intel ->
   xnu/out-0186 a66a56af...): SweetBaseband.inc = UniXNU/QcomBaseband 43d85fb08d + the Sweet delta (header, sweetbb
