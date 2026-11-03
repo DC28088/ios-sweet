@@ -2,6 +2,9 @@
 Cellular work continues here so kernel patches stack on the 0183 kernel the phone runs. Wi-Fi/shim
 changes came over from codex/adreno-power-audit (commits 099bf34..0d12f38 there).
 
+## 2026-11-03 (later): HANDOFF - cellular phase 2 (iOS side) started; phone ran out of charge
+- Device-specific cellular/location/call observations omitted for privacy.
+
 ## 2026-11-03: CELLULAR phase 1 - wland QMI client + serial number (image 0184)
 
 - Device-specific cellular/location/call observations omitted for privacy.
