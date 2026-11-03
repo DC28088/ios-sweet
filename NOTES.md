@@ -36,8 +36,20 @@
   bsp::FileTransferStatus::Indication. The activation indication (QMIMav13ActivationCommandDriver bootstrap block_3)
   parses TLVs 0x10 public key hash, 0x11 factory key hash, 0x12 IMEI, 0x13 MEID, 0x14 activation version, 0x15 mode,
   0x16 factory debug, 0x52 manifest result, 0x40/0x41 ActivationPriVersionSlot1/2 ({u8,u8,u16}), 0x42/0x43 ICCID/IMSI
-  slot 1, 0x44/0x45 GID1/2, 0x50 card provisioned, 0x46-0x49 slot 2. NEXT: either report the bundle's PRI version in
-  TLV 0x40 (if that is what "need an update" compares) or emulate the 0xe4 transfer + FileTransferStatus indication.
+  slot 1, 0x44/0x45 GID1/2, 0x50 card provisioned, 0x46-0x49 slot 2.
+- CORRECTION + push protocol (static RE): the carrier-file push is BSP (0xe2) SendFile **0xa000** (sendSegmentWithData_sync
+  `mov w1,#0xa000`), not 0xe4 (0xe4 = another private service, sft = Stewie). TLV 0x10 FileTransferInfo = {u8 type,
+  u8, u16 segment number (first = 0, startFileTransfer passes 0), u16 total, data}; signature on the last segment.
+  Completion = indication **0xa001** FileTransferStatus, TLV 0x01 {u8 file type, u8 result}. Results: 0 SUCCESS,
+  1 FAILED, 2 FS WRITE FAILED, 3 MEMORY, 4 TIMEOUT, 5 PROCESSING TIMEOUT, 6 SIGNATURE MISMATCH, 7 PROCESSING ERROR.
+  Types: 0 unknown, 1 EFS, 2 PRL, 3 PRI, 4 DMU, 5 DM, 6 GRI, 7 DER_PRI, 8 DER_GRI. Pushed files per round: PRI
+  (overrides_D22.der.pri), GRI (global_setting_A.gri), IMSI_SWITCH, MULTI_PDN, +1 (29 failed rounds in one boot).
+- **xnu 0188** (`xnu/patches/0188-sweet-baseband-carrier-file-push.patch`, on top of 0187): bb_send_file answers every
+  0xa000 with success and, after the last segment, sends 0xa001 {type, 0}; logs "carrier file type T segment S of N
+  accepted" (first/last, 24 lines max). CI 41667413318 (macos-15-intel) builds 0187+0188. Open question for the boot:
+  whether CommCenter stops pushing after a successful round or re-checks against the baseband (activation TLV 0x40).
+- Between resets SOS appears and incoming calls reach the call UI; the incoming-call screen itself does not show
+  (InCallService runs, no crash; UI/presentation issue, later). `SWEET Sandbox: callservicesd privilege 1002 denied`.
 
 ## 2026-11-03 20:45 IST: kernel 0186 booted: CommCenter sees the SIM, then a reset loop -> wland fix 0004
 - xnu 0186 (`xnu/patches/0186-sweet-baseband-sim-activation.patch`, commit b4dd285; CI 41655332168 macos-15-intel ->
