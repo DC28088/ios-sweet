@@ -1,9 +1,9 @@
 diff --git a/phone/wifi/cell.c b/phone/wifi/cell.c
 new file mode 100644
-index 0000000..2b448ce
+index 0000000..9e55da3
 --- /dev/null
 +++ b/phone/wifi/cell.c
-@@ -0,0 +1,751 @@
+@@ -0,0 +1,813 @@
 +/*
 + * cell: the modem's cellular side, seen from wland's QRTR link. The modem firmware wland boots for
 + * the WLAN PD is the whole MPSS image, so its QMI services (DMS 2, NAS 3, VOICE 9, UIM 0xb, ...)
@@ -50,6 +50,13 @@ index 0000000..2b448ce
 +struct call { int used, id, state, type, dir, mode; char number[48]; };
 +static struct call calls[8];
 +static uint64_t next_sig, next_srv, next_cmd, next_mode, status_dirty;
++/*
++ * RAT preference (NAS 0x33). 0184-bb boot 2: mode 0xc + duration 0 + domain CS+PS failed with QMI error 25
++ * (OP_DEVICE_UNSUPPORTED) at 2.4 s. Try variants in order, re-send once online, read back with 0x34.
++ */
++static uint16_t rat_mask = 0x0c;
++static int rat_variant, rat_done, rat_rounds;
++static uint64_t next_rat;
 +
 +static uint64_t now_ms(void) { return link_ms(); }
 +
@@ -110,6 +117,44 @@ index 0000000..2b448ce
 +	req_start(c, &q, msg);
 +	qmi_tlv_u8(&q, t, v);
 +	return send_req(c, msg, &q);
++}
++
++/*
++ * Radio access preference (Set System Selection Preference 0x33). There is no IMS/VoLTE here, so on LTE the
++ * phone cannot take calls (observed 0184: callers heard "busy" while camped on LTE; on UMTS the call rang).
++ * Default GSM+UMTS; /var/local/cell.lte adds LTE; /var/local/cell.rat holds a hex QMI mode mask (4 gsm, 8 umts,
++ * 0x10 lte) that wins; "rat HEX" in cell.cmd sets it live. Variants: 0 mode+duration(power cycle)+domain CS+PS,
++ * 1 mode+domain (permanent; lands in our rmtfs EFS copy only), 2 mode only.
++ */
++static void rat_load(void)
++{
++	rat_mask = 0x0c;
++	if (!access("/var/local/cell.lte", F_OK))
++		rat_mask = 0x1c;
++	FILE *rf = fopen("/var/local/cell.rat", "r");
++	if (rf) {
++		unsigned v;
++		if (fscanf(rf, "%x", &v) == 1 && v && v < 0x80)
++			rat_mask = (uint16_t)v;
++		fclose(rf);
++	}
++}
++
++static void rat_send(void)
++{
++	struct qmi_buf q;
++	uint32_t domain = 2;
++	req_start(C_NAS, &q, 0x33);
++	qmi_tlv(&q, 0x11, &rat_mask, 2);
++	if (rat_variant == 0)
++		qmi_tlv_u8(&q, 0x17, 0);
++	if (rat_variant <= 1)
++		qmi_tlv(&q, 0x18, &domain, 4);
++	printf("[%6llu] cell: radio preference mask %#x (%s%s%s), variant %d (%s)\n", (unsigned long long)now_ms(),
++	       rat_mask, rat_mask & 4 ? "gsm " : "", rat_mask & 8 ? "umts " : "", rat_mask & 0x10 ? "lte" : "", rat_variant,
++	       rat_variant == 0 ? "until power cycle, CS+PS" : rat_variant == 1 ? "permanent, CS+PS" : "mode only");
++	send_req(C_NAS, 0x33, &q);
++	next_rat = 0;
 +}
 +
 +static const char *rat_name(int r)
@@ -212,33 +257,8 @@ index 0000000..2b448ce
 +		qmi_tlv_u8(&q, 0x13, 1);
 +		qmi_tlv_u8(&q, 0x19, 1);
 +		send_req(C_NAS, 0x03, &q);
-+		{
-+			/*
-+			 * Radio access preference (Set System Selection Preference 0x33, until the next modem boot). There
-+			 * is no IMS/VoLTE here, so on LTE the phone cannot take calls (observed 0184: hopping GSM/UMTS/LTE,
-+			 * callers heard "busy", no call indication). Default GSM+UMTS; /var/local/cell.lte adds LTE;
-+			 * /var/local/cell.rat holds a hex QMI RAT mask (4 gsm, 8 umts, 0x10 lte) that wins. Service
-+			 * domain CS+PS so packet attach is allowed too.
-+			 */
-+			uint16_t rat_mask = 0x0c;
-+			if (!access("/var/local/cell.lte", F_OK))
-+				rat_mask = 0x1c;
-+			FILE *rf = fopen("/var/local/cell.rat", "r");
-+			if (rf) {
-+				unsigned v;
-+				if (fscanf(rf, "%x", &v) == 1 && v && v < 0x80)
-+					rat_mask = (uint16_t)v;
-+				fclose(rf);
-+			}
-+			uint32_t domain = 2;
-+			req_start(C_NAS, &q, 0x33);
-+			qmi_tlv(&q, 0x11, &rat_mask, 2);
-+			qmi_tlv_u8(&q, 0x17, 0);
-+			qmi_tlv(&q, 0x18, &domain, 4);
-+			printf("cell: radio preference mask %#x (%s%s%s), CS+PS, until the next modem boot\n", rat_mask,
-+			       rat_mask & 4 ? "gsm " : "", rat_mask & 8 ? "umts " : "", rat_mask & 0x10 ? "lte" : "");
-+			send_req(C_NAS, 0x33, &q);
-+		}
++		rat_load();
++		rat_send();
 +		simple(C_NAS, 0x24);	/* Get Serving System */
 +		simple(C_NAS, 0x4f);	/* Get Signal Info */
 +		next_sig = now_ms() + 10000;
@@ -361,10 +381,15 @@ index 0000000..2b448ce
 +		break;
 +	}
 +	case 0x2e:
-+		if (result_ok(m, C_DMS, "set operating mode"))
++		if (result_ok(m, C_DMS, "set operating mode")) {
 +			printf("cell: operating mode change accepted\n");
-+		else
++			if (!rat_done) {	/* the early preference may have been refused before ONLINE */
++				rat_variant = 0;
++				next_rat = now_ms() + 3000;
++			}
++		} else {
 +			next_mode = now_ms() + 5000;
++		}
 +		simple(C_DMS, 0x2d);
 +		break;
 +	case 0x01:	/* Event Report indication (operating mode changes among them) */
@@ -565,9 +590,32 @@ index 0000000..2b448ce
 +		result_ok(m, C_NAS, "register indications");
 +		break;
 +	case 0x33:
-+		if (result_ok(m, C_NAS, "set system selection preference"))
-+			printf("cell: radio preference accepted\n");
++		if (result_ok(m, C_NAS, "set system selection preference")) {
++			printf("[%6llu] cell: radio preference accepted (variant %d)\n", (unsigned long long)now_ms(), rat_variant);
++			rat_done = 1;
++			simple(C_NAS, 0x34);	/* read it back */
++		} else if (rat_variant < 2) {
++			rat_variant++;
++			next_rat = now_ms() + 2000;
++		} else if (++rat_rounds < 4) {
++			rat_variant = 0;	/* all variants refused: start over later (early boot / not online yet?) */
++			next_rat = now_ms() + 30000;
++		} else {
++			printf("cell: radio preference refused in every form; giving up until \"rat HEX\" in cell.cmd\n");
++		}
 +		break;
++	case 0x34: {
++		uint16_t mp = 0, l = 0;
++		const uint8_t *v = qmi_get(m, 0x11, &l);
++		if (!result_ok(m, C_NAS, "get system selection preference"))
++			break;
++		if (v && l >= 2)
++			memcpy(&mp, v, 2);
++		const uint8_t *d = qmi_get(m, 0x18, &l);
++		printf("[%6llu] cell: modem radio preference now mode %#x (%s%s%s), domain %d\n", (unsigned long long)now_ms(), mp,
++		       mp & 4 ? "gsm " : "", mp & 8 ? "umts " : "", mp & 0x10 ? "lte" : "", d && l >= 4 ? (int)d[0] : -1);
++		break;
++	}
 +	case 0x24:
 +		if (m->type == QMI_INDICATION)
 +			nas_serving(m, 1);
@@ -715,6 +763,18 @@ index 0000000..2b448ce
 +		send_req(C_VOICE, 0x20, &q);
 +	} else if (!strcmp(line, "online") || !strcmp(line, "lpm")) {
 +		req_u8(C_DMS, 0x2e, 1, line[0] == 'o' ? 0 : 1);
++	} else if (!strcmp(line, "ratget")) {
++		simple(C_NAS, 0x34);
++	} else if (!strncmp(line, "rat", 3)) {
++		unsigned v;
++		if (sscanf(line + 3, "%x", &v) == 1 && v && v < 0x80)
++			rat_mask = (uint16_t)v;
++		if (line[3] == 0 || line[3] == ' ') {
++			rat_variant = 0;
++			rat_rounds = 0;
++			rat_done = 0;
++			rat_send();
++		}
 +	} else if (!strcmp(line, "status")) {
 +		simple(C_DMS, 0x2d);
 +		simple(C_UIM, 0x2f);
@@ -736,6 +796,8 @@ index 0000000..2b448ce
 +		simple(C_NAS, 0x24);
 +		next_srv = now + 60000;
 +	}
++	if (srv[C_NAS].up && next_rat && now >= next_rat)
++		rat_send();
 +	if (srv[C_DMS].up && op_mode != 0 && now >= next_mode) {
 +		simple(C_DMS, 0x2d);	/* not online yet ("device not ready" early in boot): ask again */
 +		next_mode = now + 10000;
