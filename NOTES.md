@@ -1,3 +1,11 @@
+## 2026-11-04: 0190 built and temporarily booted
+- Source commit bd63bfe; Intel CI run 41693973899 succeeded, including the BSP acknowledgement regression check.
+- Downloaded kernel CRC and SHA256 verified. Packaged shim/out/shim-boot-0190.img with the unchanged
+  0189 shim, DTB, ADT and boot options except sweetbuild=190. Kernel SHA256 starts 777419ce; image starts 7c0edb73.
+- Started tools/sweet-usb-log.py with ignored logs/boot-0190.txt before fastboot boot; command returned success.
+  No partitions flashed. Hardware cellular result remains pending; boot-command success alone is not radio stability.
+- Receiver diagnostics: logs/receiver-0190.err; private fastboot output: logs/fastboot-0190.txt.
+
 ## 2026-11-03: 0190 prepared — BSP SendFile missing next-segment acknowledgement
 - Continued from the 0189 handoff on the cleaned codex/cellular history. No device write or reboot yet.
 - Static inspection of the local iOS 16 command-driver binary found the concrete response mismatch:
