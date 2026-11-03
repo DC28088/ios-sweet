@@ -1,3 +1,20 @@
+## 2026-11-03: 0190 prepared — BSP SendFile missing next-segment acknowledgement
+- Continued from the 0189 handoff on the cleaned codex/cellular history. No device write or reboot yet.
+- Static inspection of the local iOS 16 command-driver binary found the concrete response mismatch:
+  SendFile's success handler reads ExpectedSegmentInfo TLV 0x40 as a little-endian u16, then requires
+  it to equal the current segment plus one. A missing TLV defaults to zero, so the generic success
+  response in 0188/0189 fails the first non-final segment. This matches the segment-zero-only symptom.
+- Patch 0190 adds the expected-segment TLV, preserves service/client/transaction/channel routing,
+  rejects malformed file headers/counts, and retains the final transfer indication. It continues the
+  existing compatibility sink; Apple modem configuration is not written into the Qualcomm modem.
+- Added a synthetic host regression check covering multi-segment and single-segment transfers,
+  both channels, client/transaction routing, repeated requests, u16 boundary and malformed headers.
+  Checks pass with 0190 and reproduce the missing-TLV failure with 0189. CI now runs this check.
+- Hardware behavior is not yet established. If successful transfers still trigger the reset loop,
+  the separate Mav filesystem-sync/reset handshake remains the next lead. No claim of stable cellular yet.
+- Raw logs and local reverse-engineering material stay in ignored logs/ and research/. Public notes
+  record only protocol behavior; no subscriber, operator, location or call records are included.
+
 ## 2026-11-03: public-history privacy cleanup
 
 - Audited all six published branch histories for device/SIM identifiers and

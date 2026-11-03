@@ -62,6 +62,10 @@ jobs:
         if: github.event_name != 'workflow_dispatch' || inputs.run_tests
         run: python3 tools/check-adreno-core.py
 
+      - name: Check BSP carrier-file acknowledgements
+        if: github.event_name != 'workflow_dispatch' || inputs.run_tests
+        run: python3 tools/check-baseband-file-push.py
+
       - name: Fetch build script
         run: |
           git init -q dxb

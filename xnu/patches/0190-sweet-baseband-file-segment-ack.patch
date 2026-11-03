@@ -1,0 +1,28 @@
+--- a/iokit/Kernel/arm/SweetBaseband.inc
++++ b/iokit/Kernel/arm/SweetBaseband.inc
+@@ -497,12 +497,21 @@
+   const uint8_t *info = cbd_find(sdu, r.len, 0x01u, &len);   // TLV 0x10 is the signature, 0x11 a flag
+   const uint32_t type = info && len >= 6 ? info[0] : 0, segment = info && len >= 6 ? cbd_rd16(info + 2) : 0,
+                  total = info && len >= 6 ? cbd_rd16(info + 4) : 0;
+-  uint32_t n = cbq_private_answer(sdu, r.service, r.cid, 0, nullptr, 0, bb_out, sizeof bb_out);
++  const bool valid = cbd_sdu_ok(sdu, r.len) && info && len >= 6 && total && segment < total;
++  // The iOS 16 BSP SendFile response handler requires ExpectedSegmentInfo (TLV 0x40, LE u16).
++  // A generic QMI success without it leaves next at zero, so segment 0 fails the host's next == segment + 1 check.
++  // This acknowledges the existing compatibility sink; Mav configuration is never applied to the Qualcomm modem.
++  const uint32_t next = segment + 1u;
++  const uint8_t expected[] = { 0x40, 0x02, 0x00, (uint8_t)next, (uint8_t)(next >> 8) };
++  uint32_t n = cbq_private_answer(sdu, r.service, r.cid, valid ? 0u : CBQ_ERR_MALFORMED_MESSAGE,
++                                 valid ? expected : nullptr, valid ? sizeof expected : 0u, bb_out, sizeof bb_out);
+   if (n) bb_push(channel, bb_out, n);
+-  const bool last = info && len >= 6 && segment + 1u >= total;
+-  if (bb_files_logged < 24 && (segment == 0 || last)) {
++  const bool last = valid && next == total;
++  if (bb_files_logged < 48 && (!valid || segment < 2 || last)) {
+     bb_files_logged++;
+-    printf("SWEET BB: carrier file type %u segment %u of %u accepted%s\n", type, segment, total, last ? ", transfer done" : "");
++    // Protocol counters only: never log file data, names, identities or network information.
++    printf("SWEET BB: file push ack v2 ch %u cid %u txn %u type %u segment %u total %u next %u valid %u done %u\n",
++           channel, r.cid, cbd_rd16(sdu + 1), type, segment, total, valid ? next : 0u, valid ? 1u : 0u, last ? 1u : 0u);
+   }
+   if (last) {
+     const uint8_t status[] = { 0x01, 0x02, 0x00, (uint8_t)type, 0x00 };
