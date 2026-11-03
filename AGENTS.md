@@ -14,3 +14,8 @@
   recovery, modem, persist and the backups intact, and confirm each
   destructive step with the user before running it.
 - Keep device dumps, serial numbers and downloaded Apple artifacts out of git.
+
+- Follow `PRIVACY.md`: never publish device/SIM IDs, phone/call/SMS records,
+  carrier/cell-location details, personal network identifiers or raw device logs.
+- Public history was privacy-rewritten on 2026-11-03. Never merge/push pre-cleanup
+  history; start from the cleaned remote and transplant reviewed code changes.
