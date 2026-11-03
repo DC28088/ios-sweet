@@ -1,9 +1,9 @@
 diff --git a/phone/wifi/cell.c b/phone/wifi/cell.c
 new file mode 100644
-index 0000000..9e55da3
+index 0000000..715f702
 --- /dev/null
 +++ b/phone/wifi/cell.c
-@@ -0,0 +1,813 @@
+@@ -0,0 +1,916 @@
 +/*
 + * cell: the modem's cellular side, seen from wland's QRTR link. The modem firmware wland boots for
 + * the WLAN PD is the whole MPSS image, so its QMI services (DMS 2, NAS 3, VOICE 9, UIM 0xb, ...)
@@ -55,6 +55,24 @@ index 0000000..9e55da3
 + * (OP_DEVICE_UNSUPPORTED) at 2.4 s. Try variants in order, re-send once online, read back with 0x34.
 + */
 +static uint16_t rat_mask = 0x0c;
++
++/*
++ * The iOS baseband bridge (xnu 0184, boot-arg sweetbb=1): the kernel publishes AppleBaseband and the QMUX
++ * channels CommCenter/ABM open, and its QMI clients reach the modem through wland's QRTR link. Records on
++ * /dev/sweet-bb, little endian: u32 type, a, b, c, d, len, then len bytes padded to 4.
++ *   from the kernel: 1 QMI request {a local port, b node, c port}   2 DEL_CLIENT {a local port}
++ *   to the kernel:   3 modem data {a dst port, b src node, c src port}   4 NEW_SERVER {a service, b version|instance<<8,
++ *                    c node, d port}   5 DEL_SERVER {a service, c node, d port}   6 READY (the kernel publishes)
++ * The device has no select: it is read every poll round (a read returns 0 when nothing waits).
++ * Off with /var/local/cell.nobb.
++ */
++#define BB_DEV	"/dev/sweet-bb"
++static int bb_fd = -1, bb_ready;
++static struct { uint32_t service, vi, node, port; } bb_srv[128];
++static unsigned bb_nsrv;
++static unsigned long bb_req, bb_data, bb_del, bb_err;
++static uint8_t bb_buf[64 * 1024 + 4096];
++static void bb_record(uint32_t type, uint32_t a, uint32_t b, uint32_t c, uint32_t d, const void *data, uint32_t len);
 +static int rat_variant, rat_done, rat_rounds;
 +static uint64_t next_rat;
 +
@@ -282,12 +300,35 @@ index 0000000..9e55da3
 +	}
 +	printf("cell: QMI client for DMS/UIM/NAS/VOICE at ports %#x..%#x\n", CELL_PORT0, CELL_PORT0 + CELL_PORTS - 1);
 +	unlink(CELL_STATUS);
++	if (access("/var/local/cell.nobb", F_OK)) {
++		bb_fd = open(BB_DEV, O_RDWR | O_NONBLOCK);
++		if (bb_fd < 0) {
++			printf("cell: no %s (kernel without sweetbb=1?)\n", BB_DEV);
++		} else {
++			printf("cell: iOS baseband bridge %s open; replaying %u service(s)\n", BB_DEV, bb_nsrv);
++			for (unsigned i = 0; i < bb_nsrv; i++)
++				bb_record(4, bb_srv[i].service, bb_srv[i].vi, bb_srv[i].node, bb_srv[i].port, NULL, 0);
++		}
++	}
 +}
 +
 +void cell_new_server(uint32_t service, uint32_t version_instance, uint32_t node, uint32_t port)
 +{
 +	if (!cell_on)
 +		return;
++	unsigned i;
++	for (i = 0; i < bb_nsrv; i++)
++		if (bb_srv[i].service == service && bb_srv[i].node == node && bb_srv[i].port == port)
++			break;
++	if (i == bb_nsrv && bb_nsrv < sizeof(bb_srv) / sizeof(bb_srv[0]))
++		bb_nsrv++;
++	if (i < bb_nsrv) {
++		bb_srv[i].service = service;
++		bb_srv[i].vi = version_instance;
++		bb_srv[i].node = node;
++		bb_srv[i].port = port;
++	}
++	bb_record(4, service, version_instance, node, port, NULL, 0);
 +	for (int c = 0; c < CELL_PORTS; c++) {
 +		if (svc_id[c] != service || (srv[c].up && (version_instance >> 8) != 0))
 +			continue;	/* the lowest instance (0) is the primary subscription's */
@@ -302,6 +343,12 @@ index 0000000..9e55da3
 +
 +void cell_del_server(uint32_t service, uint32_t node, uint32_t port)
 +{
++	for (unsigned i = 0; i < bb_nsrv; i++)
++		if (bb_srv[i].service == service && bb_srv[i].node == node && bb_srv[i].port == port) {
++			bb_srv[i] = bb_srv[--bb_nsrv];
++			break;
++		}
++	bb_record(5, service, 0, node, port, NULL, 0);
 +	for (int c = 0; c < CELL_PORTS; c++)
 +		if (srv[c].up && svc_id[c] == service && srv[c].node == node && srv[c].port == port) {
 +			srv[c].up = 0;
@@ -733,6 +780,11 @@ index 0000000..9e55da3
 +{
 +	struct qmi_msg m;
 +	int c = (int)(h->dst_port - CELL_PORT0);
++	if (h->dst_port >= CELL_BB_PORT0 && h->dst_port < CELL_BB_PORT0 + CELL_BB_PORTS) {
++		bb_data++;
++		bb_record(3, h->dst_port, h->src_node, h->src_port, 0, d, n);
++		return;
++	}
 +	if (!cell_port(h->dst_port) || qmi_parse(d, n, &m))
 +		return;
 +	switch (c) {
@@ -783,6 +835,56 @@ index 0000000..9e55da3
 +	}
 +}
 +
++static void bb_record(uint32_t type, uint32_t a, uint32_t b, uint32_t c, uint32_t d, const void *data, uint32_t len)
++{
++	static uint8_t out[24 + 64 * 1024 + 4];
++	if (bb_fd < 0 || len > 64 * 1024)
++		return;
++	uint32_t w[6] = { type, a, b, c, d, len }, padded = (len + 3u) & ~3u;
++	memcpy(out, w, 24);
++	if (len)
++		memcpy(out + 24, data, len);
++	memset(out + 24 + len, 0, padded - len);
++	if (write(bb_fd, out, 24 + padded) != (ssize_t)(24 + padded) && bb_err++ < 5)
++		printf("[%6llu] cell: bb write of record %u failed\n", (unsigned long long)now_ms(), type);
++}
++
++/* QMI requests and released clients from the kernel bridge -> the modem */
++static void bb_poll(void)
++{
++	if (bb_fd < 0)
++		return;
++	if (!bb_ready && srv[C_DMS].up && srv[C_NAS].up && srv[C_UIM].up && srv[C_VOICE].up) {
++		bb_ready = 1;
++		printf("[%6llu] cell: bb READY (%u modem services known) -> the kernel publishes AppleBaseband\n",
++		       (unsigned long long)now_ms(), bb_nsrv);
++		bb_record(6, 0, 0, 0, 0, NULL, 0);
++	}
++	ssize_t n = read(bb_fd, bb_buf, sizeof(bb_buf));
++	if (n <= 0)
++		return;
++	for (size_t at = 0; at + 24 <= (size_t)n;) {
++		uint32_t w[6];
++		memcpy(w, bb_buf + at, 24);
++		uint32_t padded = (w[5] + 3u) & ~3u;
++		if (at + 24 + padded > (size_t)n)
++			break;
++		if (w[0] == 1 && w[1] >= CELL_BB_PORT0 && w[1] < CELL_BB_PORT0 + CELL_BB_PORTS) {
++			if (bb_req++ < 8)
++				printf("[%6llu] cell: bb request %u bytes %#x -> %u:%x\n", (unsigned long long)now_ms(), w[5], w[1], w[2], w[3]);
++			qrtr_send(QRTR_TYPE_DATA, w[1], w[2], w[3], bb_buf + at + 24, w[5]);
++		} else if (w[0] == 2 && w[1] >= CELL_BB_PORT0 && w[1] < CELL_BB_PORT0 + CELL_BB_PORTS) {
++			/* struct qrtr_ctrl_pkt DEL_CLIENT {cmd, client node, client port}, from the released port to the modem's control port */
++			uint32_t pkt[5] = { QRTR_TYPE_DEL_CLIENT, QRTR_NODE_APPS, w[1], 0, 0 };
++			bb_del++;
++			qrtr_send(QRTR_TYPE_DEL_CLIENT, w[1], QRTR_NODE_MODEM, QRTR_PORT_CTRL, pkt, sizeof(pkt));
++		} else if (bb_err++ < 5) {
++			printf("cell: bb record type %u port %#x ignored\n", w[0], w[1]);
++		}
++		at += 24 + padded;
++	}
++}
++
 +void cell_poll(void)
 +{
 +	if (!cell_on)
@@ -796,6 +898,7 @@ index 0000000..9e55da3
 +		simple(C_NAS, 0x24);
 +		next_srv = now + 60000;
 +	}
++	bb_poll();
 +	if (srv[C_NAS].up && next_rat && now >= next_rat)
 +		rat_send();
 +	if (srv[C_DMS].up && op_mode != 0 && now >= next_mode) {
@@ -819,10 +922,10 @@ index 0000000..9e55da3
 +}
 diff --git a/phone/wifi/cell.h b/phone/wifi/cell.h
 new file mode 100644
-index 0000000..0cd2baf
+index 0000000..e93911e
 --- /dev/null
 +++ b/phone/wifi/cell.h
-@@ -0,0 +1,18 @@
+@@ -0,0 +1,24 @@
 +/* Cellular status over the modem's own QMI services (DMS, UIM, NAS, VOICE), on wland's QRTR link. */
 +#ifndef CELL_H
 +#define CELL_H
@@ -836,7 +939,13 @@ index 0000000..0cd2baf
 +/* QRTR NEW_SERVER / DEL_SERVER from the modem (ctrl words 1-4) */
 +void cell_new_server(uint32_t service, uint32_t version_instance, uint32_t node, uint32_t port);
 +void cell_del_server(uint32_t service, uint32_t node, uint32_t port);
-+static inline int cell_port(uint32_t port) { return port >= CELL_PORT0 && port < CELL_PORT0 + CELL_PORTS; }
++/* ABM's QMI clients through the kernel's iOS baseband bridge (/dev/sweet-bb, xnu 0184): QRTR ports 0x4100..0x413f */
++#define CELL_BB_PORT0	0x4100
++#define CELL_BB_PORTS	64
++static inline int cell_port(uint32_t port)
++{
++	return (port >= CELL_PORT0 && port < CELL_PORT0 + CELL_PORTS) || (port >= CELL_BB_PORT0 && port < CELL_BB_PORT0 + CELL_BB_PORTS);
++}
 +void cell_handle(const struct qrtr_hdr *h, const uint8_t *d, uint32_t n);
 +void cell_poll(void);	/* every link poll round: periodic queries, /var/local/cell.cmd */
 +

@@ -4,6 +4,10 @@ name: sweet-wifi
 # with Sweet's board patches from userspace/wifi/patches. Kernel side: xnu/patches/0138.
 on:
   workflow_dispatch:
+    inputs:
+      runner:
+        description: runner label (macos-15 arm64 queues for hours under capacity limits)
+        default: macos-15-intel
   push:
     branches: [codex/adreno-power-audit, codex/cellular]
     paths: [userspace/wifi/**, .github/workflows/wifi.yml]
@@ -12,7 +16,7 @@ env:
   DONOR_COMMIT: f09fdb58a2c074d131072947b247240532b7d97d
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: ${{ inputs.runner || 'macos-15-intel' }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
