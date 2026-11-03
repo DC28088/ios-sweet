@@ -1,9 +1,9 @@
 diff --git a/phone/wifi/cell.c b/phone/wifi/cell.c
 new file mode 100644
-index 0000000..c4f64eb
+index 0000000..2b448ce
 --- /dev/null
 +++ b/phone/wifi/cell.c
-@@ -0,0 +1,715 @@
+@@ -0,0 +1,751 @@
 +/*
 + * cell: the modem's cellular side, seen from wland's QRTR link. The modem firmware wland boots for
 + * the WLAN PD is the whole MPSS image, so its QMI services (DMS 2, NAS 3, VOICE 9, UIM 0xb, ...)
@@ -212,6 +212,33 @@ index 0000000..c4f64eb
 +		qmi_tlv_u8(&q, 0x13, 1);
 +		qmi_tlv_u8(&q, 0x19, 1);
 +		send_req(C_NAS, 0x03, &q);
++		{
++			/*
++			 * Radio access preference (Set System Selection Preference 0x33, until the next modem boot). There
++			 * is no IMS/VoLTE here, so on LTE the phone cannot take calls (observed 0184: hopping GSM/UMTS/LTE,
++			 * callers heard "busy", no call indication). Default GSM+UMTS; /var/local/cell.lte adds LTE;
++			 * /var/local/cell.rat holds a hex QMI RAT mask (4 gsm, 8 umts, 0x10 lte) that wins. Service
++			 * domain CS+PS so packet attach is allowed too.
++			 */
++			uint16_t rat_mask = 0x0c;
++			if (!access("/var/local/cell.lte", F_OK))
++				rat_mask = 0x1c;
++			FILE *rf = fopen("/var/local/cell.rat", "r");
++			if (rf) {
++				unsigned v;
++				if (fscanf(rf, "%x", &v) == 1 && v && v < 0x80)
++					rat_mask = (uint16_t)v;
++				fclose(rf);
++			}
++			uint32_t domain = 2;
++			req_start(C_NAS, &q, 0x33);
++			qmi_tlv(&q, 0x11, &rat_mask, 2);
++			qmi_tlv_u8(&q, 0x17, 0);
++			qmi_tlv(&q, 0x18, &domain, 4);
++			printf("cell: radio preference mask %#x (%s%s%s), CS+PS, until the next modem boot\n", rat_mask,
++			       rat_mask & 4 ? "gsm " : "", rat_mask & 8 ? "umts " : "", rat_mask & 0x10 ? "lte" : "");
++			send_req(C_NAS, 0x33, &q);
++		}
 +		simple(C_NAS, 0x24);	/* Get Serving System */
 +		simple(C_NAS, 0x4f);	/* Get Signal Info */
 +		next_sig = now_ms() + 10000;
@@ -483,6 +510,11 @@ index 0000000..c4f64eb
 +			dl = sizeof(plmn_desc) - 1;
 +		memcpy(plmn_desc, pl + 5, dl);
 +		plmn_desc[dl] = 0;
++		for (unsigned i = 0; i < dl; i++)
++			if (plmn_desc[i] < 0x20 || plmn_desc[i] > 0x7e) {
++				plmn_desc[0] = 0;	/* not ASCII (GSM 7-bit or UCS-2 coded): left out */
++				break;
++			}
 +	}
 +	if (old_reg != reg_state || old_rat != rat || !indication)
 +		printf("[%6llu] cell: %s%s, cs %d ps %d, %s, PLMN %03d-%02d \"%s\"%s\n", (unsigned long long)now_ms(), reg_name(reg_state),
@@ -531,6 +563,10 @@ index 0000000..c4f64eb
 +	switch (m->id) {
 +	case 0x03:
 +		result_ok(m, C_NAS, "register indications");
++		break;
++	case 0x33:
++		if (result_ok(m, C_NAS, "set system selection preference"))
++			printf("cell: radio preference accepted\n");
 +		break;
 +	case 0x24:
 +		if (m->type == QMI_INDICATION)
@@ -640,8 +676,8 @@ index 0000000..c4f64eb
 +			printf("cell: call answered (no audio path yet: ADSP/voice routing is not up)\n");
 +		break;
 +	default:
-+		if (m->type != QMI_INDICATION)
-+			qmi_dump(m);
++		printf("[%6llu] cell: voice ", (unsigned long long)now_ms());
++		qmi_dump(m);
 +	}
 +}
 +
