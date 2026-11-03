@@ -16,6 +16,22 @@
   cached commit views; rewriting branches cannot erase external copies.
 - No device writes, boots, or driver changes performed.
 
+## 2026-11-03 22:45 IST: first 0188 boot (0187+0188) -> two fixes, revised 0188 building (CI 41680017657)
+- CI 41667413318 FAILED to compile: the Python edits for 0187/0188 ran in an unquoted shell heredoc, so "\\n" in new
+  printf literals became real newlines (SweetBaseband.inc:470/1020 "expected expression", then the class cascade). Fixed
+  (commit after 36c0736); rebuilt CI 41674076383 -> xnu/out-0188 18f98251..., image shim/out/shim-boot-0188.img
+  495ee27b..., booted 22:19:39 (log logs/boot-0188.txt). Lesson: write such edits with quoted heredocs (<<'EOF').
+- Result: "carrier file type 0 segment 0 of 0" for every segment -> FileTransferInfo is TLV **0x01** (wrapper type byte 1
+  in sendSegmentWithData_sync; 0x10 = signature, 0x11 = a 2-byte TLV), so no completion indication was sent and every
+  push still failed. Reset messages: messageClients returned 0xe00002c7 (our own user clients answer message() with
+  unsupported; not a delivery failure), but they were only sent AFTER "Soft reset failed": ABM's soft reset never calls
+  AppleBaseband; it is DMS Set Operating Mode RESET ("Resetting Operating Mode: kReset_Mode"; 0xe4 = AWD metrics, not
+  reset). The only path into AppleBaseband was the hard-reset fallback.
+- Revised **0188**: TLV 0x01; bb_dms_reset answers DMS 0x2e with mode 4 itself (never reaches the modem, which belongs
+  to wland), then bb_qmi_soft_reset (sahara back to before SendImage) and reset-detected 50 ms / alive 150 ms after the
+  request via thread calls (also for the AppleBaseband selector path); AppleBaseband service pointer kept from
+  publication. Logs "DMS set operating mode N" (16 max).
+
 ## 2026-11-03 21:05 IST: wland 0004 holds (no lost requests, no crash); new loop: carrier-file push + soft reset
 - Boot of shim-boot-0186.img with wland ef9a6d24 (20:43): wland alive, 0 `glink: cannot send`, no ATCS_TIMEOUT resets.
   SIM Ready and registered after ABM boot, then CommCenter's carrier-file push (set.bb: 5 files, first
