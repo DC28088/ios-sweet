@@ -18,7 +18,18 @@
   Baseband does not exist. /private/var/wireless/baseband_data exists (empty).
 - dyld map (stub images vs subcache vmoffsets): libPCITransport, libIOABP, libTelephonyIOKitDynamic,
   libTelephonyBasebandDynamic, libQMIParserDynamic, libARI = subcache .29; AppleBasebandManager + libBasebandManager
-  = .17; libCommCenterBase/AppleBasebandServices = .31; CoreTelephony = .03. Pulling .29/.30 into research/dsc.
+  = .17; libCommCenterBase/AppleBasebandServices = .31; CoreTelephony = .03. .29/.30 now in research/dsc.
+- **iOS 16 ABI VERIFIED (static, libIOABP in .29, capstone; scratch script re/abpdis.py)**: class names AppleBaseband,
+  AppleBasebandPCIControl, AppleBasebandPCIInterface, ABPInterfaceProtocol, AppleBasebandPCIPDPManagerBase present.
+  libPCITransport channel table = iPadOS 17's minus "at" (pbl sahara diag refs qmux1 qmux2 rom boot ari trace dpl
+  mediactl vcom gnss qdss virtual_timesync boot_logger); kernel matches by name only (cbh_channel_id unused) -> OK.
+  IOKit calls (0x1ecc58ab4 IOConnectCallAsyncScalarMethod, ..acc CallScalarMethod, ..ac0 CallMethod): interface
+  open 0/1 scalar, close 1/0, write 2/2, read 3/2 (sync and async), sendImage 4/2, readRegister 5/1, abort 6/1,
+  start 7/1, timeSync 8/3, mapMemory 9/3, unmap 10/1, 11/1, 12/1; async ref words 3; control open 0/1, close 1/0,
+  readLogs 2/3 async, loggerTune 3/4 -> all equal to coachz_bb_channels.h. Not published by the kernel:
+  AppleBasebandPCITraceBackendRaw (trace client: readLogs 0/4, flush 1/2, dumpRegistry 2) - watch whether ABM needs it.
+- wland 784faed6 (CI sweet-wifi 41625995638 on macos-15-intel, patch 0003 7f855318...) INSTALLED 17:0x IST (readback
+  OK). Takes effect next boot. Previous: 2bf85d06 (research/cell-install-0184/wifi-41570373592/wland).
 
 ## 2026-11-03 16:17 IST: kernel 0184 (baseband bridge) BOOTED; wland 2bf85d06 (GSM+UMTS) INSTALLED, needs one more boot
 - Device-specific cellular/location/call observations omitted for privacy.
