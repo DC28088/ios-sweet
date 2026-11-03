@@ -1,3 +1,25 @@
+## 2026-11-03 (evening): CELLULAR phase 2 iOS side in progress (user: "go ahead with the iOS side")
+- wland (5d30286, patch 0003 regenerated + verified): RAT retry (ecc1fd3) + /dev/sweet-bb bridge in cell.c:
+  open O_RDWR|O_NONBLOCK in cell_init (off: /var/local/cell.nobb), all NEW/DEL_SERVER forwarded (bb_srv[128]
+  table replayed on open, since the first servers arrive during link_up before cell_init), modem DATA for ports
+  0x4100..0x413f -> record 3, READY (6) once DMS/NAS/UIM/VOICE are up, kernel records read every poll round:
+  1 -> qrtr_send(DATA, port, node, port), 2 -> QRTR ctrl DEL_CLIENT {6, node 1, port} to 0:ctrl. cell_port() widened.
+  wifi.yml now runs on macos-15-intel (arm64 run 41623670424 "not acquired by Runner ... capacity"); CI 41625995638.
+- ADT: tools/adt-add-baseband.py (identity props checked against research/ipsw-x/d22ap.adt: name, device_type,
+  compatible baseband,n41, class 3, imeisv "9", config; device-imei 32 zero bytes, region-sku 0x40 zero bytes; no
+  function-* GPIO refs) -> shim/out/sweet-0185-baseband.adt cd496b6a.... Image shim/out/shim-boot-0184-bbadt.img
+  65cb1d6a... (payload fe6388c8...; 0184 kernel, 0184-bb cmdline incl. sweetbb=1; kernel/dtb == 0184-bb). NOT booted.
+- launchd: phone /System/Library/LaunchDaemons/com.apple.CommCenter.plist (59fb2d07..., _LimitLoadToDeviceTree baseband,
+  UserName _wireless, KeepAlive) + -noncellular (_LimitLoadFromDeviceTree). Backup of the live launchd.plist:
+  research/cell-install-0184/launchd/launchd.plist.before-commcenter 1bd48aa1... (531 jobs, no com.apple.CommCenter
+  label); prepared launchd.plist.with-commcenter c65c3a90... (532 jobs, binary). NOT installed (needs user OK).
+  Risk (history): image v13 removed CommCenter because Setup blocked in CoreTelephony getSubscriptionInfo.
+- Firmware: phone has /usr/standalone/update/Mav17.Release.bbfw (34132850) + ICE17; /usr/local/standalone/firmware/
+  Baseband does not exist. /private/var/wireless/baseband_data exists (empty).
+- dyld map (stub images vs subcache vmoffsets): libPCITransport, libIOABP, libTelephonyIOKitDynamic,
+  libTelephonyBasebandDynamic, libQMIParserDynamic, libARI = subcache .29; AppleBasebandManager + libBasebandManager
+  = .17; libCommCenterBase/AppleBasebandServices = .31; CoreTelephony = .03. Pulling .29/.30 into research/dsc.
+
 ## 2026-11-03 16:17 IST: kernel 0184 (baseband bridge) BOOTED; wland 2bf85d06 (GSM+UMTS) INSTALLED, needs one more boot
 - Device-specific cellular/location/call observations omitted for privacy.
 
