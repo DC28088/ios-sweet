@@ -1,11 +1,43 @@
 --- a/iokit/Kernel/arm/SweetBaseband.inc
 +++ b/iokit/Kernel/arm/SweetBaseband.inc
-@@ -448,6 +448,35 @@
+@@ -315,8 +315,31 @@
+ static void bb_sim_request(const struct cbq_result &r, const uint8_t *sdu);
+ 
+ // A request for the modem, with the data port named as this modem has it.
++// Sweet: ABM's soft reset of a Mav baseband (e.g. after the carrier-file push) is DMS Set Operating Mode (0x2e) with TLV 0x01 mode 4
++// (RESET), then a wait for AppleBaseband's reset-detected message. This SoC's modem belongs to wland and must not reset under it:
++// answer the request here and play the reset back to ABM (bb_qmi_soft_reset, after the AppleBaseband part below).
++static void bb_qmi_soft_reset(void);
++static uint32_t bb_dms_modes_logged;
++static bool bb_dms_reset(const struct cbq_result &r, const uint8_t *sdu)
++{
++  if (r.service != 0x02u || r.len < 7u || cbd_rd16(sdu + 3) != 0x2eu) return false;
++  uint32_t len = 0;
++  const uint8_t *mode = cbd_find(sdu, r.len, 0x01u, &len);
++  if (!mode || len < 1) return false;
++  if (bb_dms_modes_logged < 16) {
++    bb_dms_modes_logged++;
++    printf("SWEET BB: DMS set operating mode %u%s\n", mode[0], mode[0] == 4u ? " (reset): answered here, reset played back" : "");
++  }
++  if (mode[0] != 4u) return false;
++  const uint32_t n = cbq_private_answer(sdu, r.service, r.cid, 0, nullptr, 0, bb_out, sizeof bb_out);
++  if (n) bb_push(r.channel ? CBH_QMUX2 : CBH_QMUX1, bb_out, n);
++  bb_qmi_soft_reset();
++  return true;
++}
++
+ static void bb_to_modem(const struct cbq_result &r, const uint8_t *sdu)
+ {
++  if (bb_dms_reset(r, sdu)) return;
+   if (r.service == CBD_SVC_WDS) bb_pdp_note(r.local_port, r.cid, r.channel, sdu, r.len);
+   bb_sim_request(r, sdu);
+   if (r.service == CBE_SVC_UIM && bb_esim.route_failed) {
+@@ -448,6 +471,35 @@
    }
  }
  
 +// Sweet: CommCenter's carrier-file push (QMIBasebandSettingsDriver::sendSegmentWithData_sync, libCommCenterMCommandDrivers): BSP
-+// SendFile 0xa000 per segment, TLV 0x10 FileTransferInfo {u8 file type (bsp::QMIFileType: 3 PRI, 6 GRI, 7/8 DER PRI/GRI, ...), u8,
++// SendFile 0xa000 per segment, TLV 0x01 FileTransferInfo {u8 file type (bsp::QMIFileType: 3 PRI, 6 GRI, 7/8 DER PRI/GRI, ...), u8,
 +// u16 segment number from 0, u16 total segments, data}, a signature on the last one; done when the baseband sends FileTransferStatus
 +// 0xa001 with TLV 0x01 {u8 file type, u8 result, 0 = FILE_TRANSFER_SUCCESS}. This modem runs its own Qualcomm configuration, so the
 +// files are taken and dropped. Unanswered, every push failed and CommCenter reset the baseband after each round (an endless loop).
@@ -15,7 +47,7 @@
 +static int bb_send_file(uint32_t channel, const struct cbq_result &r, const uint8_t *sdu)
 +{
 +  uint32_t len = 0;
-+  const uint8_t *info = cbd_find(sdu, r.len, 0x10u, &len);
++  const uint8_t *info = cbd_find(sdu, r.len, 0x01u, &len);   // TLV 0x10 is the signature, 0x11 a flag
 +  const uint32_t type = info && len >= 6 ? info[0] : 0, segment = info && len >= 6 ? cbd_rd16(info + 2) : 0,
 +                 total = info && len >= 6 ? cbd_rd16(info + 4) : 0;
 +  uint32_t n = cbq_private_answer(sdu, r.service, r.cid, 0, nullptr, 0, bb_out, sizeof bb_out);
@@ -36,7 +68,7 @@
  // A private request the bridge answers itself: 1 when it did.
  static int bb_private_answer(uint32_t channel, const struct cbq_result &r, const uint8_t *sdu)
  {
-@@ -460,6 +489,7 @@
+@@ -460,6 +512,7 @@
      if (n != CBE_DEFERRED) bb_push(channel, bb_out, n);
      return 1;
    }
@@ -44,3 +76,65 @@
    if (r.service == CBD_SVC_BSP && message == CBD_BSP_ACTIVATION_REGISTER) {
      const uint32_t n = cbq_private_answer(sdu, r.service, r.cid, 0, 0, 0, bb_out, sizeof bb_out);
      if (n) bb_push(channel, bb_out, n);
+@@ -980,24 +1033,42 @@
+ #define BB_MSG_RESET_DETECTED 0xe3ff8000u
+ #define BB_MSG_ALIVE 0xe3ff8001u
+ static IOService *bb_baseband_service;
+-static thread_call_t bb_alive_call;
++static thread_call_t bb_reset_call, bb_alive_call;
+ static uint32_t bb_reset_messages;
++static void bb_after_ms(thread_call_t call, uint32_t ms)
++{
++  uint64_t deadline;
++  clock_interval_to_deadline(ms, kMillisecondScale, &deadline);
++  if (call) thread_call_enter_delayed(call, deadline);
++}
+ static void bb_alive(thread_call_param_t, thread_call_param_t)
+ {
+   if (!bb_baseband_service) return;
+   const IOReturn r = bb_baseband_service->messageClients(BB_MSG_ALIVE);
+   if (bb_reset_messages <= 8) printf("SWEET BB: alive message sent (0x%x)\n", r);
+ }
+-static void bb_reset_detected(IOService *service)
++static void bb_reset_fire(thread_call_param_t, thread_call_param_t)
+ {
+-  if (!service) return;
+-  bb_baseband_service = service;
+-  const IOReturn r = service->messageClients(BB_MSG_RESET_DETECTED);
++  if (!bb_baseband_service) return;
++  const IOReturn r = bb_baseband_service->messageClients(BB_MSG_RESET_DETECTED);
+   if (++bb_reset_messages <= 8) printf("SWEET BB: reset detected message sent (0x%x), alive in 100 ms\n", r);
++  bb_after_ms(bb_alive_call, 100);
++}
++// After the caller has returned and started waiting (ABM logs "waiting for reset detection" after issuing the reset): 50 ms later.
++static void bb_reset_detected(IOService *service)
++{
++  if (service) bb_baseband_service = service;
++  if (!bb_baseband_service) return;
++  if (!bb_reset_call) bb_reset_call = thread_call_allocate(bb_reset_fire, nullptr);
+   if (!bb_alive_call) bb_alive_call = thread_call_allocate(bb_alive, nullptr);
+-  uint64_t deadline;
+-  clock_interval_to_deadline(100, kMillisecondScale, &deadline);
+-  if (bb_alive_call) thread_call_enter_delayed(bb_alive_call, deadline);
++  bb_after_ms(bb_reset_call, 50);
++}
++// bb_lock held (from bb_to_modem): back to before SendImage, as a reset or power-on through AppleBaseband.
++static void bb_qmi_soft_reset(void)
++{
++  bb_boot_image_sent = false;
++  bb_flush(CBH_SAHARA);
++  bb_reset_detected(nullptr);
+ }
+ 
+ class AppleBasebandUserClient : public IOUserClient {
+@@ -1136,7 +1207,9 @@
+   bb_del_client = del_client;
+   IOService *provider = IOService::getResourceService();
+   int made = 0;
+-  made += provider && bb_publish<AppleBaseband>(provider);
++  AppleBaseband *baseband = provider ? bb_publish<AppleBaseband>(provider) : nullptr;
++  if (baseband) bb_baseband_service = baseband;
++  made += baseband != nullptr;
+   made += provider && bb_publish<AppleBasebandPCIControl>(provider);
+   for (uint32_t c = 0; c < CBH_PUBLISHED; c++) made += provider && bb_publish<AppleBasebandPCIInterface>(provider, c);
+   made += provider && bb_publish<AppleBasebandPCIMAVPDPManager>(provider);
