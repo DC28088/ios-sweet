@@ -30,6 +30,12 @@
   AppleBasebandPCITraceBackendRaw (trace client: readLogs 0/4, flush 1/2, dumpRegistry 2) - watch whether ABM needs it.
 - wland 784faed6 (CI sweet-wifi 41625995638 on macos-15-intel, patch 0003 7f855318...) INSTALLED 17:0x IST (readback
   OK). Takes effect next boot. Previous: 2bf85d06 (research/cell-install-0184/wifi-41570373592/wland).
+- launchd.plist WITH com.apple.CommCenter INSTALLED (user chose "both in one boot"): phone file was 1bd48aa1 (= local
+  backup), now c65c3a90 (532 jobs, readback OK); on-phone backup /System/Library/xpc/launchd.plist.pre-commcenter
+  (1bd48aa1). ROLLBACK: sweet-files rm + put research/cell-install-0184/launchd/launchd.plist.before-commcenter
+  /System/Library/xpc/launchd.plist 644, sync, reboot. NEXT: fastboot boot shim/out/shim-boot-0184-bbadt.img (watcher),
+  then check: SpringBoard alive, "cell: bb READY", "SWEET BB: N of 22 services published", CommCenter pid / crashes,
+  SWEET BB channel opens (report every N s), Settings > Cellular / status bar.
 
 ## 2026-11-03 16:17 IST: kernel 0184 (baseband bridge) BOOTED; wland 2bf85d06 (GSM+UMTS) INSTALLED, needs one more boot
 - Device-specific cellular/location/call observations omitted for privacy.
