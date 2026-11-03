@@ -1,3 +1,21 @@
+## 2026-11-03: public-history privacy cleanup
+
+- Audited all six published branch histories for device/SIM identifiers and
+  private cellular observations. Removed network/location and call-test prose
+  from historical notes; sanitized a personal SSID reference.
+- Rechecked 476 rewritten notes blobs: flagged records absent. Driver/build
+  source hashes at the branch tips are unchanged. Added PRIVACY.md and agent
+  rules against publishing sensitive device data or restoring old history.
+- Full decimal IMEI/IMSI/ICCID-length values and international phone-number
+  patterns were not found; this pattern scan is not a guarantee of no secrets.
+- GitHub issues/PRs and releases were empty at audit time. Build workflows
+  package source/binaries, not runtime device captures. Downloads of older CI
+  logs timed out; those logs have not been certified clean by this audit.
+- Existing local clones and GitHub cached/unreachable commits require separate
+  handling. Reclone before further pushes. GitHub Support may need to purge
+  cached commit views; rewriting branches cannot erase external copies.
+- No device writes, boots, or driver changes performed.
+
 ## 2026-10-30 (later): native driver - plan and N0 device/PM4 foundation
 
 The user asked for a native Metal driver (no metal2vulkan, no Turnip) while another agent was
