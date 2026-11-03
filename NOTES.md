@@ -1,3 +1,6 @@
+## 2026-11-03 16:17 IST: kernel 0184 (baseband bridge) BOOTED; wland 2bf85d06 (GSM+UMTS) INSTALLED, needs one more boot
+- Device-specific cellular/location/call observations omitted for privacy.
+
 ## 2026-11-03: BRANCH codex/cellular (from myfork/codex/native-adreno-metal c27b1a9 = kernel 0183)
 Cellular work continues here so kernel patches stack on the 0183 kernel the phone runs. Wi-Fi/shim
 changes came over from codex/adreno-power-audit (commits 099bf34..0d12f38 there).
