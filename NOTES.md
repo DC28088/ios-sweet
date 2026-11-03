@@ -16,6 +16,40 @@
   cached commit views; rewriting branches cannot erase external copies.
 - No device writes, boots, or driver changes performed.
 
+## 2026-11-03 23:50 IST: HANDOFF (to Codex) - 0189 booted twice; cellular still loops on the carrier-file push
+- Current phone state: kernel 0189 (xnu/out-0189 fc7c348a..., image shim/out/shim-boot-0189.img bd57ec8e..., second boot
+  23:40:56, log logs/boot-0189b.txt; first boot log logs/boot-0189.txt), wland 0004 (ef9a6d24, /var/local/bin/wland),
+  launchd.plist with CommCenter + OS_ACTIVITY_DT_MODE (90a99987), unzipped Mav17 bbfw folder in /private/preboot/<HASH>/...
+  (+ symlink /usr/standalone/firmware/Baseband/Mav17). Wi-Fi works on the second boot (USER).
+- 0189 result: the reset storm is gone (no "baseband crash detected"). TLV 0x40 PRI version did NOT stop the push: each
+  SIM-ready round still pushes PRI, GRI, IMSI_SWITCH, MULTI_PDN (all "Pushing ... failed", "File transfer complete:
+  failure" within ~90 ms of starting, only segment 0 of a file reaches 0xa000), then "Resetting baseband after pushing
+  files (kCarrierBundleChange)" -> soft reset = DMS mode 4 (answered by the bridge since 0188b) -> ABM "Soft reset failed:
+  Baseband never started filesystem sync" -> fallback -> Reset -> Online -> SIM Ready again -> push again. USER: no SOS,
+  no Cellular section during this loop.
+- First 0189 boot: wland's GLINK TX jammed ~13 s in during a large modem tftp read (1060-byte sends), "glink: cannot send
+  N bytes (intents 47..119)" x86, all remote intents busy and none returned -> Wi-Fi (same modem link) also dead until
+  reboot. Second boot did not jam (so far). Unresolved: whether wland leaks intents (nested link_send from rx handlers,
+  e.g. tftp) or the modem stalls.
+- OPEN LEADS for the push loop (pick one):
+  (a) why the push fails: BSP queries in the push window answered not supported by the bridge (0xe010, 0xe012
+      bootstrap, 0xe014 GetCDRXInfo, 0xe009, 0xe018, 0xb001 GetChipIdSerialNumber/ChipInformation, 0xb004, 0xb008,
+      0xe000/0xe001/0xe020, 0xd005/0xd009); and CommCenter logs neither "QMI BSP Send file ... successful" nor "...
+      returned error" for our 0xa000 answers. Check the 0xa000 answer reaches the right client (qmi trace budget 6000
+      lines ran out: raise it or trace 0xe2 always), and what prepareFilePushTransaction_sync (0x1f19aba40,
+      libCommCenterMCommandDrivers in subcache .31) needs.
+  (b) why it pushes at all: CommCenter 0x10066e72c "Checking if any of the files need an update on baseband" -> for file
+      types 0,6,7,5,8,2 0x100c791b4 -> 0x100c78ffc -> per-slot model object vtable+0x48 (not followed). Keys:
+      InstalledPRIVersion, DerPriFileVersion/GRIVersion (D22 overlay: 0.1.144 / 9.2.1).
+  (c) make the soft reset succeed: emulate the Mav RFS sync (libBasebandManager "rfs sync", BBUFSServerFlush, refs
+      channel) or find why ABM requires it.
+- Fallback image with SOS + incoming calls between push/reset cycles: shim/out/shim-boot-0186.img (kernel 0186).
+- Still to do after cellular: call audio (no audio route to the modem), incoming-call screen (InCallService runs, UI not
+  presented), haptics in iOS (kernel AW8624 test buzz works every boot: "SWEET HAPTIC ... after buzz"), Settings/About.
+- Static-RE helpers live in the session scratchpad (not in git): re/abpdis.py (dsc disassembler), syms.py (local
+  symbols), macho.py (standalone Mach-O), cclog.py (joins |CommCenter| DT-mode lines). CommCenter binary pulled from
+  /System/Library/Frameworks/CoreTelephony.framework/Support/CommCenter.
+
 ## 2026-11-03 23:20 IST: 0188b boot -> reset storm; xnu 0189 (PRI version, no selector reset messages), CI 41687293245
 - 0188b (xnu/out-0188b d23c198e..., image shim/out/shim-boot-0188b.img 40a29869..., booted 22:52:57, log
   logs/boot-0188b.txt): carrier file segments now parse ("type 9 segment 0 of 9", "type 8 segment 0 of 43"), but
