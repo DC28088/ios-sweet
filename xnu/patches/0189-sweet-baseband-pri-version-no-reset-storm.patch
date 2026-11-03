@@ -1,0 +1,38 @@
+--- a/iokit/Kernel/arm/SweetBaseband.inc
++++ b/iokit/Kernel/arm/SweetBaseband.inc
+@@ -430,11 +430,23 @@
+ 
+ // The activation indication (coachz_bb_data.h) to the BSP client that registered, with slot one's ICCID and IMSI once the card gave them.
+ static uint8_t bb_iccid[CBD_ICCID_BYTES], bb_imsi[CBD_IMSI_BYTES], bb_iccid_known, bb_imsi_known, bb_act_known, bb_act_channel, bb_act_cid;
++// Sweet: QMIMav13ActivationCommandDriver reads the baseband's installed PRI version from TLV 0x40 (ActivationPriVersionSlot1,
++// {u8 major, u8 minor, u16 release}). Without it CommCenter decides the carrier PRI must be pushed on every SIM event, pushes, and
++// soft-resets the baseband after each round (a reset this modem cannot do: it needs Apple's RFS sync). Report the version of the
++// D22 carrier bundle's PRI (Default.bundle overlay for D22 54.0.1: DerPriFileVersion 0.1.144) as installed.
++#define BB_PRI_MAJOR 0u
++#define BB_PRI_MINOR 1u
++#define BB_PRI_RELEASE 144u
+ static void bb_activation_indicate(void)
+ {
+   if (!bb_act_known) return;
+-  uint8_t tlvs[CBD_ACTIVATION_SIM_TLVS];
+-  const uint32_t t = cbd_activation_state(tlvs, sizeof tlvs, bb_iccid_known ? bb_iccid : nullptr, bb_imsi_known ? bb_imsi : nullptr);
++  uint8_t tlvs[CBD_ACTIVATION_SIM_TLVS + 7u];
++  uint32_t t = cbd_activation_state(tlvs, CBD_ACTIVATION_SIM_TLVS, bb_iccid_known ? bb_iccid : nullptr, bb_imsi_known ? bb_imsi : nullptr);
++  const uint8_t pri[7] = { 0x40, 0x04, 0x00, BB_PRI_MAJOR, BB_PRI_MINOR, (uint8_t)(BB_PRI_RELEASE & 0xff), (uint8_t)(BB_PRI_RELEASE >> 8) };
++  if (t) {
++    memcpy(tlvs + t, pri, sizeof pri);
++    t += sizeof pri;
++  }
+   const uint32_t n = cbq_private_indication(CBD_BSP_ACTIVATION_REGISTER, CBD_SVC_BSP, bb_act_cid, tlvs, t, bb_out, sizeof bb_out);
+   if (n) bb_push(bb_act_channel, bb_out, n);
+ }
+@@ -1094,7 +1106,8 @@
+       bb_flush(CBH_SAHARA);
+     }
+     IOLockUnlock(bb_lock);
+-    if (reset) bb_reset_detected(getProvider());
++    // No reset-detected message here: during ABM's hard-reset fallback one arriving later reads as "baseband crash detected"
++    // and starts the next reset (a reset storm with the first 0188). Only the bridge-answered DMS reset plays one back.
+     if (result == CBC_UNSUPPORTED) printf("SWEET BB: AppleBaseband selector %u unsupported\n", selector);
+     for (uint32_t i = 0; i < nout; i++) args->scalarOutput[i] = out[i];
+     args->scalarOutputCount = nout;
