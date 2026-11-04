@@ -1,0 +1,223 @@
+diff --git a/phone/wifi/glink.c b/phone/wifi/glink.c
+index f2e49ab..7c28e1e 100644
+--- a/phone/wifi/glink.c
++++ b/phone/wifi/glink.c
+@@ -8,7 +8,13 @@
+ #define FIFO_TX_ITEM	479	/* ours: apps -> modem */
+ #define FIFO_RX_ITEM	480	/* the modem's */
+ #define APCS_IPC	0x17c0000cull
+-#define IPC_GLINK	12
++/* 0007: the edge: the modem (SMEM host 1, IPC bit 12) by default, the ADSP (host 2, bit 24) for `wland adsp` */
++static unsigned g_host = SMEM_HOST_MODEM, g_ipc = 12;
++void glink_edge(unsigned smem_host, unsigned ipc_bit)
++{
++	g_host = smem_host;
++	g_ipc = ipc_bit;
++}
+ 
+ static uint64_t desc, tx_fifo, rx_fifo;
+ static uint32_t tx_len, rx_len;
+@@ -22,14 +28,14 @@ static uint32_t tx_len, rx_len;
+ int glink_init(void)
+ {
+ 	uint32_t sz;
+-	if (smem_alloc(SMEM_HOST_MODEM, DESC_ITEM, 32, &desc) ||
+-	    smem_alloc(SMEM_HOST_MODEM, FIFO_TX_ITEM, 16384, &tx_fifo) ||
+-	    smem_get(SMEM_HOST_MODEM, FIFO_TX_ITEM, &tx_fifo, &tx_len)) {
++	if (smem_alloc(g_host, DESC_ITEM, 32, &desc) ||
++	    smem_alloc(g_host, FIFO_TX_ITEM, 16384, &tx_fifo) ||
++	    smem_get(g_host, FIFO_TX_ITEM, &tx_fifo, &tx_len)) {
+ 		fprintf(stderr, "glink: smem items\n");
+ 		return -1;
+ 	}
+-	if (smem_get(SMEM_HOST_MODEM, FIFO_RX_ITEM, &rx_fifo, &rx_len)) {
+-		fprintf(stderr, "glink: the modem has no rx fifo (item 480)\n");
++	if (smem_get(g_host, FIFO_RX_ITEM, &rx_fifo, &rx_len)) {
++		fprintf(stderr, "glink: the remote (SMEM host %u) has no rx fifo (item 480)\n", g_host);
+ 		return -1;
+ 	}
+ 	(void)sz;
+@@ -74,7 +80,7 @@ int glink_send(uint16_t cmd, uint16_t p1, uint32_t p2, const void *data, size_t
+ 	head = tx_write(head, buf, padded);
+ 	__asm__ volatile("dsb sy" ::: "memory");
+ 	wr32(TX_HEAD, head);
+-	wr32(APCS_IPC, 1u << IPC_GLINK);
++	wr32(APCS_IPC, 1u << g_ipc);
+ 	return 0;
+ }
+ 
+diff --git a/phone/wifi/glink.h b/phone/wifi/glink.h
+index 86e9dba..4609cf3 100644
+--- a/phone/wifi/glink.h
++++ b/phone/wifi/glink.h
+@@ -1,6 +1,7 @@
+ /* GLINK over SMEM with the modem, polled (Linux qcom_glink_native.c + qcom_glink_smem.c). */
+ #ifndef GLINK_H
+ #define GLINK_H
++void glink_edge(unsigned smem_host, unsigned ipc_bit);	/* before glink_init; default the modem */
+ #include <stdint.h>
+ #include <stddef.h>
+ 
+diff --git a/phone/wifi/link.c b/phone/wifi/link.c
+index cddf66e..da582e0 100644
+--- a/phone/wifi/link.c
++++ b/phone/wifi/link.c
+@@ -351,10 +351,13 @@ int qrtr_send(uint32_t type, uint32_t src_port, uint32_t dst_node, uint32_t dst_
+ 	return r;
+ }
+ 
++/* 0007: the QRTR node across this edge (the modem is node 0; the ADSP announces its own in HELLO) */
++uint32_t link_remote_node = QRTR_NODE_MODEM;
++
+ int qrtr_new_server(uint32_t service, uint32_t version, uint32_t instance, uint32_t port)
+ {
+ 	uint32_t pkt[5] = { QRTR_TYPE_NEW_SERVER, service, (version & 0xff) | (instance << 8), QRTR_NODE_APPS, port };
+-	return qrtr_send(QRTR_TYPE_NEW_SERVER, QRTR_PORT_CTRL, QRTR_NODE_MODEM, QRTR_PORT_CTRL, pkt, sizeof(pkt));
++	return qrtr_send(QRTR_TYPE_NEW_SERVER, QRTR_PORT_CTRL, link_remote_node, QRTR_PORT_CTRL, pkt, sizeof(pkt));
+ }
+ 
+ /* After a packet with confirm_rx: tell the sender it may go on (Linux qrtr_port_post: RESUME_TX). */
+diff --git a/phone/wifi/link.h b/phone/wifi/link.h
+index 0eab90a..916c6ab 100644
+--- a/phone/wifi/link.h
++++ b/phone/wifi/link.h
+@@ -28,6 +28,7 @@ int link_poll(unsigned ms);		/* handle what arrived; for ms (0 = just once) */
+ int link_send(const void *data, uint32_t len);
+ int qrtr_send(uint32_t type, uint32_t src_port, uint32_t dst_node, uint32_t dst_port,
+ 	      const void *payload, uint32_t len);
++extern uint32_t link_remote_node;	/* 0007: where NEW_SERVER goes; set from the remote HELLO */
+ int qrtr_new_server(uint32_t service, uint32_t version, uint32_t instance, uint32_t port);
+ int qrtr_resume_tx(const struct qrtr_hdr *h);
+ 
+diff --git a/phone/wifi/pdmapper.c b/phone/wifi/pdmapper.c
+index e1d6f05..8e30bfd 100644
+--- a/phone/wifi/pdmapper.c
++++ b/phone/wifi/pdmapper.c
+@@ -19,6 +19,11 @@ static const struct { const char *service, *domain; uint32_t instance; } db[] =
+ 	{ "kernel/elf_loader", "msm/modem/wlan_pd", 180 },
+ 	{ "tms/servreg", "msm/modem/wlan_pd", 180 },
+ 	{ "wlan/fw", "msm/modem/wlan_pd", 180 },
++	/* 0007: the ADSP's (adspr.jsn, adsps.jsn, adspua.jsn) */
++	{ "tms/servreg", "msm/adsp/root_pd", 74 },
++	{ "tms/servreg", "msm/adsp/sensor_pd", 74 },
++	{ "tms/servreg", "msm/adsp/audio_pd", 74 },
++	{ "avs/audio", "msm/adsp/audio_pd", 74 },
+ };
+ 
+ int pdmapper_init(void)
+diff --git a/phone/wifi/wland.c b/phone/wifi/wland.c
+index 2a960e5..f2e7196 100644
+--- a/phone/wifi/wland.c
++++ b/phone/wifi/wland.c
+@@ -30,6 +30,7 @@
+ #include "pmem.h"
+ #include "smem.h"
+ #include "link.h"
++#include "glink.h"
+ #include "rmtfs.h"
+ #include "pdmapper.h"
+ #include "tftp.h"
+@@ -643,6 +644,49 @@ static int adsp_state(uint32_t *v)
+ 	return -1;
+ }
+ 
++/*
++ * 0007: the "lpass" GLINK edge (SMEM host 2, items 478/479/480, APCS IPC bit 24) with QRTR on IPCRTR, the pd-mapper (the ADSP
++ * asks it for its servreg domains) and the TFTP server (files the sensor PD reads), in this process: the modem's link state
++ * lives in the boot wland. 0195 boot: without them the ADSP's sensor PD stalled ("USER-PD DOG detects stalled initialization"),
++ * the ADSP went fatal and took the modem with it (glink_channel_migration.c:667).
++ */
++static void net_cb(const struct qrtr_hdr *h, const uint8_t *d, uint32_t n);
++static uint32_t adsp_last = 0xffffffff;
++static void adsp_idle(void)
++{
++	uint32_t v;
++	if (adsp_state(&v) == 0 && v != adsp_last) {
++		printf("[%6llu] adsp: slave-kernel %x%s%s\n", (unsigned long long)link_ms(), v, v & 1 ? " ERR-FATAL" : "", v & 2 ? " ready" : "");
++		adsp_last = v;
++	}
++}
++
++static int adsp_net(void)
++{
++	glink_edge(SMEM_HOST_ADSP, 24);
++	link_idle = adsp_idle;
++	if (link_up(net_cb, 10000)) {
++		printf("adsp: no GLINK link in 10 s\n");
++		return -1;
++	}
++	printf("adsp: IPCRTR up; remote node %u\n", link_remote_node);
++	if (pdmapper_init() || tftp_init())
++		printf("adsp: no pd-mapper/tftp\n");
++	for (uint64_t t0 = link_ms(), next = t0; ;) {
++		link_poll(100);
++		if (link_ms() >= next) {
++			adsp_idle();
++			uint64_t pa;
++			uint32_t sz;
++			printf("[%6llu] adsp: alive; SMEM 429 %s\n", (unsigned long long)link_ms(),
++			       smem_get(SMEM_HOST_ADSP, SMP2P_ADSP_IN, &pa, &sz) ? "absent" : "present");
++			next = link_ms() + 10000;
++		}
++		if (adsp_last != 0xffffffff && (adsp_last & 1))
++			return 1;
++	}
++}
++
+ static int boot_adsp(void)
+ {
+ 	uint32_t v = 0;
+@@ -651,27 +695,26 @@ static int boot_adsp(void)
+ 		return 0;
+ 	}
+ 	/* proxy votes as the stock DT: the top LPI cx/mx levels (the kernel may refuse resources it does not know) */
+-	int nl = levels("lcx.lvl", 0), nm = levels("lmx.lvl", 0);
+-	printf("adsp: lcx %d levels, lmx %d levels\n", nl, nm);
+-	if (nl > 0)
+-		vote("lcx.lvl", (uint32_t)nl - 1);
+-	if (nm > 0)
+-		vote("lmx.lvl", (uint32_t)nm - 1);
++	uint64_t aux;
++	uint32_t len, top_l = 0, top_m = 0;
++	if (!cmddb_aux("lcx.lvl", &aux, &len))
++		for (uint32_t i = 0; i < len / 2; i++)
++			if (aux16(aux, i))
++				top_l = i;
++	if (!cmddb_aux("lmx.lvl", &aux, &len))
++		for (uint32_t i = 0; i < len / 2; i++)
++			if (aux16(aux, i))
++				top_m = i;
++	printf("adsp: voting lcx[%u] lmx[%u] (the highest nonzero levels)\n", top_l, top_m);
++	if (top_l)
++		vote("lcx.lvl", top_l);
++	if (top_m)
++		vote("lmx.lvl", top_m);
+ 	if (adsp_smp2p_create())
+ 		return -1;
+ 	if (pas_load(PAS_ADSP, ADSP_FW_DIR, "adsp", ADSP_PA, ADSP_SIZE, "adsp"))
+ 		return -1;
+-	for (int t = 0; t < 300; t++) {
+-		if (adsp_state(&v) == 0 && (v & 2) && !(v & 1)) {
+-			printf("adsp: READY after %d00 ms (slave-kernel %x)\n", t, v);
+-			return 0;
+-		}
+-		if (t % 20 == 0)
+-			printf("adsp: waiting, slave-kernel %s %x\n", adsp_state(&v) ? "absent" : "", v);
+-		usleep(100000);
+-	}
+-	printf("adsp: no ready bit in 30 s\n");
+-	return -1;
++	return adsp_net();
+ }
+ 
+ /* configure (kernel), firmware (here), setup (kernel); everything stays off on the first failure */
+@@ -859,7 +902,8 @@ static void net_cb(const struct qrtr_hdr *h, const uint8_t *d, uint32_t n)
+ 	printf("[%6llu] qrtr: < ctrl type %u (cmd %u) from %u:%x: %x %x %x %x\n", (unsigned long long)link_ms(), h->type, w[0], h->src_node, h->src_port,
+ 	       w[1], w[2], w[3], w[4]);
+ 	if (w[0] == QRTR_TYPE_HELLO) {
+-		uint32_t hello[5] = { QRTR_TYPE_HELLO };	/* struct qrtr_ctrl_pkt: always 20 bytes */
++		uint32_t hello[5] = { QRTR_TYPE_HELLO };
++		link_remote_node = h->src_node;	/* 0007: the modem is 0; the ADSP says its own */	/* struct qrtr_ctrl_pkt: always 20 bytes */
+ 		qrtr_send(QRTR_TYPE_HELLO, QRTR_PORT_CTRL, h->src_node, QRTR_PORT_CTRL, hello, sizeof(hello));
+ 	} else if (w[0] == QRTR_TYPE_NEW_SERVER) {
+ 		printf("qrtr:   server service %#x instance %#x at %u:%x\n", w[1], w[2], w[3], w[4]);
