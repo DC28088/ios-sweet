@@ -1,3 +1,17 @@
+## 2026-11-04 07:40 IST: Settings Cellular / SOS root cause = stale MobileGestalt cache (HasBaseband false)
+- New tool userspace/tools/sweet-mgquery.c (CI sweet-tools 41758213153, artifact in research/tools-41758213153,
+  installed /var/local/bin/sweet-mgquery 7a407b6d...). Read-only MGCopyAnswer printer; never pass identifier keys.
+- With the cached plist (built ~0163/0165, before the 0185 baseband ADT): cellular-data=false, HasBaseband=false,
+  contains-cellular-radio=false, BasebandStatus "NoTelephonyCapabilty" (telephony/sms=true). Settings hides
+  Cellular on cellular-data=false.
+- Moved the cache aside on the phone (backup .pre-0190, same SHA256 e10fda01... as research/mg-reset-0190/
+  MobileGestalt.plist.pre-0190; live file renamed .moved-0190). A fresh process then answers cellular-data=true,
+  HasBaseband=true, contains-cellular-radio=true, BasebandStatus "BBNotAnswering". MobileGestaltHelper did not
+  rewrite the cache immediately. Killed Preferences + SpringBoard (respring 07:39, SpringBoard 703 up, no crash).
+- Restore if needed: mv .moved-0190 back to com.apple.MobileGestalt.plist (or copy .pre-0190).
+- Earlier this session: USB dropped 07:15:55 and came back ~07:22 (user replugged; phone kept running). Calls:
+  first outgoing call reached Alerting and later ended ("CS call not active"); user then reported new calls "not allowed".
+
 ## 2026-11-04 07:20 IST: 0190 second boot (0190b) -> carrier-file push loop GONE, registered home, no resets
 - Analysis of the first 0190 boot (logs/boot-0190.txt, never reviewed by the previous agent): the PRI file
   (overrides_D22.der.pri, 9 segments) transferred with every segment acked and the 0xa001 indication sent ->
