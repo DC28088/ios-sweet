@@ -1,3 +1,17 @@
+## 2026-11-04 18:15 IST: sound track started (USER: "lets try to fix the sound"); ADSP first boot attempt
+- USER also asked whether iOS 26 can boot: answered no in practice: iOS 17+ ships only arm64e (pointer authentication, A12+);
+  the SM7150's A76/A55 are ARMv8.2 without PAC, so arm64e system code would trap on non-HINT PAC instructions. iOS 16.7 (iPhone X,
+  arm64) is the ceiling.
+- wland 0006 (userspace/wifi/patches/0006-sweet-adsp-boot.patch, CI 41828902686): generic pas_load(); `wland adsp` boots the ADSP
+  (PAS 1, pil_adsp_region 0x95700000+0x2600000, QMP load_state adsp, SMP2P host 2 item 443 out / 429 in, IPC bit 26) and waits for
+  slave-kernel ready; `wland adsp-shutdown` = PAS shutdown 1. Installed as /var/local/bin/wland-0006 (boot wland unchanged).
+  ADSP firmware copied to /var/local/fw/adsp (28 files, sha256 readback OK). Root fs 97% full (585 MiB free).
+- Run on 0191d: PAS 1 init 0/0, mem setup 0/0, 19586305 bytes loaded, QMP acked, auth+reset 0/0, but no SMP2P item 429 in 30 s
+  (SMEM host 0-2 partition: 443 478 480 606 611). Kernel refused lcx.lvl/lmx.lvl ("not a Wi-Fi/modem resource").
+- **xnu 0195** (on top of 0194; CI 41829326191, branch claude/audio-0195): sweet_rpmh_write allows lcx.lvl/lmx.lvl. Package
+  research/audio-0195/package.py, cmdline WITHOUT sweetipa (sweetbuild=195). xnu 0194 CI 41828548344 (codex/cellular, with the
+  BearSSL GitHub-mirror fallback in 0020-stage-bearssl.sh) is the IPA retest (sweetipa=1).
+
 ## 2026-11-04 17:45 IST: 0193: SMMU fixed, IPA setup COMPLETE, pdp_ip0..3 exist; INIT_DRIVER -> panic; 0194 building
 - Image shim/out/shim-boot-0193.img 2573725a (kernel 0edeae2f; first CI run failed fetching BearSSL, 502; rerun OK). Boot 17:26:45,
   logs/boot-0193.txt. SMMU: "IPA stream 0x520 -> CB5 via SMR7", "0x522 -> CB5 via SMR8", 0 refused -> ok (so 0192's failure was
