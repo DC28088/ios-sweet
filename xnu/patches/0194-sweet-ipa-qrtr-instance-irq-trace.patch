@@ -1,0 +1,74 @@
+diff -ruN a/bsd/dev/sweet_ipa.c b/bsd/dev/sweet_ipa.c
+--- a/bsd/dev/sweet_ipa.c
++++ b/bsd/dev/sweet_ipa.c
+@@ -245,9 +245,13 @@
+ {
+ 	void *rx = (void *)ml_io_map_wcomb((vm_offset_t)SI_MODEM_RX_PA, SI_MODEM_RX_BYTES);
+ 	void *tx = (void *)ml_io_map_wcomb((vm_offset_t)SI_MODEM_TX_PA, SI_MODEM_TX_BYTES);
++	printf("SWEET IPA: modem start: RX init\n");
+ 	int err = !rx || !tx ? -1 : coachz_ipa_rx_init(&si_modem_rx, &si_ipa, &si_gsi, CIPA_EP_AP_MODEM_RX, rx, SI_MODEM_RX_PA, SI_MODEM_RX_BYTES);
++	printf("SWEET IPA: modem start: RX init %d, modem init\n", err);
+ 	if (!err) err = coachz_ipa_modem_init(&si_modem, &si_ipa, &si_gsi, &si_modem_rx, tx, SI_MODEM_TX_PA, SI_MODEM_TX_BYTES);
++	printf("SWEET IPA: modem start: modem init %d, start\n", err);
+ 	if (!err) err = coachz_ipa_modem_start(&si_modem);
++	printf("SWEET IPA: modem start: start %d, open\n", err);
+ 	if (!err) err = coachz_ipa_modem_open(&si_modem);
+ 	if (err) {
+ 		printf("SWEET IPA: modem data path failed (%d); voice and Wi-Fi go on without it\n", err);
+@@ -286,6 +290,7 @@
+ si_qmi(int client, uint32_t node, uint32_t port, const void *body, uint32_t length)
+ {
+ 	struct ci_msg m;
++	printf("SWEET IPA: QMI in on the %s port, %u bytes from %u:0x%x\n", client ? "client" : "server", length, node, port);
+ 	if (!ci_parse(body, length, &m)) {
+ 		printf("SWEET IPA: bad QMI message of %u bytes from %u:0x%x\n", length, node, port);
+ 		return;
+@@ -319,10 +324,28 @@
+ }
+ 
+ /* the interrupts coachz_modem_poll handles: SPI ipa-irq, gsi-irq and the RX/TX event rings, polled */
++/* 0194: the 0193 boot panicked on CPU 3 right after INIT_DRIVER (no text in the logs); each new pending IPA/GSI interrupt
++   set is printed (first 64 changes) before it is handled, so the console shows what the hardware raised last. */
++static uint32_t si_irq_seen_ipa, si_irq_seen_gsi, si_irq_logs;
++static void
++si_irq_note(void)
++{
++	const uint32_t ipa = ipa_rd(&si_ipa, CIPA_IPA_IRQ_STTS);
++	const uint32_t gsi = si_state == SI_SET_UP ? gsi_rd(&si_gsi, CGSI_CNTXT_TYPE_IRQ) : 0;
++	if ((ipa & ~si_irq_seen_ipa) || (gsi & ~si_irq_seen_gsi)) {
++		si_irq_seen_ipa |= ipa;
++		si_irq_seen_gsi |= gsi;
++		if (si_irq_logs++ < 64)
++			printf("SWEET IPA: irq pending IPA 0x%x (enabled 0x%x) GSI type 0x%x (enabled 0x%x)\n", ipa, si_ipa.irq_enabled, gsi,
++			    si_gsi.type_enabled);
++	}
++}
++
+ static void
+ si_poll_locked(void)
+ {
+ 	if (si_state == SI_OFF) return;
++	si_irq_note();
+ 	coachz_ipa_interrupt(&si_ipa);
+ 	if (si_state != SI_SET_UP) return;
+ 	coachz_gsi_interrupt(&si_gsi);
+@@ -424,7 +447,7 @@
+ void
+ sweet_ipa_new_server(uint32_t service, uint32_t version_instance, uint32_t node, uint32_t port)
+ {
+-	if (!ci_is_modem_service(service, version_instance >> 8)) return;
++	if (!ci_is_modem_service(service, version_instance)) return;   /* QRTR word: version | instance << 8 (0x201) */
+ 	lck_mtx_lock(&si_mtx);
+ 	si_modem_node = node;
+ 	si_modem_port = port;
+diff -ruN a/iokit/Kernel/arm/coachz_bb_pdp.cpp b/iokit/Kernel/arm/coachz_bb_pdp.cpp
+--- a/iokit/Kernel/arm/coachz_bb_pdp.cpp
++++ b/iokit/Kernel/arm/coachz_bb_pdp.cpp
+@@ -51,6 +51,7 @@
+ { return 0; }  // raw IP: no link header, software checksums, no advertised offloads
+ static errno_t bb_pdp_ioctl(ifnet_t ifp, unsigned long cmd, void *data)
+ {
++  if ((cmd & 0xffffu) == ('i' << 8 | 56)) return EOPNOTSUPP;   // Sweet: SIOCGIFMEDIA (any size), asked constantly; no media here
+   switch (cmd) {
+     case SIOCSIFMTU: {
+       const int mtu = static_cast<ifreq *>(data)->ifr_mtu;
