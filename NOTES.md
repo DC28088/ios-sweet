@@ -12,7 +12,18 @@
 - Remaining (observed in logs): "Baseband activation result is unexpected!" x4, "Operator name change aborted:
   not provisioned", PDP/data path still stubbed in the kernel (no IPA hooks). Soft reset (Mav RFS sync over the
   BBUFS/refs channel, ABM FSModule::requestFSSync) is still unimplemented; now only matters when a push happens.
-- USER-visible result: pending (asked the user).
+- USER (0190b): OUTGOING CALL WORKS (the other phone shows this phone's caller ID screen). Status bar still shows
+  "SOS"; Settings has no Cellular section. CommCenter meanwhile sends kRegistrationDisplayStatusNotification
+  kRegisteredHome (GSM, later UTRAN) and displayStatusChanged RegisteredHome to 4 clients, so the SOS/hidden
+  Cellular section is on the client side (SpringBoard SystemStatus telephony provider, 'com.apple.systemstatus.
+  telephonystate', registered via NSXPC for 17 notifications; strings in subcache .01: showsSOSWhenDisabled,
+  _shouldShowEmergencyOnlyStatusForInfo:, suppressSOSOnlyWithLimitedService). Guess (unverified): the slot is
+  considered disabled/not provisioned on the client side, or MobileGestalt lacks the cellular-data capability.
+  CommCenter also logs "Could not get cellular plan device Info" for that client.
+- USB link to the host DROPPED at 07:15:55 (host: descriptor read error -71, unable to enumerate); log ends there.
+  Cause unknown (unplugged vs phone hang/reboot).
+- Next: SpringBoard os_log (sweetoslog=CommCenter,SpringBoard + OS_ACTIVITY_DT_MODE for SpringBoard in launchd.plist)
+  to see why STTelephony shows SOS; check MobileGestalt cellular-data/telephony answers for the Settings section.
 
 ## 2026-11-04: 0190 built and temporarily booted
 - Source commit bd63bfe; Intel CI run 41693973899 succeeded, including the BSP acknowledgement regression check.
