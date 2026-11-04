@@ -1,3 +1,10 @@
+## 2026-11-04 09:05 IST: 0191 booted: binds held + answered, no ATCS reset
+- Kernel CI 41763340271 -> xnu/out-0191 8770fc0d...; image shim/out/shim-boot-0191.img 716767a7... (0190 shim/ADT/cmdline,
+  sweetbuild=191); fastboot boot 09:00:10, log logs/boot-0191.txt. DPM open 0 / WDA 0 (raw IP, QMAPv4 both ways), "21 held
+  bind(s) sent, 0 dropped"; 11/11 WDS 0xa2 answered; 0 ATCS_TIMEOUT; SIM ready; registered home. "context is not assigned"
+  remains (no pdp_ip in 0191). xnu 0192 CI 41764330464 SUCCESS (compiled first try); wland 0005 CI 41764334978 success.
+- /var/local/fw/ipa/ipa_fws.{mdt,b00-b04,elf} copied to the phone (sha256 readback OK; new directory).
+
 ## 2026-11-04 08:30 IST: no-service-after-reset root cause (xnu 0191) + IPA data path written (xnu 0192, wland 0005)
 - 0190c boot (08:09, logs/boot-0190c.txt; MobileGestalt cache rebuilt by iOS, cellular-data=true): CommCenter now sets up data
   contexts. Its first 11 WDS Bind Mux Data Port (0xa2) requests reached the modem before the bridge's DPM Open Port / WDA Set Data
