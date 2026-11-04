@@ -1,3 +1,19 @@
+## 2026-11-04 07:20 IST: 0190 second boot (0190b) -> carrier-file push loop GONE, registered home, no resets
+- Analysis of the first 0190 boot (logs/boot-0190.txt, never reviewed by the previous agent): the PRI file
+  (overrides_D22.der.pri, 9 segments) transferred with every segment acked and the 0xa001 indication sent ->
+  CommCenter "File transfer complete: success", "PRI was pushed", AttachAPN push succeeded. GRI (43 segments)
+  was sent; IMSI_SWITCH and MULTI_PDN failed (each preceded by BSP 0xe00d answered not supported). Then ONE
+  "Resetting baseband after pushing files" -> soft reset failed ("never started filesystem sync",
+  subtype RemoteFSSyncError) -> hard-reset fallback -> "Baseband is Online!" again; no further push rounds.
+- 0190b (same image shim/out/shim-boot-0190.img 7c0edb73, fastboot boot 07:11, log logs/boot-0190b.txt,
+  receiver logs/receiver-0190b.err): SIM Ready -> EmergencyOnly -> kRegisteredHome. The push check now says
+  "Candidate and writtenCache match => nothing to do", "No files to push after all" (state cached by the
+  successful round of the previous boot). 0 ATCS_TIMEOUT, 0 glink jams, 0 baseband resets so far.
+- Remaining (observed in logs): "Baseband activation result is unexpected!" x4, "Operator name change aborted:
+  not provisioned", PDP/data path still stubbed in the kernel (no IPA hooks). Soft reset (Mav RFS sync over the
+  BBUFS/refs channel, ABM FSModule::requestFSSync) is still unimplemented; now only matters when a push happens.
+- USER-visible result: pending (asked the user).
+
 ## 2026-11-04: 0190 built and temporarily booted
 - Source commit bd63bfe; Intel CI run 41693973899 succeeded, including the BSP acknowledgement regression check.
 - Downloaded kernel CRC and SHA256 verified. Packaged shim/out/shim-boot-0190.img with the unchanged
