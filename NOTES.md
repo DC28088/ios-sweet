@@ -1,3 +1,12 @@
+## 2026-11-04 21:10 IST: Wi-Fi broken since wland 0005 boots (suspected); boot wland reverted to 0004 for a test
+- USER: "wifi doesn't toggle on". Kernel logs: Wi-Fi scans in boot-0190b/0190c/0191 (wland 0004), none from 0191b on (first
+  boot with wland 0005; also the first boot after the battery ran flat). On 0195b the modem never announces WLFW (0x45) in
+  330 s; pd-mapper is only asked tms/pdr_enabled and tms/pddump_disabled; cellular registers fine.
+- Test: /var/local/bin/wland = 0004 (ef9a6d24) again; 0005 kept as /var/local/bin/wland-0005, 0006 as wland-0006. Next boot shows
+  whether 0005 broke the WLAN PD start. IPA work (0005) is paused anyway (sweetipa off since 0195).
+- wland 0007 builds: 41852158214 cancelled twice in the runner queue (once by the USER); redispatched 41857731941 (intel) and
+  41857741378 (macos-15), first success wins.
+
 ## 2026-11-04 19:55 IST: 0195 booted; ADSP runs but its sensor PD stalls -> ADSP fatal -> MODEM fatal (Wi-Fi/cell down)
 - Image shim/out/shim-boot-0195.img 182f95b2 (kernel 0195 = 0194 + lcx/lmx; no sweetipa), boot 19:48:32, logs/boot-0195.txt.
   (Downloaded in 8 parallel byte ranges from the artifact's signed blob URL: the plain download kept timing out.)
