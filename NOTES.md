@@ -1,3 +1,18 @@
+## 2026-11-04 16:40 IST: 0192 booted (first IPA run): config + GSI firmware OK, commands time out, SoC reset; 0193 building
+- Image shim/out/shim-boot-0192.img 6328378c (kernel c9dc2195, sweetipa=1), boot 16:22:01, log logs/boot-0192.txt.
+- Observed: "BCM IP0 addr=0x500a4 unit 40 width 8: 100000000 Hz -> level 2500 vote 0x600009c4 -> 0"; SN11/SN0/CN0 votes 0;
+  IPA registers readable (no bus hang): SHARED_MEM_SIZE 0x415 (mem_offset 0, size 0x2000), FLAVOR_0 0x8090811 (8 TX, 9 RX from 8),
+  configured. wland: PAS 15 init/mem-setup/auth all 0/0, 12488 bytes at 0x97f00000. GSI: HW_PARAM_2 0xe4046b59, 11 channels/
+  rings, setup done. Then "4 commands (first opcode 0x9) not completed; channel state 0x10f0010a" -> setup failed -60.
+  SMMU: "IPA 0x520/0x2 -> CB5 via SMR7: SMR 0 S2CR 0x5 ... sCR0 0x250406 -> NOT as written" (sCR0.USFCFG=1: unmatched streams
+  fault). WLAN on the same boot: SMR6 0x80010240 ok. Modem then booted normally (cellular up); ~70 s later the SoC reset with no
+  log line (no panic text); phone came back through ABL to fastboot. Guess: the IPA DMA blocked by the SMMU tripped a secure
+  watchdog. Not verified.
+- Userland apps-SMMU reads through /dev/pmem (new tool userspace/tools/sweet-pmemrw.c, CI 41817644973) stalled a CPU on 0191c
+  (process stuck in R, unkillable), as 0141 did for wland: do not read 0x15000000 from userland.
+- **xnu 0193** (CI 41818191058): one SMR per DT stream (0x520/0, 0x522/0), write+readback per candidate SMR, refused ones cleared;
+  the IPA is not touched unless both streams are in place. Package: research/ipa-0193/package.py (sweetbuild=193 sweetipa=1).
+
 ## 2026-11-04 16:10 IST: phone battery ran flat on 0191 (USER); 0191 rebooted with wland 0005 installed
 - wland 0005 (CI 41764334978, bfb1477b...) INSTALLED at /var/local/bin/wland; previous 0004 ef9a6d24 kept as
   /var/local/bin/wland.before-0005 and research/cell-install-0192/wland.before-0005.
