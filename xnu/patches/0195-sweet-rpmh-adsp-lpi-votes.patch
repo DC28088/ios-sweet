@@ -1,0 +1,13 @@
+diff -ruN a/bsd/dev/sweet_rpmh.c b/bsd/dev/sweet_rpmh.c
+--- a/bsd/dev/sweet_rpmh.c
++++ b/bsd/dev/sweet_rpmh.c
+@@ -820,7 +820,8 @@
+ 		}
+ 	}
+ 	const bool clock = !strcmp(res, "rfclka2");
+-	const bool arc = !strcmp(res, "cx.lvl") || !strcmp(res, "mss.lvl");
++	/* 0195: lcx.lvl/lmx.lvl, the ADSP's proxy votes (stock DT qcom,lpass vdd_lpi_cx/mx), for wland's `adsp` boot */
++	const bool arc = !strcmp(res, "cx.lvl") || !strcmp(res, "mss.lvl") || !strcmp(res, "lcx.lvl") || !strcmp(res, "lmx.lvl");
+ 	if (rail < 0 && !clock && !arc) {
+ 		printf("SWEET RPMH: userland vote for %s refused (not a Wi-Fi/modem resource)\n", res);
+ 		return EPERM;
