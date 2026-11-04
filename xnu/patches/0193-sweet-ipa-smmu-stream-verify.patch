@@ -1,0 +1,189 @@
+diff -ruN a/bsd/dev/sweet_ipa.c b/bsd/dev/sweet_ipa.c
+--- a/bsd/dev/sweet_ipa.c
++++ b/bsd/dev/sweet_ipa.c
+@@ -33,7 +33,7 @@
+ extern vm_offset_t ml_io_map_wcomb(vm_offset_t, vm_size_t);
+ extern int sweet_rpmh_bcm_vote(const char *res, uint32_t x, uint32_t y);
+ extern int sweet_rpmh_bcm_clock(const char *res, uint64_t hz);
+-extern void sweet_smmu_ipa_stream(void);
++extern int sweet_smmu_ipa_stream(void);
+ extern void IOSleep(unsigned);
+ extern void sweet_bb_pdp_poll(void);
+ 
+@@ -171,7 +171,11 @@
+ 		printf("SWEET IPA: no core clock: the IPA registers are not touched, cellular data stays off\n");
+ 		return EIO;
+ 	}
+-	sweet_smmu_ipa_stream();
++	/* 0193: without both streams the IPA's DMA faults and its commands never complete; 0192 then reset the SoC ~70 s later. */
++	if (sweet_smmu_ipa_stream()) {
++		printf("SWEET IPA: no apps-SMMU stream: the IPA is not touched, cellular data stays off\n");
++		return ENXIO;
++	}
+ 	void *zero = (void *)ml_io_map_wcomb((vm_offset_t)SI_ZERO_PA, SI_ZERO_BYTES);
+ 	uint8_t *ring = (uint8_t *)ml_io_map_wcomb((vm_offset_t)SI_RING_PA, SI_RING_BYTES);
+ 	void *rx = (void *)ml_io_map_wcomb((vm_offset_t)SI_RX_PA, SI_RX_BYTES);
+diff -ruN a/bsd/dev/sweet_rpmh.c b/bsd/dev/sweet_rpmh.c
+--- a/bsd/dev/sweet_rpmh.c
++++ b/bsd/dev/sweet_rpmh.c
+@@ -1130,87 +1130,113 @@
+ }
+ 
+ /*
+- * 0192: the IPA's apps-SMMU streams (stock DT ipa_smmu_ap 0x520, ipa_smmu_uc 0x522; both context banks are S1 bypass there):
+- * one SMR 0x520 mask 2 to a free bank with translation off, as sweet_smmu_wlan_stream does for the WLAN. Called by
+- * bsd/dev/sweet_ipa.c before the IPA's first DMA.
++ * 0192/0193: the IPA's apps-SMMU streams (stock DT ipa_smmu_ap <0x520 0>, ipa_smmu_uc <0x522 0>; both banks S1 bypass there),
++ * each in its own SMR with the DT's exact mask, both to one free bank with translation off (as sweet_smmu_wlan_stream).
++ * 0192 boot: an SMR that reads back invalid can still refuse writes (SMR7 read 0 after the write, S2CR took it): owned
++ * elsewhere. So each candidate SMR is written and read back; one that does not keep the value is cleared and skipped.
++ * 0 when both streams match; the IPA is not touched otherwise (bsd/dev/sweet_ipa.c).
+  */
+ #define SMMU_IPA_SID   0x520u
+-#define SMMU_IPA_MASK  0x2u
+-void sweet_smmu_ipa_stream(void);
+-void
++#define SMMU_IPA_UC    0x522u
++int sweet_smmu_ipa_stream(void);
++int
+ sweet_smmu_ipa_stream(void)
+ {
++	static const uint32_t sids[2] = { SMMU_IPA_SID, SMMU_IPA_UC };
+ 	volatile uint32_t *gr0 = (volatile uint32_t *)ml_io_map(0x15000000, 0x1000);
+ 	if (!gr0) {
+ 		printf("SWEET SMMU: IPA stream: map failed\n");
+-		return;
++		return ENOMEM;
+ 	}
+ 	const uint32_t scr0 = gr0[0], id0 = gr0[0x20 / 4], id1 = gr0[0x24 / 4];
+ 	const uint32_t nsmr = id0 & 0xff, ncb = id1 & 0xff;
+ 	const uint64_t psize = (id1 >> 31) ? 0x10000 : 0x1000, npage = 1ull << (((id1 >> 28) & 7) + 1);
+ 	if (psize != 0x1000 || nsmr > 128 || ncb > 128 || (npage + ncb) * psize > 0x100000) {
+ 		printf("SWEET SMMU: IPA stream: unexpected geometry smr=%u cb=%u\n", nsmr, ncb);
+-		return;
++		return ENODEV;
+ 	}
+ 	volatile uint32_t *gr1 = (volatile uint32_t *)ml_io_map(0x15000000 + psize, psize);
+ 	if (!gr1) {
+-		return;
++		return ENOMEM;
+ 	}
+ 	uint64_t used[2] = {0, 0};
+-	int slot = -1;
++	int have[2] = { -1, -1 }, cb = -1;
+ 	for (uint32_t i = 0; i < nsmr; i++) {
+ 		const uint32_t smr = gr0[(0x800 + 4 * i) / 4], s2cr = gr0[(0xc00 + 4 * i) / 4];
+ 		if (!(smr >> 31)) {
+-			if (slot < 0) {
+-				slot = (int)i;
+-			}
+ 			continue;
+ 		}
+ 		if (((s2cr >> 16) & 3) == 0) {
+ 			used[(s2cr & 0xff) / 64] |= 1ull << ((s2cr & 0xff) % 64);
+ 		}
+-		if (smmu_sid_match(smr, SMMU_IPA_SID, 0) || smmu_sid_match(smr, SMMU_IPA_SID | SMMU_IPA_MASK, 0)) {
+-			printf("SWEET SMMU: IPA stream: SMR%u %#x already matches (S2CR %#x), sCR0 %#x\n", i, smr, s2cr, scr0);
+-			return;
++		for (int k = 0; k < 2; k++) {
++			if (smmu_sid_match(smr, sids[k], 0)) {
++				have[k] = (int)i;
++				if (((s2cr >> 16) & 3) == 0) {
++					cb = (int)(s2cr & 0xff);
++				}
++				printf("SWEET SMMU: IPA stream %#x already in SMR%u %#x (S2CR %#x)\n", sids[k], i, smr, s2cr);
++			}
+ 		}
+ 	}
+-	int cb = -1;
+ 	volatile uint32_t *cbp = NULL;
+-	for (uint32_t c = 0; c < ncb && cb < 0; c++) {
+-		if (used[c / 64] & (1ull << (c % 64)) || gr1[c] != 0) {
+-			continue;
++	if (cb < 0) {
++		for (uint32_t c = 0; c < ncb && cb < 0; c++) {
++			if (used[c / 64] & (1ull << (c % 64)) || gr1[c] != 0) {
++				continue;
++			}
++			volatile uint32_t *page = (volatile uint32_t *)ml_io_map(0x15000000 + (npage + c) * psize, psize);
++			if (page && !(page[0] & 1)) {
++				cb = (int)c;
++				cbp = page;
++			}
+ 		}
+-		volatile uint32_t *page = (volatile uint32_t *)ml_io_map(0x15000000 + (npage + c) * psize, psize);
+-		if (page && !(page[0] & 1)) {
+-			cb = (int)c;
+-			cbp = page;
+-		}
+-	}
+-	if (slot < 0 || cb < 0) {
+-		printf("SWEET SMMU: IPA stream: no free SMR/bank (SMR %d, bank %d), sCR0 %#x\n", slot, cb, scr0);
+-		return;
+-	}
+-	cbp[0x58 / 4] = 0xffffffff;     /* FSR clear */
+-	cbp[0x20 / 4] = 0;              /* TTBR0 */
+-	cbp[0x24 / 4] = 0;
+-	cbp[0x30 / 4] = 0;              /* TCR */
+-	cbp[0x10 / 4] = 0;              /* TCR2 */
+-	cbp[0x38 / 4] = 0;              /* MAIR */
+-	cbp[0x3c / 4] = 0;
+-	gr1[(0x800 + 4 * cb) / 4] = 0x00000001;          /* CBA2R: AArch64 */
+-	gr1[cb] = 0x0001f000;                             /* CBAR */
+-	cbp[0] = 0x000000e0;                              /* SCTLR last: M=0, faults reported */
+-	gr0[(0xc00 + 4 * slot) / 4] = (uint32_t)cb;       /* S2CR: translate via the bank */
+-	gr0[(0x800 + 4 * slot) / 4] = (1u << 31) | (SMMU_IPA_MASK << 16) | SMMU_IPA_SID;
++		if (cb < 0) {
++			printf("SWEET SMMU: IPA stream: no free context bank, sCR0 %#x\n", scr0);
++			return ENOSPC;
++		}
++		cbp[0x58 / 4] = 0xffffffff;     /* FSR clear */
++		cbp[0x20 / 4] = 0;              /* TTBR0 */
++		cbp[0x24 / 4] = 0;
++		cbp[0x30 / 4] = 0;              /* TCR */
++		cbp[0x10 / 4] = 0;              /* TCR2 */
++		cbp[0x38 / 4] = 0;              /* MAIR */
++		cbp[0x3c / 4] = 0;
++		gr1[(0x800 + 4 * cb) / 4] = 0x00000001;          /* CBA2R: AArch64 */
++		gr1[cb] = 0x0001f000;                             /* CBAR */
++		cbp[0] = 0x000000e0;                              /* SCTLR last: M=0, faults reported */
++	}
++	unsigned refused = 0;
++	for (int k = 0; k < 2; k++) {
++		for (uint32_t i = 0; i < nsmr && have[k] < 0; i++) {
++			if (gr0[(0x800 + 4 * i) / 4] >> 31) {
++				continue;
++			}
++			const uint32_t s2cr_before = gr0[(0xc00 + 4 * i) / 4];
++			const uint32_t want = (1u << 31) | sids[k];
++			gr0[(0xc00 + 4 * i) / 4] = (uint32_t)cb;  /* S2CR: translate via the bank */
++			gr0[(0x800 + 4 * i) / 4] = want;
++			__asm__ volatile ("dsb sy" ::: "memory");
++			if (gr0[(0x800 + 4 * i) / 4] == want) {
++				have[k] = (int)i;
++				printf("SWEET SMMU: IPA stream %#x -> CB%d via SMR%u (S2CR %#x)\n", sids[k], cb, i, gr0[(0xc00 + 4 * i) / 4]);
++			} else {
++				gr0[(0x800 + 4 * i) / 4] = 0;
++				gr0[(0xc00 + 4 * i) / 4] = s2cr_before;
++				if (refused++ < 8) {
++					printf("SWEET SMMU: IPA stream: SMR%u refused the write (reads %#x), S2CR restored\n", i, gr0[(0x800 + 4 * i) / 4]);
++				}
++			}
++		}
++	}
+ 	gr0[0x70 / 4] = 0;                                /* sTLBGSYNC */
+ 	for (int i = 0; i < 1000 && (gr0[0x74 / 4] & 1); i++) {
+ 		delay(1000);
+ 	}
+-	const uint32_t smr = gr0[(0x800 + 4 * slot) / 4], s2cr = gr0[(0xc00 + 4 * slot) / 4];
+-	const bool ok = (smr >> 31) && smmu_sid_match(smr, SMMU_IPA_SID, SMMU_IPA_MASK) &&
+-	    ((s2cr >> 16) & 3) == 0 && (s2cr & 0xff) == (uint32_t)cb;
+-	printf("SWEET SMMU: IPA %#x/%#x -> CB%d via SMR%d: SMR %#x S2CR %#x SCTLR %#x CBAR %#x sCR0 %#x -> %s\n",
+-	    SMMU_IPA_SID, SMMU_IPA_MASK, cb, slot, smr, s2cr, cbp[0], gr1[cb], scr0, ok ? "ok" : "NOT as written");
++	const bool ok = have[0] >= 0 && have[1] >= 0;
++	printf("SWEET SMMU: IPA streams %#x SMR%d %#x SMR%d, CB%d, %u SMR(s) refused, sCR0 %#x sGFSR %#x -> %s\n", SMMU_IPA_SID, have[0],
++	    SMMU_IPA_UC, have[1], cb, refused, scr0, gr0[0x48 / 4], ok ? "ok" : "NOT set up");
++	return ok ? 0 : EIO;
+ }
+ 
+ /*
