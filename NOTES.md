@@ -1,3 +1,12 @@
+## 2026-11-04 16:10 IST: phone battery ran flat on 0191 (USER); 0191 rebooted with wland 0005 installed
+- wland 0005 (CI 41764334978, bfb1477b...) INSTALLED at /var/local/bin/wland; previous 0004 ef9a6d24 kept as
+  /var/local/bin/wland.before-0005 and research/cell-install-0192/wland.before-0005.
+- Boot 0191b (16:08:22, logs/boot-0191b.txt): on a kernel without 0192, wland logs "ipa: no answer from the kernel for step 7",
+  data path off, modem ready after 100 ms, bb READY; SIM ready, registered home. So 0005 is safe on older kernels.
+- USER: battery ran out ("we need to figure out proper sleep, and power management later") -> TODO list: sleep/idle power,
+  charger configuration (battery drained even though connected).
+- NEXT: boot shim/out/shim-boot-0192.img (6328378c..., kernel CI 41764330464 c9dc2195..., cmdline + sweetipa=1, sweetbuild=192).
+
 ## 2026-11-04 09:05 IST: 0191 booted: binds held + answered, no ATCS reset
 - Kernel CI 41763340271 -> xnu/out-0191 8770fc0d...; image shim/out/shim-boot-0191.img 716767a7... (0190 shim/ADT/cmdline,
   sweetbuild=191); fastboot boot 09:00:10, log logs/boot-0191.txt. DPM open 0 / WDA 0 (raw IP, QMAPv4 both ways), "21 held
