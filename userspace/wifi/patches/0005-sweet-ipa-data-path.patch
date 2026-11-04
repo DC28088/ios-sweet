@@ -1,0 +1,357 @@
+diff --git a/phone/wifi/cell.c b/phone/wifi/cell.c
+index 9dc50a8..c770e12 100644
+--- a/phone/wifi/cell.c
++++ b/phone/wifi/cell.c
+@@ -61,7 +61,7 @@ static uint16_t rat_mask = 0x0c;
+  * Off with /var/local/cell.nobb.
+  */
+ #define BB_DEV	"/dev/sweet-bb"
+-static int bb_fd = -1, bb_ready;
++static int bb_fd = -1, bb_ready, ipa_enabled;
+ static struct { uint32_t service, vi, node, port; } bb_srv[128];
+ static unsigned bb_nsrv;
+ static unsigned long bb_req, bb_data, bb_del, bb_err;
+@@ -295,7 +295,8 @@ void cell_init(void)
+ 	printf("cell: QMI client for DMS/UIM/NAS/VOICE at ports %#x..%#x\n", CELL_PORT0, CELL_PORT0 + CELL_PORTS - 1);
+ 	unlink(CELL_STATUS);
+ 	if (access("/var/local/cell.nobb", F_OK)) {
+-		bb_fd = open(BB_DEV, O_RDWR | O_NONBLOCK);
++		if (bb_fd < 0)
++			bb_fd = open(BB_DEV, O_RDWR | O_NONBLOCK);
+ 		if (bb_fd < 0) {
+ 			printf("cell: no %s (kernel without sweetbb=1?)\n", BB_DEV);
+ 		} else {
+@@ -773,6 +774,13 @@ static void voice_answer(const struct qmi_msg *m)
+ void cell_handle(const struct qrtr_hdr *h, const uint8_t *d, uint32_t n)
+ {
+ 	struct qmi_msg m;
++	if (h->dst_port == CELL_IPA_SRV_PORT || h->dst_port == CELL_IPA_CLI_PORT) {
++		if (ipa_enabled)
++			bb_record(10, h->dst_port == CELL_IPA_CLI_PORT, h->src_node, h->src_port, 0, d, n);
++		printf("[%6llu] cell: ipa qmi %u bytes from %u:%x to our %s port\n", (unsigned long long)now_ms(), n, h->src_node, h->src_port,
++		       h->dst_port == CELL_IPA_CLI_PORT ? "client" : "server");
++		return;
++	}
+ 	int c = (int)(h->dst_port - CELL_PORT0);
+ 	if (h->dst_port >= CELL_BB_PORT0 && h->dst_port < CELL_BB_PORT0 + CELL_BB_PORTS) {
+ 		bb_data++;
+@@ -872,6 +880,12 @@ static void bb_poll(void)
+ 			uint32_t pkt[5] = { QRTR_TYPE_DEL_CLIENT, QRTR_NODE_APPS, w[1], 0, 0 };
+ 			bb_del++;
+ 			qrtr_send(QRTR_TYPE_DEL_CLIENT, w[1], QRTR_NODE_MODEM, QRTR_PORT_CTRL, pkt, sizeof(pkt));
++		} else if (w[0] == 11) {
++			printf("[%6llu] cell: ipa qmi %u bytes from our %s port -> %u:%x\n", (unsigned long long)now_ms(), w[5],
++			       w[1] ? "client" : "server", w[2], w[3]);
++			qrtr_send(QRTR_TYPE_DATA, w[1] ? CELL_IPA_CLI_PORT : CELL_IPA_SRV_PORT, w[2], w[3], bb_buf + at + 24, w[5]);
++		} else if (w[0] == 12) {
++			printf("[%6llu] cell: ipa step %u status %d\n", (unsigned long long)now_ms(), w[1], (int)w[2]);
+ 		} else if (bb_err++ < 5) {
+ 			printf("cell: bb record type %u port %#x ignored\n", w[0], w[1]);
+ 		}
+@@ -879,6 +893,52 @@ static void bb_poll(void)
+ 	}
+ }
+ 
++/* ---------------------------------------------------------------- the IPA data path (0005, xnu 0192) */
++int cell_ipa_step(uint32_t type, uint32_t a, int ms)
++{
++	if (bb_fd < 0 && !access("/var/local/cell.nobb", F_OK))
++		return -1;
++	if (bb_fd < 0)
++		bb_fd = open(BB_DEV, O_RDWR | O_NONBLOCK);
++	if (bb_fd < 0) {
++		printf("ipa: no %s\n", BB_DEV);
++		return -1;
++	}
++	bb_record(type, a, 0, 0, 0, NULL, 0);
++	if (!ms)
++		return 0;
++	/* Before the modem boots nothing else is queued in the kernel (AppleBaseband waits for READY): only status records. */
++	for (int t = 0; t < ms; t += 10) {
++		ssize_t n = read(bb_fd, bb_buf, sizeof(bb_buf));
++		for (size_t at = 0; n > 0 && at + 24 <= (size_t)n;) {
++			uint32_t w[6];
++			memcpy(w, bb_buf + at, 24);
++			if (w[0] == 12 && w[1] == type) {
++				printf("ipa: kernel step %u -> %d\n", type, (int)w[2]);
++				return (int)w[2];
++			}
++			printf("ipa: record %u while waiting for step %u, dropped\n", w[0], type);
++			at += 24 + ((w[5] + 3u) & ~3u);
++		}
++		usleep(10000);
++	}
++	printf("ipa: no answer from the kernel for step %u\n", type);
++	return -1;
++}
++
++void cell_ipa_enable(void)
++{
++	ipa_enabled = 1;
++}
++
++void cell_ipa_link_up(void)
++{
++	if (!ipa_enabled)
++		return;
++	int r = qrtr_new_server(0x31, 1, 1, CELL_IPA_SRV_PORT);
++	printf("ipa: IPA QMI server (0x31 v1 instance 1) announced at port %#x -> %d\n", CELL_IPA_SRV_PORT, r);
++}
++
+ static void cell_poll_once(void);
+ void cell_poll(void)
+ {
+diff --git a/phone/wifi/cell.h b/phone/wifi/cell.h
+index e93911e..7b59a9d 100644
+--- a/phone/wifi/cell.h
++++ b/phone/wifi/cell.h
+@@ -14,10 +14,19 @@ void cell_del_server(uint32_t service, uint32_t node, uint32_t port);
+ /* ABM's QMI clients through the kernel's iOS baseband bridge (/dev/sweet-bb, xnu 0184): QRTR ports 0x4100..0x413f */
+ #define CELL_BB_PORT0	0x4100
+ #define CELL_BB_PORTS	64
++/* 0005, the IPA data path (xnu 0192): our IPA QMI server (service 0x31 v1 instance 1) and our client of the modem's (instance 2) */
++#define CELL_IPA_SRV_PORT	0x4002
++#define CELL_IPA_CLI_PORT	0x4003
+ static inline int cell_port(uint32_t port)
+ {
+-	return (port >= CELL_PORT0 && port < CELL_PORT0 + CELL_PORTS) || (port >= CELL_BB_PORT0 && port < CELL_BB_PORT0 + CELL_BB_PORTS);
++	return (port >= CELL_PORT0 && port < CELL_PORT0 + CELL_PORTS) || (port >= CELL_BB_PORT0 && port < CELL_BB_PORT0 + CELL_BB_PORTS) ||
++	       port == CELL_IPA_SRV_PORT || port == CELL_IPA_CLI_PORT;
+ }
++/* An IPA step record (7 configure, 8 firmware loaded {a error}, 9 modem starting) to the kernel; with ms, waits for its status
++   record (12) and returns the kernel's errno (-1: no answer). */
++int cell_ipa_step(uint32_t type, uint32_t a, int ms);
++void cell_ipa_enable(void);	/* the kernel set the IPA up: route IPA QMI */
++void cell_ipa_link_up(void);	/* announce our IPA QMI server on the modem link */
+ void cell_handle(const struct qrtr_hdr *h, const uint8_t *d, uint32_t n);
+ void cell_poll(void);	/* every link poll round: periodic queries, /var/local/cell.cmd */
+ 
+diff --git a/phone/wifi/wland.c b/phone/wifi/wland.c
+index 957d58c..ba0ea37 100644
+--- a/phone/wifi/wland.c
++++ b/phone/wifi/wland.c
+@@ -274,6 +274,52 @@ static int smp2p_in_value(const char *name, uint32_t *v)
+ 	return 0;
+ }
+ 
++/*
++ * 0005, the IPA data path (xnu 0192): our outbound "ipa" entry (stock DT qcom,smp2p-ipa-1-out; Linux ipa_smp2p.c bit 0
++ * "ipa-clock-enabled-valid", bit 1 "ipa-clock-enabled") and the modem's inbound one (bit 0 "ipa-clock-query", bit 1
++ * "ipa-setup-ready"). Mainline answers the first clock query only, enabled before valid; the clock stays voted (the kernel).
++ */
++static int ipa_on;
++static uint64_t ipa_out_va;
++static uint32_t ipa_in_last = 0xffffffff;
++static int ipa_answered;
++
++static void smp2p_add_ipa(void)
++{
++	if (!smp2p_out_pa || ipa_out_va)
++		return;
++	uint32_t valid = rd32(smp2p_out_pa + 12) >> 16;
++	if (valid >= 16)
++		return;
++	uint64_t e = smp2p_out_pa + 20 + 20ull * valid;
++	wr_name(e, "ipa");
++	wr32(e + 16, 0);
++	__asm__ volatile("dsb sy" ::: "memory");
++	wr32(smp2p_out_pa + 12, 16 | ((valid + 1) << 16));
++	ipa_out_va = e + 16;
++	kick(IPC_MODEM_SMP2P);
++	printf("smp2p: outbound entry \"ipa\" added (%u valid)\n", valid + 1);
++}
++
++static void smp2p_ipa_service(void)
++{
++	uint32_t v;
++	if (!ipa_out_va || smp2p_in_value("ipa", &v))
++		return;
++	if (v != ipa_in_last) {
++		printf("[%6llu] smp2p: modem ipa %x%s%s\n", (unsigned long long)link_ms(), v, v & 1 ? " clock-query" : "", v & 2 ? " setup-ready" : "");
++		ipa_in_last = v;
++	}
++	if ((v & 1) && !ipa_answered) {
++		wr32(ipa_out_va, 2);			/* enabled */
++		kick(IPC_MODEM_SMP2P);
++		wr32(ipa_out_va, 3);			/* then valid */
++		kick(IPC_MODEM_SMP2P);
++		ipa_answered = 1;
++		printf("[%6llu] smp2p: IPA clock query answered: enabled\n", (unsigned long long)link_ms());
++	}
++}
++
+ /*
+  * Keep the SMP2P side going: SSR ack (Linux qcom_smp2p_do_ssr_ack: after a
+  * restart the modem flips RESTART_DONE, flags bit 0, and waits for the same
+@@ -300,6 +346,7 @@ static void smp2p_service(void)
+ 		       v & 4 ? " handover" : "", v & 8 ? " stop-ack" : "");
+ 		modem_state = v;
+ 	}
++	smp2p_ipa_service();
+ }
+ 
+ static int smp2p_init(void)
+@@ -413,6 +460,141 @@ static uint8_t *slurp(const char *path, size_t *len)
+ 
+ struct phdr { uint32_t type, offset, vaddr, paddr, filesz, memsz, flags, align; };
+ 
++/*
++ * 0005: the IPA's GSI firmware (Android /vendor/firmware/ipa_fws.*, copied to /var/local/fw/ipa): TrustZone PAS 15 into the stock
++ * ips_fw_region, as Linux's qcom_mdt_load + qcom_scm_pas_auth_and_reset (mainline IPA_LOADER_SELF). Relocatable segments land at
++ * the region base plus their offset from the lowest one.
++ */
++#define PAS_IPA		15
++#define IPA_FW_PA	0x97f00000ull
++#define IPA_FW_SIZE	0x00010000ull
++#define IPA_FW_DIR	"/var/local/fw/ipa"
++
++static int ipa_fw_load(void)
++{
++	size_t mlen;
++	uint8_t *mdt = slurp(IPA_FW_DIR "/ipa_fws.mdt", &mlen);
++	if (!mdt || mlen < 0x34) {
++		fprintf(stderr, "ipa: no %s/ipa_fws.mdt\n", IPA_FW_DIR);
++		return -1;
++	}
++	uint32_t phoff, phnum = 0;
++	memcpy(&phoff, mdt + 0x1c, 4);
++	memcpy(&phnum, mdt + 0x2c, 2);
++	if (phoff + 32ull * phnum > mlen) {
++		fprintf(stderr, "ipa: bad program headers\n");
++		return -1;
++	}
++	struct phdr *ph = (struct phdr *)(mdt + phoff);
++	int hash = -1, reloc = 0;
++	uint64_t min_pa = ~0ull;
++	for (uint32_t i = 0; i < phnum; i++) {
++		if (((ph[i].flags >> 24) & 7) == 2)
++			hash = (int)i;
++		if (ph[i].type == 1 && ph[i].memsz && ((ph[i].flags >> 24) & 7) != 2) {
++			if (ph[i].paddr < min_pa)
++				min_pa = ph[i].paddr;
++			if (ph[i].flags & (1u << 27))
++				reloc = 1;
++		}
++	}
++	if (hash < 0 || min_pa == ~0ull) {
++		fprintf(stderr, "ipa: no hash or load segment\n");
++		return -1;
++	}
++	size_t ehsz = phoff + 32ull * phnum, meta_len = ehsz + ph[hash].filesz;
++	uint8_t *meta = malloc(meta_len);
++	memcpy(meta, mdt, ehsz);
++	if (ph[hash].offset + ph[hash].filesz <= mlen) {
++		memcpy(meta + ehsz, mdt + ph[hash].offset, ph[hash].filesz);
++	} else {
++		char path[128];
++		size_t hl;
++		snprintf(path, sizeof(path), IPA_FW_DIR "/ipa_fws.b%02d", hash);
++		uint8_t *h = slurp(path, &hl);
++		if (!h || hl < ph[hash].filesz) {
++			fprintf(stderr, "ipa: hash segment %s missing\n", path);
++			return -1;
++		}
++		memcpy(meta + ehsz, h, ph[hash].filesz);
++		free(h);
++	}
++	uint64_t meta_pa = pm_alloc(meta_len, 0x1000);
++	if (!meta_pa)
++		return -1;
++	pm_wr(meta_pa, meta, (meta_len + 3) & ~(size_t)3);
++	uint64_t r1 = 0;
++	int64_t rc = scm(1, 2 | (2u << 6), PAS_IPA, meta_pa, 0, &r1);
++	printf("ipa: init image (%zu bytes metadata) -> %lld/%llx\n", meta_len, (long long)rc, (unsigned long long)r1);
++	if (rc || r1)
++		return -1;
++	if (reloc) {
++		rc = scm(2, 3, PAS_IPA, IPA_FW_PA, IPA_FW_SIZE, &r1);
++		printf("ipa: mem setup %llx+%llx -> %lld/%llx\n", IPA_FW_PA, IPA_FW_SIZE, (long long)rc, (unsigned long long)r1);
++		if (rc || r1)
++			return -1;
++	}
++	static uint8_t zeros[0x4000];
++	uint64_t total = 0;
++	for (uint32_t i = 0; i < phnum; i++) {
++		if (ph[i].type != 1 || (int)i == hash || !ph[i].memsz || ((ph[i].flags >> 24) & 7) == 2)
++			continue;
++		uint64_t pa = reloc ? IPA_FW_PA + (ph[i].paddr - min_pa) : ph[i].paddr;
++		if (pa < IPA_FW_PA || pa + ph[i].memsz > IPA_FW_PA + IPA_FW_SIZE) {
++			fprintf(stderr, "ipa: segment %u at %llx outside the region\n", i, (unsigned long long)pa);
++			return -1;
++		}
++		if (ph[i].filesz) {
++			char path[128];
++			size_t sl;
++			snprintf(path, sizeof(path), IPA_FW_DIR "/ipa_fws.b%02u", i);
++			uint8_t *seg = slurp(path, &sl);
++			if (!seg || sl < ph[i].filesz) {
++				fprintf(stderr, "ipa: %s missing or short\n", path);
++				return -1;
++			}
++			uint8_t *pad = calloc(1, (ph[i].filesz + 3) & ~3u);
++			memcpy(pad, seg, ph[i].filesz);
++			pm_wr(pa, pad, (ph[i].filesz + 3) & ~3u);
++			free(pad);
++			free(seg);
++			total += ph[i].filesz;
++		}
++		for (uint64_t o = (ph[i].filesz + 3) & ~3ull; o < ph[i].memsz; o += sizeof(zeros)) {
++			uint64_t n = ph[i].memsz - o < sizeof(zeros) ? ph[i].memsz - o : sizeof(zeros);
++			pm_wr(pa + o, zeros, (n + 3) & ~3ull);
++		}
++	}
++	printf("ipa: %llu bytes of segments loaded at %llx\n", (unsigned long long)total, IPA_FW_PA);
++	rc = scm(5, 1, PAS_IPA, 0, 0, &r1);
++	printf("ipa: auth and reset -> %lld/%llx\n", (long long)rc, (unsigned long long)r1);
++	return rc || r1 ? -1 : 0;
++}
++
++/* configure (kernel), firmware (here), setup (kernel); everything stays off on the first failure */
++static void ipa_prepare(void)
++{
++	if (!access("/var/local/ipa.off", F_OK)) {
++		printf("ipa: off (/var/local/ipa.off)\n");
++		return;
++	}
++	int r = cell_ipa_step(7, 0, 3000);
++	if (r) {
++		printf("ipa: kernel configure -> %d: no cellular data path\n", r);
++		return;
++	}
++	const int fw = ipa_fw_load();
++	r = cell_ipa_step(8, fw ? 5 /* EIO */ : 0, 3000);
++	if (fw || r) {
++		printf("ipa: firmware %d, kernel setup %d: no cellular data path\n", fw, r);
++		return;
++	}
++	smp2p_add_ipa();
++	ipa_on = 1;
++	cell_ipa_enable();
++	printf("ipa: ready for the modem\n");
++}
++
+ static int boot_modem(void)
+ {
+ 	/* 1. proxy votes as downstream (vdd_cx/vdd_mss >= 385): the top levels */
+@@ -687,6 +869,7 @@ static int net(unsigned secs)
+ 	signal(SIGCHLD, SIG_IGN);	/* netsvc children (ipnet.c) reap themselves */
+ 	if (link_up(net_cb, 5000))
+ 		return -1;
++	cell_ipa_link_up();
+ 	if (rmtfs_init())
+ 		printf("net: no rmtfs\n");
+ 	if (pdmapper_init() || tftp_init())
+@@ -722,7 +905,12 @@ static int up(unsigned secs)
+ {
+ 	if (smmu_wlan_identity())
+ 		printf("up: no WLAN SMMU stream: the radio will not start\n");
+-	if (wlan_power() || smp2p_create() || boot_modem())
++	if (wlan_power() || smp2p_create())
++		return 1;
++	ipa_prepare();
++	if (ipa_on)
++		cell_ipa_step(9, 0, 0);	/* modem starting (no answer) */
++	if (boot_modem())
+ 		return 1;
+ 	return net(secs) ? 1 : 0;
+ }
