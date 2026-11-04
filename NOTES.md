@@ -1,3 +1,27 @@
+## 2026-11-04 08:30 IST: no-service-after-reset root cause (xnu 0191) + IPA data path written (xnu 0192, wland 0005)
+- 0190c boot (08:09, logs/boot-0190c.txt; MobileGestalt cache rebuilt by iOS, cellular-data=true): CommCenter now sets up data
+  contexts. Its first 11 WDS Bind Mux Data Port (0xa2) requests reached the modem before the bridge's DPM Open Port / WDA Set Data
+  Format were answered; 10 were never answered -> ATCS_TIMEOUT -> played-back reset -> "Baseband did not allocate client for svc
+  type: UIM, error 0x5 QMI_ERR_CLIENT_IDS_EXHAUSTED" (the bridge's 64 QMUX slots still held the pre-reset clients; the modem never
+  really resets) -> SIM state Unknown, display EmergencyOnly ("No Service") until reboot. Same as the first 0190 boot after its reset.
+- **xnu 0191** (commit 0191 patch, CI 41763340271 on codex/cellular): holds WDS 0xa2 / QOS 0x2b until the data-port setup is done
+  (3 s cap), frees every host QMUX client when sahara restarts (new baseband session). Packaging: research/cellular-0191/package.py.
+- Mobile data, observed: CommCenter never sends WDS Start Network; "kDataNotSupported {context is not assigned}" because pdp_ip0..3
+  do not exist (bridge stubbed coachz_bb_pdp.cpp). IPA facts (stock DTB): qcom,ipa-hw-ver 16 = v4.2 (same as upstream SC7180
+  code), regs 0x1e40000 / GSI 0x1e04000 (same), SMMU SIDs 0x520/0x521/0x522, AP-loaded GSI firmware ipa_fws (PAS 15,
+  ips_fw_region 0x97f00000+0x10000; 3 relocatable segments 0..0x41c0), SMP2P "ipa" entries both ways, bus BCMs IP0 (clock),
+  SN11+SN0 (to DDR), CN0 (config).
+- Firmware/config pulled read-only via OrangeFox (user approved; vendor mounted ro, unmounted after) to git-ignored
+  research/vendor-0190: firmware/ipa_fws.{mdt,b00-b04,elf}, awinic/ aw882xx files, etc/ mixer_paths*, audio_platform_info*,
+  acdbdata/, modules/audio_*.ko. Not yet copied to the phone (needs /var/local/fw/ipa/).
+- **xnu 0192 + wland 0005** (commit after 0191; CI xnu 41764330464 and sweet-wifi 41764334978 on branch claude/ipa-0192 because
+  the xnu workflow cancels in-progress runs per ref): see the commit message. Off unless boot-arg sweetipa=1 (pdp_ip interfaces
+  exist regardless). wland order: smp2p_create -> record 7 (kernel: votes, SMMU stream, ipa_config) -> PAS 15 ipa_fws ->
+  record 8 (kernel: gsi/cmd/LAN RX setup) -> SMP2P "ipa" entry -> record 9 -> boot_modem; after link up, NEW_SERVER 0x31 v1 inst1
+  at port 0x4002 (client port 0x4003). Not booted yet. Risk: a wrong IPA clock/bus vote can hang the bus (temporary boot only).
+- Audio track (background agent, branch claude/audio-plan e291ea3, not merged): docs/audio-plan.md + userspace/adsp APR library.
+  Key finding: iOS call audio control is Apple-private QMI 0xe1 (answered unsupported today); on sweet voice goes modem->ADSP.
+
 ## 2026-11-04 07:40 IST: Settings Cellular / SOS root cause = stale MobileGestalt cache (HasBaseband false)
 - New tool userspace/tools/sweet-mgquery.c (CI sweet-tools 41758213153, artifact in research/tools-41758213153,
   installed /var/local/bin/sweet-mgquery 7a407b6d...). Read-only MGCopyAnswer printer; never pass identifier keys.
