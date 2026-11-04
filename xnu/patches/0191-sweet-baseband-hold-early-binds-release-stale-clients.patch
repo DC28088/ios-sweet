@@ -1,0 +1,129 @@
+--- a/iokit/Kernel/arm/SweetBaseband.inc
++++ b/iokit/Kernel/arm/SweetBaseband.inc
+@@ -83,6 +83,14 @@
+ static struct cbe bb_esim;
+ static int bb_esim_slot = -1;
+ static bb_tx bb_uim_held[BB_TX];
++// 0191: WDS Bind Mux Data Port / QOS Bind Data Port that CommCenter sends before the bridge's own DPM Open Port and WDA Set Data
++// Format are answered. The modem left 10 of 11 such early binds unanswered (0190c: ATCS_TIMEOUT on WDS 0xa2 -> baseband reset), and
++// answered every bind sent after the setup. They wait here until bb_data is done (or 3 s), then go out in order.
++#define BB_BIND_HELD 32u
++static bb_tx bb_bind_held[BB_BIND_HELD];
++static uint32_t bb_bind_count, bb_binds_held_total, bb_binds_released;
++static uint64_t bb_bind_first_ns;
++static void bb_bind_release(const char *why);
+ static uint32_t bb_uim_head, bb_uim_count;
+ static uint8_t bb_uim_cid[BB_TX];
+ static uint8_t *bb_esim_in, *bb_esim_resp;
+@@ -244,9 +252,24 @@
+ // HELLO goes out when sahara opens after a SendImage.
+ static bool bb_boot_image_sent;
+ 
++// 0191: the modem itself never resets here (the bridge plays resets back to ABM), so the QMUX clients CommCenter held before the reset
++// stay allocated, and CommCenter takes new ones without releasing them. 0190c: after one ATCS reset the 64 slots were gone
++// (QMI_ERR_CLIENT_IDS_EXHAUSTED for UIM) and the SIM never came back. A new boot exchange on sahara starts a new baseband session:
++// free every host client (DEL_CLIENT for their QRTR ports follows through cbq_next_release); the bridge's own clients stay.
++static void bb_release_host_clients(void)
++{
++  uint32_t n = 0;
++  for (uint32_t i = 0; i < CBQ_MAX_CLIENTS; i++)
++    if (bb_qmux.client[i].used && bb_qmux.client[i].channel != CBQ_INTERNAL) { cbq_client_free(&bb_qmux, i); n++; }
++  for (uint32_t i = 0; i < bb_bind_count; i++) IOFreeData(bb_bind_held[i].data, bb_bind_held[i].len);
++  bb_bind_count = 0;
++  if (n) printf("SWEET BB: new baseband session: %u stale host QMUX client(s) released\n", n);
++}
++
+ static void bb_sahara_restart(void)
+ {
+   struct cbs_out o;
++  bb_release_host_clients();
+   bb_flush(CBH_SAHARA);
+   cbs_init(&bb_sahara, bb_sahara_images, sizeof bb_sahara_images / sizeof bb_sahara_images[0], 0x10000);
+   cbs_start(&bb_sahara, &o);
+@@ -273,6 +296,7 @@
+     printf("SWEET BB: data port: DPM open %s 0x%x; WDA set data format error 0x%x, link %d, uplink %d, downlink %d (asked %u), %d datagrams, %d bytes\n",
+            bb_data.has_dpm ? "error" : "skipped, no service,", bb_data.dpm_error, bb_data.wda_error, (int)bb_data.llp, (int)bb_data.ul_dap,
+            (int)bb_data.dl_dap, cbd_daps[bb_data.dap_index], (int)bb_data.dl_datagrams, (int)bb_data.dl_size);
++    bb_bind_release("data port set up");
+     return;
+   }
+   int *slot = &bb_data_slot[service == CBD_SVC_DPM ? 0 : 1];
+@@ -281,6 +305,7 @@
+   if (*slot < 0 || !server) {
+     printf("SWEET BB: data port: no client for service %u\n", service);
+     bb_data.step = CBD_DONE;
++    bb_bind_release("data port setup skipped");
+     return;
+   }
+   bb_queue_tx(CBQ_PORT_BASE + (uint32_t)*slot, server->node, server->port, sdu, n);
+@@ -337,6 +362,13 @@
+   return true;
+ }
+ 
++static void bb_send_fixed(uint32_t service, uint32_t local_port, uint32_t node, uint32_t port, const uint8_t *sdu, uint32_t len);
++static uint64_t bb_now_ns(void)
++{
++  uint64_t ns = 0;
++  absolutetime_to_nanoseconds(mach_absolute_time(), &ns);
++  return ns;
++}
+ static void bb_to_modem(const struct cbq_result &r, const uint8_t *sdu)
+ {
+   if (bb_dms_reset(r, sdu)) return;
+@@ -361,15 +393,52 @@
+     }
+     return;
+   }
+-  const struct cbd_fix f = cbd_endpoint_fix(r.service, sdu, r.len, bb_fix, sizeof bb_fix);
++  const uint32_t message = r.len >= 5 ? (uint32_t)(sdu[3] | sdu[4] << 8) : 0;
++  const bool bind = (r.service == CBD_SVC_WDS && message == CBD_WDS_BIND_MUX_DATA_PORT) ||
++                    (r.service == CBD_SVC_QOS && message == CBD_QOS_BIND_DATA_PORT);
++  if (bind && bb_bind_count && bb_now_ns() - bb_bind_first_ns > 3000000000ull) bb_bind_release("3 s passed");
++  if (bind && bb_data.step != CBD_DONE && bb_bind_count < BB_BIND_HELD) {
++    uint8_t *copy = static_cast<uint8_t *>(IOMallocData(r.len));
++    if (copy) {
++      memcpy(copy, sdu, r.len);
++      if (!bb_bind_count) bb_bind_first_ns = bb_now_ns();
++      bb_bind_held[bb_bind_count++] = { r.local_port, r.node, r.port, r.len, copy };
++      bb_binds_held_total++;
++      return;
++    }
++  }
++  bb_send_fixed(r.service, r.local_port, r.node, r.port, sdu, r.len);
++}
++
++// The endpoint fix, then the queue to wland (bb_lock held).
++static void bb_send_fixed(uint32_t service, uint32_t local_port, uint32_t node, uint32_t port, const uint8_t *sdu, uint32_t len)
++{
++  const struct cbd_fix f = cbd_endpoint_fix(service, sdu, len, bb_fix, sizeof bb_fix);
+   if (!f.len) {
+-    bb_queue_tx(r.local_port, r.node, r.port, sdu, r.len);
++    bb_queue_tx(local_port, node, port, sdu, len);
+     return;
+   }
+   if (bb_endpoint_fixes++ < 8)
+-    printf("SWEET BB: data port: service %u message 0x%x endpoint %u/%u %s %u/%u\n", r.service, (uint32_t)(sdu[3] | sdu[4] << 8),
++    printf("SWEET BB: data port: service %u message 0x%x endpoint %u/%u %s %u/%u\n", service, (uint32_t)(sdu[3] | sdu[4] << 8),
+            f.before_type, f.before_interface, f.inserted ? "added as" : "now", CBD_EP_EMBEDDED, CBD_EP_INTERFACE);
+-  bb_queue_tx(r.local_port, r.node, r.port, bb_fix, f.len);
++  bb_queue_tx(local_port, node, port, bb_fix, f.len);
++}
++
++// Held binds go out in arrival order; a client released meanwhile (its slot no longer used) is skipped.
++static void bb_bind_release(const char *why)
++{
++  if (!bb_bind_count) return;
++  uint32_t sent = 0;
++  for (uint32_t i = 0; i < bb_bind_count; i++) {
++    bb_tx *t = &bb_bind_held[i];
++    const uint32_t slot = t->local_port - CBQ_PORT_BASE;
++    const uint32_t service = slot < CBQ_MAX_CLIENTS ? bb_qmux.client[slot].service : 0;
++    if (slot < CBQ_MAX_CLIENTS && bb_qmux.client[slot].used) { bb_send_fixed(service, t->local_port, t->node, t->port, t->data, t->len); sent++; }
++    IOFreeData(t->data, t->len);
++  }
++  bb_binds_released += sent;
++  printf("SWEET BB: data port: %u held bind(s) sent, %u dropped (%s); %u held in all\n", sent, bb_bind_count - sent, why, bb_binds_held_total);
++  bb_bind_count = 0;
+ }
+ 
+ // eSIM control runs on the same QRTR owner as the other QMI traffic (bb_lock held).
