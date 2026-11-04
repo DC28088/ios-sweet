@@ -1,0 +1,225 @@
+diff --git a/phone/wifi/wland.c b/phone/wifi/wland.c
+index ba0ea37..2a960e5 100644
+--- a/phone/wifi/wland.c
++++ b/phone/wifi/wland.c
+@@ -470,19 +470,23 @@ struct phdr { uint32_t type, offset, vaddr, paddr, filesz, memsz, flags, align;
+ #define IPA_FW_SIZE	0x00010000ull
+ #define IPA_FW_DIR	"/var/local/fw/ipa"
+ 
+-static int ipa_fw_load(void)
++/* 0006: one TrustZone PAS loader for the IPA (15) and the ADSP (1): mdt + bNN from DIR, relocatable segments at REGION plus
++   their offset from the lowest one; with QMP_NAME, the AOP hears load_state on before auth-and-reset (Linux q6v5_pas). */
++static int pas_load(unsigned pas, const char *dir, const char *base, uint64_t region, uint64_t region_size, const char *qmp_name)
+ {
++	char mpath[160];
++	snprintf(mpath, sizeof(mpath), "%s/%s.mdt", dir, base);
+ 	size_t mlen;
+-	uint8_t *mdt = slurp(IPA_FW_DIR "/ipa_fws.mdt", &mlen);
++	uint8_t *mdt = slurp(mpath, &mlen);
+ 	if (!mdt || mlen < 0x34) {
+-		fprintf(stderr, "ipa: no %s/ipa_fws.mdt\n", IPA_FW_DIR);
++		fprintf(stderr, "pas %u: no %s\n", pas, mpath);
+ 		return -1;
+ 	}
+ 	uint32_t phoff, phnum = 0;
+ 	memcpy(&phoff, mdt + 0x1c, 4);
+ 	memcpy(&phnum, mdt + 0x2c, 2);
+ 	if (phoff + 32ull * phnum > mlen) {
+-		fprintf(stderr, "ipa: bad program headers\n");
++		fprintf(stderr, "pas %u: bad program headers\n", pas);
+ 		return -1;
+ 	}
+ 	struct phdr *ph = (struct phdr *)(mdt + phoff);
+@@ -499,7 +503,7 @@ static int ipa_fw_load(void)
+ 		}
+ 	}
+ 	if (hash < 0 || min_pa == ~0ull) {
+-		fprintf(stderr, "ipa: no hash or load segment\n");
++		fprintf(stderr, "pas %u: no hash or load segment\n", pas);
+ 		return -1;
+ 	}
+ 	size_t ehsz = phoff + 32ull * phnum, meta_len = ehsz + ph[hash].filesz;
+@@ -510,10 +514,10 @@ static int ipa_fw_load(void)
+ 	} else {
+ 		char path[128];
+ 		size_t hl;
+-		snprintf(path, sizeof(path), IPA_FW_DIR "/ipa_fws.b%02d", hash);
++		snprintf(path, sizeof(path), "%s/%s.b%02d", dir, base, hash);
+ 		uint8_t *h = slurp(path, &hl);
+ 		if (!h || hl < ph[hash].filesz) {
+-			fprintf(stderr, "ipa: hash segment %s missing\n", path);
++			fprintf(stderr, "pas %u: hash segment %s missing\n", pas, path);
+ 			return -1;
+ 		}
+ 		memcpy(meta + ehsz, h, ph[hash].filesz);
+@@ -524,13 +528,13 @@ static int ipa_fw_load(void)
+ 		return -1;
+ 	pm_wr(meta_pa, meta, (meta_len + 3) & ~(size_t)3);
+ 	uint64_t r1 = 0;
+-	int64_t rc = scm(1, 2 | (2u << 6), PAS_IPA, meta_pa, 0, &r1);
+-	printf("ipa: init image (%zu bytes metadata) -> %lld/%llx\n", meta_len, (long long)rc, (unsigned long long)r1);
++	int64_t rc = scm(1, 2 | (2u << 6), pas, meta_pa, 0, &r1);
++	printf("pas %u: init image (%zu bytes metadata) -> %lld/%llx\n", pas, meta_len, (long long)rc, (unsigned long long)r1);
+ 	if (rc || r1)
+ 		return -1;
+ 	if (reloc) {
+-		rc = scm(2, 3, PAS_IPA, IPA_FW_PA, IPA_FW_SIZE, &r1);
+-		printf("ipa: mem setup %llx+%llx -> %lld/%llx\n", IPA_FW_PA, IPA_FW_SIZE, (long long)rc, (unsigned long long)r1);
++		rc = scm(2, 3, pas, region, region_size, &r1);
++		printf("pas %u: mem setup %llx+%llx -> %lld/%llx\n", pas, (unsigned long long)region, (unsigned long long)region_size, (long long)rc, (unsigned long long)r1);
+ 		if (rc || r1)
+ 			return -1;
+ 	}
+@@ -539,18 +543,18 @@ static int ipa_fw_load(void)
+ 	for (uint32_t i = 0; i < phnum; i++) {
+ 		if (ph[i].type != 1 || (int)i == hash || !ph[i].memsz || ((ph[i].flags >> 24) & 7) == 2)
+ 			continue;
+-		uint64_t pa = reloc ? IPA_FW_PA + (ph[i].paddr - min_pa) : ph[i].paddr;
+-		if (pa < IPA_FW_PA || pa + ph[i].memsz > IPA_FW_PA + IPA_FW_SIZE) {
+-			fprintf(stderr, "ipa: segment %u at %llx outside the region\n", i, (unsigned long long)pa);
++		uint64_t pa = reloc ? region + (ph[i].paddr - min_pa) : ph[i].paddr;
++		if (pa < region || pa + ph[i].memsz > region + region_size) {
++			fprintf(stderr, "pas %u: segment %u at %llx outside the region\n", pas, i, (unsigned long long)pa);
+ 			return -1;
+ 		}
+ 		if (ph[i].filesz) {
+ 			char path[128];
+ 			size_t sl;
+-			snprintf(path, sizeof(path), IPA_FW_DIR "/ipa_fws.b%02u", i);
++			snprintf(path, sizeof(path), "%s/%s.b%02u", dir, base, i);
+ 			uint8_t *seg = slurp(path, &sl);
+ 			if (!seg || sl < ph[i].filesz) {
+-				fprintf(stderr, "ipa: %s missing or short\n", path);
++				fprintf(stderr, "pas %u: %s missing or short\n", pas, path);
+ 				return -1;
+ 			}
+ 			uint8_t *pad = calloc(1, (ph[i].filesz + 3) & ~3u);
+@@ -565,12 +569,111 @@ static int ipa_fw_load(void)
+ 			pm_wr(pa + o, zeros, (n + 3) & ~3ull);
+ 		}
+ 	}
+-	printf("ipa: %llu bytes of segments loaded at %llx\n", (unsigned long long)total, IPA_FW_PA);
+-	rc = scm(5, 1, PAS_IPA, 0, 0, &r1);
+-	printf("ipa: auth and reset -> %lld/%llx\n", (long long)rc, (unsigned long long)r1);
++	printf("pas %u: %llu bytes of segments loaded at %llx\n", pas, (unsigned long long)total, (unsigned long long)region);
++	if (qmp_name) {
++		char msg[96];
++		snprintf(msg, sizeof(msg), "{class: image, res: load_state, name: %s, val: on}", qmp_name);
++		qmp_send(msg);
++	}
++	rc = scm(5, 1, pas, 0, 0, &r1);
++	printf("pas %u: auth and reset -> %lld/%llx\n", pas, (long long)rc, (unsigned long long)r1);
+ 	return rc || r1 ? -1 : 0;
+ }
+ 
++static int ipa_fw_load(void)
++{
++	return pas_load(PAS_IPA, IPA_FW_DIR, "ipa_fws", IPA_FW_PA, IPA_FW_SIZE, NULL);
++}
++
++/*
++ * 0006: the ADSP (LPASS Q6, audio): stock DT qcom,lpass@62400000 (PAS 1, firmware "adsp", pil_adsp_region 0x95700000+0x2600000,
++ * proxy votes lcx/lmx, signal-aop) and qcom,smp2p-adsp (SMEM host 2, items 443 out / 429 in, APCS IPC bit 26; inbound
++ * slave-kernel bit 0 err-fatal, 1 ready). `wland adsp` boots it once, separately from the modem (milestone 1 of
++ * docs/audio-plan.md); the GLINK "lpass" edge and APR come next.
++ */
++#define PAS_ADSP	1
++#define ADSP_PA		0x95700000ull
++#define ADSP_SIZE	0x02600000ull
++#define ADSP_FW_DIR	"/var/local/fw/adsp"
++#define SMEM_HOST_ADSP	2
++#define SMP2P_ADSP_OUT	443
++#define SMP2P_ADSP_IN	429
++#define IPC_ADSP_SMP2P	26
++
++static int adsp_smp2p_create(void)
++{
++	uint64_t pa;
++	if (smem_alloc(SMEM_HOST_ADSP, SMP2P_ADSP_OUT, 20 + 16 * 20, &pa)) {
++		fprintf(stderr, "adsp: cannot allocate SMP2P item %u\n", SMP2P_ADSP_OUT);
++		return -1;
++	}
++	if (rd32(pa) != 0x504d5324) {
++		wr32(pa + 8, 0 | (2u << 16));		/* local pid 0, remote pid 2 (ADSP) */
++		wr32(pa + 12, 16 | (1u << 16));		/* total 16 entries, 1 valid */
++		wr32(pa + 16, 0);
++		wr_name(pa + 20, "master-kernel");
++		wr32(pa + 36, 0);
++		wr32(pa + 0, 0x504d5324);
++		__asm__ volatile("dsb sy" ::: "memory");
++		wr32(pa + 4, 1 | (1u << 8));
++	}
++	kick(IPC_ADSP_SMP2P);
++	printf("adsp: SMP2P item %u at %llx\n", SMP2P_ADSP_OUT, (unsigned long long)pa);
++	return 0;
++}
++
++static int adsp_state(uint32_t *v)
++{
++	uint64_t pa;
++	uint32_t sz;
++	if (smem_get(SMEM_HOST_ADSP, SMP2P_ADSP_IN, &pa, &sz))
++		return -1;
++	uint32_t n = rd32(pa + 12) >> 16;
++	for (uint32_t i = 0; i < n && i < 16; i++) {
++		uint64_t e = pa + 20 + 20ull * i;
++		char nm[17];
++		for (int k = 0; k < 16; k++)
++			nm[k] = (char)(rd32(e + (k & ~3)) >> (8 * (k & 3)));
++		nm[16] = 0;
++		if (!strcmp(nm, "slave-kernel")) {
++			*v = rd32(e + 16);
++			return 0;
++		}
++	}
++	return -1;
++}
++
++static int boot_adsp(void)
++{
++	uint32_t v = 0;
++	if (adsp_state(&v) == 0 && (v & 2) && !(v & 1)) {
++		printf("adsp: already up (slave-kernel %x)\n", v);
++		return 0;
++	}
++	/* proxy votes as the stock DT: the top LPI cx/mx levels (the kernel may refuse resources it does not know) */
++	int nl = levels("lcx.lvl", 0), nm = levels("lmx.lvl", 0);
++	printf("adsp: lcx %d levels, lmx %d levels\n", nl, nm);
++	if (nl > 0)
++		vote("lcx.lvl", (uint32_t)nl - 1);
++	if (nm > 0)
++		vote("lmx.lvl", (uint32_t)nm - 1);
++	if (adsp_smp2p_create())
++		return -1;
++	if (pas_load(PAS_ADSP, ADSP_FW_DIR, "adsp", ADSP_PA, ADSP_SIZE, "adsp"))
++		return -1;
++	for (int t = 0; t < 300; t++) {
++		if (adsp_state(&v) == 0 && (v & 2) && !(v & 1)) {
++			printf("adsp: READY after %d00 ms (slave-kernel %x)\n", t, v);
++			return 0;
++		}
++		if (t % 20 == 0)
++			printf("adsp: waiting, slave-kernel %s %x\n", adsp_state(&v) ? "absent" : "", v);
++		usleep(100000);
++	}
++	printf("adsp: no ready bit in 30 s\n");
++	return -1;
++}
++
+ /* configure (kernel), firmware (here), setup (kernel); everything stays off on the first failure */
+ static void ipa_prepare(void)
+ {
+@@ -984,6 +1087,13 @@ int main(int argc, char **argv)
+ 		levels(argv[2], 1);
+ 	} else if (!strcmp(c, "qmp") && argc > 2) {
+ 		return qmp_send(argv[2]) ? 1 : 0;
++	} else if (!strcmp(c, "adsp")) {
++		return boot_adsp() ? 1 : 0;
++	} else if (!strcmp(c, "adsp-shutdown")) {
++		uint64_t r1 = 0;
++		int64_t rc = scm(6, 1, PAS_ADSP, 0, 0, &r1);	/* PAS_SHUTDOWN */
++		printf("adsp shutdown -> %lld/%llx\n", (long long)rc, (unsigned long long)r1);
++		return rc ? 1 : 0;
+ 	} else if (!strcmp(c, "smp2p-init")) {
+ 		return smp2p_init() ? 1 : 0;
+ 	} else if (!strcmp(c, "shutdown")) {
