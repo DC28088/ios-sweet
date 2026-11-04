@@ -1,3 +1,11 @@
+## 2026-11-04 19:20 IST: lower-resolution experiment (USER asked; no build): IOMobileGraphicsFamily canvas override crashes backboardd
+- Wrote /private/var/mobile/Library/Preferences/com.apple.iokit.IOMobileGraphicsFamily.plist {canvas_width 720, canvas_height
+  1600} (mobile:mobile 644) and restarted backboardd on 0191d: backboardd rendered at 720 wide (A8 uploads 720x79), then
+  SIGSEGV far 0x18 (pc outside the shared cache, likely our SweetNativeMetal bundle), crash loop.
+- Revert: plist moved to /var/local/IOMobileGraphicsFamily.plist.720x1600; it kept crashing until cfprefsd was killed (cached
+  value), then backboardd + SpringBoard stable. Lesson: after editing a preferences plist by hand, restart cfprefsd first.
+- Making a lower render size work needs code in the Metal backend/present path (a build); not done.
+
 ## 2026-11-04 18:15 IST: sound track started (USER: "lets try to fix the sound"); ADSP first boot attempt
 - USER also asked whether iOS 26 can boot: answered no in practice: iOS 17+ ships only arm64e (pointer authentication, A12+);
   the SM7150's A76/A55 are ARMv8.2 without PAC, so arm64e system code would trap on non-HINT PAC instructions. iOS 16.7 (iPhone X,
