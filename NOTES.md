@@ -1,3 +1,20 @@
+## 2026-11-04 17:45 IST: 0193: SMMU fixed, IPA setup COMPLETE, pdp_ip0..3 exist; INIT_DRIVER -> panic; 0194 building
+- Image shim/out/shim-boot-0193.img 2573725a (kernel 0edeae2f; first CI run failed fetching BearSSL, 502; rerun OK). Boot 17:26:45,
+  logs/boot-0193.txt. SMMU: "IPA stream 0x520 -> CB5 via SMR7", "0x522 -> CB5 via SMR8", 0 refused -> ok (so 0192's failure was
+  the mask-2 SMR, not SMR7 itself). GSI setup, "endpoints programmed, command channel up, memory and tables set", "LAN RX endpoint 8
+  up with 251 buffers queued ... setup complete". pdp_ip0..3 registered (iOS asks SIOCGIFMEDIA on them constantly).
+- Modem side: QMI INDICATION_REGISTER (0x20) from 0:0x31 answered; modem announces IPA service 0x31 QRTR instance word 0x201 at
+  0:0x2e; the modem's SMP2P in-item has no "ipa" entry (only smp2p, slave-kernel): no clock query on this firmware.
+- BUG (ours): sweet_ipa_new_server passed version_instance >> 8 to ci_is_modem_service (wants the word, 0x201) -> INIT_DRIVER
+  never sent. Injected a corrected NEW_SERVER record via printf > /dev/sweet-bb: "modem IPA service at 0:0x2e", "INIT_DRIVER 108
+  bytes ... queued 0" -> the kernel PANICKED (USER: "panic (CPU 3 Caller 0xfffffe0..."; rest not captured; the persistent log
+  pulled via OrangeFox to logs/persist-0193.txt ends earlier, flush #21). Cause unknown.
+- Earlier: SpringBoard restart on 0191c left the lock screen unusable (USER); likely the CPU stalled by the sweet-pmemrw SMMU read
+  holding sweet_pmem_lock. Phone back on 0191 (17:38, logs/boot-0191d.txt).
+- **xnu 0194** (CI 41826953507): instance word fix; prints new pending IPA/GSI interrupt sets (64 max), each QMI arrival, each
+  modem-start step; SIOCGIFMEDIA on pdp_ip quiet. Package research/ipa-0194/package.py (sweetbuild=194 sweetipa=1).
+  Ask the USER for a photo of any panic screen.
+
 ## 2026-11-04 16:40 IST: 0192 booted (first IPA run): config + GSI firmware OK, commands time out, SoC reset; 0193 building
 - Image shim/out/shim-boot-0192.img 6328378c (kernel c9dc2195, sweetipa=1), boot 16:22:01, log logs/boot-0192.txt.
 - Observed: "BCM IP0 addr=0x500a4 unit 40 width 8: 100000000 Hz -> level 2500 vote 0x600009c4 -> 0"; SN11/SN0/CN0 votes 0;
