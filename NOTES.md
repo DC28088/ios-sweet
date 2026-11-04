@@ -1,3 +1,17 @@
+## 2026-11-04 19:55 IST: 0195 booted; ADSP runs but its sensor PD stalls -> ADSP fatal -> MODEM fatal (Wi-Fi/cell down)
+- Image shim/out/shim-boot-0195.img 182f95b2 (kernel 0195 = 0194 + lcx/lmx; no sweetipa), boot 19:48:32, logs/boot-0195.txt.
+  (Downloaded in 8 parallel byte ranges from the artifact's signed blob URL: the plain download kept timing out.)
+- `wland adsp` with the votes: wland asked level index 15 (16 table slots) -> ERANGE (34); real tables: lcx.lvl
+  {0,16,64,128,256,384} (top index 5), lmx.lvl {0,16,128,256,384} (top 4). Voted 5/4 by hand (0), adsp-shutdown 0/0, boot again:
+  PAS all 0/0, QMP acked, still no SMP2P item 429 in 30 s. TODO in 0006: vote the highest nonzero level like boot_modem.
+- SMEM crash reasons: item 423 (LPASS) "err_qdi.c:1040:EF:sensor_process:0x1:TMR_CLNT_1:0xe7:dog_virtual_user.c:240:USER-PD DOG
+  detects stalled initiali[zation]" -> the ADSP root PD runs, its sensor user PD waits for AP services (QRTR on the "lpass" GLINK
+  edge: pd-mapper/servreg, sensor registry files) that do not exist yet, the PD watchdog kills the ADSP.
+  item 421 (modem) "glink_channel_migration.c:667:Assertion status == GLINK_STATUS_SUCCESS failed" (wland: smp2p modem state 7
+  ERR-FATAL at 85 s) -> the modem died with the ADSP: no Wi-Fi/cellular until reboot (USER: "wifi doesn't toggle on").
+  WLFW (0x45) had not appeared on this boot before the crash either (unexplained).
+- RULE: do not boot the ADSP again before wland serves the lpass edge (GLINK + QRTR + pd-mapper/servreg), milestone 2.
+
 ## 2026-11-04 19:20 IST: lower-resolution experiment (USER asked; no build): IOMobileGraphicsFamily canvas override crashes backboardd
 - Wrote /private/var/mobile/Library/Preferences/com.apple.iokit.IOMobileGraphicsFamily.plist {canvas_width 720, canvas_height
   1600} (mobile:mobile 644) and restarted backboardd on 0191d: backboardd rendered at 720 wide (A8 uploads 720x79), then
