@@ -8,6 +8,11 @@
   MobileGestalt.plist.pre-0190; live file renamed .moved-0190). A fresh process then answers cellular-data=true,
   HasBaseband=true, contains-cellular-radio=true, BasebandStatus "BBNotAnswering". MobileGestaltHelper did not
   rewrite the cache immediately. Killed Preferences + SpringBoard (respring 07:39, SpringBoard 703 up, no crash).
+- USER (after the respring): **Settings shows the Cellular section; status bar shows signal bars + the SIM/carrier
+  name (no more SOS).** Both were caused by the stale cache. Not yet checked: whether MobileGestaltHelper rewrites
+  the cache by the next boot (verify with sweet-mgquery after reboot), whether calls are allowed again.
+- Still open for cellular: mobile data (PDP/IPA path stubbed in the kernel), call audio, soft reset / RFS sync,
+  IMSI_SWITCH/MULTI_PDN pushes (BSP 0xe00d unsupported), BasebandStatus "BBNotAnswering".
 - Restore if needed: mv .moved-0190 back to com.apple.MobileGestalt.plist (or copy .pre-0190).
 - Earlier this session: USB dropped 07:15:55 and came back ~07:22 (user replugged; phone kept running). Calls:
   first outgoing call reached Alerting and later ended ("CS call not active"); user then reported new calls "not allowed".
