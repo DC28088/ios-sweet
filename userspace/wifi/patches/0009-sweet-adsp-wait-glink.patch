@@ -1,0 +1,161 @@
+diff --git a/phone/wifi/glink.c b/phone/wifi/glink.c
+index 7c28e1e..2816e58 100644
+--- a/phone/wifi/glink.c
++++ b/phone/wifi/glink.c
+@@ -48,6 +48,17 @@ int glink_init(void)
+ 	return 0;
+ }
+ 
++/*
++ * 0009: the peer allocates the SMEM rx fifo item when its GLINK transport starts, which on the ADSP is after the PAS
++ * reset returns (0008 checked once and concluded "no GLINK link" while the ADSP was still booting). Read-only.
++ */
++int glink_remote_ready(void)
++{
++	uint64_t pa;
++	uint32_t len;
++	return smem_get(g_host, FIFO_RX_ITEM, &pa, &len) == 0;
++}
++
+ static uint32_t tx_write(uint32_t head, const uint8_t *data, size_t n)
+ {
+ 	/* the FIFO is device memory here: whole words only (n is padded by the caller) */
+diff --git a/phone/wifi/glink.h b/phone/wifi/glink.h
+index 4609cf3..d1f591e 100644
+--- a/phone/wifi/glink.h
++++ b/phone/wifi/glink.h
+@@ -22,6 +22,8 @@ void glink_edge(unsigned smem_host, unsigned ipc_bit);	/* before glink_init; def
+ #define GLINK_CMD_SIGNALS	15
+ 
+ int glink_init(void);
++/* 0009: 1 once the remote has allocated its rx fifo (the peer's GLINK transport is up). Read-only. */
++int glink_remote_ready(void);
+ /* Queue one command (8-byte header + data, padded to 8) and ring the modem. */
+ int glink_send(uint16_t cmd, uint16_t p1, uint32_t p2, const void *data, size_t len);
+ /* Bytes available from the modem, and copying/consuming them. */
+diff --git a/phone/wifi/wland.c b/phone/wifi/wland.c
+index 1d1725c..2cae25f 100644
+--- a/phone/wifi/wland.c
++++ b/phone/wifi/wland.c
+@@ -677,18 +677,71 @@ static void adsp_idle(void)
+ 	}
+ }
+ 
+-static int adsp_net(void)
++/* 0009: the LPASS crash reason (SMEM item 423) as text, so a fatal explains itself in the same log. */
++static void adsp_crash_reason(void)
+ {
++	uint64_t pa;
++	uint32_t sz;
++	if (smem_get(SMEM_HOST_ADSP, 423, &pa, &sz)) {
++		printf("adsp: SMEM 423 absent\n");
++		return;
++	}
++	char s[161];
++	uint32_t n = sz < sizeof(s) - 1 ? sz : (uint32_t)sizeof(s) - 1;
++	for (uint32_t i = 0; i < n; i++) {
++		char ch = (char)(rd32(pa + (i & ~3u)) >> (8 * (i & 3)));
++		s[i] = ch >= 32 && ch < 127 ? ch : ' ';
++	}
++	s[n] = 0;
++	printf("adsp: SMEM 423: %s\n", s);
++}
++
++static int adsp_net(unsigned secs)
++{
++	adsp_last = 0xffffffff;
+ 	glink_edge(SMEM_HOST_ADSP, 24);
+ 	link_idle = adsp_idle;
+-	if (link_up(net_cb, 10000)) {
+-		printf("adsp: no GLINK link in 10 s\n");
++	/*
++	 * 0009: the order 0008 showed: PAS reset returns first, the ADSP's GLINK transport (its rx fifo, SMEM 480) comes
++	 * up a moment later, then its slave-kernel ready bit. 0008 called link_up once, right after the reset, got "the
++	 * remote has no rx fifo" and exited, so IPCRTR, pd-mapper and tftp were never served at all. Wait for the fifo,
++	 * then open the edge.
++	 */
++	uint64_t start = link_ms();
++	int ready = 0;
++	while (link_ms() - start < 60000) {
++		uint32_t v = 0;
++		if (adsp_state(&v) == 0) {
++			if ((v & 2) && !ready) {
++				printf("adsp: READY after %llu ms (slave-kernel %x)\n", (unsigned long long)(link_ms() - start), v);
++				ready = 1;
++			}
++			if (v & 1) {
++				printf("adsp: slave-kernel %x: ERR-FATAL before GLINK\n", v);
++				adsp_crash_reason();
++				return 1;
++			}
++		}
++		if (glink_remote_ready())
++			break;
++		if ((link_ms() - start) % 5000 < 100)
++			printf("adsp: waiting for the GLINK rx fifo (SMEM 480), %llu ms\n", (unsigned long long)(link_ms() - start));
++		usleep(100000);
++	}
++	if (!glink_remote_ready()) {
++		printf("adsp: no GLINK rx fifo in 60 s\n");
++		return -1;
++	}
++	printf("adsp: GLINK rx fifo after %llu ms; opening the edge\n", (unsigned long long)(link_ms() - start));
++	if (link_up(net_cb, 30000)) {
++		printf("adsp: GLINK did not open in 30 s\n");
+ 		return -1;
+ 	}
+ 	printf("adsp: IPCRTR up; remote node %u\n", link_remote_node);
+ 	if (pdmapper_init() || tftp_init())
+ 		printf("adsp: no pd-mapper/tftp\n");
+-	for (uint64_t t0 = link_ms(), next = t0; ;) {
++	const uint64_t end = secs ? link_ms() + 1000ull * secs : 0;
++	for (uint64_t next = link_ms(); !end || link_ms() < end;) {
+ 		link_poll(100);
+ 		if (link_ms() >= next) {
+ 			adsp_idle();
+@@ -698,17 +751,22 @@ static int adsp_net(void)
+ 			       smem_get(SMEM_HOST_ADSP, SMP2P_ADSP_IN, &pa, &sz) ? "absent" : "present");
+ 			next = link_ms() + 10000;
+ 		}
+-		if (adsp_last != 0xffffffff && (adsp_last & 1))
++		if (adsp_last != 0xffffffff && (adsp_last & 1)) {
++			printf("adsp: ERR-FATAL while serving the edge\n");
++			adsp_crash_reason();
+ 			return 1;
++		}
+ 	}
++	printf("adsp: %u s watched, still serving (slave-kernel %x)\n", secs, adsp_last);
++	return 0;
+ }
+ 
+-static int boot_adsp(void)
++static int boot_adsp(unsigned secs)
+ {
+ 	uint32_t v = 0;
+ 	if (adsp_state(&v) == 0 && (v & 2) && !(v & 1)) {
+-		printf("adsp: already up (slave-kernel %x)\n", v);
+-		return 0;
++		printf("adsp: already up (slave-kernel %x); serving the edge\n", v);
++		return adsp_net(secs);
+ 	}
+ 	/* proxy votes as the stock DT: the top LPI cx/mx levels (the kernel may refuse resources it does not know) */
+ 	uint64_t aux;
+@@ -730,7 +788,7 @@ static int boot_adsp(void)
+ 		return -1;
+ 	if (pas_load(PAS_ADSP, ADSP_FW_DIR, "adsp", ADSP_PA, ADSP_SIZE, "adsp"))
+ 		return -1;
+-	return adsp_net();
++	return adsp_net(secs);
+ }
+ 
+ /* configure (kernel), firmware (here), setup (kernel); everything stays off on the first failure */
+@@ -1148,7 +1206,8 @@ int main(int argc, char **argv)
+ 	} else if (!strcmp(c, "qmp") && argc > 2) {
+ 		return qmp_send(argv[2]) ? 1 : 0;
+ 	} else if (!strcmp(c, "adsp")) {
+-		return boot_adsp() ? 1 : 0;
++		/* 0009: optional seconds to watch (0 = until it fails or is killed) */
++		return boot_adsp(argc > 2 ? (unsigned)strtoul(argv[2], NULL, 0) : 0) ? 1 : 0;
+ 	} else if (!strcmp(c, "adsp-shutdown")) {
+ 		uint64_t r1 = 0;
+ 		int64_t rc = scm(6, 1, PAS_ADSP, 0, 0, &r1);	/* PAS_SHUTDOWN */
