@@ -1,3 +1,30 @@
+## 2026-11-05: USER switched from sideload to native Apple ID/App Store; actual ADI error captured
+- Sideload PAUSED by USER. EeveeSpotify files copied to /Applications/EeveeSpotify.app (884 SHA256s matched),
+  registration FAILED with MCMErrorDomain 98 NOT_CODESIGNED; no launch. Temporary helper and registration plist
+  removed. No cache deleted; small cache backup verified locally. Last free filesystem space ~202 MiB.
+- USER entered fastboot. Temporary 0207-iserv boot accepted (Sending + Booting OKAY), no flash.
+  Image is workspace work/iserv-runtime/shim-boot-0207-iserv.img, SHA256
+  5ecdef977707afc6606f642945e739fbc5f62c8a98bb18ff66d05102054ec875.
+  Only logging args/header checksum changed from 0207-dtlog; kernel/ADT unchanged; cmdline 585 bytes,
+  sweetdtlog=akd,adid,appstored,fairplayd.H2. Existing UDP receiver retained; raw captures stay private.
+- Wall clock reset to 1970 after boot; corrected to current host UTC. Native Foundation TLS reached Apple
+  authentication host (HTTP 404 test path, certificate validation enabled); SecRandomCopyBytes returned 0.
+- USER then reproduced "Verification failed MD is invalid" and Store "forever stuck in loading".
+  Native akd: provisioning start/end HTTP 200; ADIProvisioningStart succeeded; ADIProvisioningEnd -42410.
+  Error chain AKAnisetteError -8004 -> AKUnderlyingADIErrors -42410. Meaning unresolved; no fix claimed.
+  Separate activation-record/BAA errors observed. appstored bag timeout ASDErrorDomain 515; fairplayd.H2
+  repeatedly starts; exact exit cause not yet captured. Do not equate HTTP 200 with successful provisioning.
+- Entitlement-limited synthetic probe got NSCocoaErrorDomain 4099 from anisette XPC and -34018 keychain;
+  these probe failures do not establish the native Settings/keychain cause. All probes removed after runs.
+- Isolated worktree workspace/work/iserv-diagnostics, branch codex/iserv-diagnostics, commit b9c1a64:
+  0209 bounded syscall-number/errno + exit-code diagnostics for adid/fairplayd.H2, boot-arg sweetservtrace=1,
+  default off. No payloads, paths, IDs, auth/signing/activation changes. Patch apply check passed;
+  full compile and hardware test pending. Native nonlocal BSD returns/Mach traps are outside this first probe.
+- Asked specific approval to push this branch to DC28088/ios-sweet + Actions build because earlier automatic
+  review rejected project diagnostic uploads without explicit payload/destination authorization. NO PUSH/CI YET.
+  Next after approval: build 0209, package same hardware baseline + sweetservtrace=1; test once.
+- Updated user-facing outputs/iServ-Notes.md in current chat workspace. Raw logs/firmware/credentials not committed.
+
 ## 2026-11-05 20:01 IST: 0207 YouTube reproduction crashes; 0208 diagnostics prepared, external build awaiting approval
 - USER: YouTube in Safari caused a visible SpringBoard restart. Captured private logs/boot-0207-dtlog.txt:
   mediaserverd repeatedly SIGBUS at unslid H264SW.videocodec PC 0x1f0f4c914 (str q0,[x10,x3]), bad destination
