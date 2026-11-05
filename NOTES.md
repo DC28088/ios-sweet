@@ -1,3 +1,21 @@
+## 2026-11-05 18:40 IST: wland 0008 `adsp` on 0204: ADSP READY, then the same sensor-PD dog; MODEM SURVIVES now
+- wland 0008 (commit eee43ef; CI sweet-wifi 42032699830, wland 1ec27069...; on the phone as /var/local/bin/wland-0008, boot
+  wland unchanged): ADSP SMP2P items fixed to in 443 / out 429 (0006/0007 had them swapped; the modem's <435 428> proves
+  qcom,smem = <in out>) + "sleepstate" entry (ios-flame adspboot au14). Run `wland-0008 adsp` (log /var/local/adsp-0008.log):
+  votes lcx 5 / lmx 4 -> 0, out item 429 "master-kernel" 0 "sleepstate" 1, PAS 1 init/mem/auth all 0/0, 19586305 bytes,
+  QMP acked; "glink: the remote has no rx fifo (item 480)", "no GLINK link in 10 s" -> exit (0007 has no READY wait).
+- Read-only after (`wland-0008 item N 2`): ADSP out item 443 = "smp2p" 0, "slave-kernel" 7 (READY + unvote + ERR-FATAL),
+  "sleepstate_see"; item 480 now exists (the ADSP's FIFO came later than our 10 s); crash item 423: "err_qdi.c:1040:EF:
+  sensor_process:0x1:TMR_CLNT_1:0xe7:dog_virtual_user.c:240:USER-PD DOG detects stalled initialization" (as 0195).
+  MODEM: slave-kernel 6 (fine), cellular + Wi-Fi traffic continue (0195: modem fatal with the ADSP).
+- Next (sound): the sensor PD needs its registry/config files over reverse FastRPC (ios-flame adspboot fastrpc.c, au10-au15;
+  postmarketOS hexagonrpcd): a FastRPC listener on fastrpcglink-apps-dsp + a translating SMMU bank for SID 0x1b23 (sweet
+  DT: audio-ion 0x1b21, fastrpc cbs 0x1b23-0x1b28 = sunfish's) - kernel side on sweet (userland apps-SMMU access stalls a
+  CPU here) - + sweet's /vendor/etc/sensors files (not pulled yet; read-only OrangeFox pull needs the USER's OK).
+  Also: wland waits >10 s for GLINK, with a READY wait first.
+- Also today: YouTube/web media don't play: mediaserverd aborts on Safari media (0202-0204); xnu 0205 (sweetdtlog) builds
+  to read its os_log. backboardd SIGSEGV twice during the UFO test (parked by the USER).
+
 ## 2026-11-05 17:00-18:10 IST: 0202 + merged 0203 on the phone: panel sleep WORKS; haptics/BT audio/charger in one image
 - 0202 (logs/boot-0202.txt): 28/10 in HS ("dcs 0x28 HS sent ... ack_err=0 timeout=0 dma_ctrl=0x14000000"; ABL's DMA_CTRL
   was LP|embedded), 11/29 LP, 6 cycles. USER: "the display sleeps and wakes normally"; a crack line on the panel stays lit
