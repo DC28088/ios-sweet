@@ -1,3 +1,18 @@
+## 2026-11-05 17:00-18:10 IST: 0202 + merged 0203 on the phone: panel sleep WORKS; haptics/BT audio/charger in one image
+- 0202 (logs/boot-0202.txt): 28/10 in HS ("dcs 0x28 HS sent ... ack_err=0 timeout=0 dma_ctrl=0x14000000"; ABL's DMA_CTRL
+  was LP|embedded), 11/29 LP, 6 cycles. USER: "the display sleeps and wakes normally"; a crack line on the panel stays lit
+  (on Android it goes dark).
+- 0203-noblack (shim/out/shim-boot-0203-noblack.img ebca12b4, sweetpanelblack=0: no black fill, DCS only). USER: lock
+  screen "cannot see at all" -> DCS 28/10 in HS really turn the panel off; the lit crack line = panel rails still
+  powered. Next for full Android-like off: panel regulators/ELVDD + reset (research the K6 DT supplies first; risky).
+- 0203 merged (claude/pm-merged = 0196-0203 stacked; CI 42020549243 on macos-15-intel: FIRST kernel built on Intel,
+  works; the arm run 42019079955 was never given a runner. Image shim/out/shim-boot-0203-merged.img 769056ad, kernel
+  3763cab9, extra args sweetvaudio=1 sweetcharge=2 sweetchgsdp=900; panel sleep default on, taps 30 ms at the DT drive
+  0x6a, sweethapscale=1 = old scaling). Boot 18:02: charger SDP 900 mA + FCC 2000 again, haptics served, panel cycles
+  clean. USER: "the tap haptics feels alright".
+- Open: speaker/jack/mic (ADSP path, wland 0007 not installed), full panel power-off (crack line), tap to wake (USER),
+  charging check on a wall charger / below 99 %, Wi-Fi not joining (wland scans), CommCenter loop seen on 0197.
+
 ## 2026-11-05 16:15-16:55 IST: hardware results of 0199/0200/0198/0197 (USER at the phone, PC USB)
 - 0199 charging (logs/boot-0199.txt): "source SDP (apsd 0x1, typec 0x8, aicl on): target 900 mA"; ICL 0x1370 0x0a -> 0x12
   (500 -> 900 mA, ICL status 900), FCC 0x1061 0x1e -> 0x28 (1500 -> 2000 mA), all read back, no SPMI errors. Battery 99%:
