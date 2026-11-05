@@ -27,3 +27,30 @@ attestation requirements are satisfied.
 
 Local validation: patch apply check against the prepared 0207 source passed;
 whitespace check passed. A full kernel compile and hardware test remain pending.
+
+## Observed ADI storage repair
+
+On the native 0209 reproduction, the server's exact text/code was captured:
+`MID is invalid`, `ec=-80009`. ADI finalization separately returned -42410.
+
+Read-only inspection found the `com.apple.adid` system container's Documents,
+Library, Library/Caches, Library/Preferences and tmp directories had mode 000
+and UID/GID 4294967294. A temporary entitlement-free native check, running
+as mobile UID/GID 501, returned EACCES for write/search access to every one.
+
+Saved their original metadata privately and changed only these five existing
+standard directories to UID/GID 501, mode 0700. The mobile access check then
+passed for all five. Container root and metadata file, account contents,
+audio code/processes and boot state were not changed. No service success is
+claimed until native login is retested.
+
+`tools/sweet-adid-storage.py` can inspect a separately mounted root and repair
+this exact invalid-template signature. Default is inspect-only. Applying
+requires a new private backup outside the mounted root; unexpected ownership
+or modes and symlinks are refused. It does not enumerate account files.
+
+Validation: Python compilation and CLI help passed. A disposable root fixture
+confirmed inspection, refusal of unexpected metadata without mutation, and
+refusal of symlink candidates. The actual phone repair was performed separately
+with scoped SSH chmod/chown and verified by a native mobile-UID access check;
+the mounted-root Python tool has not been applied to a mounted phone image.

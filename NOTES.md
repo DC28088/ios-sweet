@@ -1,3 +1,20 @@
+## 2026-11-05: confirmed MID -80009; ADI inaccessible directories repaired; awaiting retest
+- USER: continue Apple ID, do not clash with OpenCode/DeepSeek audio. Main checkout/NOTES dirty from audio:
+  left untouched; own isolated iServices worktree only. No reboot or audio process/config change.
+- 0209 logs confirm server "MID is invalid", ec=-80009. ADI finalization remains -42410 on reproduction.
+  Error syscall 398 = open_nocancel ENOENT; no justified generic success-return changes.
+- Found com.apple.adid's Documents, Library, Library/Caches, Library/Preferences, tmp had mode 000,
+  UID/GID 4294967294. Entitlement-free native helper as mobile 501:501 confirmed EACCES on all five.
+- Saved exact original metadata privately in chat work/iserv-runtime; repaired ONLY those five existing
+  directories to 501:501 mode 0700. Native mobile write/search access now passes for all five.
+  Container root and metadata file untouched; no account contents read/erased/changed by agent. Helper removed.
+- USER asked for one login retest on same boot; outcome pending. This fixes observed storage access only,
+  Apple ID success NOT established. Avoid claiming -42410's cause from the permissions observation alone.
+- New tools/sweet-adid-storage.py for a mounted root: inspect default; scoped exact invalid-template repair,
+  external private backup required; unexpected states/symlinks refused. Python compile/help and disposable
+  fixture refusal checks pass. Not run against a mounted phone image; live repair separately verified.
+- Raw captures, container UUIDs, backup metadata remain private outside Git. Handoff/docs sanitized.
+
 ## 2026-11-05: 0209 temporarily booted; clean fairplayd exit confirmed; awaiting native reproduction
 - USER entered fastboot. Sending + Booting OKAY for the previously verified 0209 image; no flash.
 - Pre-boot receiver offset saved in chat workspace work/iserv-runtime/0209-capture-start.json.
