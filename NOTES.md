@@ -1,3 +1,20 @@
+## 2026-11-05 19:48 IST: Codex resumed Claude: sensor files pulled read-only; 0207-dtlog booted
+- USER: continue Claude handoff; phone in OrangeFox; pull sensor files first, then boot completed image.
+- Mounted vendor EROFS read-only at /mnt/sweet-vendor-readonly; copied etc/sensors (119 files) and lib/rfsa/adsp
+  (35 files) into ignored research/sensors-0207/vendor. Verified all 154 file SHA256s against the device
+  (12,591,771 bytes total); manifest pull-manifest.json + device-SHA256SUMS. Unmounted afterwards. No partition writes.
+- Both xnu runs 42040394031 / 42040400391 SUCCESS, head 79f8745315553c6de395afb10b7d3409016d550e.
+  Verified local kernel SHA256SUMS, boot-image header and diagnostic markers. Temporary fastboot boot of
+  shim/out/shim-boot-0207-dtlog.img returned OKAY; image SHA256
+  7ca0d7a7f283adf831d6c0b2dda61bb36a5176781664a93e952d89b7d2cd327d.
+- Existing USB receiver PID 88195 retained; it appends to logs/boot-0205-dtlog.txt. Start offset 14082211,
+  recorded in research/sensors-0207/0207-boot-start.json. Extracted new segment to logs/boot-0207-dtlog.txt.
+  Early capture 755715 bytes: sweetbuild=207 confirmed, SpringBoard/backboardd/mediaserverd each exec once,
+  no matching crashes for those processes or panic in that capture. USB SSH works; all three processes alive.
+- Asked USER to test Safari YouTube with Bluetooth headphones. Playback success NOT established yet.
+  Sensor files are saved on the host only; FastRPC listener port/install and ADSP sensor-PD survival remain pending.
+  Speaker/jack/mic still need that work. No builds dispatched/cancelled and no firmware/config files published.
+
 ## 2026-11-05 19:35 IST: USER priorities after today; Safari media root cause; 0206/0207 building
 - USER order: speaker (ADSP) -> sensors -> GPS -> Apple ID / iServices. Sensors share the ADSP work (SEE sensors PD
   over FastRPC); GPS = modem LOC (QMI) + locationd; Apple ID needs Apple hardware attestation (FairPlay/SEP/device
