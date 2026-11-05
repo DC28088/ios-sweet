@@ -1,0 +1,70 @@
+diff --git a/phone/wifi/wland.c b/phone/wifi/wland.c
+index f2e7196..1d1725c 100644
+--- a/phone/wifi/wland.c
++++ b/phone/wifi/wland.c
+@@ -588,7 +588,7 @@ static int ipa_fw_load(void)
+ 
+ /*
+  * 0006: the ADSP (LPASS Q6, audio): stock DT qcom,lpass@62400000 (PAS 1, firmware "adsp", pil_adsp_region 0x95700000+0x2600000,
+- * proxy votes lcx/lmx, signal-aop) and qcom,smp2p-adsp (SMEM host 2, items 443 out / 429 in, APCS IPC bit 26; inbound
++ * proxy votes lcx/lmx, signal-aop) and qcom,smp2p-adsp (SMEM host 2, items 443 in / 429 out (0008), APCS IPC bit 26; inbound
+  * slave-kernel bit 0 err-fatal, 1 ready). `wland adsp` boots it once, separately from the modem (milestone 1 of
+  * docs/audio-plan.md); the GLINK "lpass" edge and APR come next.
+  */
+@@ -597,8 +597,11 @@ static int ipa_fw_load(void)
+ #define ADSP_SIZE	0x02600000ull
+ #define ADSP_FW_DIR	"/var/local/fw/adsp"
+ #define SMEM_HOST_ADSP	2
+-#define SMP2P_ADSP_OUT	443
+-#define SMP2P_ADSP_IN	429
++/* 0008: qcom,smem = <443 429> is <inbound outbound> as the modem's <435 428> (wland: in 435, out 428): 0006/0007 had them
++ * swapped (wrote "master-kernel" into the ADSP's own item and waited for 429 in vain: 0191d/0195 "no SMP2P item 429").
++ * Same bug and fix in ios-flame adspboot (3a275a6, sunfish): READY within ~110 ms afterwards. */
++#define SMP2P_ADSP_OUT	429
++#define SMP2P_ADSP_IN	443
+ #define IPC_ADSP_SMP2P	26
+ 
+ static int adsp_smp2p_create(void)
+@@ -608,18 +611,31 @@ static int adsp_smp2p_create(void)
+ 		fprintf(stderr, "adsp: cannot allocate SMP2P item %u\n", SMP2P_ADSP_OUT);
+ 		return -1;
+ 	}
++	/*
++	 * 0008: entry 1 "sleepstate", bit 0 = AP awake (Android's smp2p-sleepstate). The ADSP's SEE remote_proc_state driver
++	 * registers on it; without it the static sensors image dies (ios-flame adspboot au14: the ADSP survived only with it).
++	 */
+ 	if (rd32(pa) != 0x504d5324) {
+ 		wr32(pa + 8, 0 | (2u << 16));		/* local pid 0, remote pid 2 (ADSP) */
+-		wr32(pa + 12, 16 | (1u << 16));		/* total 16 entries, 1 valid */
++		wr32(pa + 12, 16 | (2u << 16));		/* total 16 entries, 2 valid */
+ 		wr32(pa + 16, 0);
+ 		wr_name(pa + 20, "master-kernel");
+ 		wr32(pa + 36, 0);
++		wr_name(pa + 40, "sleepstate");
++		wr32(pa + 56, 1);			/* bit 0: awake */
+ 		wr32(pa + 0, 0x504d5324);
+ 		__asm__ volatile("dsb sy" ::: "memory");
+ 		wr32(pa + 4, 1 | (1u << 8));
++	} else if ((rd32(pa + 12) >> 16) == 1) {	/* an item from an older run: append the entry */
++		wr_name(pa + 40, "sleepstate");
++		wr32(pa + 56, 1);
++		__asm__ volatile("dsb sy" ::: "memory");
++		wr32(pa + 12, 16 | (2u << 16));
+ 	}
++	__asm__ volatile("dsb sy" ::: "memory");
+ 	kick(IPC_ADSP_SMP2P);
+-	printf("adsp: SMP2P item %u at %llx\n", SMP2P_ADSP_OUT, (unsigned long long)pa);
++	printf("adsp: SMP2P out item %u at %llx: %u entries, \"master-kernel\" %x, \"sleepstate\" %x\n", SMP2P_ADSP_OUT,
++	       (unsigned long long)pa, rd32(pa + 12) >> 16, rd32(pa + 36), rd32(pa + 56));
+ 	return 0;
+ }
+ 
+@@ -678,7 +694,7 @@ static int adsp_net(void)
+ 			adsp_idle();
+ 			uint64_t pa;
+ 			uint32_t sz;
+-			printf("[%6llu] adsp: alive; SMEM 429 %s\n", (unsigned long long)link_ms(),
++			printf("[%6llu] adsp: alive; SMEM 443 %s\n", (unsigned long long)link_ms(),
+ 			       smem_get(SMEM_HOST_ADSP, SMP2P_ADSP_IN, &pa, &sz) ? "absent" : "present");
+ 			next = link_ms() + 10000;
+ 		}
