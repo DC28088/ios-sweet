@@ -1,0 +1,591 @@
+diff --git a/bsd/conf/files b/bsd/conf/files
+index 770d7c7..2eff104 100644
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -120,6 +120,7 @@ bsd/dev/flame_wlan.c		standard
+ bsd/dev/sweet_bt.c			standard
+ bsd/dev/sweet_bt_hci.c			standard
+ bsd/dev/sweet_haptic.c			standard
++bsd/dev/sweet_dark.c			standard
+ bsd/dev/sweet_audiohal.c		standard
+ bsd/dev/sweet_files.c			standard
+ bsd/dev/sweet_gpu.c			standard
+diff --git a/bsd/dev/sweet_dark.c b/bsd/dev/sweet_dark.c
+new file mode 100644
+index 0000000..5c8df9d
+--- /dev/null
++++ b/bsd/dev/sweet_dark.c
+@@ -0,0 +1,101 @@
++/*
++ * 0200: display-dark power state for sweet. Adapted from ios-flame (Pixel 4a "sunfish" port, MIT)
++ * xnu 0242 "display-dark idle" (itself after akshaynexus/iOSPlus10 0382 "power idle", MIT) and 0257
++ * "dark clocks".
++ *
++ * AppleCLCD's RequestPowerChange (SweetFramebuffer.cpp; backboardd sends it when the screen locks or
++ * wakes) calls sweet_dark_set(). While dark:
++ *   - the panel sleeps (DCS 28 display off, 10 sleep in; on wake 11 sleep out, 29 display on), see
++ *     SweetFramebuffer.cpp (sweetpanelsleep=1), instead of a CPU fade of a lit black frame
++ *   - USB ud_thread polls every 20 ms instead of 1 ms once the host link was quiet for 2 s (any
++ *     event or queued frame -> 1 ms at once); the USB log thread every 250 ms instead of 100 ms
++ *   - touch polling stops while no finger is down; keys poll every 40 ms instead of 20 ms
++ *   - the framebuffer tick runs every 500 ms after 5 s dark (instead of 120 Hz)
++ *   - CPU clocks: A55 at most ~1.25 GHz, A76 at most ~0.65 GHz (SweetCPU.cpp sweet_cpufreq_dark;
++ *     cpufreq-hw LUT rows), restored on wake
++ * Boot-arg sweetdark=0: nothing changes (the flag stays 0). sweetdarkclk=0 keeps the CPU clocks.
++ * kern.sweet_display_dark (read-only) shows the state.
++ */
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <sys/sysctl.h>
++#include <kern/clock.h>
++#include <kern/thread.h>
++#include <kern/sched_prim.h>
++#include <pexpert/pexpert.h>
++
++void sweet_dark_set(int dark);
++void sweet_dark_sleep(uint32_t ms);
++extern void sweet_cpufreq_dark(int dark);   /* iokit/Kernel/arm/SweetCPU.cpp */
++
++int sweet_display_dark;                 /* 1 while the display is off (and sweetdark=1) */
++const uint32_t sweet_dark_usb_ms = 20;
++const uint32_t sweet_dark_usblog_ms = 250;
++const uint32_t sweet_dark_keys_ms = 40;
++const uint32_t sweet_dark_fb_ms = 500;
++const uint32_t sweet_dark_fb_after_ms = 5000;
++static int sweet_dark_enabled = -1, sweet_dark_clk = 1;
++static unsigned sweet_dark_cycles;
++
++SYSCTL_INT(_kern, OID_AUTO, sweet_display_dark, CTLFLAG_RD | CTLFLAG_LOCKED, &sweet_display_dark, 0,
++    "SWEET: display off, kernel pollers slowed (0200)");
++
++void
++sweet_dark_set(int dark)
++{
++	if (sweet_dark_enabled < 0) {
++		int en = 1;
++		(void)PE_parse_boot_argn("sweetdark", &en, sizeof(en));
++		(void)PE_parse_boot_argn("sweetdarkclk", &sweet_dark_clk, sizeof(sweet_dark_clk));
++		sweet_dark_enabled = en != 0;
++	}
++	if (!sweet_dark_enabled) {
++		return;
++	}
++	int was = __atomic_exchange_n(&sweet_display_dark, dark ? 1 : 0, __ATOMIC_SEQ_CST);
++	if (!dark) {
++		thread_wakeup((event_t)&sweet_display_dark);    /* slowed pollers restart now */
++	}
++	if (was == !!dark) {
++		return;
++	}
++	if (sweet_dark_clk) {
++		sweet_cpufreq_dark(dark);
++	}
++	if (dark) {
++		sweet_dark_cycles++;
++	}
++	if (sweet_dark_cycles <= 20) {
++		if (dark) {
++			printf("SWEET DARK: on (%u): usb %u ms (no traffic 2 s), usblog %u ms, touch stopped, keys %u ms, "
++			    "fb %u ms after %u ms, cpu clocks %s\n", sweet_dark_cycles, sweet_dark_usb_ms, sweet_dark_usblog_ms,
++			    sweet_dark_keys_ms, sweet_dark_fb_ms, sweet_dark_fb_after_ms, sweet_dark_clk ? "low" : "kept");
++		} else {
++			printf("SWEET DARK: off: usb 1 ms, usblog 100 ms, touch 10 ms, keys 20 ms, fb full rate, cpu clocks %s\n",
++			    sweet_dark_clk ? "restored" : "kept");
++		}
++	}
++}
++
++/*
++ * Sleep up to ms (0 = until the display comes on) on the dark channel. Returns at once if the display
++ * is already on again (the check after assert_wait: a sweet_dark_set(0) in between is not lost).
++ */
++void
++sweet_dark_sleep(uint32_t ms)
++{
++	if (ms) {
++		uint64_t deadline;
++		clock_interval_to_deadline(ms, NSEC_PER_MSEC, &deadline);
++		(void)assert_wait_deadline((event_t)&sweet_display_dark, THREAD_UNINT, deadline);
++	} else {
++		(void)assert_wait((event_t)&sweet_display_dark, THREAD_UNINT);
++	}
++	if (!__atomic_load_n(&sweet_display_dark, __ATOMIC_SEQ_CST)) {
++		clear_wait(current_thread(), THREAD_AWAKENED);
++		return;
++	}
++	thread_block(THREAD_CONTINUE_NULL);
++}
++#endif /* ARM64_BOARD_CONFIG_SWEET */
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+index a148608..380e361 100644
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -15,6 +15,9 @@
+ 
+ extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
+ extern void sweet_hid_key(int key, int down);
++extern int sweet_display_dark;          /* 0200: bsd/dev/sweet_dark.c */
++extern void sweet_dark_sleep(uint32_t ms);
++extern const uint32_t sweet_dark_keys_ms;
+ void sweet_keys_init(void);
+ 
+ #define KEYS_CORE_PA     0x0c440000u
+@@ -118,7 +121,12 @@ keys_thread(void *arg, wait_result_t result)
+ 				sweet_hid_key(k, state[k]);
+ 			}
+ 		}
+-		keys_wait();
++		/* 0200 (ios-flame 0242): display dark, no key down: 40 ms (a press lasts 80 ms or more) */
++		if (!state[0] && !state[1] && !state[2] && __atomic_load_n(&sweet_display_dark, __ATOMIC_ACQUIRE)) {
++			sweet_dark_sleep(sweet_dark_keys_ms);
++		} else {
++			keys_wait();
++		}
+ 	}
+ }
+ 
+diff --git a/bsd/dev/sweet_touch.c b/bsd/dev/sweet_touch.c
+index e3f8ce8..7b071aa 100644
+--- a/bsd/dev/sweet_touch.c
++++ b/bsd/dev/sweet_touch.c
+@@ -20,6 +20,8 @@ extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
+ extern kern_return_t thread_terminate(thread_t);
+ extern int sweet_rpmh_vreg_enable(const char *res, unsigned mv);
+ extern void sweet_hid_touch(int finger, int down, int x, int y);
++extern int sweet_display_dark;          /* 0200: bsd/dev/sweet_dark.c */
++extern void sweet_dark_sleep(uint32_t ms);
+ extern void sweet_sched_tap_mark(void); /* 0179 per-tap probe (sched_prim.c) */
+ void sweet_touch_init(void);
+ 
+@@ -662,6 +664,11 @@ touch_thread(void *arg, wait_result_t result)
+ 				errors = 0;
+ 			}
+ 		}
++		/* 0200 (ios-flame 0242): display dark, no finger down: no polling until the display is on */
++		if (st.active == 0 && __atomic_load_n(&sweet_display_dark, __ATOMIC_ACQUIRE)) {
++			sweet_dark_sleep(0);
++			continue;
++		}
+ 		touch_wait(10);
+ 	}
+ 	touch_report(0, st.x, st.y);
+diff --git a/bsd/dev/sweet_usb.c b/bsd/dev/sweet_usb.c
+index 987f791..ddeaec9 100644
+--- a/bsd/dev/sweet_usb.c
++++ b/bsd/dev/sweet_usb.c
+@@ -16,6 +16,7 @@
+ #include <kern/clock.h>
+ #include <kern/thread.h>
+ #include <kern/sched_prim.h>
++#include <mach/mach_time.h>
+ #include <machine/machine_routines.h>
+ #include <arm/caches_internal.h>
+ #include <vm/pmap.h>
+@@ -239,8 +240,18 @@ static struct {
+ 	unsigned    txq_head, txq_count;
+ 	bool        tx_busy;
+ 	uint64_t    rx_frames, tx_frames;
++	uint64_t    last_traffic;   /* 0200: mach time of the last event or queued TX frame */
++	bool        poll_long;      /* 0200: ud_thread is in a dark (20 ms) sleep: ud_if_output wakes it */
+ } ud;
+ 
++/*
++ * 0200 (ios-flame 0242, after iOSPlus10 0382, MIT): with the display dark (sweet_dark.c) and no traffic
++ * for 2 s, ud_thread polls every sweet_dark_usb_ms (20) instead of 1 ms; any event, a queued TX frame
++ * (ud_if_output wakes the thread) or the display on -> 1 ms at once. The log thread: 250 ms while dark.
++ */
++extern int sweet_display_dark;
++extern const uint32_t sweet_dark_usb_ms, sweet_dark_usblog_ms;
++
+ static inline void
+ dwc_wr(uint32_t off, uint32_t v)
+ {
+@@ -628,7 +639,11 @@ ud_if_output(ifnet_t ifp, mbuf_t m)
+ 	ud.txq[(ud.txq_head + ud.txq_count) % UD_TXQ] = m;
+ 	ud.txq_count++;
+ 	ud_tx_kick_locked();
++	ud.last_traffic = mach_absolute_time();         /* 0200 */
+ 	lck_mtx_unlock(ud.lock);
++	if (__atomic_load_n(&ud.poll_long, __ATOMIC_SEQ_CST)) {
++		thread_wakeup((event_t)&sweet_display_dark);    /* 0200: the completion is seen within 1 ms */
++	}
+ 	return 0;
+ }
+ 
+@@ -826,10 +841,32 @@ ud_thread(void *arg __unused, wait_result_t wr __unused)
+ 				ud_event(ev);
+ 			}
+ 			dwc_wr(GEVNTCOUNT, count);
++			ud.last_traffic = mach_absolute_time();         /* 0200 */
+ 		}
+ 		if ((++ticks % 30000) == 0) {
+ 			printf("SWEET USB: ue0 rx %llu tx %llu frames\n", ud.rx_frames, ud.tx_frames);
+ 		}
++		/* 0200: dark and quiet for 2 s: the long sleep, on the dark channel (display on / TX wake it) */
++		uint64_t quiet_abs;
++		nanoseconds_to_absolutetime(2000ull * NSEC_PER_MSEC, &quiet_abs);
++		if (__atomic_load_n(&sweet_display_dark, __ATOMIC_ACQUIRE) &&
++		    mach_absolute_time() - ud.last_traffic > quiet_abs) {
++			uint64_t deadline;
++			clock_interval_to_deadline(sweet_dark_usb_ms, NSEC_PER_MSEC, &deadline);
++			__atomic_store_n(&ud.poll_long, true, __ATOMIC_SEQ_CST);
++			(void)assert_wait_deadline((event_t)&sweet_display_dark, THREAD_UNINT, deadline);
++			/* a TX queued or the display on between the check and assert_wait: do not sleep long */
++			if (!__atomic_load_n(&sweet_display_dark, __ATOMIC_SEQ_CST) ||
++			    __atomic_load_n(&ud.txq_count, __ATOMIC_SEQ_CST) != 0 ||
++			    __atomic_load_n(&ud.tx_busy, __ATOMIC_SEQ_CST) ||
++			    mach_absolute_time() - __atomic_load_n(&ud.last_traffic, __ATOMIC_SEQ_CST) <= quiet_abs) {
++				clear_wait(current_thread(), THREAD_AWAKENED);
++			} else {
++				thread_block(THREAD_CONTINUE_NULL);
++			}
++			__atomic_store_n(&ud.poll_long, false, __ATOMIC_SEQ_CST);
++			continue;
++		}
+ 		ud_sleep_ms(1);
+ 	}
+ }
+@@ -860,7 +897,7 @@ ud_log_thread(void *arg __unused, wait_result_t wr __unused)
+ 	to.sin_port = htons(5140);
+ 	to.sin_addr.s_addr = htonl(0xc0a80701);         /* 192.168.7.1 */
+ 	for (;;) {
+-		ud_sleep_ms(100);
++		ud_sleep_ms(__atomic_load_n(&sweet_display_dark, __ATOMIC_ACQUIRE) ? sweet_dark_usblog_ms : 100);     /* 0200 */
+ 		lck_mtx_lock(ud.lock);
+   bool ready = ud.configured && ud.data_alt == 1 && ud.rx_frames > ud.epoch_rx_start;
+   uint32_t current_epoch = ud.configuration_epoch;
+diff --git a/iokit/Kernel/arm/SweetCPU.cpp b/iokit/Kernel/arm/SweetCPU.cpp
+index 86b3acc..36a10e0 100644
+--- a/iokit/Kernel/arm/SweetCPU.cpp
++++ b/iokit/Kernel/arm/SweetCPU.cpp
+@@ -159,6 +159,42 @@ extern "C" processor_t thread_bind(processor_t);
+ #define SWEET_OSM_XO_KHZ        19200u
+ #define SWEET_OSM_GPLL0_KHZ     300000u
+ 
++/*
++ * 0200: dark clocks (after ios-flame 0257, MIT). While the display is off (bsd/dev/sweet_dark.c) each
++ * domain runs at the highest LUT row at or below its dark target (A55 1248 MHz, A76 652.8 MHz, as the
++ * sunfish port's rows 4 and 1 of the same SM7150 table), and goes back to the row selected at boot on
++ * wake. Only rows this file chose at boot are written; nothing happens with sweetcpufreq=0.
++ */
++static struct {
++	volatile uint32_t *osm;
++	unsigned bright_row, dark_row;
++	uint32_t bright_khz, dark_khz;
++	bool ready;
++} sweet_dark_dom[2];
++static const uint32_t sweet_dark_target_khz[2] = {1248000u, 652800u};
++
++extern "C" void sweet_cpufreq_dark(int dark);
++
++void
++sweet_cpufreq_dark(int dark)
++{
++	for (unsigned d = 0; d < 2; d++) {
++		if (!sweet_dark_dom[d].ready) {
++			continue;
++		}
++		sweet_dark_dom[d].osm[SWEET_OSM_PERF_STATE / 4] = dark ? sweet_dark_dom[d].dark_row : sweet_dark_dom[d].bright_row;
++	}
++	__builtin_arm_dsb(DSB_SY);
++	static unsigned logged;
++	if (logged++ < 12 && (sweet_dark_dom[0].ready || sweet_dark_dom[1].ready)) {
++		IOLog("SWEET CPUFREQ: %s: a55 row %u (%u kHz), a76 row %u (%u kHz)\n", dark ? "dark" : "bright",
++		    dark ? sweet_dark_dom[0].dark_row : sweet_dark_dom[0].bright_row,
++		    dark ? sweet_dark_dom[0].dark_khz : sweet_dark_dom[0].bright_khz,
++		    dark ? sweet_dark_dom[1].dark_row : sweet_dark_dom[1].bright_row,
++		    dark ? sweet_dark_dom[1].dark_khz : sweet_dark_dom[1].bright_khz);
++	}
++}
++
+ /* 64 dependent adds per iteration: one per cycle on both A55 and A76. */
+ static uint64_t
+ sweet_cpu_measure_khz(void)
+@@ -237,6 +273,27 @@ sweet_cpufreq_domain(const ml_topology_info_t *topology, unsigned domain,
+ 	} else {
+ 		IOLog("SWEET CPUFREQ: domain %u no write (mode=%d best=%u rows=%u)\n", domain, mode, best, rows);
+ 	}
++	/* 0200: the dark row: the highest row at or below the target (rows rise in frequency) */
++	if (mode == 1 && best < rows && domain < 2) {
++		unsigned dark = best;
++		bool found = false;
++		for (unsigned i = 0; i < rows; i++) {
++			const uint32_t cores = (osm[(SWEET_OSM_FREQ_LUT + i * SWEET_OSM_LUT_ROW) / 4] >> 16) & 7;
++			if (cores != 1 && khz[i] <= sweet_dark_target_khz[domain] && (!found || khz[i] > khz[dark])) {
++				dark = i;
++				found = true;
++			}
++		}
++		if (found) {
++			sweet_dark_dom[domain].osm = osm;
++			sweet_dark_dom[domain].bright_row = best;
++			sweet_dark_dom[domain].bright_khz = khz[best];
++			sweet_dark_dom[domain].dark_row = dark;
++			sweet_dark_dom[domain].dark_khz = khz[dark];
++			sweet_dark_dom[domain].ready = true;
++			IOLog("SWEET CPUFREQ: domain %u dark row %u = %u kHz (bright row %u)\n", domain, dark, khz[dark], best);
++		}
++	}
+ 	thread_bind(PROCESSOR_NULL);
+ 	thread_block(THREAD_CONTINUE_NULL);
+ }
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index e8c8b38..ff9a3a0 100644
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -37,6 +37,10 @@
+ #include "SweetSurface.h"
+ 
+ extern "C" int sweet_console_muted;     /* osfmk/console/serial_console.c */
++/* 0200 (ios-flame 0242/0257, MIT): the display-dark state for the pollers and CPU clocks, bsd/dev/sweet_dark.c */
++extern "C" int sweet_display_dark;
++extern "C" const uint32_t sweet_dark_fb_ms, sweet_dark_fb_after_ms;
++extern "C" void sweet_dark_set(int dark);
+ 
+ #if defined(SWEET)
+ #include <IOKit/IOService.h>
+@@ -193,15 +197,30 @@ class AppleARMBacklight : public IOService {
+ 	unsigned       fLogged;
+ 	static void    applyCall(thread_call_param_t owner, thread_call_param_t);
+ 	int            sendLevel(uint32_t level);
++	int            sendShort(uint8_t cmd);     /* 0200: DCS short write, no parameter */
+ 	void           publish(void);
+ 	void           request(uint32_t level, uint32_t value);
++	IOLock        *fDsiLock;                   /* 0200: one DSI command at a time */
++	bool           fPanelWant, fPanelAsleep;   /* 0200: requested / current panel sleep */
+ public:
+ 	bool start(IOService *provider) APPLE_KEXT_OVERRIDE;
+ 	IOReturn setProperties(OSObject *properties) APPLE_KEXT_OVERRIDE;
++	void           panelSleep(bool off);       /* 0200: from RequestPowerChange */
+ };
++/*
++ * 0200: panel sleep while the display is off (sweetpanelsleep=1). The K6 38/0c/0a panel's DT
++ * qcom,mdss-dsi-off-command is DCS 0x28 (display off, 10 ms) then 0x10 (sleep in, 150 ms); waking is
++ * 0x11 (sleep out; 120 ms before display on) then 0x29, then the brightness again. Before 0200 "off"
++ * only faded the frame to black with the CPU (7 passes over the uncached panel memory) and left the
++ * panel lit. A failed command falls back to that fade (sweet_panel_failed).
++ */
++static AppleARMBacklight *sweet_backlight;
++static int sweet_panel_sleep = -1;
++static volatile bool sweet_panel_failed;
+ 
+ class AppleCLCD : public IOMobileFramebuffer {
+ 	OSDeclareDefaultStructors(AppleCLCD);
++	friend class IOMobileFramebufferUserClient;     /* 0200: the power-change path kicks fVsync */
+ 
+ 	IOWorkLoop         *fWorkLoop;
+ 	IOTimerEventSource *fVsync;
+@@ -270,6 +289,8 @@ public:
+ 	void rearmVsync(void);
+ 	bool          fPowerOff;      /* RequestPowerChange(0) */
+ 	uint32_t      fFadeStep;      /* fade-out steps done while off */
++	uint64_t      fOffAt;         /* 0200: mach time of the last RequestPowerChange(0) */
++	bool          fDarkKick;      /* 0200: display on during a slow dark tick: re-phase the tick now */
+ 
+ 	bool start(IOService *provider) APPLE_KEXT_OVERRIDE;
+ 	void addClient(IOMobileFramebufferUserClient *client);
+@@ -421,9 +442,10 @@ AppleARMBacklight::start(IOService *provider)
+ 		return false;
+ 	}
+ 	fLock = IOLockAlloc();
++	fDsiLock = IOLockAlloc();
+ 	fCall = thread_call_allocate(&AppleARMBacklight::applyCall, this);
+ 	fDsi = (volatile uint32_t *)ml_io_map(SWEET_DSI0_PA, 0x400);
+-	if (fLock == NULL || fCall == NULL || fDsi == NULL) {
++	if (fLock == NULL || fDsiLock == NULL || fCall == NULL || fDsi == NULL) {
+ 		return false;
+ 	}
+ 	const uint32_t ctrl = fDsi[DSI_REG_CTRL / 4], version = fDsi[DSI_REG_VERSION / 4];
+@@ -443,6 +465,7 @@ AppleARMBacklight::start(IOService *provider)
+ 	publish();
+ 	registerService();
+ 	IOLog("SWEET BL: AppleARMBacklight published (DCS 0x51, levels %u..%u)\n", SWEET_BL_MIN, SWEET_BL_MAX);
++	sweet_backlight = this;     /* 0200: panel sleep */
+ 	uint32_t test = 0;
+ 	if (PE_parse_boot_argn("sweetbl", &test, sizeof(test)) && test >= SWEET_BL_MIN && test <= SWEET_BL_MAX) {
+ 		request(test, (uint32_t)(((uint64_t)(test - SWEET_BL_MIN) * SWEET_BL_SCALE) / (SWEET_BL_MAX - SWEET_BL_MIN)));
+@@ -590,10 +613,54 @@ void
+ AppleARMBacklight::applyCall(thread_call_param_t owner, thread_call_param_t)
+ {
+ 	AppleARMBacklight *bl = (AppleARMBacklight *)owner;
++	IOLockLock(bl->fDsiLock);
++	/* 0200: panel sleep first; loop while requests change underneath (each pass is ~150 ms) */
++	for (unsigned pass = 0; pass < 4; pass++) {
++		IOLockLock(bl->fLock);
++		const bool want = bl->fPanelWant;
++		IOLockUnlock(bl->fLock);
++		if (want == bl->fPanelAsleep || sweet_panel_failed) {
++			break;
++		}
++		static unsigned logged;
++		uint64_t t0 = mach_absolute_time(), ns;
++		int e1, e2;
++		if (want) {
++			e1 = bl->sendShort(0x28);    /* display off */
++			IOSleep(20);
++			e2 = bl->sendShort(0x10);    /* sleep in */
++			IOSleep(150);
++		} else {
++			e1 = bl->sendShort(0x11);    /* sleep out */
++			IOSleep(120);
++			e2 = bl->sendShort(0x29);    /* display on */
++			bl->fSent = 0;               /* resend the brightness: the panel may have reset it */
++		}
++		absolutetime_to_nanoseconds(mach_absolute_time() - t0, &ns);
++		bl->fPanelAsleep = want;
++		if (e1 || e2) {
++			sweet_panel_failed = true;   /* fade from now on; a wake is still attempted below */
++		}
++		if (logged++ < 40 || e1 || e2) {
++			IOLog("SWEET PANEL: %s: dcs %s %d, %s %d, %llu ms%s\n", want ? "sleep" : "wake",
++			    want ? "28" : "11", e1, want ? "10" : "29", e2, ns / NSEC_PER_MSEC,
++			    (e1 || e2) ? " -> panel sleep off, CPU fade" : "");
++		}
++		if (sweet_panel_failed && bl->fPanelAsleep) {
++			/* never leave the panel asleep after a failure */
++			(void)bl->sendShort(0x11);
++			IOSleep(120);
++			(void)bl->sendShort(0x29);
++			bl->fPanelAsleep = false;
++			bl->fSent = 0;
++			break;
++		}
++	}
+ 	IOLockLock(bl->fLock);
+ 	const uint32_t level = bl->fWanted;
+ 	IOLockUnlock(bl->fLock);
+-	if (level == 0 || level == bl->fSent || bl->fFailures >= 4) {
++	if (bl->fPanelAsleep || level == 0 || level == bl->fSent || bl->fFailures >= 4) {
++		IOLockUnlock(bl->fDsiLock);
+ 		return;
+ 	}
+ 	const int error = bl->sendLevel(level);
+@@ -602,6 +669,60 @@ AppleARMBacklight::applyCall(thread_call_param_t owner, thread_call_param_t)
+ 	} else {
+ 		bl->fSent = level;
+ 	}
++	IOLockUnlock(bl->fDsiLock);
++}
++
++void
++AppleARMBacklight::panelSleep(bool off)
++{
++	IOLockLock(fLock);
++	fPanelWant = off;
++	IOLockUnlock(fLock);
++	thread_call_enter(fCall);
++}
++
++/* 0200: DCS short write without a parameter (data type 0x05), same FIFO path as sendLevel */
++int
++AppleARMBacklight::sendShort(uint8_t cmd)
++{
++	volatile uint32_t *dsi = fDsi;
++	const uint32_t ctrl = dsi[DSI_REG_CTRL / 4];
++	if ((ctrl & 3) != 3) {
++		IOLog("SWEET PANEL: DSI0 left video mode (ctrl=%#x); dcs %#x not sent\n", ctrl, cmd);
++		return ENODEV;
++	}
++	const uint32_t dma_ctrl = dsi[DSI_REG_DMA_CTRL / 4];
++	/* header {data0 = cmd, data1 = 0, data id 0x05, LAST} */
++	const uint32_t word = (uint32_t)cmd | (0x05u << 16) | (0x80u << 24);
++	dsi[DSI_REG_CTRL / 4] = ctrl | (1u << 2);                       /* command engine on */
++	dsi[DSI_REG_INT_CTRL / 4] = dsi[DSI_REG_INT_CTRL / 4] | 1u;    /* W1C stale DMA done */
++	dsi[DSI_REG_TPG_CTRL / 4] = (1u << 1) | (1u << 2) | (3u << 16);
++	dsi[DSI_REG_TPG_DMA_DATA / 4] = word;
++	dsi[DSI_REG_DMA_CTRL / 4] = (dma_ctrl & ~((1u << 31) | (1u << 30))) | (1u << 26) | (1u << 28);
++	dsi[DSI_REG_DMA_LENGTH / 4] = sizeof(word);
++	__asm__ volatile("dsb sy" ::: "memory");
++	dsi[DSI_REG_DMA_TRIGGER / 4] = 1;
++	unsigned us;
++	for (us = 0; us < 50000 && !(dsi[DSI_REG_INT_CTRL / 4] & 1u); us += 50) {
++		IODelay(50);
++	}
++	const bool done = (dsi[DSI_REG_INT_CTRL / 4] & 1u) != 0;
++	const uint32_t ack = dsi[DSI_REG_ACK_ERR / 4];
++	if (done) {
++		dsi[DSI_REG_INT_CTRL / 4] = dsi[DSI_REG_INT_CTRL / 4] | 1u;
++	}
++	dsi[DSI_REG_TPG_CTRL / 4] = 0;
++	dsi[DSI_REG_TPG_FIFO_RESET / 4] = 1;
++	IODelay(1);
++	dsi[DSI_REG_TPG_FIFO_RESET / 4] = 0;
++	dsi[DSI_REG_DMA_CTRL / 4] = dma_ctrl;
++	if (!(ctrl & (1u << 2))) {
++		dsi[DSI_REG_CTRL / 4] = dsi[DSI_REG_CTRL / 4] & ~(1u << 2);
++	}
++	if (!done) {
++		IOLog("SWEET PANEL: dcs %#x NOT acknowledged after %u us ack_err=%#x\n", cmd, us, ack);
++	}
++	return done ? 0 : ETIMEDOUT;
+ }
+ 
+ int
+@@ -660,6 +781,18 @@ AppleCLCD::rearmVsync(void)
+ {
+ 	uint64_t now = mach_absolute_time();
+ 	fNextVsync += fVsyncPeriod;
++	if (__atomic_exchange_n(&fDarkKick, false, __ATOMIC_ACQ_REL)) {
++		fNextVsync = now + fVsyncPeriod;        /* 0200: back to full rate after a slow dark tick */
++	}
++	/* 0200: dark for 5 s (fade and panel sleep long done): one tick per 500 ms; display on kicks it */
++	if (fPowerOff && __atomic_load_n(&sweet_display_dark, __ATOMIC_ACQUIRE)) {
++		uint64_t after, slow;
++		nanoseconds_to_absolutetime((uint64_t)sweet_dark_fb_after_ms * NSEC_PER_MSEC, &after);
++		nanoseconds_to_absolutetime((uint64_t)sweet_dark_fb_ms * NSEC_PER_MSEC, &slow);
++		if (now - fOffAt >= after) {
++			fNextVsync = now + slow;
++		}
++	}
+ 	if (fNextVsync <= now) {
+ 		uint64_t skipped = (now - fNextVsync) / fVsyncPeriod + 1;
+ 		fNextVsync += skipped * fVsyncPeriod;
+@@ -733,6 +866,10 @@ AppleCLCD::vsyncFired(OSObject *owner, IOTimerEventSource *sender)
+ 		client->notify(SWEET_FB_NOTIFY_VSYNC, values, 6);
+ 	}
+ 	if (fb->fPowerOff) {
++		/* 0200: the panel sleeps (fFadeStep 7 = no fade); if its commands failed, fade as before */
++		if (fb->fFadeStep == 7 && sweet_panel_failed) {
++			fb->fFadeStep = 0;
++		}
+ 		/* Fade out: halve every channel each vsync, then black, then idle. */
+ 		uint32_t step = fb->fFadeStep;
+ 		if (step <= 6) {
+@@ -1662,14 +1799,33 @@ IOMobileFramebufferUserClient::externalMethod(uint32_t selector, IOExternalMetho
+ 	case kSweetFBRequestPowerChange:
+ 		if (args->scalarInputCount >= 1) {
+ 			bool off = args->scalarInput[0] == 0;
++			if (sweet_panel_sleep < 0) {
++				int ps = 0;
++				PE_parse_boot_argn("sweetpanelsleep", &ps, sizeof(ps));
++				sweet_panel_sleep = ps;
++			}
++			const bool panel = sweet_panel_sleep == 1 && sweet_backlight != NULL && !sweet_panel_failed;
+ 			IOLockLock(fFB->fLock);
+-			if (off != fFB->fPowerOff) {
++			bool change = off != fFB->fPowerOff;
++			if (change) {
+ 				fFB->fPowerOff = off;
+-				fFB->fFadeStep = 0;
++				fFB->fFadeStep = (off && panel) ? 7 : 0;    /* 0200: the panel sleeps: no CPU fade */
+ 				fFB->fDirty = true;     /* on: redraw the latest frame */
++				if (off) {
++					fFB->fOffAt = mach_absolute_time();
++				}
+ 			}
+ 			IOLockUnlock(fFB->fLock);
+-			IOLog("SWEET FB: display %s\n", off ? "off" : "on");
++			if (change && panel) {
++				sweet_backlight->panelSleep(off);
++			}
++			bool wasDark = __atomic_load_n(&sweet_display_dark, __ATOMIC_ACQUIRE) != 0;
++			sweet_dark_set(off);    /* 0200: pollers slow down / restart, CPU clocks (sweetdark=0: no-op) */
++			if (!off && wasDark && fFB->fVsync != NULL) {
++				__atomic_store_n(&fFB->fDarkKick, true, __ATOMIC_RELEASE);
++				fFB->fVsync->wakeAtTime(mach_absolute_time());  /* 0200: full rate now, not after a 500 ms tick */
++			}
++			IOLog("SWEET FB: display %s%s\n", off ? "off" : "on", panel ? " (panel sleep)" : "");
+ 		}
+ 		break;
+ 	case kSweetFBSwapWait:
