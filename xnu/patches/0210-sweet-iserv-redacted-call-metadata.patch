@@ -1,0 +1,131 @@
+--- a/bsd/dev/arm/systemcalls.c
++++ b/bsd/dev/arm/systemcalls.c
+@@ -126,6 +126,120 @@
+ 		printf("SWEET ISERV: %s syscall %u errno %d\n", p->p_comm, code, error);
+ 	}
+ }
++/* 0210: allowlist-only path categories and scalar call metadata. Unknown
++ * components (including container UUIDs and account identifiers) are masked.
++ * No file contents, entitlement values, tokens or user pointers are printed.
++ */
++static const char *
++sweet_iserv_path_component(const char *p, size_t n)
++{
++#define ISERV_COMPONENT(s) if (n == sizeof(s) - 1 && strncmp(p, s, n) == 0) { return s; }
++	ISERV_COMPONENT("private") ISERV_COMPONENT("var") ISERV_COMPONENT("db")
++	ISERV_COMPONENT("containers") ISERV_COMPONENT("Data") ISERV_COMPONENT("System")
++	ISERV_COMPONENT("Library") ISERV_COMPONENT("Caches") ISERV_COMPONENT("Preferences")
++	ISERV_COMPONENT("Documents") ISERV_COMPONENT("tmp") ISERV_COMPONENT("adi")
++	ISERV_COMPONENT(".adi") ISERV_COMPONENT("adi.pb") ISERV_COMPONENT("adi.pb.lock")
++	ISERV_COMPONENT("com.apple.adid")
++#undef ISERV_COMPONENT
++	if (n > 7 && strncmp(p, "adi-", 4) == 0 && strncmp(p + n - 3, ".pb", 3) == 0) {
++		return "<ADI-state>";
++	}
++	return "<other>";
++}
++
++static void
++sweet_iserv_path_category(user_addr_t address, char *out, size_t capacity)
++{
++	char path[512];
++	size_t copied = 0;
++	strlcpy(out, "<unavailable>", capacity);
++	if (copyinstr(address, path, sizeof(path), &copied) != 0) {
++		return;
++	}
++	out[0] = '\0';
++	for (const char *p = path; *p;) {
++		while (*p == '/') { p++; }
++		if (!*p) { break; }
++		const char *end = strchr(p, '/');
++		size_t n = end ? (size_t)(end - p) : strlen(p);
++		strlcat(out, "/", capacity);
++		strlcat(out, sweet_iserv_path_component(p, n), capacity);
++		if (!end) { break; }
++		p = end + 1;
++	}
++}
++
++static void
++sweet_iserv_metadata(struct proc *p, unsigned int code, int error, const void *arguments)
++{
++	static unsigned int lines;
++	if (strcmp(p->p_comm, "adid") != 0 || !sweet_iserv_trace_selected(p)) {
++		return;
++	}
++	if (code != SYS_csops && code != SYS_csops_audittoken &&
++	    code != SYS_open && code != SYS_openat && code != SYS_open_nocancel &&
++	    code != SYS_open_dprotected_np && code != SYS_stat64 && code != SYS_lstat64 &&
++	    code != SYS_mkdir && code != SYS_mkdirat && code != SYS___mac_syscall) {
++		return;
++	}
++	if (__atomic_fetch_add(&lines, 1, __ATOMIC_RELAXED) >= 768) {
++		return;
++	}
++	if (code == SYS_csops || code == SYS_csops_audittoken) {
++		/* Common initial fields have the same syscall slot layout. */
++		const struct csops_args *a = (const struct csops_args *)arguments;
++		uint32_t header[2] = { 0, 0 };
++		unsigned int required = 0;
++		/* Only XML/DER entitlement blobs have the size header read below. */
++		if ((a->ops == 7 || a->ops == 16) && error == ERANGE && a->usersize >= sizeof(header) &&
++		    copyin(a->useraddr, header, sizeof(header)) == 0) {
++			required = __builtin_bswap32(header[1]);
++		}
++		printf("SWEET ISERV META: csops op %u capacity %llu required %u errno %d\n",
++		    a->ops, (unsigned long long)a->usersize, required, error);
++		return;
++	}
++	if (code == SYS___mac_syscall) {
++		const struct __mac_syscall_args *a = (const struct __mac_syscall_args *)arguments;
++		char policy[16];
++		const char *kind = "other";
++		if (copyinstr(a->policy, policy, sizeof(policy), NULL) == 0) {
++			if (strcmp(policy, "AMFI") == 0) { kind = "AMFI"; }
++			if (strcmp(policy, "Sandbox") == 0) { kind = "Sandbox"; }
++		}
++		printf("SWEET ISERV META: policy %s call %d errno %d\n", kind, a->call, error);
++		return;
++	}
++	user_addr_t address = 0;
++	int flags = 0, protection = 0, dpflags = 0;
++	switch (code) {
++	case SYS_open: {
++		const struct open_args *a = (const struct open_args *)arguments;
++		address = a->path; flags = a->flags; break;
++	}
++	case SYS_open_nocancel: {
++		const struct open_nocancel_args *a = (const struct open_nocancel_args *)arguments;
++		address = a->path; flags = a->flags; break;
++	}
++	case SYS_openat: {
++		const struct openat_args *a = (const struct openat_args *)arguments;
++		address = a->path; flags = a->flags; break;
++	}
++	case SYS_open_dprotected_np: {
++		const struct open_dprotected_np_args *a = (const struct open_dprotected_np_args *)arguments;
++		address = a->path; flags = a->flags; protection = a->class; dpflags = a->dpflags; break;
++	}
++	case SYS_stat64: address = ((const struct stat64_args *)arguments)->path; break;
++	case SYS_lstat64: address = ((const struct lstat64_args *)arguments)->path; break;
++	case SYS_mkdir: address = ((const struct mkdir_args *)arguments)->path; break;
++	case SYS_mkdirat: address = ((const struct mkdirat_args *)arguments)->path; break;
++	}
++	char category[192];
++	sweet_iserv_path_category(address, category, sizeof(category));
++	printf("SWEET ISERV META: file syscall %u category %s flags %#x protection %d dpflags %#x errno %d\n",
++	    code, category, flags, protection, dpflags, error);
++}
++
+ #endif
+ 
+ void
+@@ -226,6 +340,7 @@
+ 	error = (*(callp->sy_call))(proc, &uthread->uu_arg[0], &(uthread->uu_rval[0]));
+ #if defined(SWEET)
+ 	sweet_iserv_trace(proc, code, error, false, 0);
++	sweet_iserv_metadata(proc, code, error, &uthread->uu_arg[0]);
+ #endif
+ 	AUDIT_SYSCALL_EXIT(code, proc, uthread, error);
+ 

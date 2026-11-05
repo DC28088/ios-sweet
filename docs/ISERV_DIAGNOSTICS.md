@@ -54,3 +54,30 @@ confirmed inspection, refusal of unexpected metadata without mutation, and
 refusal of symlink candidates. The actual phone repair was performed separately
 with scoped SSH chmod/chown and verified by a native mobile-UID access check;
 the mounted-root Python tool has not been applied to a mounted phone image.
+
+## 0210: distinguish failed file probes from code-signing buffer sizing
+
+A fresh reboot confirmed all five repaired ADI directories remain 501:501/0700
+and pass mobile access checks. Wi-Fi/Safari and native HTTPS were then restored.
+The user still reproduced MID invalid; ADIProvisioningEnd still returned -42410.
+Therefore the directory repair does not resolve login.
+
+Patch 0210 extends opt-in sweetservtrace=1 diagnostics only for adid. It records
+selected file syscall flags/protection class/result and a path category whose
+components are restricted to literal standard directory names. Unknown names,
+container UUIDs and per-account ADI filenames are masked. It also records csops
+operation/capacity/required blob size, and MAC policy category/operation/result.
+It prints no file/entitlement contents, audit tokens, target process IDs or user
+addresses. New metadata is capped at 768 records per boot; existing 0209 caps
+remain. It changes no syscall, authentication, activation or signing result.
+
+The required blob size is read only for XML/DER entitlement blob sizing errors;
+other csops operations do not have their output read. The optional existing
+sweetiolog tracing can be enabled for adid/fairplayd.H2 in a separate diagnostic
+boot; its raw output must remain private like every device console capture.
+
+Validation: patch applies to 0209 with exact resulting-source comparison; C
+syntax check uses the target's generated syscall structures and numbers with
+stub kernel declarations. Actual C path-redaction tests cover masking private
+components, retaining static ADI names, rejecting oversized inputs and safe
+NUL-terminated truncation. Full kernel compilation/hardware validation pending.

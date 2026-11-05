@@ -1,3 +1,26 @@
+## 2026-11-05: post-repair/reboot login still MID invalid; 0210 metadata diagnostics prepared
+- Same 0209 reboot reached iOS. Corrected UTC; verified all five ADI directories still 501:501/0700 and
+  native mobile access passes. USER confirmed Wi-Fi + Safari works; native HTTPS gave public Apple 200
+  and authentication-host HTTP response with TLS validation enabled (404 test endpoint, not auth success).
+- USER retried login: MID invalid persists. Fresh capture: ADIProvisioningStart success,
+  ADIProvisioningEnd -42410 again. Directory access repair is real but NOT the login solution.
+- 0210 extends opt-in diagnostics: adid-only redacted path categories, open flags/protection/result,
+  csops operation/capacity/required blob size, MAC policy/operation/result. No content, IDs or addresses.
+  768-record cap. Targeted blob header read only on XML/DER ERANGE sizing. No syscall behavior changes.
+- Apply/exact-source check, syntax with target generated argument structures, actual C redaction checks
+  pass. Full CI/hardware test pending. Raw logs + directory backups private outside Git.
+- Isolated iServices branch only; main/audio branch dirty and left untouched. No audio services changed.
+  Next: build this diagnostic independently; coordinate any new physical boot with USER around audio tests.
+
+## 2026-11-05: post-repair test hit Wi-Fi failure; USER requested same 0209 reboot
+- USER saw spinner after password, then error connecting to Apple ID server. Native HTTPS to both
+  authentication and public Apple hosts timed out (-1001); akd now reported -8007. USER confirmed Safari
+  pages fail and Wi-Fi stopped. Therefore storage repair's effect on native ADI finalization remains untested.
+- USER explicitly requested same-image reboot and entered fastboot. Checksum reverified; temporary boot
+  Sending + Booting OKAY. Image SHA256 remains 6cfe48cd8e2734759faac8c7d07e7f56d868ad9a1fe7c138d46570cd14f59ca0.
+- New receiver offset: chat work/iserv-runtime/0209-reboot-capture-start.json. Next: UTC, confirm ADI directory
+  repair persisted, native HTTPS, then a fresh login test after Wi-Fi joins. No flash/network config/audio changes.
+
 ## 2026-11-05: confirmed MID -80009; ADI inaccessible directories repaired; awaiting retest
 - USER: continue Apple ID, do not clash with OpenCode/DeepSeek audio. Main checkout/NOTES dirty from audio:
   left untouched; own isolated iServices worktree only. No reboot or audio process/config change.
