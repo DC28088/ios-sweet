@@ -50,11 +50,22 @@ int main(void)
     CHECK(n == 68 && g32(b + 16) == AFE_SVC_CMD_SET_PARAM && g32(b + 20) == 32 && g32(b + 36) == AFE_MODULE_CLOCK_SET);
     CHECK(g32(b + 52) == 0x100 && g32(b + 56) == 1536000 && g16(b + 60) == 1 && g32(b + 64) == 1);
 
+    /* v3 headers: 16-byte param_hdr_v3, 4 bytes longer, and the AFE_PORT_CMD_SET_PARAM_V3 / AFE_SVC_CMD_SET_PARAM_V2 opcodes */
+    n = sweet_apr_afe_i2s_config_v3(b, sizeof b, 1, 5, AFE_PORT_ID_PRIMARY_MI2S_RX, 48000, 16, AFE_PORT_I2S_SD0,
+                                    AFE_PORT_I2S_STEREO);
+    CHECK(n == 72 && g16(b + 22) == 36 && g32(b + 36) == AFE_MODULE_AUDIO_DEV_INTERFACE && g16(b + 40) == 0 &&
+          g16(b + 42) == 0 && g32(b + 44) == AFE_PARAM_ID_I2S_CONFIG && g32(b + 48) == 20);
+    CHECK(g32(b + 52) == 1 && g16(b + 56) == 16 && g16(b + 58) == 1 && g16(b + 60) == 1 && g32(b + 64) == 48000);
+    n = sweet_apr_afe_clock_v2(b, sizeof b, 1, 6, Q6AFE_LPASS_CLK_ID_PRI_MI2S_IBIT, 1536000, 1);
+    CHECK(n == 72 && g32(b + 16) == AFE_SVC_CMD_SET_PARAM_V2 && g32(b + 20) == 36 && g32(b + 36) == AFE_MODULE_CLOCK_SET &&
+          g32(b + 44) == AFE_PARAM_ID_CLOCK_SET && g32(b + 48) == 20);
+    CHECK(g32(b + 52) == 1 && g32(b + 56) == 0x100 && g32(b + 60) == 1536000 && g16(b + 64) == 1 && g32(b + 68) == 1);
+
     /* parser rejects truncated/oversized packets */
     struct sweet_apr_msg m;
     CHECK(sweet_apr_parse(b, 19, &m) == -1);
     CHECK(sweet_apr_parse(b, 60, &m) == -1);
-    CHECK(sweet_apr_parse(b, n, &m) == 0 && m.payload_len == 48);
+    CHECK(sweet_apr_parse(b, n, &m) == 0 && m.payload_len == 52);   /* the last packet above is the 72-byte clock v2 */
 
     /* the voice sequence against the fake DSP */
     struct sweet_voice v;

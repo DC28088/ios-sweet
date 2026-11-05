@@ -5,6 +5,14 @@
 
 static void put16(uint8_t *p, uint16_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); }
 static void put32(uint8_t *p, uint32_t v) { put16(p, (uint16_t)v); put16(p + 2, (uint16_t)(v >> 16)); }
+static void put_param_hdr_v3(uint8_t *p, uint32_t module, uint32_t param, uint32_t size)
+{
+    put32(p, module);
+    put16(p + 4, 0);         /* instance_id */
+    put16(p + 6, 0);         /* reserved */
+    put32(p + 8, param);
+    put32(p + 12, size);
+}
 static uint16_t get16(const uint8_t *p) { return (uint16_t)(p[0] | (p[1] << 8)); }
 static uint32_t get32(const uint8_t *p) { return (uint32_t)get16(p) | ((uint32_t)get16(p + 2) << 16); }
 
@@ -114,6 +122,45 @@ size_t sweet_apr_afe_clock(uint8_t *out, size_t cap, uint16_t src_port, uint32_t
     put16(c + 12, Q6AFE_LPASS_CLK_ATTRIBUTE_COUPLE_NO);
     put32(c + 16, enable ? 1u : 0u);
     return sweet_apr_pack(out, cap, APR_MSG_TYPE_SEQ_CMD, APR_SVC_AFE, src_port, 0, token, AFE_SVC_CMD_SET_PARAM,
+                          p, sizeof p);
+}
+
+/*
+ * The same two parameters with a param_hdr_v3 (module, instance_id 0, param, u32 size). Linux sends these
+ * (AFE_PORT_CMD_SET_PARAM_V3 / AFE_SVC_CMD_SET_PARAM_V2) when the ADSP supports instance IDs; the header
+ * is 4 bytes longer and the in-band payload_size counts only the packed header+data.
+ */
+size_t sweet_apr_afe_i2s_config_v3(uint8_t *out, size_t cap, uint16_t src_port, uint32_t token, uint16_t port_id,
+                                   uint32_t sample_rate, uint16_t bit_width, uint16_t sd_lines, uint16_t stereo)
+{
+    uint8_t p[4 + 12 + 16 + 20] = { 0 };
+    uint8_t *ph = p + 16, *cfg = p + 32;
+    put16(p, port_id);
+    put16(p + 2, 16 + 20);
+    put_param_hdr_v3(ph, AFE_MODULE_AUDIO_DEV_INTERFACE, AFE_PARAM_ID_I2S_CONFIG, 20);
+    put32(cfg, 1);
+    put16(cfg + 4, bit_width);
+    put16(cfg + 6, sd_lines);
+    put16(cfg + 8, stereo);
+    put16(cfg + 10, 1);
+    put32(cfg + 12, sample_rate);
+    return sweet_apr_pack(out, cap, APR_MSG_TYPE_SEQ_CMD, APR_SVC_AFE, src_port, 0, token, AFE_PORT_CMD_SET_PARAM_V3,
+                          p, sizeof p);
+}
+
+size_t sweet_apr_afe_clock_v2(uint8_t *out, size_t cap, uint16_t src_port, uint32_t token, uint32_t clk_id,
+                              uint32_t freq_hz, int enable)
+{
+    uint8_t p[4 + 12 + 16 + 20] = { 0 };
+    uint8_t *ph = p + 16, *c = p + 32;
+    put32(p, 16 + 20);
+    put_param_hdr_v3(ph, AFE_MODULE_CLOCK_SET, AFE_PARAM_ID_CLOCK_SET, 20);
+    put32(c, 1);
+    put32(c + 4, clk_id);
+    put32(c + 8, freq_hz);
+    put16(c + 12, Q6AFE_LPASS_CLK_ATTRIBUTE_COUPLE_NO);
+    put32(c + 16, enable ? 1u : 0u);
+    return sweet_apr_pack(out, cap, APR_MSG_TYPE_SEQ_CMD, APR_SVC_AFE, src_port, 0, token, AFE_SVC_CMD_SET_PARAM_V2,
                           p, sizeof p);
 }
 

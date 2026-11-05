@@ -43,13 +43,17 @@
 #define AFE_PORT_CMD_DEVICE_START         0x000100E5u
 #define AFE_PORT_CMD_DEVICE_STOP          0x000100E6u
 #define AFE_PORT_CMD_SET_PARAM_V2         0x000100EFu
+#define AFE_PORT_CMD_SET_PARAM_V3         0x000100FAu
 #define AFE_SVC_CMD_SET_PARAM             0x000100F3u
+#define AFE_SVC_CMD_SET_PARAM_V2          0x000100FCu
 #define AFE_MODULE_AUDIO_DEV_INTERFACE    0x0001020Cu
 #define AFE_PARAM_ID_I2S_CONFIG           0x0001020Du
 #define AFE_MODULE_CLOCK_SET              0x0001028Fu
 #define AFE_PARAM_ID_CLOCK_SET            0x00010290u
 #define AFE_PORT_ID_PRIMARY_MI2S_RX       0x1000u
 #define AFE_PORT_ID_PRIMARY_MI2S_TX       0x1001u
+/* q6audio_get_port_index(AFE_PORT_ID_PRIMARY_MI2S_RX): the AFE service commands carry this as their APR token. */
+#define AFE_PORT_INDEX_PRIMARY_MI2S_RX    40u
 #define AFE_PORT_ID_RX_CODEC_DMA_RX_0     0xB030u
 #define AFE_PORT_ID_TX_CODEC_DMA_TX_3     0xB037u
 #define AFE_PORT_I2S_SD0                  1u
@@ -107,6 +111,12 @@ size_t sweet_apr_afe_i2s_config(uint8_t *out, size_t cap, uint16_t src_port, uin
                                 uint32_t sample_rate, uint16_t bit_width, uint16_t sd_lines, uint16_t stereo);
 size_t sweet_apr_afe_clock(uint8_t *out, size_t cap, uint16_t src_port, uint32_t token, uint32_t clk_id,
                            uint32_t freq_hz, int enable);
+/* The param_hdr_v3 forms, used when the ADSP reports instance-ID support (AFE_PORT_CMD_SET_PARAM_V3 /
+ * AFE_SVC_CMD_SET_PARAM_V2). Same fields, 4-byte larger header. */
+size_t sweet_apr_afe_i2s_config_v3(uint8_t *out, size_t cap, uint16_t src_port, uint32_t token, uint16_t port_id,
+                                   uint32_t sample_rate, uint16_t bit_width, uint16_t sd_lines, uint16_t stereo);
+size_t sweet_apr_afe_clock_v2(uint8_t *out, size_t cap, uint16_t src_port, uint32_t token, uint32_t clk_id,
+                              uint32_t freq_hz, int enable);
 
 /*
  * CS voice: voc_start_voice_call for a modem session (passive MVM/CVS named "default modem voice",

@@ -1,0 +1,251 @@
+diff --git a/phone/wifi/sweet_apr.c b/phone/wifi/sweet_apr.c
+index 5985764..b59464a 100644
+--- a/phone/wifi/sweet_apr.c
++++ b/phone/wifi/sweet_apr.c
+@@ -5,6 +5,14 @@
+ 
+ static void put16(uint8_t *p, uint16_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); }
+ static void put32(uint8_t *p, uint32_t v) { put16(p, (uint16_t)v); put16(p + 2, (uint16_t)(v >> 16)); }
++static void put_param_hdr_v3(uint8_t *p, uint32_t module, uint32_t param, uint32_t size)
++{
++    put32(p, module);
++    put16(p + 4, 0);         /* instance_id */
++    put16(p + 6, 0);         /* reserved */
++    put32(p + 8, param);
++    put32(p + 12, size);
++}
+ static uint16_t get16(const uint8_t *p) { return (uint16_t)(p[0] | (p[1] << 8)); }
+ static uint32_t get32(const uint8_t *p) { return (uint32_t)get16(p) | ((uint32_t)get16(p + 2) << 16); }
+ 
+@@ -117,6 +125,45 @@ size_t sweet_apr_afe_clock(uint8_t *out, size_t cap, uint16_t src_port, uint32_t
+                           p, sizeof p);
+ }
+ 
++/*
++ * The same two parameters with a param_hdr_v3 (module, instance_id 0, param, u32 size). Linux sends these
++ * (AFE_PORT_CMD_SET_PARAM_V3 / AFE_SVC_CMD_SET_PARAM_V2) when the ADSP supports instance IDs; the header
++ * is 4 bytes longer and the in-band payload_size counts only the packed header+data.
++ */
++size_t sweet_apr_afe_i2s_config_v3(uint8_t *out, size_t cap, uint16_t src_port, uint32_t token, uint16_t port_id,
++                                   uint32_t sample_rate, uint16_t bit_width, uint16_t sd_lines, uint16_t stereo)
++{
++    uint8_t p[4 + 12 + 16 + 20] = { 0 };
++    uint8_t *ph = p + 16, *cfg = p + 32;
++    put16(p, port_id);
++    put16(p + 2, 16 + 20);
++    put_param_hdr_v3(ph, AFE_MODULE_AUDIO_DEV_INTERFACE, AFE_PARAM_ID_I2S_CONFIG, 20);
++    put32(cfg, 1);
++    put16(cfg + 4, bit_width);
++    put16(cfg + 6, sd_lines);
++    put16(cfg + 8, stereo);
++    put16(cfg + 10, 1);
++    put32(cfg + 12, sample_rate);
++    return sweet_apr_pack(out, cap, APR_MSG_TYPE_SEQ_CMD, APR_SVC_AFE, src_port, 0, token, AFE_PORT_CMD_SET_PARAM_V3,
++                          p, sizeof p);
++}
++
++size_t sweet_apr_afe_clock_v2(uint8_t *out, size_t cap, uint16_t src_port, uint32_t token, uint32_t clk_id,
++                              uint32_t freq_hz, int enable)
++{
++    uint8_t p[4 + 12 + 16 + 20] = { 0 };
++    uint8_t *ph = p + 16, *c = p + 32;
++    put32(p, 16 + 20);
++    put_param_hdr_v3(ph, AFE_MODULE_CLOCK_SET, AFE_PARAM_ID_CLOCK_SET, 20);
++    put32(c, 1);
++    put32(c + 4, clk_id);
++    put32(c + 8, freq_hz);
++    put16(c + 12, Q6AFE_LPASS_CLK_ATTRIBUTE_COUPLE_NO);
++    put32(c + 16, enable ? 1u : 0u);
++    return sweet_apr_pack(out, cap, APR_MSG_TYPE_SEQ_CMD, APR_SVC_AFE, src_port, 0, token, AFE_SVC_CMD_SET_PARAM_V2,
++                          p, sizeof p);
++}
++
+ /* ---- the CS voice sequence ---- */
+ 
+ void sweet_voice_init(struct sweet_voice *v, uint16_t src_port, uint16_t tx_port, uint16_t rx_port)
+diff --git a/phone/wifi/sweet_apr.h b/phone/wifi/sweet_apr.h
+index 58a651f..6c78efd 100644
+--- a/phone/wifi/sweet_apr.h
++++ b/phone/wifi/sweet_apr.h
+@@ -43,13 +43,17 @@
+ #define AFE_PORT_CMD_DEVICE_START         0x000100E5u
+ #define AFE_PORT_CMD_DEVICE_STOP          0x000100E6u
+ #define AFE_PORT_CMD_SET_PARAM_V2         0x000100EFu
++#define AFE_PORT_CMD_SET_PARAM_V3         0x000100FAu
+ #define AFE_SVC_CMD_SET_PARAM             0x000100F3u
++#define AFE_SVC_CMD_SET_PARAM_V2          0x000100FCu
+ #define AFE_MODULE_AUDIO_DEV_INTERFACE    0x0001020Cu
+ #define AFE_PARAM_ID_I2S_CONFIG           0x0001020Du
+ #define AFE_MODULE_CLOCK_SET              0x0001028Fu
+ #define AFE_PARAM_ID_CLOCK_SET            0x00010290u
+ #define AFE_PORT_ID_PRIMARY_MI2S_RX       0x1000u
+ #define AFE_PORT_ID_PRIMARY_MI2S_TX       0x1001u
++/* q6audio_get_port_index(AFE_PORT_ID_PRIMARY_MI2S_RX): the AFE service commands carry this as their APR token. */
++#define AFE_PORT_INDEX_PRIMARY_MI2S_RX    40u
+ #define AFE_PORT_ID_RX_CODEC_DMA_RX_0     0xB030u
+ #define AFE_PORT_ID_TX_CODEC_DMA_TX_3     0xB037u
+ #define AFE_PORT_I2S_SD0                  1u
+@@ -107,6 +111,12 @@ size_t sweet_apr_afe_i2s_config(uint8_t *out, size_t cap, uint16_t src_port, uin
+                                 uint32_t sample_rate, uint16_t bit_width, uint16_t sd_lines, uint16_t stereo);
+ size_t sweet_apr_afe_clock(uint8_t *out, size_t cap, uint16_t src_port, uint32_t token, uint32_t clk_id,
+                            uint32_t freq_hz, int enable);
++/* The param_hdr_v3 forms, used when the ADSP reports instance-ID support (AFE_PORT_CMD_SET_PARAM_V3 /
++ * AFE_SVC_CMD_SET_PARAM_V2). Same fields, 4-byte larger header. */
++size_t sweet_apr_afe_i2s_config_v3(uint8_t *out, size_t cap, uint16_t src_port, uint32_t token, uint16_t port_id,
++                                   uint32_t sample_rate, uint16_t bit_width, uint16_t sd_lines, uint16_t stereo);
++size_t sweet_apr_afe_clock_v2(uint8_t *out, size_t cap, uint16_t src_port, uint32_t token, uint32_t clk_id,
++                              uint32_t freq_hz, int enable);
+ 
+ /*
+  * CS voice: voc_start_voice_call for a modem session (passive MVM/CVS named "default modem voice",
+diff --git a/phone/wifi/wland.c b/phone/wifi/wland.c
+index b9e98f6..1b55f84 100644
+--- a/phone/wifi/wland.c
++++ b/phone/wifi/wland.c
+@@ -793,6 +793,120 @@ static void adsp_rpc_poll(void)
+ 		printf("adsp: FastRPC did not start\n");
+ }
+ 
++/*
++ * 0013: AFE bring-up test (WLAND_AFE=1): PRI_MI2S_RX clock, I2S config and port start, the checkpoint of
++ * docs/audio-plan.md milestone 3 on the DSP side. The AFE service's APR token is the port *index* (40 for
++ * AFE_PORT_ID_PRIMARY_MI2S_RX), and Linux sends a param_hdr_v1 or v3 depending on the ADSP's instance-ID
++ * support; try v1 first (the harmless direction if the DSP expects v1) and fall back to v3.
++ */
++static int afe_on, afe_step = -1;
++static uint32_t afe_token = AFE_PORT_INDEX_PRIMARY_MI2S_RX;
++
++static void afe_send(void)
++{
++	uint8_t b[128];
++	size_t n = 0;
++	if (!afe_on || afe_step < 0 || !adspedge_apr_up())
++		return;
++	switch (afe_step) {
++	case 0:
++		n = sweet_apr_afe_clock(b, sizeof b, 0, afe_token, Q6AFE_LPASS_CLK_ID_PRI_MI2S_IBIT, 1536000, 1);
++		break;
++	case 1:
++		n = sweet_apr_afe_clock_v2(b, sizeof b, 0, afe_token, Q6AFE_LPASS_CLK_ID_PRI_MI2S_IBIT, 1536000, 1);
++		break;
++	case 2:
++		n = sweet_apr_afe_i2s_config(b, sizeof b, 0, afe_token, AFE_PORT_ID_PRIMARY_MI2S_RX, 48000, 16,
++					     AFE_PORT_I2S_SD0, AFE_PORT_I2S_STEREO);
++		break;
++	case 3:
++		n = sweet_apr_afe_i2s_config_v3(b, sizeof b, 0, afe_token, AFE_PORT_ID_PRIMARY_MI2S_RX, 48000, 16,
++						AFE_PORT_I2S_SD0, AFE_PORT_I2S_STEREO);
++		break;
++	case 4:
++		n = sweet_apr_afe_port(b, sizeof b, 0, afe_token, 1, AFE_PORT_ID_PRIMARY_MI2S_RX);
++		break;
++	default:
++		return;
++	}
++	if (!n) {
++		printf("afe: step %d: could not build the packet\n", afe_step);
++		return;
++	}
++	if (adspedge_apr_send(b, n)) {
++		printf("afe: step %d: send failed\n", afe_step);
++		return;
++	}
++	printf("afe: step %d: sent %zu bytes (token %u)\n", afe_step, n, afe_token);
++}
++
++static void afe_start(void)
++{
++	if (!afe_on || afe_step >= 0)
++		return;
++	printf("afe: starting PRI_MI2S bring-up (clock -> i2s config -> port start)\n");
++	afe_step = 0;
++	afe_send();
++}
++
++static void afe_result(uint32_t op, uint32_t st)
++{
++	if (!afe_on || afe_step < 0)
++		return;
++	switch (op) {
++	case AFE_SVC_CMD_SET_PARAM:		/* clock, param_hdr_v1 */
++		if (afe_step != 0)
++			break;
++		printf("afe: clock v1 -> status %u\n", st);
++		afe_step = st == 0 ? 2 : 1;
++		if (st)
++			printf("afe: v1 clock rejected; trying the v3 header\n");
++		afe_send();
++		break;
++	case AFE_SVC_CMD_SET_PARAM_V2:		/* clock, param_hdr_v3 */
++		if (afe_step != 1)
++			break;
++		printf("afe: clock v3 -> status %u\n", st);
++		afe_step = st == 0 ? 2 : -2;
++		if (st)
++			printf("afe: clock failed; stopping\n");
++		else
++			afe_send();
++		break;
++	case AFE_PORT_CMD_SET_PARAM_V2:		/* I2S config, param_hdr_v1 */
++		if (afe_step != 2)
++			break;
++		printf("afe: i2s config v1 -> status %u\n", st);
++		afe_step = st == 0 ? 4 : 3;
++		if (st)
++			printf("afe: v1 i2s config rejected; trying the v3 header\n");
++		afe_send();
++		break;
++	case AFE_PORT_CMD_SET_PARAM_V3:		/* I2S config, param_hdr_v3 */
++		if (afe_step != 3)
++			break;
++		printf("afe: i2s config v3 -> status %u\n", st);
++		afe_step = st == 0 ? 4 : -2;
++		if (st)
++			printf("afe: i2s config failed; stopping\n");
++		else
++			afe_send();
++		break;
++	case AFE_PORT_CMD_DEVICE_START:
++		if (afe_step != 4)
++			break;
++		printf("afe: PRI_MI2S_RX start -> status %u\n", st);
++		afe_step = st == 0 ? 5 : -2;
++		if (st == 0)
++			printf("afe: PRI_MI2S_RX is running (clock + port enabled)\n");
++		else
++			printf("afe: PRI_MI2S_RX start failed\n");
++		break;
++	default:
++		break;
++	}
++}
++
+ /* 0012: APR on apr_audio_svc: first checkpoint is AVCS_CMD_ADSP_EVENT_GET_STATE. */
+ static int apr_sent;
+ static void adsp_apr_rx(const uint8_t *p, size_t n)
+@@ -809,10 +923,14 @@ static void adsp_apr_rx(const uint8_t *p, size_t n)
+ 		if (m.payload_len >= 4)
+ 			memcpy(&st, m.payload, 4);
+ 		printf("apr: ADSP state %u (%s)\n", st, st == 1 ? "running" : "unexpected");
++		if (st == 1)
++			afe_start();
+ 	} else if (m.opcode == APR_BASIC_RSP_RESULT) {
+ 		uint32_t op, st;
+-		if (!sweet_apr_basic_result(&m, &op, &st))
++		if (!sweet_apr_basic_result(&m, &op, &st)) {
+ 			printf("apr: command %#x -> status %u\n", op, st);
++			afe_result(op, st);
++		}
+ 	}
+ }
+ 
+@@ -831,6 +949,9 @@ static void adsp_apr_poll(void)
+ static int adsp_net(unsigned secs)
+ {
+ 	adsp_last = 0xffffffff;
++	afe_on = getenv("WLAND_AFE") != NULL;
++	if (afe_on)
++		printf("adsp: AFE bring-up test enabled (WLAND_AFE)\n");
+ 	glink_edge(SMEM_HOST_ADSP, 24);
+ 	link_idle = adsp_idle;
+ 	/*
