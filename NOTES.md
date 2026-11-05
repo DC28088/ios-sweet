@@ -1,3 +1,25 @@
+## 2026-11-05 16:15-16:55 IST: hardware results of 0199/0200/0198/0197 (USER at the phone, PC USB)
+- 0199 charging (logs/boot-0199.txt): "source SDP (apsd 0x1, typec 0x8, aicl on): target 900 mA"; ICL 0x1370 0x0a -> 0x12
+  (500 -> 900 mA, ICL status 900), FCC 0x1061 0x1e -> 0x28 (1500 -> 2000 mA), all read back, no SPMI errors. Battery 99%:
+  no charging gain measurable (one -428/-477 mA sample under load). Still to test: wall charger / lower battery.
+- 0200 sleep (logs/boot-0200.txt): 11 lock/wake cycles; DCS 28/10 "sent" (DMA done) ~178 ms, 11/29 ~128 ms, CPU dark rows
+  A55 row 4 1248 MHz / A76 row 1 652.8 MHz, pollers slowed/restored each time. USER: "it never actually sleeps. the
+  screen goes very dark" = iOS's min brightness (DCS 0x51 level 8) with the panel still on; touch stopped while dark (by
+  design), works after unlock. Cause (guess): K6 DT off-command-state "dsi_hs_mode", 0200 sent them LP. -> xnu 0202
+  (claude/sleep-0200, CI 42014904260, image shim/out/shim-boot-0202.img 9137f57b): 28/10 in HS, ACK_ERR logged per
+  command, one black pass on display off. USER wish (later): tap to wake.
+- 0198 haptics (logs/boot-0198.txt): VirtualAudio moved in at 180 ms after root mount (before mediaserverd);
+  mediaserverd stable with it; "open by mediaserverd[28]", 73 buzzes/min while the USER typed, 0 faults, 0 capped. USER:
+  "haptics works fine now. no delay, the strength is normal. tho a quick strong buzz would make it much better".
+- 0197 audio (logs/boot-0197.txt): both AW882xx answer: TOP 0x34 and BOT 0x35 chip ID 0x2032, regs 01=0000 02=0100
+  03=ffff 04=4003 05=0038 (powered down). USER: Bluetooth headphones: keyboard clicks play in the headphones (HCI tx 13.6 KB
+  -> 101.8 KB) = BLUETOOTH AUDIO WORKS. Speaker silent (expected: no ADSP path). Settings > Sounds opens very slowly,
+  Control Center slow; this boot had a CommCenter crash loop ("Unable to communicate with AppleBaseband driver" x15+,
+  0 SWEET BB lines although wland logged "bb READY"; seen x2 on 0191b/c before) - not from 0197 (started before the amp
+  probe). Wi-Fi still not joining (wland scans fine). bluetoothd crashes 3x per boot (reason 1201) on every image.
+- VirtualAudio is now enabled ON DISK (persists). Test file /var/mobile/Containers/Shared/AppGroup/4B73F233-.../File
+  Provider Storage/sweet-bt-test.wav (30 s tones; no Files app in this build).
+
 ## 2026-11-05 09:30 IST: audio / haptics / charging / sleep: four test images (0197-0200) built, NOT booted yet
 - USER (08:15, away 8 h, phone not connected): fix audio (speaker, headphone, BT audio, mic), haptics, charging, sleep +
   power management; each its own CI build and boot image; the USER tests all four together, then merge.
