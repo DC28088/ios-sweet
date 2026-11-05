@@ -1,3 +1,21 @@
+## 2026-11-05 20:00 IST: 0207 Safari playback crashes media + compositor; 0208 diagnostic prepared
+- USER tested YouTube in Safari with Bluetooth headphones and reports a SpringBoard crash.
+- logs/boot-0207-dtlog.txt (private, extracted from the existing receiver after offset 14082211) contains repeated
+  mediaserverd SIGBUS at unslid PC 0x1f0f4c914 (H264SW.videocodec + 0x13914), instruction str q0,[x10,x3]. FARs
+  vary, all in read/execute shared-region mappings (prot 5/5 tag 35). Cause of the bad destination is not known.
+- backboardd SIGSEGV: unslid PC 0x1d1b01e70 is a vector memory-copy load; caller IOSurface +0x4ffc, then
+  CA::Render::iosurface_get_edr_factor. IOSurface reads its state pointer at client+0x70 and copies 0x70 bytes
+  from state+0x30. Its source is unmapped. Could be a stale surface/state mapping; NOT established yet.
+- 0207's old NSNumber/objectForKey exception absent from this capture. Neither this observation nor the
+  initial successful boot proves playback works. Do not label 0207 a complete media fix.
+- Isolated codex/media-0208 branch from claude/pm-merged 79f8745. 0208 adds bounded media IOSurface mapping/plane
+  metadata and argument registers only for mediaserverd/backboardd memory faults. No memory access behavior changed.
+  Local libclang syntax checks: SweetSurface.cpp + exception.c, 0/2 failed; original research build-tree files restored.
+- Sensor pull completed earlier: research/sensors-0207/vendor, 154 files (119 configs + 35 ADSP libraries),
+  every SHA256 verified against read-only OrangeFox vendor; mount removed. 0207-dtlog temporary boot OKAY, live SSH.
+- Next: build/package 0208, retain 0207 diagnostic flags, boot temporarily and reproduce once to correlate
+  decoder destination/stride and compositor state pointer with actual surface mappings. Speaker FastRPC pending.
+
 ## 2026-11-04 21:10 IST: Wi-Fi broken since wland 0005 boots (suspected); boot wland reverted to 0004 for a test
 - USER: "wifi doesn't toggle on". Kernel logs: Wi-Fi scans in boot-0190b/0190c/0191 (wland 0004), none from 0191b on (first
   boot with wland 0005; also the first boot after the battery ran flat). On 0195b the modem never announces WLFW (0x45) in

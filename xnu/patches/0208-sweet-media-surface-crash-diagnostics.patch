@@ -1,0 +1,53 @@
+--- a/iokit/Kernel/arm/SweetSurface.cpp
++++ b/iokit/Kernel/arm/SweetSurface.cpp
+@@ -704,6 +704,28 @@
+ 		ret = kIOReturnNoMemory;
+ 	} else {
+ 		sweet_surface_fill_result(s, ref, out);
++		/* Media-only, bounded metadata trace for the iOS16 software decoder.
++		 * Addresses stay in private device logs; no pixel contents are read. */
++		char media_name[32] = {0};
++		proc_selfname(media_name, sizeof(media_name));
++		static unsigned media_maps_logged;
++		if ((!strcmp(media_name, "mediaserverd") || s->planeCount != 0) &&
++		    media_maps_logged++ < 96) {
++			IOLog("SWEET MEDIA MAP v1: %s id %u existing %u data %#llx state %#llx size %u offset %u ro %u %ux%u row %u fmt %#x planes %u\n",
++			    media_name, s->id, existing ? 1u : 0u,
++			    (unsigned long long)ref->data->getAddress(),
++			    (unsigned long long)ref->state->getAddress(), s->allocSize,
++			    s->offset, s->readOnly ? 1u : 0u, s->width, s->height,
++			    s->bytesPerRow, s->pixelFormat, s->planeCount);
++			for (uint32_t pi = 0; pi < s->planeCount; pi++) {
++				const struct sweet_surface_plane *pl = &s->planes[pi];
++				IOLog("SWEET MEDIA PLANE: id %u plane %u %ux%u row %u offset %u size %u bpe %u elem %ux%u\n",
++				    s->id, pi, pl->width, pl->height, pl->bytesPerRow,
++				    pl->offset, pl->size, pl->bytesPerElement,
++				    pl->elementWidth, pl->elementHeight);
++			}
++		}
++
+ 		if (existing) {
+ 			put64(out, 0x00, ~0ULL);        /* "already yours": use the cached client */
+ 		}
+--- a/osfmk/kern/exception.c
++++ b/osfmk/kern/exception.c
+@@ -858,6 +858,19 @@
+ 	    get_saved_state_pc(ss), get_saved_state_lr(ss), get_saved_state_sp(ss), fp,
+ 	    (uint64_t)saved_state64(ss)->far);
+ 
++	/* Pointer/stride arguments for media SIGBUS and compositor SIGSEGV.
++	 * Only the two relevant processes; never dump pointed-to user data. */
++	if ((sig == 10 || sig == 11) &&
++	    (!strcmp(name, "mediaserverd") || !strcmp(name, "backboardd"))) {
++		for (unsigned int r = 0; r < 28; r += 4) {
++			printf("CRASH %s regs x%u=%#llx x%u=%#llx x%u=%#llx x%u=%#llx\n",
++			    name, r, (uint64_t)saved_state64(ss)->x[r],
++			    r + 1, (uint64_t)saved_state64(ss)->x[r + 1],
++			    r + 2, (uint64_t)saved_state64(ss)->x[r + 2],
++			    r + 3, (uint64_t)saved_state64(ss)->x[r + 3]);
++		}
++	}
++
+ 	char line[200];
+ 	int n = snprintf(line, sizeof(line), "CRASH %s bt", name);
+ 	for (int i = 0; i < 10 && fp != 0 && (fp & 7) == 0 && n < (int)sizeof(line) - 20; i++) {
