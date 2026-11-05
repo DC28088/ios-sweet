@@ -1,0 +1,65 @@
+--- a/bsd/dev/arm/systemcalls.c
++++ b/bsd/dev/arm/systemcalls.c
+@@ -86,6 +86,48 @@
+  *
+  * Outputs:	none
+  */
++#if defined(SWEET)
++/* 0209: opt-in iServices diagnostics. No paths, payloads, registers or IDs.
++ * Only the two failing native daemons are selected. Errors and exits are
++ * independently capped per daemon for the whole boot, including respawns.
++ */
++static bool
++sweet_iserv_trace_selected(struct proc *p)
++{
++	unsigned int enabled = 0;
++	if (strcmp(p->p_comm, "adid") != 0 &&
++	    strcmp(p->p_comm, "fairplayd.H2") != 0) {
++		return false;
++	}
++	return PE_parse_boot_argn("sweetservtrace", &enabled, sizeof(enabled)) && enabled == 1;
++}
++
++static void
++sweet_iserv_trace(struct proc *p, unsigned int code, int error,
++    bool entering, uint64_t exit_status)
++{
++	static unsigned int errors[2], exits[2];
++	if (!sweet_iserv_trace_selected(p)) {
++		return;
++	}
++	unsigned int role = strcmp(p->p_comm, "adid") == 0 ? 0 : 1;
++	if (entering) {
++		if (code == SYS_exit &&
++		    __atomic_fetch_add(&exits[role], 1, __ATOMIC_RELAXED) < 32) {
++			printf("SWEET ISERV: %s exit status %d\n", p->p_comm, (int)exit_status);
++		}
++		return;
++	}
++	if (error <= 0 || error == EINTR || error == EAGAIN ||
++	    error == ERESTART || error == EJUSTRETURN) {
++		return;
++	}
++	if (__atomic_fetch_add(&errors[role], 1, __ATOMIC_RELAXED) < 256) {
++		printf("SWEET ISERV: %s syscall %u errno %d\n", p->p_comm, code, error);
++	}
++}
++#endif
++
+ void
+ unix_syscall(
+ 	struct arm_saved_state * state,
+@@ -178,7 +220,13 @@
+ #endif /* CONFIG_DEBUG_SYSCALL_REJECTION */
+ 
+ 	AUDIT_SYSCALL_ENTER(code, proc, uthread);
++#if defined(SWEET)
++	sweet_iserv_trace(proc, code, 0, true, uthread->uu_arg[0]);
++#endif
+ 	error = (*(callp->sy_call))(proc, &uthread->uu_arg[0], &(uthread->uu_rval[0]));
++#if defined(SWEET)
++	sweet_iserv_trace(proc, code, error, false, 0);
++#endif
+ 	AUDIT_SYSCALL_EXIT(code, proc, uthread, error);
+ 
+ #if CONFIG_MACF

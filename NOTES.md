@@ -1,3 +1,16 @@
+## 2026-11-05: native account/Store failure isolated; 0209 syscall diagnostics prepared
+- USER stopped sideload and prioritized native Apple ID/App Store. 0207-iserv temporary boot accepted.
+- Corrected wall clock (reset to 1970 on boot). Native TLS and SecRandom API tested successfully.
+- USER reproduced "Verification failed MD is invalid" and Store stuck loading after time correction.
+- Native logs: provisioning start/end HTTP 200; ADIProvisioningStart success;
+  ADIProvisioningEnd -42410 -> AKAnisetteError -8004 / AKUnderlyingADIErrors -42410.
+  Meaning of -42410 unresolved; no login fix claimed. Separate activation-copy errors also present.
+- appstored: bag waits, ASDErrorDomain 515; fairplayd.H2 repeatedly starts. Exit cause unresolved here.
+- 0209 is opt-in bounded diagnostics only: adid/fairplayd.H2 syscall number+errno, exit code.
+  No paths, payloads, IDs, auth bypass or entitlement changes. Enable sweetservtrace=1.
+- Patch apply check and whitespace check passed. Full compile, CI dispatch and boot NOT performed.
+- Raw logs and firmware remain local outside Git. No credentials or machine data included here.
+
 ## 2026-11-04 21:10 IST: Wi-Fi broken since wland 0005 boots (suspected); boot wland reverted to 0004 for a test
 - USER: "wifi doesn't toggle on". Kernel logs: Wi-Fi scans in boot-0190b/0190c/0191 (wland 0004), none from 0191b on (first
   boot with wland 0005; also the first boot after the battery ran flat). On 0195b the modem never announces WLFW (0x45) in
