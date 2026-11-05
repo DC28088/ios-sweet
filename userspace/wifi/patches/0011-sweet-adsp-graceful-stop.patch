@@ -1,0 +1,141 @@
+diff --git a/phone/wifi/adspedge.c b/phone/wifi/adspedge.c
+index d1788ef..918f0f0 100644
+--- a/phone/wifi/adspedge.c
++++ b/phone/wifi/adspedge.c
+@@ -408,6 +408,31 @@ void adspedge_rpc_send(const void *pkt, size_t n)
+ 	chan_send(rpc_chan, pkt, n);
+ }
+ 
++void adspedge_close(void)
++{
++	static int closed;
++	if (closed)
++		return;
++	closed = 1;
++	int n = 0;
++	for (int i = 0; i < nch; i++) {
++		if (!ch[i].up)
++			continue;
++		send_cmd(GLINK_CMD_CLOSE, ch[i].lcid, 0, NULL, 0);
++		ch[i].up = 0;
++		n++;
++	}
++	if (n) {
++		uint64_t end = link_ms() + 200;
++		while (link_ms() < end) {
++			while (pump_one() > 0)
++				;
++			usleep(1000);
++		}
++		printf("adsp: closed %d channels\n", n);
++	}
++}
++
+ void adspedge_status(void)
+ {
+ 	printf("adsp: edge %d channels:", nch);
+diff --git a/phone/wifi/adspedge.h b/phone/wifi/adspedge.h
+index 9873fd2..5aaa6ef 100644
+--- a/phone/wifi/adspedge.h
++++ b/phone/wifi/adspedge.h
+@@ -26,6 +26,9 @@ int adspedge_qrtr_send(uint32_t type, uint32_t src_port, uint32_t dst_node, uint
+ /* fastrpc.c's send callback: one smq packet on fastrpcglink-apps-dsp. */
+ void adspedge_rpc_send(const void *pkt, size_t n);
+ 
++/* Close every open channel (0011: on exit, so a later run on the same boot starts clean). */
++void adspedge_close(void);
++
+ /* One line for the log: channels, intents. */
+ void adspedge_status(void);
+ 
+diff --git a/phone/wifi/wland.c b/phone/wifi/wland.c
+index 7edddf6..b6ae40c 100644
+--- a/phone/wifi/wland.c
++++ b/phone/wifi/wland.c
+@@ -607,6 +607,8 @@ static int ipa_fw_load(void)
+ #define SMP2P_ADSP_IN	443
+ #define IPC_ADSP_SMP2P	26
+ 
++static uint64_t adsp_out_pa;
++
+ static int adsp_smp2p_create(void)
+ {
+ 	uint64_t pa;
+@@ -635,6 +637,8 @@ static int adsp_smp2p_create(void)
+ 		__asm__ volatile("dsb sy" ::: "memory");
+ 		wr32(pa + 12, 16 | (2u << 16));
+ 	}
++	wr32(pa + 36, rd32(pa + 36) & ~1u);	/* 0011: no stale stop request for the new boot */
++	adsp_out_pa = pa;
+ 	__asm__ volatile("dsb sy" ::: "memory");
+ 	kick(IPC_ADSP_SMP2P);
+ 	printf("adsp: SMP2P out item %u at %llx: %u entries, \"master-kernel\" %x, \"sleepstate\" %x\n", SMP2P_ADSP_OUT,
+@@ -680,6 +684,35 @@ static void adsp_idle(void)
+ 	}
+ }
+ 
++/* 0011: a graceful ADSP stop: master-kernel bit 0 is the stop request, slave-kernel bit 3 the stop-ack. */
++static int adsp_shutdown(void)
++{
++	uint64_t pa;
++	uint32_t sz, v = 0;
++	if (!adsp_out_pa && !smem_get(SMEM_HOST_ADSP, SMP2P_ADSP_OUT, &pa, &sz))
++		adsp_out_pa = pa;
++	if (adsp_out_pa) {
++		wr32(adsp_out_pa + 36, rd32(adsp_out_pa + 36) | 1u);
++		__asm__ volatile("dsb sy" ::: "memory");
++		kick(IPC_ADSP_SMP2P);
++		unsigned i;
++		for (i = 0; i < 2000; i++) {
++			if (adsp_state(&v) == 0 && (v & 8))
++				break;
++			usleep(1000);
++		}
++		printf("adsp: stop request -> %s after %u ms (slave-kernel %x)\n", (v & 8) ? "acked" : "no ack", i, v);
++	}
++	uint64_t r1 = 0;
++	int64_t rc = scm(6, 1, PAS_ADSP, 0, 0, &r1);	/* PAS_SHUTDOWN */
++	if (adsp_out_pa) {
++		wr32(adsp_out_pa + 36, rd32(adsp_out_pa + 36) & ~1u);
++		__asm__ volatile("dsb sy" ::: "memory");
++	}
++	printf("adsp shutdown -> %lld/%llx\n", (long long)rc, (unsigned long long)r1);
++	return rc ? 1 : 0;
++}
++
+ /* 0009: the LPASS crash reason (SMEM item 423) as text, so a fatal explains itself in the same log. */
+ static void adsp_crash_reason(void)
+ {
+@@ -802,6 +835,7 @@ static int adsp_net(unsigned secs)
+ 	adspedge_set_qrtr_cb(adsp_qrtr);
+ 	if (adspedge_open(30000))
+ 		return -1;
++	atexit(adspedge_close);
+ 	uint64_t t0 = link_ms();
+ 	while (link_ms() - t0 < 30000 && (!adspedge_ipcrtr_up() || !adspedge_rpc_up())) {
+ 		uint32_t v = 0;
+@@ -850,7 +884,11 @@ static int boot_adsp(unsigned secs)
+ 			adsp_rpc_pa = 0;
+ 		}
+ 	}
+-	if (adsp_state(&v) == 0 && (v & 2) && !(v & 1)) {
++	if (adsp_state(&v) == 0 && (v & 2) && !(v & 1) && getenv("WLAND_ADSP_FRESH")) {
++		printf("adsp: up (slave-kernel %x): stopping it for a fresh edge\n", v);
++		adsp_shutdown();
++		usleep(200000);
++	} else if (adsp_state(&v) == 0 && (v & 2) && !(v & 1)) {
+ 		printf("adsp: already up (slave-kernel %x); serving the edge\n", v);
+ 		return adsp_net(secs);
+ 	}
+@@ -1295,10 +1333,7 @@ int main(int argc, char **argv)
+ 		/* 0009: optional seconds to watch (0 = until it fails or is killed) */
+ 		return boot_adsp(argc > 2 ? (unsigned)strtoul(argv[2], NULL, 0) : 0) ? 1 : 0;
+ 	} else if (!strcmp(c, "adsp-shutdown")) {
+-		uint64_t r1 = 0;
+-		int64_t rc = scm(6, 1, PAS_ADSP, 0, 0, &r1);	/* PAS_SHUTDOWN */
+-		printf("adsp shutdown -> %lld/%llx\n", (long long)rc, (unsigned long long)r1);
+-		return rc ? 1 : 0;
++		return adsp_shutdown();
+ 	} else if (!strcmp(c, "smp2p-init")) {
+ 		return smp2p_init() ? 1 : 0;
+ 	} else if (!strcmp(c, "shutdown")) {
