@@ -1,3 +1,68 @@
+## 2026-11-05 09:30 IST: audio / haptics / charging / sleep: four test images (0197-0200) built, NOT booted yet
+- USER (08:15, away 8 h, phone not connected): fix audio (speaker, headphone, BT audio, mic), haptics, charging, sleep +
+  power management; each its own CI build and boot image; the USER tests all four together, then merge.
+  USER (mid-session): "the 3 buzzes were felt in last boots" (sweethaptic=2/3 test buzzes work).
+- Reference used: Yofuness/ios-flame main (Pixel 4a sunfish, same SM7150 + PM6150; MIT) cloned read-only to
+  research/flame-sunfish-20261105/main (docs/features/{audio,haptics,charging,sleep-wake}.md, xnu 0242/0257 dark idle).
+  Xiaomi sweet-r-oss smb5-reg.h/smb5-lib.c/qpnp-smb5.c, Linux pinctrl-sm7150.c, gcc-sm7150.c in research/ref-20261105.
+  0195 CI build tree (patched source) in research/buildtree-0195 (own git repo: branches p0196..p0200, pall).
+- Local syntax check without a Mac: pip libclang in the session scratchpad + tools/xnu-cc.py's command extraction
+  (fake clang that parses with libclang); catches compile errors in seconds. Not a link check.
+- Findings from old logs (observed): 0195 "SWEET HAPTIC: serving /dev/sweet-haptic (0 frames written so far)": iOS never
+  played anything on the Actuator. VirtualAudio.plugin sits in /Library/Audio/Plug-Ins/HAL.disabled since image v12.
+  sunfish: VirtualAudio + their HAL driver = AirPods music (U11) and Actuator haptics (hp3); VirtualAudio only makes
+  devices for UIDs "Actuator"/"Null_Device". Guess: the same blocks sweet's haptics AND Bluetooth audio.
+  0195b battery lines on USB at 14%: "-122mA external=1 charging=1" (positive = charging): fast-charge state but the
+  battery drains -> input current limit below the load. Display "off" = CPU fade only, panel lit, all pollers at full
+  rate, CPUs pinned at the top LUT row all the time (SweetCPU writes PERF_STATE once at boot).
+- Cmdline is 594 of 607 bytes (mkpayload truncates silently!). The new images drop sweetgles=0 (default) and
+  sweetoslog=CommCenter (cellular debugging only): 560 + extras.
+- Patches (each applies on 0196 alone; branch per feature, from claude/pm-base-0196 = codex/cellular + 0196):
+  - 0196 sweet_audiohal.c: sweetvaudio=1 renames HAL.disabled/VirtualAudio.plugin -> HAL/ at boot (only if
+    SweetAudio.driver exists; kills mediaserverd once if it already runs); sweetvaudio=0 moves it back. PERSISTENT.
+    Undo by hand: mv /Library/Audio/Plug-Ins/HAL/VirtualAudio.plugin /Library/Audio/Plug-Ins/HAL.disabled/
+  - 0197 (claude/audio-0197) sweet_amp.c sweetamp=1: AW882xx TOP 0x34/BOT 0x35 chip-ID probe on QUP0 SE4 (gpio53/54
+    qup04 WEST, resets gpio64/72 NORTH, wrap0 s4 clocks), read only, reset + pins restored.
+  - 0198 (claude/haptic-0198): CONT mode registers written once; per buzz 5 writes; taps >= 40 ms (sweethapmin=MS);
+    "SWEET HAPTIC: open by NAME[pid]", "first sound from iOS", 60 s stats.
+  - 0199 (claude/charge-0199) sweet_charger.c + sweet_spmi_write (whitelist 0x1042 0x1061 0x1340 0x1342 0x1365 0x1366
+    0x1370 0x1643, EE0-owned APIDs only, retry on collision): sweetcharge=1 dumps/status, =2 sets ICL from Type-C Rp /
+    APSD (Rp3A 2000, Rp1.5A/DCP/CDP/QC 1500, float/OCP 1000, SDP sweetchgsdp=500|900|1500 only with AICL on), cap
+    sweetchgmax=2000, FCC raised to 2000 only if lower, unsuspend, charge enable if disabled, watchdog pet. FV/JEITA
+    never written. Lines "SWEET CHARGER: ...".
+  - 0200 (claude/sleep-0200) sweet_dark.c (from ios-flame 0242/0257, MIT): on RequestPowerChange(0): panel DCS 28/10
+    (sweetpanelsleep=1; wake 11, 120 ms, 29, brightness resent; a failed DCS -> old CPU fade), USB 20 ms poll after 2 s
+    quiet, USB log 250 ms, touch stopped, keys 40 ms, FB tick 500 ms after 5 s, CPU rows A55 <=1248 MHz, A76 <=652.8
+    MHz (sweetdarkclk=0 keeps). sweetdark=0 disables all. Lines "SWEET DARK:", "SWEET PANEL:", "SWEET CPUFREQ: dark".
+  - claude/pm-merged: the same four stacked (0199/0200 rebased, only diff context differs) for the combined image.
+- CI (DC28088/ios-sweet xnu.yml): all SUCCESS on macos-15, ~10 min each, first try:
+  0198 haptic 41961918212, 0199 charge 41962252752, 0200 sleep 41962689785, 0197 audio 41963332686, merged
+  41963950021; wland 0007 sweet-wifi 41963473750 (macos-15-intel) -> research/wifi-41963473750 (wland 9c1e4e23...).
+  Kernels in xnu/out-0197..0200, xnu/out-0201-merged (SHA256SUMS checked). Downloads: the plain artifact download crawls
+  (~50 KB/s); fetch only the kernel member of the zip with HTTP ranges (scratchpad kget.sh/zipget.py; 90 s).
+- Images (research/pm-0196/package.py N KERNELDIR 'extra' MARKER; 0195 shim/DTB/ADT sweet-0189.adt): 
+  | image (shim/out/) | kernel | image SHA256 | extra boot-args |
+  |---|---|---|---|
+  | shim-boot-0197.img audio | 14072eed | c8db1c9a... | sweetvaudio=1 sweetamp=1 |
+  | shim-boot-0198.img haptics | 5a85776d | 12f8274b... | sweetvaudio=1 (sweethaptic=3 as before) |
+  | shim-boot-0198-vaoff.img revert | 5a85776d | c90002ea... | sweetvaudio=0 (moves VirtualAudio back out) |
+  | shim-boot-0199.img charging | 3fdb2c26 | 8040f6c8... | sweetcharge=2 sweetchgsdp=900 |
+  | shim-boot-0200.img sleep | 9e142c54 | 440fcafa... | sweetpanelsleep=1 (sweetdark/sweetdarkclk default on) |
+  | shim-boot-0201-merged.img all | 43c907a1 | d0c71ab8... | sweetvaudio=1 sweetcharge=2 sweetpanelsleep=1 (606 bytes: no room for sweetchgsdp=900) |
+- NOT done / honest state: speaker, wired headphones and mics need the ADSP audio path (APR/AFE, WCD937x over
+  SoundWire); the ADSP crashed the modem on 0195 (sensor PD stall) and wland 0007 (lpass edge: QRTR, pd-mapper, tftp)
+  is only now built (CI 41963473750, success, not installed). 0197 only proves the amp I2C bus. Next for sound: install
+  wland 0007 as /var/local/bin/wland-0007 and run `wland adsp` with it (USER present, modem may crash -> reboot), then
+  APR (milestone 2). sunfish's phone/wifi/adspboot.c (MIT) has a working ADSP+APR+AFE+ASM speaker path to port.
+- Test plan for the USER (all temporary `fastboot boot`, no flashing):
+  1. charging 0199: plug a wall charger, then the PC; watch the battery % rise; log "SWEET CHARGER: source ... target"
+     and the status lines (icl cfg/now, mA in SWEET BATTERY lines should turn positive).
+  2. sleep 0200: lock with the power key: screen fully dark (panel off), wake with power key: picture back, touch works;
+     leave locked 10+ min and compare battery drop with an older image.
+  3. haptics 0198 (moves VirtualAudio in!): Settings > Sounds & Haptics switches, keyboard, long-press: buzz.
+  4. audio 0197: Bluetooth headphones: play music; log "SWEET AMP: TOP @0x34: chip ID ...".
+  If mediaserverd/backboardd misbehave after VirtualAudio moved in: boot the sweetvaudio=0 image (VAOFF) or mv it back.
+
 ## 2026-11-04 21:10 IST: Wi-Fi broken since wland 0005 boots (suspected); boot wland reverted to 0004 for a test
 - USER: "wifi doesn't toggle on". Kernel logs: Wi-Fi scans in boot-0190b/0190c/0191 (wland 0004), none from 0191b on (first
   boot with wland 0005; also the first boot after the battery ran flat). On 0195b the modem never announces WLFW (0x45) in
