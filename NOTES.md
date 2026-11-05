@@ -1,3 +1,50 @@
+## 2026-11-05 22:45 IST: wland 0013 — ADSP audio PD answers; PRI_MI2S clock, config and port start all status 0
+- wland 0011 (CI 42066647562, wland 25dde74f...): graceful ADSP stop request not acked by the live ADSP;
+  `WLAND_ADSP_FRESH=1` + PAS auth/reset reloads it. The preserved stale GLINK tails stalled the handshake
+  (tx 1056/1072, rx 5504/5504).
+- wland 0012 (commit 2d17298, CI 42067571003, wland 5fc55509...): APR `AVCS_CMD_ADSP_EVENT_GET_STATE` on
+  `apr_audio_svc` + `glink_resync` (backwards head -> RX_TAIL=RX_HEAD; before VERSION TX_HEAD=TX_TAIL). Fresh run:
+  stale tx 0/1080 -> 0/0, rx 0/8 preserved; all 6 channels opened; FastRPC root + sensors PD served 1072 calls
+  (apps_std, sensor-registry reads, persist writes/rename `sns_reg_config`); GET_STATE -> "ADSP state 1 (running)";
+  alive at 12/22/32/42 s, clean at 45 s. The `fastrpc_port_s.c:176` assertion in SMEM item 423 was stale from an
+  earlier boot, not this run. Log /var/local/adsp-0012.log.
+- wland 0013 (commit 51bc78e, CI 42071786308, wland 0da7320f...): `WLAND_AFE=1` sends AFE clock
+  (Q6AFE_LPASS_CLK_ID_PRI_MI2S_IBIT 0x100, 1.536 MHz), I2S config (port 0x1000, 48 kHz, 16-bit, SD0, stereo, WS
+  internal) and device start. All three basic responses status 0: 0x100f3, 0x100ef, 0x100e5. The AFE service APR
+  token is the port *index* 40 (`q6audio_get_port_index(AFE_PORT_ID_PRIMARY_MI2S_RX)`), not the port id. The v1
+  param_hdr is accepted by this ADSP; the v3 fallback (AFE_PORT_CMD_SET_PARAM_V3 / AFE_SVC_CMD_SET_PARAM_V2) is
+  built and host-tested but unused. Fresh run READY after 139 ms (slave-kernel 6), alive the full 30 s. Phone log
+  /var/local/adsp-0013-afe.log. This is docs/audio-plan.md milestone 3's DSP half: the LPASS PRI_MI2S port runs.
+- Still not audible: the two AW88263S amps are powered down (0197 read only their IDs), TLMM MI2S pins
+  49/50/52/51 are not muxed by the kernel, and no PCM source exists. The iOS SweetAudio HAL writes
+  /dev/sweet-audio, which the kernel does not provide; media playback needs ADSP ASM shared-memory playback.
+  Headphone jack (WCD9375 SoundWire/reset/regulators) untouched.
+- xnu 0208 diagnostics: the starved macos-15 run was cancelled (jobs cancelled/skipped) and redispatched on
+  macos-15-intel as run 42069587462 (branch codex/media-0208, commit 81762fb); build success. Not downloaded or
+  booted yet; no Safari fix claimed.
+- Next: (1) find the AW882xx ACF blob in the vendor partition (read-only) and add MI2S pinctrl + a minimal amp
+  power-up/unmute/status driver to xnu, test after `WLAND_AFE` starts; (2) then /dev/sweet-audio + ASM
+  shared-memory playback; (3) WCD9375 jack. No partition writes or root changes.
+
+## 2026-11-05 21:55 IST: wland 0009b on the ADSP; GLINK handshake failure found; 0010 FastRPC port built
+- wland 0009b (CI 42061143817, wland 8192ba0c...): the stale-fatal fix works; a fresh `wland-0009b adsp 45` reached the
+  GLINK edge. IPCRTR did NOT open: the ADSP's first VERSION (1, features 7) is followed ~34 ms later by a reset of its
+  shared tx head to 0 (its early descriptor re-init). The old single-channel link.c then read the zeroed ring as 2047
+  VERSION commands and filled our tx fifo (desc 478 tx head 0x3ff0, tail 0); the ADSP never consumed it. ADSP still
+  ran to the usual sensor-PD dog (SMEM 423, 0xe5). No partition/root changes.
+- Wrote patch 0010 (`userspace/wifi/patches/0010-sweet-adsp-fastrpc.patch`, commit 0713a4b, pushed to myfork
+  claude/audio-0009): `adspedge.c` multi-channel lpass edge (IPCRTR + fastrpcglink-apps-dsp, intents,
+  RX_DONE_W_REUSE, QRTR hook for pdmapper), `fastrpc.c` ported from the sunfish reference (sensors root+sensors PD
+  serving `/var/local/fw/sensors` and `/var/local/fw/dsp`), `adsp_smmu.c` (kernel 0206 PMEM_SMMU: 0x1b23 translating
+  bank IOVA 0x80000000 | 3<<32, other audio SIDs identity). glink.c now bounds-checks the shared indices and, for the
+  ADSP edge, preserves the peer's ends and waits 1.5 s (`WLAND_EDGE_DELAY_MS`) before VERSION.
+- Staged on the phone: `/var/local/fw/sensors` (119 files, 584K) and `/var/local/fw/dsp` (35 libs, 12M); root 200MiB free.
+- CI wland 42063984265 (branch claude/audio-0009) queued at 21:57; install as wland-0010 and test with
+  `WLAND_NO_RPC=1 ... adsp 20` first (channels), then `adsp 60` (FastRPC). Reattach after a crash needs a fresh ADSP.
+- USER also asked to fix Safari audio/video playback together. Media diagnostics 0208 was pushed (commit 81762fb,
+  branch codex/media-0208; previously blocked, now accepted) and xnu CI 42064161965 queued; boot it after the ADSP
+  milestone to reproduce the mediaserverd/backboardd faults once. Diagnostic only, no fix claimed yet.
+
 ## 2026-11-05: USER switched from sideload to native Apple ID/App Store; actual ADI error captured
 - Sideload PAUSED by USER. EeveeSpotify files copied to /Applications/EeveeSpotify.app (884 SHA256s matched),
   registration FAILED with MCMErrorDomain 98 NOT_CODESIGNED; no launch. Temporary helper and registration plist
