@@ -1,3 +1,18 @@
+## 2026-11-05 19:35 IST: USER priorities after today; Safari media root cause; 0206/0207 building
+- USER order: speaker (ADSP) -> sensors -> GPS -> Apple ID / iServices. Sensors share the ADSP work (SEE sensors PD
+  over FastRPC); GPS = modem LOC (QMI) + locationd; Apple ID needs Apple hardware attestation (FairPlay/SEP/device
+  certificates): not to be spoofed (DRM/attestation circumvention); only non-attested paths can be checked.
+- USER also: tap to wake; resize the 16 GiB iOS volume to the ~107 GiB userdata partition (kernel's HFS+ has
+  HFSIOC_RESIZE_VOLUME; full 16 GiB backup first), then let SystemAppMigrator install the 32 staged apps
+  (/private/var/staged_system_apps, 496 MB; root has 231 MiB free: not before the resize).
+- Safari/YouTube/web media root cause (0205 sweetdtlog + research/dsc local symbols): mediaserverd
+  "-[__NSCFNumber objectForKey:]" in VideoToolbox (FPSupport_ShouldApplyVideoTrackMatrix -> IOService
+  DisplayPipePlaneBaseAlignment, CFDictionaryGetValue "PlaneBaseAlignmentLinear"); SweetFramebuffer published a bare
+  number since 0046. xnu 0207 publishes {PlaneBaseAlignmentLinear = 64}. 0206 = PMEM_SMMU for the ADSP port.
+  claude/pm-merged CI 42040394031 / 42040400391 (intel) -> shim/out/shim-boot-0207-merged.img (+ 0207-dtlog).
+- USB link dropped twice on 0203/0205 while the user used the phone (replug fixes it); suspect 0200's dark USB
+  20 ms poll, not proven.
+
 ## 2026-11-05 18:40 IST: wland 0008 `adsp` on 0204: ADSP READY, then the same sensor-PD dog; MODEM SURVIVES now
 - wland 0008 (commit eee43ef; CI sweet-wifi 42032699830, wland 1ec27069...; on the phone as /var/local/bin/wland-0008, boot
   wland unchanged): ADSP SMP2P items fixed to in 443 / out 429 (0006/0007 had them swapped; the modem's <435 428> proves
