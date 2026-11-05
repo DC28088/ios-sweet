@@ -1,3 +1,15 @@
+## 2026-11-05: 0209 temporarily booted; clean fairplayd exit confirmed; awaiting native reproduction
+- USER entered fastboot. Sending + Booting OKAY for the previously verified 0209 image; no flash.
+- Pre-boot receiver offset saved in chat workspace work/iserv-runtime/0209-capture-start.json.
+  Capture confirms sweetbuild=209, sweetservtrace=1; syscall trace active. SSH: SpringBoard/akd/adid alive.
+- Wall clock again started at 1970; corrected to host current UTC.
+- New evidence: fairplayd.H2 repeatedly exits status 0 (not a crash). Reason remains unresolved.
+  Initial errors include file probes, getattrlist EINVAL, syscall 535 ENOSYS, MAC syscall ENOENT,
+  csops_audittoken ERANGE. Do not blindly change these return values: sizing/probe failures can be expected.
+  Syscall 381 is __mac_syscall in CONFIG_MACF, not its disabled-branch enosys alias.
+- Asked USER for Wi-Fi + one Apple ID login attempt + Store launch. Awaiting reproduction.
+  No service fix claimed. Raw captures local only; user-facing iServ-Notes updated.
+
 ## 2026-11-05: approved 0209 built successfully and packaged; awaiting USER fastboot
 - USER explicitly approved push/build of b9c1a64 to DC28088/ios-sweet. Push succeeded.
 - GitHub Actions xnu run 42057960143 SUCCESS, exact source b9c1a64c9526410af437da0b7809623a1ea8b59b,
