@@ -35,7 +35,7 @@ jobs:
           cd donor/phone/wifi
           xcrun --sdk iphoneos clang -target arm64-apple-ios16.0 -O2 -Wall -Wextra -Wno-unused-parameter \
             -o "$GITHUB_WORKSPACE/$out/wland" wland.c smem.c pmem.c glink.c link.c qmi.c rmtfs.c pdmapper.c \
-            tftp.c scm.c wlfw.c radio.c ipnet.c bridge.c cell.c
+            tftp.c scm.c wlfw.c radio.c ipnet.c bridge.c cell.c adspedge.c adsp_smmu.c fastrpc.c
           cd ../tools
           xcrun --sdk iphoneos clang -target arm64-apple-ios16.0 -O2 -fobjc-arc -framework Foundation \
             -framework SystemConfiguration -o "$GITHUB_WORKSPACE/$out/netsvc" netsvc.m

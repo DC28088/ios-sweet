@@ -1,0 +1,1913 @@
+diff --git a/phone/wifi/adsp_smmu.c b/phone/wifi/adsp_smmu.c
+new file mode 100644
+index 0000000..57e3ceb
+--- /dev/null
++++ b/phone/wifi/adsp_smmu.c
+@@ -0,0 +1,69 @@
++#include <errno.h>
++#include <stdio.h>
++#include <string.h>
++#include "adsp_smmu.h"
++#include "fastrpc.h"
++#include "pmem.h"
++
++#define RPC_IOVA	0x80000000ull
++#define RPC_ALIAS	(3ull << 32)	/* the DSP's stream bits 3 (0x1b23) */
++#define RPC_SID		0x1b23
++
++/* audio-ion, the fastrpc compute cbs (0x1b24-0x1b28) and usb-audio: translation off, as on the reference. */
++static const uint16_t id_sids[] = { 0x1b21, 0x1b24, 0x1b25, 0x1b26, 0x1b27, 0x1b28, 0x1b2f };
++
++int adsp_smmu_setup(uint64_t *pa, uint64_t *dsp)
++{
++	int bad = 0;
++	for (unsigned i = 0; i < sizeof(id_sids) / sizeof(id_sids[0]); i++) {
++		struct pmem_smmu q;
++		memset(&q, 0, sizeof(q));
++		q.op = 1;
++		q.nsid = 1;
++		q.sid[0] = id_sids[i];
++		if (pm_smmu(&q)) {
++			printf("smmu: %#x identity: %s\n", id_sids[i], strerror(errno));
++			bad = 1;
++		} else {
++			printf("smmu: %#x identity (SMR %d)\n", id_sids[i], q.slot[0]);
++		}
++	}
++	uint64_t buf = pm_alloc(FASTRPC_DMA_SIZE, 0x1000);
++	if (!buf) {
++		printf("smmu: no FastRPC DMA buffer\n");
++		return -1;
++	}
++	struct pmem_smmu q;
++	memset(&q, 0, sizeof(q));
++	q.op = 2;
++	q.nsid = 1;
++	q.sid[0] = RPC_SID;
++	q.iova = RPC_IOVA;
++	q.alias = RPC_ALIAS;
++	q.pa = buf;
++	q.len = FASTRPC_DMA_SIZE;
++	if (pm_smmu(&q)) {
++		printf("smmu: %#x translate %#llx -> %#llx: %s\n", RPC_SID, (unsigned long long)RPC_IOVA,
++		       (unsigned long long)buf, strerror(errno));
++		return -1;
++	}
++	printf("smmu: %#x translate %#llx (alias %#llx) -> %#llx, %#x bytes, CB%d\n", RPC_SID,
++	       (unsigned long long)q.iova, (unsigned long long)q.alias, (unsigned long long)buf, FASTRPC_DMA_SIZE, q.cb);
++	*pa = buf;
++	*dsp = RPC_IOVA | RPC_ALIAS;
++	return bad ? -1 : 0;
++}
++
++void adsp_smmu_status(void)
++{
++	struct pmem_smmu q;
++	memset(&q, 0, sizeof(q));
++	q.op = 3;
++	q.nsid = 1;
++	q.sid[0] = RPC_SID;
++	if (pm_smmu(&q)) {
++		printf("smmu: %#x status: %s\n", RPC_SID, strerror(errno));
++		return;
++	}
++	printf("smmu: %#x CB%d FSR %#x FSYNR0 %#x FAR %#llx\n", RPC_SID, q.cb, q.fsr, q.fsynr0, (unsigned long long)q.far);
++}
+diff --git a/phone/wifi/adsp_smmu.h b/phone/wifi/adsp_smmu.h
+new file mode 100644
+index 0000000..a38c77c
+--- /dev/null
++++ b/phone/wifi/adsp_smmu.h
+@@ -0,0 +1,16 @@
++/*
++ * The ADSP's FastRPC DMA stream through the apps-SMMU, from the kernel (xnu 0206, /dev/pmem PMEM_SMMU): the
++ * sensors PD takes 32-bit addresses, so SID 0x1b23 gets a translating bank IOVA 0x80000000 -> a pm_alloc buffer
++ * and the DSP sees IOVA | 3 << 32 (the reference's compute-cb stream). The other audio/fastrpc SIDs stay
++ * translation-off as ABL left them.
++ */
++#ifndef ADSP_SMMU_H
++#define ADSP_SMMU_H
++#include <stdint.h>
++
++/* Program the streams and allocate the FastRPC buffer; 0 = ok. */
++int adsp_smmu_setup(uint64_t *pa, uint64_t *dsp);
++/* Print the translating bank's fault state (read-only). */
++void adsp_smmu_status(void);
++
++#endif
+diff --git a/phone/wifi/adspedge.c b/phone/wifi/adspedge.c
+new file mode 100644
+index 0000000..d1788ef
+--- /dev/null
++++ b/phone/wifi/adspedge.c
+@@ -0,0 +1,418 @@
++/*
++ * The ADSP's GLINK edge (lpass): channels, intents and QRTR/FastRPC dispatch.
++ * Ported from the ios-flame sunfish adspboot.c lpass edge (MIT): the ADSP opens IPCRTR and
++ * fastrpcglink-apps-dsp from its side; every remote OPEN is acked and opened back the same way, which is how the
++ * channel becomes bidirectional. wland's link.c stays the modem's single-channel edge.
++ */
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <unistd.h>
++#include "adspedge.h"
++#include "fastrpc.h"
++#include "glink.h"
++#include "link.h"
++
++#define SMEM_HOST_ADSP	2
++#define NCHAN		8
++#define NRINT		256	/* remote intents per channel */
++#define NPEND		32	/* packets waiting for a remote intent */
++#define PKT_MAX		1024
++#define RX_MAX		16384
++#define NLOCAL		8	/* free local rx intents kept queued per channel */
++#define FEAT_REUSE	1
++
++#define QRTR_PORT_CTRL	0xfffffffeu
++
++struct chan {
++	char name[32];
++	uint16_t rcid, lcid;
++	uint32_t r_iid[NRINT], r_isz[NRINT];
++	uint8_t r_use[NRINT];
++	int r_n, r_busy;
++	int l_n;		/* our rx intents the ADSP still holds unused */
++	int up;
++	uint32_t nrx, ndone, nreuse;
++	uint8_t rx[RX_MAX];
++	size_t rx_have;
++	uint32_t rx_iid;
++	uint8_t pend[NPEND][PKT_MAX];
++	uint32_t pend_len[NPEND];
++	int npend;
++};
++
++static struct chan ch[NCHAN];
++static int nch;
++static uint32_t our_iid = 100;
++static struct chan *ipcrtr, *rpc_chan;
++static adsp_qrtr_cb_t qrtr_cb;
++
++static struct chan *by_rcid(uint16_t rcid)
++{
++	for (int i = 0; i < nch; i++)
++		if (ch[i].rcid == rcid)
++			return &ch[i];
++	return NULL;
++}
++
++static struct chan *by_lcid(uint16_t lcid)
++{
++	for (int i = 0; i < nch; i++)
++		if (ch[i].lcid == lcid)
++			return &ch[i];
++	return NULL;
++}
++
++static int send_cmd(uint16_t cmd, uint16_t p1, uint32_t p2, const void *data, size_t len)
++{
++	for (int i = 0; i < 1000; i++) {
++		if (!glink_send(cmd, p1, p2, data, len))
++			return 0;
++		usleep(2000);
++	}
++	printf("adsp: glink tx fifo stuck (cmd %u p1 %u p2 %u)\n", cmd, p1, p2);
++	return -1;
++}
++
++static void give_intents(struct chan *c, int n, uint32_t sz)
++{
++	while (n > 0) {
++		int k = n > 4 ? 4 : n;
++		uint32_t e[8];
++		for (int i = 0; i < k; i++) {
++			e[2 * i] = sz;
++			e[2 * i + 1] = our_iid++;
++		}
++		if (send_cmd(GLINK_CMD_INTENT, c->lcid, (uint32_t)k, e, (size_t)8 * k))
++			return;
++		c->l_n += k;
++		n -= k;
++	}
++}
++
++/* Send one packet on c in one of the ADSP's intents; without one, queue it and ask (RX_INTENT_REQ). */
++static int chan_send(struct chan *c, const void *pkt, size_t n)
++{
++	if (!c || !c->up || n > PKT_MAX)
++		return -1;
++	int i;
++	for (i = 0; i < c->r_n; i++)
++		if (!c->r_use[i] && c->r_isz[i] >= n)
++			break;
++	if (i >= c->r_n) {
++		if (c->npend < NPEND) {
++			memcpy(c->pend[c->npend], pkt, n);
++			c->pend_len[c->npend++] = (uint32_t)n;
++			send_cmd(GLINK_CMD_RX_INTENT_REQ, c->lcid, (uint32_t)n, NULL, 0);
++		} else {
++			printf("adsp: %s: tx %zu bytes dropped (no intent, queue full)\n", c->name, n);
++		}
++		return 0;
++	}
++	uint32_t iid = c->r_iid[i];
++	c->r_use[i] = 1;
++	c->r_busy++;
++	uint8_t b[8 + PKT_MAX];
++	uint32_t cl[2] = { (uint32_t)n, 0 };
++	memcpy(b, cl, 8);
++	memcpy(b + 8, pkt, n);
++	if (send_cmd(GLINK_CMD_TX_DATA, c->lcid, iid, b, 8 + n)) {
++		c->r_use[i] = 0;
++		c->r_busy--;
++		return -1;
++	}
++	return 0;
++}
++
++static void flush_pend(struct chan *c)
++{
++	int n = c->npend;
++	c->npend = 0;
++	for (int i = 0; i < n; i++)
++		chan_send(c, c->pend[i], c->pend_len[i]);
++}
++
++static void qrtr_rx(struct chan *c, const uint8_t *p, size_t n)
++{
++	if (n < 32) {
++		printf("adsp: qrtr short packet %zu bytes\n", n);
++		return;
++	}
++	struct qrtr_hdr h;
++	memcpy(&h, p, sizeof(h));
++	if (h.version != 1) {
++		printf("adsp: qrtr version %u\n", h.version);
++		return;
++	}
++	uint32_t sz = h.size;
++	size_t blen = n - 32 < sz ? n - 32 : sz;
++	if (qrtr_cb)
++		qrtr_cb(&h, p + 32, (uint32_t)blen);
++}
++
++/* One command; 0 = incomplete (wait for more), -1 = bad length. */
++static int pump_one(void)
++{
++	if (glink_rx_avail() < 8)
++		return 0;
++	uint8_t h8[8];
++	glink_rx_peek(h8, 0, 8);
++	uint16_t cmd, p1;
++	uint32_t p2;
++	memcpy(&cmd, h8, 2);
++	memcpy(&p1, h8 + 2, 2);
++	memcpy(&p2, h8 + 4, 4);
++	size_t n = 8;
++	struct chan *c = by_rcid(p1);
++
++	switch (cmd) {
++	case GLINK_CMD_VERSION:
++		if (!p1 && !p2)
++			break;	/* a zero slot exposed by the peer's early descriptor reset: not a command */
++		printf("adsp: glink remote version %u features %#x\n", p1, p2);
++		send_cmd(GLINK_CMD_VERSION_ACK, 1, p2 & FEAT_REUSE, NULL, 0);
++		break;
++	case GLINK_CMD_VERSION_ACK:
++		printf("adsp: glink version acked (%u, %#x)\n", p1, p2);
++		break;
++	case GLINK_CMD_OPEN: {
++		if (p2 > 1024)
++			return -1;
++		n = 8 + ((p2 + 7) & ~7u);
++		if (glink_rx_avail() < n)
++			return 0;
++		char name[64] = { 0 };
++		glink_rx_peek(name, 8, p2 < 63 ? p2 : 63);
++		printf("adsp: channel \"%s\" opened by the ADSP (rcid %u)\n", name, p1);
++		if (!c && nch < NCHAN) {
++			c = &ch[nch];
++			memset(c, 0, sizeof(*c));
++			snprintf(c->name, sizeof(c->name), "%s", name);
++			c->rcid = p1;
++			c->lcid = (uint16_t)(++nch);
++			c->l_n = 0;
++			send_cmd(GLINK_CMD_OPEN_ACK, c->rcid, 0, NULL, 0);
++			size_t l = strlen(c->name) + 1;
++			send_cmd(GLINK_CMD_OPEN, c->lcid, (uint32_t)l, c->name, l);
++		}
++		break;
++	}
++	case GLINK_CMD_OPEN_ACK:
++		c = by_lcid(p1);
++		if (c && !c->up) {
++			printf("adsp: %s: open acked (lcid %u, rcid %u)\n", c->name, c->lcid, c->rcid);
++			c->up = 1;
++			give_intents(c, 4, 4096);
++			if (!strcmp(c->name, "IPCRTR"))
++				ipcrtr = c;
++			else if (!strcmp(c->name, "fastrpcglink-apps-dsp"))
++				rpc_chan = c;
++		}
++		break;
++	case GLINK_CMD_CLOSE:
++		printf("adsp: %s: remote CLOSE (rcid %u)\n", c ? c->name : "?", p1);
++		send_cmd(GLINK_CMD_CLOSE_ACK, p1, 0, NULL, 0);
++		if (c)
++			c->up = 0;
++		break;
++	case GLINK_CMD_INTENT:
++		if (p2 > 64)
++			return -1;
++		n = 8 + 8ull * p2;
++		if (glink_rx_avail() < n)
++			return 0;
++		for (uint32_t i = 0; c && i < p2; i++) {
++			uint32_t e[2];
++			glink_rx_peek(e, 8 + 8 * i, 8);
++			if (c->r_n < NRINT) {
++				c->r_isz[c->r_n] = e[0];
++				c->r_use[c->r_n] = 0;
++				c->r_iid[c->r_n++] = e[1];
++			} else {
++				printf("adsp: %s: remote intents full, %u dropped\n", c->name, e[1]);
++			}
++		}
++		if (c)
++			flush_pend(c);
++		break;
++	case GLINK_CMD_RX_INTENT_REQ:
++		if (c) {
++			uint32_t sz = p2 > RX_MAX ? RX_MAX : (p2 < 4096 ? 4096 : p2);
++			send_cmd(GLINK_CMD_RX_INTENT_REQ_ACK, c->lcid, 1, NULL, 0);
++			give_intents(c, 1, sz);
++		} else {
++			send_cmd(GLINK_CMD_RX_INTENT_REQ_ACK, 0, 0, NULL, 0);
++		}
++		break;
++	case GLINK_CMD_RX_INTENT_REQ_ACK:
++		break;
++	case GLINK_CMD_TX_DATA:
++	case GLINK_CMD_TX_DATA_CONT: {
++		if (glink_rx_avail() < 16)
++			return 0;
++		uint32_t cl[2];
++		glink_rx_peek(cl, 8, 8);
++		if (cl[0] > RX_MAX)
++			return -1;
++		n = (16 + cl[0] + 7) & ~(size_t)7;
++		if (glink_rx_avail() < n)
++			return 0;
++		if (cmd == GLINK_CMD_TX_DATA) {
++			if (c) {
++				c->rx_have = 0;
++				c->rx_iid = p2;
++				c->l_n--;
++			}
++		}
++		if (c && c->rx_have + cl[0] <= RX_MAX) {
++			glink_rx_peek(c->rx + c->rx_have, 16, cl[0]);
++			c->rx_have += cl[0];
++		}
++		if (!cl[1]) {
++			if (!c) {
++				printf("adsp: data for unknown rcid %u (%u bytes) dropped\n", p1, cl[0]);
++				break;
++			}
++			c->nrx++;
++			send_cmd(GLINK_CMD_RX_DONE_W_REUSE, c->lcid, c->rx_iid, NULL, 0);
++			c->l_n++;
++			while (c->l_n < NLOCAL)
++				give_intents(c, NLOCAL - c->l_n > 4 ? 4 : NLOCAL - c->l_n, 4096);
++			if (c == ipcrtr)
++				qrtr_rx(c, c->rx, c->rx_have);
++			else if (c == rpc_chan)
++				fastrpc_rx(c->rx, c->rx_have);
++			else if (c->nrx <= 2) {
++				printf("adsp: %s: %zu bytes:", c->name, c->rx_have);
++				for (size_t i = 0; i < c->rx_have && i < 32; i++)
++					printf(" %02x", c->rx[i]);
++				printf("\n");
++			}
++			c->rx_have = 0;
++		}
++		break;
++	}
++	case GLINK_CMD_RX_DONE:
++	case GLINK_CMD_RX_DONE_W_REUSE: {
++		int re = cmd == GLINK_CMD_RX_DONE_W_REUSE;
++		if (!c)
++			break;
++		re ? c->nreuse++ : c->ndone++;
++		int i;
++		for (i = 0; i < c->r_n; i++)
++			if (c->r_iid[i] == p2 && c->r_use[i])
++				break;
++		if (i >= c->r_n)
++			break;
++		c->r_busy--;
++		if (re) {
++			c->r_use[i] = 0;
++		} else {
++			c->r_n--;
++			c->r_iid[i] = c->r_iid[c->r_n];
++			c->r_isz[i] = c->r_isz[c->r_n];
++			c->r_use[i] = c->r_use[c->r_n];
++		}
++		flush_pend(c);
++		break;
++	}
++	case GLINK_CMD_SIGNALS:
++	case GLINK_CMD_READ_NOTIF:
++	case GLINK_CMD_CLOSE_ACK:
++		break;
++	default:
++		printf("adsp: glink cmd %u (p1 %u p2 %#x): skipped 8 bytes\n", cmd, p1, p2);
++		break;
++	}
++	glink_rx_advance(n);
++	return 1;
++}
++
++int adspedge_open(unsigned timeout_ms)
++{
++	glink_edge(SMEM_HOST_ADSP, 24);
++	uint64_t t0 = link_ms();
++	while (!glink_remote_ready()) {
++		if (link_ms() - t0 >= timeout_ms) {
++			printf("adsp: no GLINK rx fifo in %u ms\n", timeout_ms);
++			return -1;
++		}
++		usleep(100000);
++	}
++	/*
++	 * 0010: the ADSP's GLINK zeroes its shared descriptors once more right after PAS (a head reset 30-40 ms in: the
++	 * first VERSION it wrote disappears). Map the items now but keep the peer's ends, let that settle, then send.
++	 */
++	const char *e = getenv("WLAND_EDGE_DELAY_MS");
++	unsigned delay = e ? (unsigned)strtoul(e, NULL, 0) : 1500;
++	glink_preserve(1);
++	if (glink_init())
++		return -1;
++	glink_print_state("edge before the delay");
++	for (unsigned i = 0; i < delay; i += 250) {
++		usleep(250000);
++		glink_print_state("edge in the delay");
++	}
++	if (send_cmd(GLINK_CMD_VERSION, 1, FEAT_REUSE, NULL, 0))
++		return -1;
++	printf("adsp: glink edge open after %llu ms (%u ms settle), VERSION sent\n",
++	       (unsigned long long)(link_ms() - t0), delay);
++	return 0;
++}
++
++int adspedge_poll(unsigned ms)
++{
++	uint64_t end = link_ms() + ms;
++	do {
++		while (pump_one() > 0)
++			;
++		if (ms)
++			usleep(1000);
++	} while (link_ms() < end);
++	return 0;
++}
++
++int adspedge_ipcrtr_up(void)
++{
++	return ipcrtr && ipcrtr->up;
++}
++
++int adspedge_rpc_up(void)
++{
++	return rpc_chan && rpc_chan->up;
++}
++
++void adspedge_set_qrtr_cb(adsp_qrtr_cb_t cb)
++{
++	qrtr_cb = cb;
++}
++
++int adspedge_qrtr_send(uint32_t type, uint32_t src_port, uint32_t dst_node, uint32_t dst_port,
++		       const void *payload, uint32_t len)
++{
++	if (!ipcrtr || !ipcrtr->up)
++		return -1;
++	uint8_t b[32 + 1024];
++	if (len > sizeof(b) - 32)
++		return -1;
++	uint32_t h[8] = { 1, type, QRTR_NODE_APPS, src_port, 0, len, dst_node, dst_port };
++	memcpy(b, h, 32);
++	memcpy(b + 32, payload, len);
++	uint32_t padded = (len + 3) & ~3u;
++	memset(b + 32 + len, 0, padded - len);
++	return chan_send(ipcrtr, b, 32 + padded);
++}
++
++void adspedge_rpc_send(const void *pkt, size_t n)
++{
++	chan_send(rpc_chan, pkt, n);
++}
++
++void adspedge_status(void)
++{
++	printf("adsp: edge %d channels:", nch);
++	for (int i = 0; i < nch; i++)
++		printf(" %s%s(l%u r%u rx%u int%u/%d)", ch[i].name, ch[i].up ? "" : "!", ch[i].lcid, ch[i].rcid,
++		       ch[i].nrx, ch[i].r_n - ch[i].r_busy, ch[i].r_n);
++	printf("\n");
++}
+diff --git a/phone/wifi/adspedge.h b/phone/wifi/adspedge.h
+new file mode 100644
+index 0000000..9873fd2
+--- /dev/null
++++ b/phone/wifi/adspedge.h
+@@ -0,0 +1,32 @@
++/*
++ * The ADSP's GLINK "lpass" edge: many channels (the modem's link.c is one), QRTR on IPCRTR and the sensors PD's
++ * FastRPC channel. Ported from ios-flame sunfish adspboot.c (MIT). Polled.
++ */
++#ifndef ADSPEDGE_H
++#define ADSPEDGE_H
++#include <stddef.h>
++#include <stdint.h>
++#include "link.h"
++
++/* Wait for the ADSP's rx fifo, init GLINK, send VERSION. 0 = ok. */
++int adspedge_open(unsigned timeout_ms);
++/* Handle everything in the rx fifo; for ms (0 = once). */
++int adspedge_poll(unsigned ms);
++
++int adspedge_ipcrtr_up(void);		/* IPCRTR open both ways */
++int adspedge_rpc_up(void);		/* fastrpcglink-apps-dsp open both ways */
++
++/* The QRTR handler for packets on IPCRTR (HELLO, NEW_LOOKUP, DATA to our ports). */
++typedef void (*adsp_qrtr_cb_t)(const struct qrtr_hdr *h, const uint8_t *d, uint32_t n);
++void adspedge_set_qrtr_cb(adsp_qrtr_cb_t cb);
++
++/* link.c's qrtr_send transport: QRTR from us on IPCRTR. */
++int adspedge_qrtr_send(uint32_t type, uint32_t src_port, uint32_t dst_node, uint32_t dst_port,
++		       const void *payload, uint32_t len);
++/* fastrpc.c's send callback: one smq packet on fastrpcglink-apps-dsp. */
++void adspedge_rpc_send(const void *pkt, size_t n);
++
++/* One line for the log: channels, intents. */
++void adspedge_status(void);
++
++#endif
+diff --git a/phone/wifi/fastrpc.c b/phone/wifi/fastrpc.c
+new file mode 100644
+index 0000000..1dc51e3
+--- /dev/null
++++ b/phone/wifi/fastrpc.c
+@@ -0,0 +1,1017 @@
++/*
++ * FastRPC over glink "fastrpcglink-apps-dsp": attach to the ADSP's static sensors PD (as `adsprpcd sensorspd`),
++ * open adsp_default_listener and serve its reverse calls (apps_remotectl + apps_std file access) from the AP.
++ * Wire format: sunfish downstream adsprpc.c (smq_msg, remote_arg64 + page lists in one DMA buffer); the
++ * listener / apps_std argument layouts: quic/fastrpc (adsp_listener next2, qaic skel conventions).
++ * Files: /vendor/etc/sensors -> /var/local/fw/sensors (read-only), /persist/sensors (and /mnt/vendor/persist/sensors)
++ * -> /var/local/sensors-persist (the only writable place: write, mkdir, remove, rename). Everything else is refused.
++ */
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <errno.h>
++#include <unistd.h>
++#include <dirent.h>
++#include <sys/stat.h>
++#include "pmem.h"
++#include "fastrpc.h"
++#include "adsp_smmu.h"
++
++#define SC_MAKE(m, in, out)	((((uint32_t)(m) & 0x1f) << 24) | (((in) & 0xff) << 16) | (((out) & 0xff) << 8))
++#define SC_METHOD(sc)		(((sc) >> 24) & 0x1f)
++#define SC_IN(sc)		(((sc) >> 16) & 0xff)
++#define SC_OUT(sc)		(((sc) >> 8) & 0xff)
++#define SC_HANDLES(sc)		((((sc) >> 4) & 0xf) + ((sc) & 0xf))
++
++#define PD_SENSORS	2	/* downstream FASTRPC_INIT_ATTACH_SENSORS: fl->pd = 2 */
++#define H_PROCESS_GROUP	1
++#define H_REMOTECTL	0
++#define H_LISTENER	3
++#define BALIGN		128
++#define M_FDLIST	16
++#define M_CRCLIST	64
++#define MAXARGS		16
++#define DMA_SIZE	FASTRPC_DMA_SIZE
++/* A pm_alloc buffer (rpc1: 0x1062a0000): the attach reached the sensor PD, which then died with
++ * EX:sensor_process:frpck_0_0:0x93. rpc2 with the buffer at 0xe0f80000 (top of radio.c's unmanaged pool) reset the
++ * whole SoC right after the attach was sent: never hand the DSP memory outside managed DRAM again. Since rpc3 the
++ * buffer is managed DRAM above 4 GB seen by the DSP at a 32-bit IOVA through a translating SMMU bank
++ * (adspboot --rpc, smmu_translate): dsp_base is that IOVA, dma_pa what the CPU uses. */
++#define BUFS_LEN	0x10000u	/* our next2 in-buffer for the DSP's packed in bufs + out lens */
++#define OBUF_MAX	0x20000u	/* our packed out bufs (prevbufs) */
++
++#define AEE_EFAILED	1
++#define AEE_EBADPARM	14
++#define AEE_EUNSUPPORTED 20
++
++#define VENDOR_SNS	"/vendor/etc/sensors"
++#define VENDOR_DIR	"/var/local/fw/sensors"
++#define PERSIST_DIR	"/var/local/sensors-persist"
++/* step 6: the DSP's libraries (ADSP_LIBRARY_PATH dirs) and /sys/devices/soc0 (the reference serves the phone's own
++ * soc0 files, nothing synthesized) */
++#define DSP_DIR		"/var/local/fw/dsp"
++#define SOC0_DIR	"/var/local/fw/soc0"
++
++/* Reverse handles we hand out from apps_remotectl open. guess: any nonzero value works (quic uses table ids). */
++#define RH_APPS_STD	0x11
++#define RH_APPS_MEM	0x12
++#define RH_MSGD		0x13
++
++struct smq_msg {
++	uint32_t pid, tid;
++	uint64_t ctx;
++	uint32_t handle, sc;
++	uint64_t addr, size;
++};
++struct rarg {
++	void *p;
++	uint32_t len;
++};
++static fastrpc_send_fn tx;
++static uint64_t dma_pa, dsp_base;
++static uint8_t meta[DMA_SIZE];
++static uint32_t tgid, seq;
++static int root_mode;	/* audio step 5: attach to the root PD (pd 0); step 6: then serve its listener */
++static int sns_too;	/* audio step 6 (--sensors): once the root listener serves, attach the sensors PD as well */
++
++/* One FastRPC session (one PD). Step 6: the root PD and the sensors PD run side by side as in the SM7150
++ * reference (rootpd + sensorspd of hexagonrpcd), each in its own half of the DMA buffer; files are shared. */
++struct sess {
++	const char *name;
++	uint32_t pd, client, size, ctxn, ctxbase;
++	uint64_t pa, dsp;
++	int state;	/* 0 off, 1 attach, 2 remotectl open, 3 register, 4 init2, 5 next2 loop, 6 dead */
++	uint64_t cur_ctx;
++	uint32_t cur_sc, out_off[MAXARGS];
++	struct rarg cur[MAXARGS];
++	uint32_t listener_h;
++	/* next2 state */
++	uint32_t n2_in[4], n2_out[4];
++	uint8_t n2_bufs[BUFS_LEN], obuf[OBUF_MAX];
++	uint32_t obuf_len, prev_ctx, calls;
++	int prev_result, n2_retry;
++};
++static struct sess s_root = { .name = "root PD", .pd = 0, .ctxbase = 0, .prev_result = -1 },
++		   s_sns = { .name = "sensors PD", .pd = PD_SENSORS, .ctxbase = 127, .prev_result = -1 };
++
++/* summary */
++static unsigned n_std[40], n_ctl, n_other, n_err, n_files;
++static char files[32][96], missing[32][96];
++static unsigned n_missing, quiet_missing;
++
++static const char *std_name[] = { "fopen", "freopen", "fflush", "fclose", "fread", "fwrite", "fgetpos", "fsetpos",
++	"ftell", "fseek", "flen", "rewind", "feof", "ferror", "clearerr", "print_string", "getenv", "setenv",
++	"unsetenv", "fopen_with_env", "fgets", "get_search_paths_with_env", "fileExists", "fsync", "fremove",
++	"fdopen_decrypt", "opendir", "closedir", "readdir", "mkdir", "rmdir", "stat", "ftrunc", "frename",
++	"fopen_fd", "fclose_fd", "fopen_with_env_fd" };
++
++static uint32_t align(uint32_t v, uint32_t a)
++{
++	return (v + a - 1) & ~(a - 1);
++}
++
++/* whole 32-bit words (safe for any pmem memory) */
++static void dev_rd(uint64_t pa, void *p, uint32_t len)
++{
++	static uint8_t tmp[DMA_SIZE];
++	if (len > DMA_SIZE)
++		return;
++	pm_rd(pa, tmp, (len + 3) & ~3u);
++	memcpy(p, tmp, len);
++}
++
++/* ---- forward invoke: everything (metadata + copies of all buffers) in one pm_alloc buffer, PA = DSP address ---- */
++
++static int invoke(struct sess *s, uint32_t handle, uint32_t sc, struct rarg *a)
++{
++	uint32_t n = SC_IN(sc) + SC_OUT(sc);
++	if (n > MAXARGS)
++		return -1;
++	uint32_t metalen = n * (16 + 8 + 16) + 8 * M_FDLIST + 4 * M_CRCLIST, off = metalen;
++	memset(meta, 0, metalen);
++	uint8_t *rpra = meta, *list = meta + 16 * n, *pages = list + 8 * n;
++	for (uint32_t i = 0; i < n; i++) {
++		uint32_t pg[2] = { a[i].len ? 1u : 0u, i };
++		memcpy(list + 8 * i, pg, 8);
++		uint64_t pv = 0, len = a[i].len, pp[2] = { 0, 0 };
++		if (a[i].len) {
++			off = align(off, BALIGN);
++			if (off + a[i].len > s->size)
++				return -1;
++			pv = s->dsp + off;	/* guess: downstream puts its kernel VA here; the DSP only needs the page offset */
++			pp[0] = pv & ~0xfffull;
++			pp[1] = (((pv + len - 1) >> 12) - (pv >> 12) + 1) << 12;
++			if (i < SC_IN(sc))
++				memcpy(meta + off, a[i].p, a[i].len);
++			else
++				memset(meta + off, 0, a[i].len);
++			s->out_off[i] = off;
++			off += a[i].len;
++		}
++		uint64_t r[2] = { pv, len };
++		memcpy(rpra + 16 * i, r, 16);
++		memcpy(pages + 16 * i, pp, 16);
++	}
++	if (pm_wr(s->pa, meta, align(off, 4)))
++		return -1;
++	seq++;
++	/* step 5: n << 4 | pd, as the SM7150 reference; step 6: root n 1..127, sensors 128..254 so the replies of
++	 * the two sessions never share a context */
++	s->ctxn = s->ctxn % 127 + 1;
++	s->cur_ctx = root_mode ? (uint64_t)(s->ctxbase + s->ctxn) << 4 | s->pd :
++		     ((uint64_t)seq << 12) | (1u << 4) | PD_SENSORS;	/* downstream: (ctx ptr & ~0xfff) | (index << 4) */
++	s->cur_sc = sc;
++	if (n)
++		memcpy(s->cur, a, n * sizeof(*a));
++	/* guess: downstream sends pid 0 for kernel-originated invokes (the attach); we use the client for user ones */
++	struct smq_msg m = { s->state == 1 ? 0 : s->client, s->client, s->cur_ctx, handle, sc, s->dsp,
++			     align(off, 4096) };
++	printf("rpc: %s -> h %u m %u in %u out %u (sc %08x) ctx %llx, %u bytes\n", s->name, handle, SC_METHOD(sc), SC_IN(sc),
++	       SC_OUT(sc), sc, (unsigned long long)m.ctx, off);
++	tx(&m, sizeof(m));
++	return 0;
++}
++
++/* Copy the out buffers back from the DMA buffer. */
++static void fetch_outs(struct sess *s)
++{
++	for (uint32_t i = SC_IN(s->cur_sc); i < SC_IN(s->cur_sc) + SC_OUT(s->cur_sc); i++)
++		if (s->cur[i].len)
++			dev_rd(s->pa + s->out_off[i], s->cur[i].p, s->cur[i].len);
++}
++
++/* ---- apps_std ---- */
++
++static FILE *ftab[32];
++static DIR *dtab[8];
++
++static int under(const char *p, const char *pre)
++{
++	size_t l = strlen(pre);
++	return !strncmp(p, pre, l) && (p[l] == 0 || p[l] == '/');
++}
++
++/* sensors step 7: fold "." / ".." / "//" of an absolute DSP path (the registry asks for
++ * .../registry/registry/../temp.json); 0, or EACCES when ".." climbs above "/" */
++static int norm_path(const char *in, char *out, size_t sz)
++{
++	char b[256];
++	size_t n = 0;
++	if (in[0] != '/' || strlen(in) >= sizeof(b) || sz < 2)
++		return EACCES;
++	snprintf(b, sizeof(b), "%s", in);
++	out[0] = 0;
++	for (char *sv, *c = strtok_r(b, "/", &sv); c; c = strtok_r(NULL, "/", &sv)) {
++		if (!strcmp(c, "."))
++			continue;
++		if (!strcmp(c, "..")) {
++			if (!n)
++				return EACCES;
++			while (n && out[n] != '/')
++				n--;
++			out[n] = 0;
++			continue;
++		}
++		if (n + 1 + strlen(c) >= sz)
++			return ENAMETOOLONG;
++		n += (size_t)snprintf(out + n, sz - n, "/%s", c);
++	}
++	if (!n)
++		snprintf(out, sz, "/");
++	return 0;
++}
++
++/* DSP path -> our path; *w = writable. 0 or an errno. */
++static int map_path(const char *in0, char *out, size_t sz, int *w)
++{
++	char in[256];
++	*w = 0;
++	if (in0[0] == '/') {
++		if (norm_path(in0, in, sizeof(in)))
++			return EACCES;
++	} else if (strstr(in0, ".."))
++		return EACCES;
++	else
++		snprintf(in, sizeof(in), "%s", in0);
++	const char *rest;
++	if (under(in, VENDOR_SNS)) {
++		rest = in + strlen(VENDOR_SNS);
++		snprintf(out, sz, VENDOR_DIR "%s", rest);
++	} else if (under(in, "/persist/sensors") || under(in, "/mnt/vendor/persist/sensors")) {
++		rest = strstr(in, "/persist/sensors") + strlen("/persist/sensors");
++		snprintf(out, sz, PERSIST_DIR "%s", rest);
++		*w = 1;
++	} else {
++		/* step 6: DSP library dirs -> DSP_DIR, soc0 -> SOC0_DIR */
++		static const char *libs[] = { "/vendor/dsp", "/usr/lib/qcom/adsp", "/vendor/lib/rfsa/adsp", "/dsp" };
++		for (unsigned i = 0; i < sizeof(libs) / sizeof(libs[0]); i++)
++			if (under(in, libs[i])) {
++				snprintf(out, sz, DSP_DIR "%s", in + strlen(libs[i]));
++				return 0;
++			}
++		if (under(in, "/sys/devices/soc0")) {
++			snprintf(out, sz, SOC0_DIR "%s", in + strlen("/sys/devices/soc0"));
++			return 0;
++		}
++		if (in[0] && in[0] != '/') {	/* the reference: relative names are under ADSP_LIBRARY_PATH */
++			snprintf(out, sz, DSP_DIR "/%s", in);
++			return 0;
++		}
++		static unsigned n_unmapped;
++		if (n_unmapped++ < 40)
++			printf("rpc: unmapped DSP path \"%s\"\n", in);
++		return ENOENT;
++	}
++	return 0;
++}
++
++/* step 6: remember a path the DSP wanted and did not get (summary) */
++static void note_missing(const char *name)
++{
++	if (quiet_missing)
++		return;
++	for (unsigned i = 0; i < n_missing && i < 32; i++)
++		if (!strcmp(missing[i], name))
++			return;
++	if (n_missing < 32)
++		snprintf(missing[n_missing], sizeof(missing[0]), "%s", name);
++	n_missing++;
++}
++
++/* mkdir -p for the parent dirs of path (only below PERSIST_DIR). */
++static void mkparents(const char *path)
++{
++	char b[256];
++	snprintf(b, sizeof(b), "%s", path);
++	mkdir(PERSIST_DIR, 0755);
++	for (char *s = b + strlen(PERSIST_DIR) + 1; (s = strchr(s, '/')); s++) {
++		*s = 0;
++		mkdir(b, 0755);
++		*s = '/';
++	}
++}
++
++static uint32_t g32(const struct rarg *a, uint32_t o)
++{
++	uint32_t v = 0;
++	if (a->len >= o + 4)
++		memcpy(&v, (uint8_t *)a->p + o, 4);
++	return v;
++}
++
++static void p32(struct rarg *a, uint32_t o, uint32_t v)
++{
++	if (a->len >= o + 4)
++		memcpy((uint8_t *)a->p + o, &v, 4);
++}
++
++static const char *str(const struct rarg *a)
++{
++	if (!a->len || ((char *)a->p)[a->len - 1])
++		return NULL;
++	return a->p;
++}
++
++static int do_fopen(const char *name, const char *mode, struct rarg *ro)
++{
++	char path[256];
++	int w, wantw = strpbrk(mode, "wa+") != NULL;
++	int e = map_path(name, path, sizeof(path), &w);
++	if (!e && wantw && !w)
++		e = EROFS;
++	if (e) {
++		note_missing(name);
++		return e;
++	}
++	if (wantw)
++		mkparents(path);
++	int fd;
++	for (fd = 0; fd < 32 && ftab[fd]; fd++)
++		;
++	if (fd >= 32)
++		return EMFILE;
++	FILE *f = fopen(path, mode);
++	if (!f) {
++		note_missing(name);
++		return errno ? errno : AEE_EFAILED;
++	}
++	ftab[fd] = f;
++	if (wantw)
++		printf("rpc: persist write: fopen %s \"%s\"\n", path, mode);	/* sensors step 7 */
++	if (n_files < 32)
++		snprintf(files[n_files], sizeof(files[0]), "%s", name);
++	n_files++;
++	p32(ro, 0, (uint32_t)fd + 1);	/* guess: apps_std_FILE = our index + 1 (0 never handed out) */
++	return 0;
++}
++
++static FILE *getf(uint32_t h)
++{
++	return h >= 1 && h <= 32 ? ftab[h - 1] : NULL;
++}
++
++static int search_env(const char *env, char *val, size_t sz)
++{
++	/* guess: only ADSP_LIBRARY_PATH is set, to what adsprpcd uses on Android; others unset */
++	if (!strcmp(env, "ADSP_LIBRARY_PATH")) {
++		snprintf(val, sz, "/vendor/lib/rfsa/adsp;/vendor/dsp/sensorspd;/vendor/dsp;/usr/lib/qcom/adsp;/dsp");
++		return 0;
++	}
++	return -1;
++}
++
++/* One apps_std call; returns the result code, logs one line. */
++static int apps_std(uint32_t sc, struct rarg *a)
++{
++	uint32_t mid = SC_METHOD(sc), nin = SC_IN(sc), nout = SC_OUT(sc);
++	struct rarg *p0 = &a[0];
++	char what[160] = "";
++	int r = 0;
++	if (mid == 31) {	/* extended: the method id is primIn word 0 */
++		if (nin < 1 || p0->len < 4)
++			return AEE_EBADPARM;
++		mid = g32(p0, 0);
++	}
++	if (mid < 40)
++		n_std[mid]++;
++	switch (mid) {
++	case 0: {	/* fopen: in {nameLen, modeLen} name mode, out {fd} */
++		const char *n = nin == 3 ? str(&a[1]) : NULL, *m = nin == 3 ? str(&a[2]) : NULL;
++		if (!n || !m || nout != 1) {
++			r = AEE_EBADPARM;
++			break;
++		}
++		snprintf(what, sizeof(what), "%s \"%s\"", n, m);
++		r = do_fopen(n, m, &a[3]);
++		break;
++	}
++	case 19: {	/* fopen_with_env: in {4 lens} env delim name mode, out {fd} */
++		const char *e = nin == 5 ? str(&a[1]) : NULL, *d = nin == 5 ? str(&a[2]) : NULL;
++		const char *n = nin == 5 ? str(&a[3]) : NULL, *m = nin == 5 ? str(&a[4]) : NULL;
++		if (!e || !d || !n || !m || nout != 1) {
++			r = AEE_EBADPARM;
++			break;
++		}
++		snprintf(what, sizeof(what), "%s:%s \"%s\"", e, n, m);
++		char val[256];
++		r = ENOENT;
++		if (n[0] == '/' || search_env(e, val, sizeof(val))) {
++			r = do_fopen(n, m, &a[5]);
++			break;
++		}
++		quiet_missing = 1;	/* step 6: one missing entry per name, not one per search dir */
++		for (char *s = strtok(val, d[0] ? d : ";"); s && r; s = strtok(NULL, d[0] ? d : ";")) {
++			char full[256];
++			snprintf(full, sizeof(full), "%s/%s", s, n);
++			r = do_fopen(full, m, &a[5]);
++		}
++		quiet_missing = 0;
++		if (r)
++			note_missing(n);
++		break;
++	}
++	case 2: case 3: case 11: case 23: {	/* fflush / fclose / rewind / fsync: in {fd} */
++		uint32_t h = g32(p0, 0);
++		FILE *f = getf(h);
++		snprintf(what, sizeof(what), "fd %u", h);
++		if (!f)
++			r = EBADF;
++		else if (mid == 3) {
++			fclose(f);
++			ftab[h - 1] = NULL;
++		} else if (mid == 11)
++			rewind(f);
++		else
++			r = fflush(f) ? errno : 0;
++		break;
++	}
++	case 4: case 20: {	/* fread: in {fd, len}, out {read, eof} buf; fgets: in {fd, len}, out {eof} buf */
++		uint32_t h = g32(p0, 0);
++		FILE *f = getf(h);
++		if (nin != 1 || nout != 2) {
++			r = AEE_EBADPARM;
++			break;
++		}
++		struct rarg *ro = &a[1], *b = &a[2];
++		if (!f) {
++			r = EBADF;
++			break;
++		}
++		if (mid == 4) {
++			size_t got = b->len ? fread(b->p, 1, b->len, f) : 0;
++			if (!got && b->len && ferror(f)) {
++				r = AEE_EFAILED;
++				break;
++			}
++			p32(ro, 0, (uint32_t)got);
++			p32(ro, 4, got <= b->len ? (uint32_t)!!feof(f) : 0);
++			snprintf(what, sizeof(what), "fd %u len %u -> %zu%s", h, b->len, got, feof(f) ? " eof" : "");
++		} else {
++			if (b->len && !fgets(b->p, (int)b->len, f))
++				((char *)b->p)[0] = 0;
++			p32(ro, 0, (uint32_t)!!feof(f));
++			snprintf(what, sizeof(what), "fd %u len %u", h, b->len);
++		}
++		break;
++	}
++	case 5: {	/* fwrite: in {fd, len} buf, out {written, eof}; files are writable only if opened in persist */
++		uint32_t h = g32(p0, 0);
++		FILE *f = getf(h);
++		if (nin != 2 || nout != 1) {
++			r = AEE_EBADPARM;
++			break;
++		}
++		if (!f) {
++			r = EBADF;
++			break;
++		}
++		size_t put = a[1].len ? fwrite(a[1].p, 1, a[1].len, f) : 0;
++		p32(&a[2], 0, (uint32_t)put);
++		p32(&a[2], 4, 0);
++		if (!put && a[1].len)
++			r = AEE_EFAILED;	/* read-only stream (EROFS refused at fopen) */
++		snprintf(what, sizeof(what), "fd %u len %u -> %zu", h, a[1].len, put);
++		break;
++	}
++	case 8: case 12: case 13: {	/* ftell / feof / ferror: in {fd}, out {int} */
++		uint32_t h = g32(p0, 0);
++		FILE *f = getf(h);
++		if (!f || nout != 1) {
++			r = f ? AEE_EBADPARM : EBADF;
++			break;
++		}
++		long v = mid == 8 ? ftell(f) : mid == 12 ? feof(f) : ferror(f);
++		p32(&a[1], 0, (uint32_t)v);
++		snprintf(what, sizeof(what), "fd %u -> %ld", h, v);
++		break;
++	}
++	case 9: {	/* fseek: in {fd, off, whence} */
++		uint32_t h = g32(p0, 0), wh = g32(p0, 8);
++		int o = (int)g32(p0, 4);
++		FILE *f = getf(h);
++		snprintf(what, sizeof(what), "fd %u off %d whence %u", h, o, wh);
++		if (!f)
++			r = EBADF;
++		else if (wh > 2)
++			r = EINVAL;
++		else
++			r = fseek(f, o, wh == 0 ? SEEK_SET : wh == 1 ? SEEK_CUR : SEEK_END) ? errno : 0;
++		break;
++	}
++	case 10: {	/* flen: in {fd}, out {u64} */
++		uint32_t h = g32(p0, 0);
++		FILE *f = getf(h);
++		struct stat st;
++		if (!f || nout != 1 || fstat(fileno(f), &st)) {
++			r = f ? AEE_EBADPARM : EBADF;
++			break;
++		}
++		uint64_t l = (uint64_t)st.st_size;
++		if (a[1].len >= 8)
++			memcpy(a[1].p, &l, 8);
++		snprintf(what, sizeof(what), "fd %u -> %llu", h, (unsigned long long)l);
++		break;
++	}
++	case 15: {	/* print_string: in {len} str */
++		const char *s = nin == 2 ? str(&a[1]) : NULL;
++		snprintf(what, sizeof(what), "\"%.120s\"", s ? s : "?");
++		break;
++	}
++	case 16: {	/* getenv: in {nameLen, valLen} name, out {valLenReq} val */
++		const char *n = nin == 2 ? str(&a[1]) : NULL;
++		char val[256];
++		if (!n || nout != 2) {
++			r = AEE_EBADPARM;
++			break;
++		}
++		snprintf(what, sizeof(what), "%s", n);
++		if (search_env(n, val, sizeof(val))) {
++			r = -1;	/* guess: an unset variable returns an error (quic: ERRNO, -1 when errno is 0) */
++			break;
++		}
++		p32(&a[2], 0, (uint32_t)strlen(val) + 1);
++		if (a[3].len > strlen(val))
++			memcpy(a[3].p, val, strlen(val) + 1);
++		else
++			r = AEE_EBADPARM;
++		break;
++	}
++	case 21: {	/* get_search_paths_with_env */
++		/* guess: in {envLen, delimLen, pathsLen} env delim [u32 len per path], out {numPaths, maxPathLen u16}
++		 * then one buffer per path (qaic out sequence of strings) */
++		const char *e = nin >= 3 ? str(&a[1]) : NULL, *d = nin >= 3 ? str(&a[2]) : NULL;
++		if (!e || !d || nin != 4 || nout < 1) {
++			r = AEE_EUNSUPPORTED;
++			snprintf(what, sizeof(what), "layout in %u out %u not understood", nin, nout);
++			break;
++		}
++		char val[256];
++		snprintf(what, sizeof(what), "%s", e);
++		if (search_env(e, val, sizeof(val))) {
++			r = -1;
++			break;
++		}
++		uint32_t np = 0, mx = 0;
++		for (char *s = strtok(val, d[0] ? d : ";"); s; s = strtok(NULL, d[0] ? d : ";"), np++) {
++			uint32_t l = (uint32_t)strlen(s) + 1;
++			mx = l > mx ? l : mx;
++			struct rarg *o = &a[nin + 1 + np];
++			if (nin + 1 + np < nin + nout && o->len >= l)
++				memcpy(o->p, s, l);
++		}
++		p32(&a[nin], 0, np);
++		if (a[nin].len >= 6)
++			memcpy((uint8_t *)a[nin].p + 4, &(uint16_t){ (uint16_t)mx }, 2);
++		break;
++	}
++	case 22: case 26: case 29: case 31: {	/* fileExists / opendir / mkdir / stat: a path in a[1] */
++		const char *n = nin == 2 ? str(&a[1]) : NULL;
++		char path[256];
++		int w;
++		if (!n) {
++			r = AEE_EBADPARM;
++			break;
++		}
++		snprintf(what, sizeof(what), "%s", n);
++		r = map_path(n, path, sizeof(path), &w);
++		if (r && mid != 22)
++			note_missing(n);
++		if (mid == 22) {	/* out {bool} */
++			struct stat st;
++			if (nout == 1 && a[2].len)
++				((uint8_t *)a[2].p)[0] = !r && !stat(path, &st);
++			r = nout == 1 ? 0 : AEE_EBADPARM;
++		} else if (r) {
++			break;
++		} else if (mid == 26) {	/* out {u64 dir} */
++			int i;
++			for (i = 0; i < 8 && dtab[i]; i++)
++				;
++			DIR *dp = i < 8 ? opendir(path) : NULL;
++			if (!dp) {
++				r = i < 8 ? errno : EMFILE;
++				break;
++			}
++			dtab[i] = dp;
++			uint64_t hd = (uint64_t)i + 1;
++			if (nout == 1 && a[2].len >= 8)
++				memcpy(a[2].p, &hd, 8);
++		} else if (mid == 29) {	/* in {nameLen, mode} */
++			if (!w)
++				r = EROFS;
++			else {
++				mkparents(path);
++				r = mkdir(path, 0755) && errno != EEXIST ? errno : 0;
++			}
++		} else {	/* stat, out 96 bytes apps_std_STAT */
++			struct stat st;
++			if (stat(path, &st)) {
++				r = errno;
++				note_missing(n);
++				break;
++			}
++			uint64_t s[12] = { 96, (uint64_t)st.st_dev, (uint64_t)st.st_ino,
++					   (uint64_t)st.st_mode | ((uint64_t)st.st_nlink << 32), (uint64_t)st.st_rdev,
++					   (uint64_t)st.st_size, (uint64_t)st.st_atimespec.tv_sec,
++					   (uint64_t)st.st_atimespec.tv_nsec, (uint64_t)st.st_mtimespec.tv_sec,
++					   (uint64_t)st.st_mtimespec.tv_nsec, (uint64_t)st.st_ctimespec.tv_sec,
++					   (uint64_t)st.st_ctimespec.tv_nsec };
++			/* guess: tsz = sizeof(apps_std_STAT) */
++			if (nout == 1 && a[2].len >= 96)
++				memcpy(a[2].p, s, 96);
++			else
++				r = AEE_EBADPARM;
++			snprintf(what, sizeof(what), "%s size %lld mode %o", n, (long long)st.st_size, st.st_mode);
++		}
++		break;
++	}
++	case 27: case 28: {	/* closedir: in {u64}; readdir: in {u64}, out {ino, name[255], pad} eof@260 */
++		uint64_t hd = 0;
++		if (p0->len >= 8)
++			memcpy(&hd, p0->p, 8);
++		DIR *dp = hd >= 1 && hd <= 8 ? dtab[hd - 1] : NULL;
++		snprintf(what, sizeof(what), "dir %llu", (unsigned long long)hd);
++		if (!dp) {
++			r = EBADF;
++			break;
++		}
++		if (mid == 27) {
++			closedir(dp);
++			dtab[hd - 1] = NULL;
++			break;
++		}
++		if (nout != 1 || a[1].len < 264) {
++			r = AEE_EBADPARM;
++			break;
++		}
++		struct dirent *de = readdir(dp);
++		memset(a[1].p, 0, 264);
++		if (de) {
++			p32(&a[1], 0, (uint32_t)de->d_ino);
++			snprintf((char *)a[1].p + 4, 255, "%s", de->d_name);
++			snprintf(what, sizeof(what), "dir %llu -> %s", (unsigned long long)hd, de->d_name);
++		} else {
++			p32(&a[1], 260, 1);
++			snprintf(what, sizeof(what), "dir %llu -> eof", (unsigned long long)hd);
++		}
++		break;
++	}
++	case 24: case 33: {	/* sensors step 7: fremove in {len} name; frename in {oldLen, newLen} old new;
++				 * persist only (the registry writes temp.json, then renames it) */
++		const char *n = nin >= 2 ? str(&a[1]) : NULL, *n2 = mid == 33 && nin == 3 ? str(&a[2]) : NULL;
++		char path[256], path2[256];
++		int w = 0, w2 = 0;
++		snprintf(what, sizeof(what), "%s%s%s", n ? n : "?", n2 ? " -> " : "", n2 ? n2 : "");
++		if (!n || (mid == 33 && !n2)) {
++			r = AEE_EBADPARM;
++			break;
++		}
++		r = map_path(n, path, sizeof(path), &w);
++		if (!r && mid == 33)
++			r = map_path(n2, path2, sizeof(path2), &w2);
++		if (!r && (!w || (mid == 33 && !w2)))
++			r = EROFS;
++		if (r)
++			break;
++		if (mid == 24)
++			r = remove(path) ? errno : 0;
++		else
++			r = rename(path, path2) ? errno : 0;
++		printf("rpc: persist write: %s %s%s%s -> %d\n", mid == 24 ? "remove" : "rename", path,
++		       mid == 33 ? " -> " : "", mid == 33 ? path2 : "", r);
++		break;
++	}
++	case 30: case 32: {	/* rmdir / ftrunc: refused */
++		const char *n = nin >= 2 ? str(&a[1]) : NULL;
++		snprintf(what, sizeof(what), "%s refused", n ? n : "");
++		r = EROFS;
++		break;
++	}
++	default:
++		r = AEE_EUNSUPPORTED;
++		snprintf(what, sizeof(what), "unsupported (in %u out %u)", nin, nout);
++	}
++	/* step 6: the first 60 of each method, then the summary's counts only */
++	if (mid >= 40 || n_std[mid] <= 60)
++		printf("rpc: apps_std %s %s -> %d\n", mid < sizeof(std_name) / sizeof(std_name[0]) ? std_name[mid] : "?",
++		       what, r);
++	else if (n_std[mid] == 61)
++		printf("rpc: apps_std %s: more calls, not logged\n",
++		       mid < sizeof(std_name) / sizeof(std_name[0]) ? std_name[mid] : "?");
++	return r;
++}
++
++/* apps_remotectl (reverse handle 0): open in {nameLen, dlerrLen} name, out {handle, nErr} dlerr; close m 1. */
++static int remotectl(uint32_t sc, struct rarg *a)
++{
++	n_ctl++;
++	if (SC_METHOD(sc) == 1) {
++		printf("rpc: <- apps_remotectl.close %u -> 0\n", g32(&a[0], 0));
++		if (SC_OUT(sc) >= 1)
++			p32(&a[1], 0, 0);
++		return 0;
++	}
++	const char *n = SC_METHOD(sc) == 0 && SC_IN(sc) == 2 && SC_OUT(sc) == 2 ? str(&a[1]) : NULL;
++	if (!n) {
++		printf("rpc: <- apps_remotectl m %u sc %08x -> unsupported\n", SC_METHOD(sc), sc);
++		return AEE_EUNSUPPORTED;
++	}
++	uint32_t h = !strcmp(n, "apps_std") ? RH_APPS_STD : !strcmp(n, "apps_mem") ? RH_APPS_MEM :
++		     !strcmp(n, "adspmsgd_apps") ? RH_MSGD : 0;
++	int r = h ? 0 : 6;	/* guess: AEE_EUNABLETOLOAD (6) for modules we don't have, in nErr and the result */
++	p32(&a[2], 0, h);
++	p32(&a[2], 4, (uint32_t)r);
++	if (!h && a[3].len)
++		snprintf(a[3].p, a[3].len, "not on this AP");
++	printf("rpc: <- apps_remotectl.open \"%s\" -> handle %x err %d\n", n, h, r);
++	return r;
++}
++
++static int dispatch(uint32_t h, uint32_t sc, struct rarg *a)
++{
++	if (h == H_REMOTECTL)
++		return remotectl(sc, a);
++	if (h == RH_APPS_STD)
++		return apps_std(sc, a);
++	n_other++;
++	printf("rpc: <- handle %x m %u in %u out %u: unsupported\n", h, SC_METHOD(sc), SC_IN(sc), SC_OUT(sc));
++	return AEE_EUNSUPPORTED;
++}
++
++/* ---- the listener loop: adsp_listener_next2 (handle 3, method 4, in 2 out 2) ---- */
++
++static void next2(struct sess *s)
++{
++	s->n2_in[0] = s->prev_ctx;
++	s->n2_in[1] = (uint32_t)s->prev_result;
++	s->n2_in[2] = s->prev_result ? 0 : s->obuf_len;	/* quic: no out bufs with an error result */
++	s->n2_in[3] = BUFS_LEN;
++	struct rarg a[4] = { { s->n2_in, 16 }, { s->obuf, s->n2_in[2] }, { s->n2_out, 16 }, { s->n2_bufs, BUFS_LEN } };
++	if (invoke(s, H_LISTENER, SC_MAKE(4, 2, 2), a))
++		s->state = 6;
++}
++
++/* Unpack the DSP's packed in bufs + out lens (quic listener_buf.h), run it, pack the out bufs for the reply. */
++static void serve(struct sess *s)
++{
++	uint32_t ctx = s->n2_out[0], h = s->n2_out[1], sc = s->n2_out[2], req = s->n2_out[3];
++	uint32_t nin = SC_IN(sc), nout = SC_OUT(sc), o = 0;
++	struct rarg a[MAXARGS];
++	int r = 0;
++	s->prev_ctx = ctx;
++	s->obuf_len = 0;
++	s->calls++;
++	if (req > BUFS_LEN || nin + nout > MAXARGS || SC_HANDLES(sc)) {
++		printf("rpc: %s <- ctx %x h %x sc %08x: in bufs %u bytes / handles: refused\n", s->name, ctx, h, sc, req);
++		s->prev_result = AEE_EBADPARM;
++		n_err++;
++		return;
++	}
++	for (uint32_t i = 0; i < nin && !r; i++) {
++		uint32_t l;
++		if (o + 4 > req) {
++			r = AEE_EBADPARM;
++			break;
++		}
++		memcpy(&l, s->n2_bufs + o, 4);
++		o += 4;
++		if (l)
++			o = align(o, 8);
++		if (o + l > req)
++			r = AEE_EBADPARM;
++		a[i].p = s->n2_bufs + o;
++		a[i].len = l;
++		o += l;
++	}
++	uint32_t w = 0;
++	for (uint32_t i = 0; i < nout && !r; i++) {
++		uint32_t l;
++		if (o + 4 > req) {
++			r = AEE_EBADPARM;
++			break;
++		}
++		memcpy(&l, s->n2_bufs + o, 4);
++		o += 4;
++		if (w + 4 > OBUF_MAX) {
++			r = AEE_EBADPARM;
++			break;
++		}
++		memcpy(s->obuf + w, &l, 4);
++		w += 4;
++		if (l)
++			w = align(w, 8);
++		if (w + l > OBUF_MAX) {
++			r = AEE_EBADPARM;
++			break;
++		}
++		memset(s->obuf + w, 0, l);
++		a[nin + i].p = s->obuf + w;
++		a[nin + i].len = l;
++		w += l;
++	}
++	if (r) {
++		printf("rpc: %s <- ctx %x h %x sc %08x: bad packing (%u bytes)\n", s->name, ctx, h, sc, req);
++	} else {
++		r = dispatch(h, sc, a);
++		s->obuf_len = w;
++	}
++	if (r)
++		n_err++;
++	s->prev_result = r;
++}
++
++static void sess_attach(struct sess *s)
++{
++	static uint32_t t[2];
++	uint32_t *tp = &t[s == &s_sns];
++	*tp = s->client;
++	s->state = 1;
++	printf("rpc: attaching to the %s (pd %u, client %u, DSP %llx+%x)\n", s->name, s->pd, s->client,
++	       (unsigned long long)s->dsp, s->size);
++	struct rarg a[1] = { { tp, 4 } };
++	if (invoke(s, H_PROCESS_GROUP, SC_MAKE(0, 1, 0), a))
++		s->state = 6;
++}
++
++/* One reply for session s: the attach -> remotectl open -> register -> init2 -> next2 loop. */
++static void sess_rx(struct sess *s, int32_t ret)
++{
++	switch (s->state) {
++	case 1: {	/* attach done: remotectl_open("adsp_default_listener") */
++		if (s == &s_root && root_mode) {
++			printf("rpc: root PD attach -> %d\n", ret);
++			adsp_smmu_status();
++		}
++		if (ret) {
++			printf("rpc: %s attach failed (%d)\n", s->name, ret);
++			s->state = 6;
++			return;
++		}
++		static char name[] = "adsp_default_listener", dlerr[256];
++		static uint32_t pin[2], pout[2][2];
++		uint32_t *po = pout[s == &s_sns];
++		pin[0] = sizeof(name);
++		pin[1] = sizeof(dlerr);
++		/* name, pin and dlerr are only read at the invoke (copied into the DMA buffer): sharing them is fine */
++		struct rarg a[4] = { { pin, 8 }, { name, sizeof(name) }, { po, 8 }, { dlerr, sizeof(dlerr) } };
++		s->state = 2;
++		invoke(s, H_REMOTECTL, SC_MAKE(0, 2, 2), a);
++		return;
++	}
++	case 2: {
++		uint32_t *pout = s->cur[2].p;
++		s->listener_h = pout[0];
++		printf("rpc: %s remotectl_open adsp_default_listener -> ret %d handle %x nErr %d%s%.64s\n", s->name, ret,
++		       pout[0], (int)pout[1], ret ? " dlerror " : "", ret ? (char *)s->cur[3].p : "");
++		if (ret || pout[1]) {
++			s->state = 6;
++			return;
++		}
++		s->state = 3;
++		/* guess: adsp_default_listener_register = method 0 on the opened handle, no args */
++		invoke(s, s->listener_h, SC_MAKE(0, 0, 0), NULL);
++		return;
++	}
++	case 3:
++		printf("rpc: %s adsp_default_listener_register -> %d\n", s->name, ret);
++		if (ret) {
++			s->state = 6;
++			return;
++		}
++		s->state = 4;
++		invoke(s, H_LISTENER, SC_MAKE(3, 0, 0), NULL);	/* adsp_listener_init2 */
++		return;
++	case 4:
++		printf("rpc: %s adsp_listener_init2 -> %d\n", s->name, ret);
++		if (ret) {
++			s->state = 6;
++			return;
++		}
++		s->state = 5;
++		next2(s);
++		/* step 6: the sensors PD only once the root listener serves (reference: else its watchdog kills the DSP) */
++		if (s == &s_root && sns_too && !s_sns.state)
++			sess_attach(&s_sns);
++		return;
++	case 5:
++		if (ret) {	/* quic: retry once with the error as the result, then give up */
++			if (s->n2_retry++) {
++				printf("rpc: %s next2 failed twice (%d): listener stops\n", s->name, ret);
++				s->state = 6;
++				return;
++			}
++			s->prev_result = ret;
++			next2(s);
++			return;
++		}
++		s->n2_retry = 0;
++		serve(s);
++		next2(s);
++		return;
++	}
++}
++
++void fastrpc_rx(const void *p, size_t n)
++{
++	uint64_t ctx;
++	int32_t ret;
++	if (n < 12) {
++		printf("rpc: short rx %zu bytes\n", n);
++		return;
++	}
++	memcpy(&ctx, p, 8);
++	memcpy(&ret, (const uint8_t *)p + 8, 4);
++	/* downstream compares rsp->ctx & ~3 */
++	struct sess *s = s_root.state && (ctx & ~3ull) == (s_root.cur_ctx & ~3ull) ? &s_root :
++			 s_sns.state && (ctx & ~3ull) == (s_sns.cur_ctx & ~3ull) ? &s_sns : NULL;
++	if (!s) {
++		printf("rpc: rx for ctx %llx (waiting for %llx / %llx), dropped\n", (unsigned long long)ctx,
++		       (unsigned long long)s_root.cur_ctx, (unsigned long long)s_sns.cur_ctx);
++		return;
++	}
++	if (s->state != 5 || s->calls < 200)	/* cap the per-request lines of a long serve */
++		printf("rpc: %s <- rsp ctx %llx ret %d (%zu bytes)\n", s->name, (unsigned long long)ctx, ret, n);
++	if (!ret)
++		fetch_outs(s);
++	sess_rx(s, ret);
++}
++
++void fastrpc_root(int on)
++{
++	root_mode = on;
++}
++
++void fastrpc_sensors(int on)
++{
++	sns_too = on;
++}
++
++void fastrpc_buffer(uint64_t pa, uint64_t dsp)
++{
++	dma_pa = pa;
++	dsp_base = dsp;
++}
++
++int fastrpc_start(fastrpc_send_fn send)
++{
++	tx = send;
++	if (!dma_pa && !(dma_pa = pm_alloc(DMA_SIZE, 0x1000))) {
++		printf("rpc: no DMA buffer\n");
++		return -1;
++	}
++	if (!dsp_base)
++		dsp_base = dma_pa;
++	tgid = (uint32_t)getpid();
++	printf("rpc: DMA buffer %llx+%x (DSP sees %llx), tgid %u, attaching to the %s PD (pd %u)%s\n",
++	       (unsigned long long)dma_pa, DMA_SIZE, (unsigned long long)dsp_base, tgid, root_mode ? "root" : "sensors",
++	       root_mode ? 0 : PD_SENSORS, sns_too ? ", then the sensors PD" : "");
++	if (root_mode)
++		adsp_smmu_status();	/* step 4/5: fault state before the DSP gets the address */
++	if (!root_mode) {	/* the sensors PD alone, the whole buffer (as before step 6) */
++		s_sns.pa = dma_pa;
++		s_sns.dsp = dsp_base;
++		s_sns.size = DMA_SIZE;
++		s_sns.client = tgid;
++		sess_attach(&s_sns);
++		return s_sns.state == 6 ? -1 : 0;
++	}
++	/* step 6: the root PD the first half, the sensors PD the second; guess: its own client number (tgid + 1),
++	 * as the reference gives each session its own */
++	s_root.pa = dma_pa;
++	s_root.dsp = dsp_base;
++	s_root.size = DMA_SIZE / 2;
++	s_root.client = tgid;
++	s_sns.pa = dma_pa + DMA_SIZE / 2;
++	s_sns.dsp = dsp_base + DMA_SIZE / 2;
++	s_sns.size = DMA_SIZE / 2;
++	s_sns.client = tgid + 1;
++	sess_attach(&s_root);
++	return s_root.state == 6 ? -1 : 0;
++}
++
++static const char *st_name[] = { "off", "attach", "remotectl_open", "register", "init2", "serving", "stopped" };
++
++void fastrpc_status(char *buf, size_t n)
++{
++	snprintf(buf, n, "root %s %u calls ctx %llx, sensors %s %u calls ctx %llx, %u invokes", st_name[s_root.state],
++		 s_root.calls, (unsigned long long)s_root.cur_ctx, st_name[s_sns.state], s_sns.calls,
++		 (unsigned long long)s_sns.cur_ctx, seq);
++}
++
++void fastrpc_summary(void)
++{
++	static const char *st[] = { "off", "attach", "remotectl_open", "register", "init2", "serving", "stopped" };
++	printf("rpc: summary: root PD %s (%u calls served), sensors PD %s (%u calls served), %u invokes, "
++	       "%u remotectl calls, %u other-handle calls, %u errors\n", st[s_root.state], s_root.calls, st[s_sns.state],
++	       s_sns.calls, seq, n_ctl, n_other, n_err);
++	for (unsigned i = 0; i < 40; i++)
++		if (n_std[i])
++			printf("rpc:   apps_std.%s x%u\n", i < sizeof(std_name) / sizeof(std_name[0]) ? std_name[i] : "?",
++			       n_std[i]);
++	printf("rpc:   files opened: %u\n", n_files);
++	for (unsigned i = 0; i < n_files && i < 32; i++)
++		printf("rpc:     %s\n", files[i]);
++	printf("rpc:   missing (not found or not mapped): %u\n", n_missing);
++	for (unsigned i = 0; i < n_missing && i < 32; i++)
++		printf("rpc:     %s\n", missing[i]);
++}
+diff --git a/phone/wifi/fastrpc.h b/phone/wifi/fastrpc.h
+new file mode 100644
+index 0000000..816d231
+--- /dev/null
++++ b/phone/wifi/fastrpc.h
+@@ -0,0 +1,32 @@
++/*
++ * FastRPC client + reverse-RPC file listener for the ADSP sensors PD over glink "fastrpcglink-apps-dsp"
++ * (sunfish downstream adsprpc.c wire format, quic/fastrpc adsp_listener + apps_std). Polled: one invoke in
++ * flight; the caller feeds every complete packet of that channel to fastrpc_rx.
++ */
++#ifndef FASTRPC_H
++#define FASTRPC_H
++#include <stddef.h>
++#include <stdint.h>
++
++#define FASTRPC_DMA_SIZE	0x80000u
++
++typedef void (*fastrpc_send_fn)(const void *pkt, size_t n);
++
++/* Use this buffer (PA for the CPU, DSP its address on the DSP side) instead of a pm_alloc one at PA. */
++void fastrpc_buffer(uint64_t pa, uint64_t dsp);
++/* 1: attach to the root PD (pd 0, first half of the buffer) instead, print the reply + SMMU faults, then open
++ * and serve its adsp_default_listener (audio step 6). */
++void fastrpc_root(int on);
++/* audio step 6, with fastrpc_root: once the root PD's listener serves, also attach the sensors PD (second half of
++ * the buffer); without it only the root PD is served. */
++void fastrpc_sensors(int on);
++/* Allocate the DMA buffer and send the sensors-PD attach; 0 = started. */
++int fastrpc_start(fastrpc_send_fn send);
++/* One received message (smq_invoke_rsp). */
++void fastrpc_rx(const void *p, size_t n);
++/* au14: one heartbeat line part: per session state, calls served, the ctx in flight. */
++void fastrpc_status(char *buf, size_t n);
++/* Calls per method, files opened, errors. */
++void fastrpc_summary(void);
++
++#endif
+diff --git a/phone/wifi/glink.c b/phone/wifi/glink.c
+index 2816e58..101f0e8 100644
+--- a/phone/wifi/glink.c
++++ b/phone/wifi/glink.c
+@@ -18,6 +18,7 @@ void glink_edge(unsigned smem_host, unsigned ipc_bit)
+ 
+ static uint64_t desc, tx_fifo, rx_fifo;
+ static uint32_t tx_len, rx_len;
++static int g_preserve;
+ 
+ /* descs: [0] tx tail, [1] tx head, [2] rx tail, [3] rx head (ours = tx) */
+ #define TX_TAIL	(desc + 0)
+@@ -25,6 +26,17 @@ static uint32_t tx_len, rx_len;
+ #define RX_TAIL	(desc + 8)
+ #define RX_HEAD	(desc + 12)
+ 
++void glink_preserve(int on)
++{
++	g_preserve = on;
++}
++
++void glink_print_state(const char *tag)
++{
++	printf("glink: %s desc %llx: tx tail/head %u/%u, rx tail/head %u/%u\n", tag, (unsigned long long)desc,
++	       rd32(TX_TAIL), rd32(TX_HEAD), rd32(RX_TAIL), rd32(RX_HEAD));
++}
++
+ int glink_init(void)
+ {
+ 	uint32_t sz;
+@@ -39,9 +51,11 @@ int glink_init(void)
+ 		return -1;
+ 	}
+ 	(void)sz;
+-	/* as Linux qcom_glink_smem_register: our ends of both pipes start over */
+-	wr32(RX_TAIL, 0);
+-	wr32(TX_HEAD, 0);
++	/* as Linux qcom_glink_smem_register: our ends of both pipes start over; 0010: not after the ADSP's own init */
++	if (!g_preserve) {
++		wr32(RX_TAIL, 0);
++		wr32(TX_HEAD, 0);
++	}
+ 	printf("glink: desc %llx tx fifo %llx (%u) rx fifo %llx (%u); tx %u/%u rx %u/%u\n",
+ 	       (unsigned long long)desc, (unsigned long long)tx_fifo, tx_len, (unsigned long long)rx_fifo, rx_len,
+ 	       rd32(TX_TAIL), rd32(TX_HEAD), rd32(RX_TAIL), rd32(RX_HEAD));
+@@ -85,6 +99,8 @@ int glink_send(uint16_t cmd, uint16_t p1, uint32_t p2, const void *data, size_t
+ 	if (len)
+ 		memcpy(buf + 8, data, len);
+ 	uint32_t head = rd32(TX_HEAD), tail = rd32(TX_TAIL);
++	if (head >= tx_len || tail >= tx_len || (head & 7))
++		return -1;
+ 	uint32_t avail = tail <= head ? tx_len - head + tail : tail - head;
+ 	if (avail < padded + 16)
+ 		return -1;	/* full: the caller polls and retries */
+@@ -98,6 +114,8 @@ int glink_send(uint16_t cmd, uint16_t p1, uint32_t p2, const void *data, size_t
+ size_t glink_rx_avail(void)
+ {
+ 	uint32_t head = rd32(RX_HEAD), tail = rd32(RX_TAIL);
++	if (head >= rx_len || tail >= rx_len)
++		return 0;
+ 	return head < tail ? rx_len - tail + head : head - tail;
+ }
+ 
+diff --git a/phone/wifi/glink.h b/phone/wifi/glink.h
+index d1f591e..c4fac56 100644
+--- a/phone/wifi/glink.h
++++ b/phone/wifi/glink.h
+@@ -22,6 +22,10 @@ void glink_edge(unsigned smem_host, unsigned ipc_bit);	/* before glink_init; def
+ #define GLINK_CMD_SIGNALS	15
+ 
+ int glink_init(void);
++/* 0010: keep the peer's fifo ends as they are (the ADSP re-initializes its descriptors right after PAS). */
++void glink_preserve(int on);
++/* 0010: the four descriptor words, for the ADSP edge's handshake log. */
++void glink_print_state(const char *tag);
+ /* 0009: 1 once the remote has allocated its rx fifo (the peer's GLINK transport is up). Read-only. */
+ int glink_remote_ready(void);
+ /* Queue one command (8-byte header + data, padded to 8) and ring the modem. */
+diff --git a/phone/wifi/link.c b/phone/wifi/link.c
+index da582e0..352aaed 100644
+--- a/phone/wifi/link.c
++++ b/phone/wifi/link.c
+@@ -326,9 +326,19 @@ static void handle_data(const uint8_t *d, uint32_t n)
+ 		qrtr_cb(&hd, d + sizeof(hd), n - sizeof(hd) < hd.size ? n - sizeof(hd) : hd.size);
+ }
+ 
++static qrtr_transport_t qrtr_transport;
++
++void qrtr_set_transport(qrtr_transport_t fn)
++{
++	qrtr_transport = fn;
++}
++
+ int qrtr_send(uint32_t type, uint32_t src_port, uint32_t dst_node, uint32_t dst_port,
+ 	      const void *payload, uint32_t len)
+ {
++	/* 0010: the ADSP's edge has its own IPCRTR channel; pd-mapper/tftp use the same calls. */
++	if (qrtr_transport)
++		return qrtr_transport(type, src_port, dst_node, dst_port, payload, len);
+ 	/* Sweet: one buffer per call. link_send waits for a modem intent in link_poll, whose idle hook may send
+ 	 * again (cell_poll, rx handlers); with one static buffer the nested packet overwrote the waiting one and the
+ 	 * first request never reached the modem (CommCenter ATCS_TIMEOUT resets). */
+diff --git a/phone/wifi/link.h b/phone/wifi/link.h
+index 916c6ab..ad3ddee 100644
+--- a/phone/wifi/link.h
++++ b/phone/wifi/link.h
+@@ -28,6 +28,10 @@ int link_poll(unsigned ms);		/* handle what arrived; for ms (0 = just once) */
+ int link_send(const void *data, uint32_t len);
+ int qrtr_send(uint32_t type, uint32_t src_port, uint32_t dst_node, uint32_t dst_port,
+ 	      const void *payload, uint32_t len);
++/* 0010: the ADSP edge (adspedge.c) takes QRTR over its own IPCRTR channel; NULL restores the modem's link_send. */
++typedef int (*qrtr_transport_t)(uint32_t type, uint32_t src_port, uint32_t dst_node, uint32_t dst_port,
++				const void *payload, uint32_t len);
++void qrtr_set_transport(qrtr_transport_t fn);
+ extern uint32_t link_remote_node;	/* 0007: where NEW_SERVER goes; set from the remote HELLO */
+ int qrtr_new_server(uint32_t service, uint32_t version, uint32_t instance, uint32_t port);
+ int qrtr_resume_tx(const struct qrtr_hdr *h);
+diff --git a/phone/wifi/pmem.c b/phone/wifi/pmem.c
+index cac1500..16b5a2a 100644
+--- a/phone/wifi/pmem.c
++++ b/phone/wifi/pmem.c
+@@ -119,3 +119,8 @@ int pm_rpmh(const char *res, unsigned n, const uint32_t *off, const uint32_t *va
+ 	}
+ 	return ioctl(pm_fd, PMEM_RPMH, &r) < 0 ? errno : 0;
+ }
++
++int pm_smmu(struct pmem_smmu *q)
++{
++	return ioctl(pm_fd, PMEM_SMMU, q) < 0 ? -1 : 0;
++}
+diff --git a/phone/wifi/pmem.h b/phone/wifi/pmem.h
+index dfa92de..26efba3 100644
+--- a/phone/wifi/pmem.h
++++ b/phone/wifi/pmem.h
+@@ -37,6 +37,20 @@ struct pmem_rpmh {
+ 	uint32_t value[4];
+ };
+ #define PMEM_RPMH	_IOW('P', 5, struct pmem_rpmh)
++/* 0206: the apps-SMMU streams, from the kernel (a userland read of the SMMU stalls a CPU on sweet). */
++struct pmem_smmu {
++	uint32_t op;		/* 1 identity, 2 translate, 3 status */
++	uint32_t nsid;
++	uint16_t sid[8];
++	uint32_t mask;		/* op 1: SMR mask */
++	int32_t cb;		/* out */
++	uint64_t iova, alias, pa, len;	/* op 2 */
++	uint32_t fsr, fsynr0;	/* op 3 out */
++	uint64_t far;
++	int32_t slot[8];	/* out: SMR per SID */
++};
++#define PMEM_SMMU	_IOWR('P', 7, struct pmem_smmu)
++int pm_smmu(struct pmem_smmu *q);	/* 0 = ok */
+ 
+ void pm_init(void);			/* exits if /dev/pmem is missing */
+ uint32_t rd32(uint64_t pa);
+diff --git a/phone/wifi/wland.c b/phone/wifi/wland.c
+index 6b1f917..7edddf6 100644
+--- a/phone/wifi/wland.c
++++ b/phone/wifi/wland.c
+@@ -39,6 +39,9 @@
+ #include "ipnet.h"
+ #include "bridge.h"
+ #include "cell.h"
++#include "adspedge.h"
++#include "adsp_smmu.h"
++#include "fastrpc.h"
+ 
+ /* cmd-db aux levels (as in the GPU's arc votes) */
+ /* Every cmd-db entry: name, RPMh slave (3 ARC, 4 VRM, 5 BCM), address. */
+@@ -696,6 +699,66 @@ static void adsp_crash_reason(void)
+ 	printf("adsp: SMEM 423: %s\n", s);
+ }
+ 
++static uint64_t adsp_rpc_pa, adsp_rpc_dsp;	/* 0010: the FastRPC DMA buffer and the DSP's view of it */
++static int adsp_smmu_done;
++
++/* 0010: QRTR on the ADSP's IPCRTR channel: its HELLO, the pd-mapper lookup, and DATA to our ports. */
++static int adsp_pdmap_announced;
++static void adsp_qrtr(const struct qrtr_hdr *h, const uint8_t *d, uint32_t n)
++{
++	uint32_t w[5] = { 0 };
++	memcpy(w, d, n < sizeof(w) ? n : sizeof(w));
++	if (h->type == QRTR_TYPE_DATA) {
++		if (h->confirm_rx)
++			qrtr_resume_tx(h);
++		if (h->dst_port == PDMAPPER_PORT) {
++			pdmapper_handle(h, d, n);
++			return;
++		}
++		if (h->dst_port == TFTP_PORT || (h->dst_port >= TFTP_XFER_PORT0 && h->dst_port < TFTP_XFER_PORT0 + TFTP_XFERS)) {
++			tftp_handle(h, d, n);
++			return;
++		}
++		printf("adsp: qrtr DATA %u:%x -> %u:%x, %u bytes\n", h->src_node, h->src_port, h->dst_node, h->dst_port, n);
++		return;
++	}
++	printf("adsp: qrtr ctrl type %u (cmd %u) from %u:%x\n", h->type, w[0], h->src_node, h->src_port);
++	if (w[0] == QRTR_TYPE_HELLO) {
++		uint32_t hello[5] = { QRTR_TYPE_HELLO };
++		link_remote_node = h->src_node;
++		qrtr_send(QRTR_TYPE_HELLO, QRTR_PORT_CTRL, h->src_node, QRTR_PORT_CTRL, hello, sizeof(hello));
++		if (!adsp_pdmap_announced) {
++			adsp_pdmap_announced = 1;
++			pdmapper_init();
++		}
++	} else if (w[0] == QRTR_TYPE_NEW_LOOKUP) {
++		uint32_t end[5] = { QRTR_TYPE_NEW_SERVER };
++		if (w[1] == PDMAPPER_SERVICE) {
++			uint32_t k[5] = { QRTR_TYPE_NEW_SERVER, PDMAPPER_SERVICE, 1u | 1u << 8, QRTR_NODE_APPS, PDMAPPER_PORT };
++			printf("adsp: pd-mapper lookup for %#x answered\n", w[1]);
++			qrtr_send(QRTR_TYPE_NEW_SERVER, QRTR_PORT_CTRL, h->src_node, h->src_port, k, sizeof(k));
++		}
++		qrtr_send(QRTR_TYPE_NEW_SERVER, QRTR_PORT_CTRL, h->src_node, h->src_port, end, sizeof(end));	/* end of lookup */
++	} else if (w[0] == QRTR_TYPE_NEW_SERVER) {
++		printf("adsp: qrtr server service %#x instance %#x at %u:%x\n", w[1], w[2], w[3], w[4]);
++	}
++}
++
++/* 0010: once fastrpcglink-apps-dsp is open both ways, attach and serve its files (fastrpc.c). */
++static int adsp_rpc_started;
++static void adsp_rpc_poll(void)
++{
++	if (adsp_rpc_started || !adsp_rpc_pa || !adspedge_rpc_up() || getenv("WLAND_NO_RPC"))
++		return;
++	adsp_rpc_started = 1;
++	printf("adsp: FastRPC channel up: attaching to the root and sensors PDs\n");
++	fastrpc_buffer(adsp_rpc_pa, adsp_rpc_dsp);
++	fastrpc_root(1);
++	fastrpc_sensors(1);
++	if (fastrpc_start(adspedge_rpc_send))
++		printf("adsp: FastRPC did not start\n");
++}
++
+ static int adsp_net(unsigned secs)
+ {
+ 	adsp_last = 0xffffffff;
+@@ -735,22 +798,35 @@ static int adsp_net(unsigned secs)
+ 		return -1;
+ 	}
+ 	printf("adsp: GLINK rx fifo after %llu ms; opening the edge\n", (unsigned long long)(link_ms() - start));
+-	if (link_up(net_cb, 30000)) {
+-		printf("adsp: GLINK did not open in 30 s\n");
++	qrtr_set_transport(adspedge_qrtr_send);
++	adspedge_set_qrtr_cb(adsp_qrtr);
++	if (adspedge_open(30000))
+ 		return -1;
++	uint64_t t0 = link_ms();
++	while (link_ms() - t0 < 30000 && (!adspedge_ipcrtr_up() || !adspedge_rpc_up())) {
++		uint32_t v = 0;
++		adspedge_poll(10);
++		adsp_rpc_poll();
++		if (adsp_state(&v) == 0 && (v & 1) && !fatal_logged) {
++			printf("adsp: ERR-FATAL before the channels were up (slave-kernel %x)\n", v);
++			adsp_crash_reason();
++			fatal_logged = 1;
++		}
+ 	}
+-	printf("adsp: IPCRTR up; remote node %u\n", link_remote_node);
+-	if (pdmapper_init() || tftp_init())
+-		printf("adsp: no pd-mapper/tftp\n");
++	printf("adsp: channels after %llu ms: IPCRTR %d, FastRPC %d; remote node %u\n",
++	       (unsigned long long)(link_ms() - t0), adspedge_ipcrtr_up(), adspedge_rpc_up(), link_remote_node);
++	adspedge_status();
+ 	const uint64_t end = secs ? link_ms() + 1000ull * secs : 0;
+ 	for (uint64_t next = link_ms(); !end || link_ms() < end;) {
+-		link_poll(100);
++		adspedge_poll(100);
++		adsp_rpc_poll();
+ 		if (link_ms() >= next) {
+ 			adsp_idle();
+ 			uint64_t pa;
+ 			uint32_t sz;
+ 			printf("[%6llu] adsp: alive; SMEM 443 %s\n", (unsigned long long)link_ms(),
+ 			       smem_get(SMEM_HOST_ADSP, SMP2P_ADSP_IN, &pa, &sz) ? "absent" : "present");
++			adspedge_status();
+ 			next = link_ms() + 10000;
+ 		}
+ 		if (adsp_last != 0xffffffff && (adsp_last & 1)) {
+@@ -766,6 +842,14 @@ static int adsp_net(unsigned secs)
+ static int boot_adsp(unsigned secs)
+ {
+ 	uint32_t v = 0;
++	/* 0010: the FastRPC DMA stream through the kernel's translating bank, before the ADSP gets any address. */
++	if (!adsp_smmu_done) {
++		adsp_smmu_done = 1;
++		if (adsp_smmu_setup(&adsp_rpc_pa, &adsp_rpc_dsp)) {
++			printf("adsp: no SMMU FastRPC stream; audio files cannot be served\n");
++			adsp_rpc_pa = 0;
++		}
++	}
+ 	if (adsp_state(&v) == 0 && (v & 2) && !(v & 1)) {
+ 		printf("adsp: already up (slave-kernel %x); serving the edge\n", v);
+ 		return adsp_net(secs);
