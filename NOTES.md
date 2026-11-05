@@ -1,3 +1,17 @@
+## 2026-11-05: approved 0209 built successfully and packaged; awaiting USER fastboot
+- USER explicitly approved push/build of b9c1a64 to DC28088/ios-sweet. Push succeeded.
+- GitHub Actions xnu run 42057960143 SUCCESS, exact source b9c1a64c9526410af437da0b7809623a1ea8b59b,
+  macos-15-intel; build job 14m6s after queue wait. Both portable regressions and required kernel checks pass.
+- ZIP CRC + artifact SHA256SUMS verified. Kernel SHA256
+  f7ea2b462eb8ae5381b878281374456960ab993eb33efd481c1a86131afbac69;
+  syscall/exit diagnostic markers and sweetservtrace present in compiled kernel.
+- Packaged chat workspace work/iserv-runtime/shim-boot-0209-iserv.img (18038784 bytes), SHA256
+  6cfe48cd8e2734759faac8c7d07e7f56d868ad9a1fe7c138d46570cd14f59ca0.
+  Preserves exact 0207 shim/DTB/ADT; cmdline 602 bytes, sweetservtrace=1 + selective daemon logging.
+- Asked USER to enter fastboot. No 0209 boot yet; no login/Store fix claimed.
+  Next: temporary fastboot boot, record receiver offset, correct UTC, Wi-Fi, one native reproduction.
+- Image/package manifest/notes stay local. No raw logs, credentials, firmware or device IDs committed.
+
 ## 2026-11-05: native account/Store failure isolated; 0209 syscall diagnostics prepared
 - USER stopped sideload and prioritized native Apple ID/App Store. 0207-iserv temporary boot accepted.
 - Corrected wall clock (reset to 1970 on boot). Native TLS and SecRandom API tested successfully.
