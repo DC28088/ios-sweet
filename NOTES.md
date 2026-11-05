@@ -1,3 +1,16 @@
+## 2026-11-05 20:01 IST: 0207 YouTube reproduction crashes; 0208 diagnostics prepared, external build awaiting approval
+- USER: YouTube in Safari caused a visible SpringBoard restart. Captured private logs/boot-0207-dtlog.txt:
+  mediaserverd repeatedly SIGBUS at unslid H264SW.videocodec PC 0x1f0f4c914 (str q0,[x10,x3]), bad destination
+  in prot 5/5 shared-region mapping; backboardd SIGSEGV in a copy from IOSurface shared state while reading EDR metadata.
+  The source of the bad pointers is not established. Prior NSNumber/objectForKey exception absent in this capture.
+- Isolated worktree /home/dan/Documents/Codex/2026-11-05/new-chat/work/media-0208, branch codex/media-0208,
+  commit 81762fb: bounded media surface mapping/plane diagnostics + mediaserverd/backboardd fault argument registers.
+  Syntax checks 0/2 failed; patch apply --check passed against research/buildtree-0195/xnu. No behavior fix claimed.
+- Push to DC28088/ios-sweet + xnu.yml dispatch was rejected by automatic approval review; neither ran.
+  Need USER approval for this specific branch/payload/build. No CI run ID or new image exists. Phone remains on 0207.
+- Next after approval: push isolated branch, dispatch on macos-15-intel, package 0208-dtlog and reproduce once.
+  Speaker FastRPC work and saved sensor files unchanged; no partition flash or root modifications.
+
 ## 2026-11-05 19:48 IST: Codex resumed Claude: sensor files pulled read-only; 0207-dtlog booted
 - USER: continue Claude handoff; phone in OrangeFox; pull sensor files first, then boot completed image.
 - Mounted vendor EROFS read-only at /mnt/sweet-vendor-readonly; copied etc/sensors (119 files) and lib/rfsa/adsp
