@@ -1,0 +1,94 @@
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index ff9a3a0..98a9a43 100644
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -197,7 +197,7 @@ class AppleARMBacklight : public IOService {
+ 	unsigned       fLogged;
+ 	static void    applyCall(thread_call_param_t owner, thread_call_param_t);
+ 	int            sendLevel(uint32_t level);
+-	int            sendShort(uint8_t cmd);     /* 0200: DCS short write, no parameter */
++	int            sendShort(uint8_t cmd, bool hs = false);   /* 0200: DCS short write, no parameter; 0202: hs */
+ 	void           publish(void);
+ 	void           request(uint32_t level, uint32_t value);
+ 	IOLock        *fDsiLock;                   /* 0200: one DSI command at a time */
+@@ -215,6 +215,14 @@ public:
+  * panel lit. A failed command falls back to that fade (sweet_panel_failed).
+  */
+ static AppleARMBacklight *sweet_backlight;
++/*
++ * 0202: 0200 on the phone: 28/10 "sent" (DMA done) every time but the panel stayed lit at iOS's minimum
++ * brightness. The K6 DT says qcom,mdss-dsi-off-command-state "dsi_hs_mode" (on-command and brightness:
++ * LP). So 28/10 go in high-speed mode (DMA_CTRL power-mode bit 26 clear; sweetpanelhs=0: LP as 0200),
++ * and the frame is filled black once when the display goes off, so the screen is dark even if the
++ * panel ignores the commands. ACK_ERR/TIMEOUT are logged for every panel command (first 64).
++ */
++static int sweet_panel_hs = -1;
+ static int sweet_panel_sleep = -1;
+ static volatile bool sweet_panel_failed;
+ 
+@@ -626,9 +634,14 @@ AppleARMBacklight::applyCall(thread_call_param_t owner, thread_call_param_t)
+ 		uint64_t t0 = mach_absolute_time(), ns;
+ 		int e1, e2;
+ 		if (want) {
+-			e1 = bl->sendShort(0x28);    /* display off */
++			if (sweet_panel_hs < 0) {
++				int hs = 1;
++				PE_parse_boot_argn("sweetpanelhs", &hs, sizeof(hs));
++				sweet_panel_hs = hs != 0;
++			}
++			e1 = bl->sendShort(0x28, sweet_panel_hs);    /* display off (DT: HS mode) */
+ 			IOSleep(20);
+-			e2 = bl->sendShort(0x10);    /* sleep in */
++			e2 = bl->sendShort(0x10, sweet_panel_hs);    /* sleep in */
+ 			IOSleep(150);
+ 		} else {
+ 			e1 = bl->sendShort(0x11);    /* sleep out */
+@@ -683,7 +696,7 @@ AppleARMBacklight::panelSleep(bool off)
+ 
+ /* 0200: DCS short write without a parameter (data type 0x05), same FIFO path as sendLevel */
+ int
+-AppleARMBacklight::sendShort(uint8_t cmd)
++AppleARMBacklight::sendShort(uint8_t cmd, bool hs)
+ {
+ 	volatile uint32_t *dsi = fDsi;
+ 	const uint32_t ctrl = dsi[DSI_REG_CTRL / 4];
+@@ -698,7 +711,7 @@ AppleARMBacklight::sendShort(uint8_t cmd)
+ 	dsi[DSI_REG_INT_CTRL / 4] = dsi[DSI_REG_INT_CTRL / 4] | 1u;    /* W1C stale DMA done */
+ 	dsi[DSI_REG_TPG_CTRL / 4] = (1u << 1) | (1u << 2) | (3u << 16);
+ 	dsi[DSI_REG_TPG_DMA_DATA / 4] = word;
+-	dsi[DSI_REG_DMA_CTRL / 4] = (dma_ctrl & ~((1u << 31) | (1u << 30))) | (1u << 26) | (1u << 28);
++	dsi[DSI_REG_DMA_CTRL / 4] = (dma_ctrl & ~((1u << 31) | (1u << 30) | (1u << 26))) | (hs ? 0u : (1u << 26)) | (1u << 28);
+ 	dsi[DSI_REG_DMA_LENGTH / 4] = sizeof(word);
+ 	__asm__ volatile("dsb sy" ::: "memory");
+ 	dsi[DSI_REG_DMA_TRIGGER / 4] = 1;
+@@ -707,7 +720,7 @@ AppleARMBacklight::sendShort(uint8_t cmd)
+ 		IODelay(50);
+ 	}
+ 	const bool done = (dsi[DSI_REG_INT_CTRL / 4] & 1u) != 0;
+-	const uint32_t ack = dsi[DSI_REG_ACK_ERR / 4];
++	const uint32_t ack = dsi[DSI_REG_ACK_ERR / 4], tmo = dsi[DSI_REG_TIMEOUT_STATUS / 4];
+ 	if (done) {
+ 		dsi[DSI_REG_INT_CTRL / 4] = dsi[DSI_REG_INT_CTRL / 4] | 1u;
+ 	}
+@@ -719,8 +732,10 @@ AppleARMBacklight::sendShort(uint8_t cmd)
+ 	if (!(ctrl & (1u << 2))) {
+ 		dsi[DSI_REG_CTRL / 4] = dsi[DSI_REG_CTRL / 4] & ~(1u << 2);
+ 	}
+-	if (!done) {
+-		IOLog("SWEET PANEL: dcs %#x NOT acknowledged after %u us ack_err=%#x\n", cmd, us, ack);
++	static unsigned cmd_logs;
++	if (!done || cmd_logs++ < 64) {
++		IOLog("SWEET PANEL: dcs %#x %s %s after %u us ack_err=%#x timeout=%#x dma_ctrl=%#x ctrl=%#x\n", cmd,
++		    hs ? "HS" : "LP", done ? "sent" : "NOT acknowledged", us, ack, tmo, dma_ctrl, ctrl);
+ 	}
+ 	return done ? 0 : ETIMEDOUT;
+ }
+@@ -1809,7 +1824,7 @@ IOMobileFramebufferUserClient::externalMethod(uint32_t selector, IOExternalMetho
+ 			bool change = off != fFB->fPowerOff;
+ 			if (change) {
+ 				fFB->fPowerOff = off;
+-				fFB->fFadeStep = (off && panel) ? 7 : 0;    /* 0200: the panel sleeps: no CPU fade */
++				fFB->fFadeStep = (off && panel) ? 6 : 0;    /* 0200: the panel sleeps: no fade; 0202: one black pass */
+ 				fFB->fDirty = true;     /* on: redraw the latest frame */
+ 				if (off) {
+ 					fFB->fOffAt = mach_absolute_time();

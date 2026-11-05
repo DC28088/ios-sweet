@@ -1,0 +1,58 @@
+diff --git a/bsd/dev/sweet_haptic.c b/bsd/dev/sweet_haptic.c
+index 3371488..f4b3143 100644
+--- a/bsd/dev/sweet_haptic.c
++++ b/bsd/dev/sweet_haptic.c
+@@ -552,7 +552,8 @@ aw_cont_stop(void)
+ #define HAP_ACTIVE_US    30000u   /* a write that was not silence counts for this long */
+ #define HAP_SILENT_BELOW 256u     /* of 32768 */
+ #define HAP_MIN_US       hap_min_us /* shortest buzz: a tap (0198: 40 ms, boot-arg sweethapmin=MS, 10..200) */
+-static uint64_t hap_min_us = 40000u;
++static uint64_t hap_min_us = 30000u;   /* 0203: 30 ms (USER: "a quick strong buzz would make it much better") */
++static int hap_scale;                 /* 0203: sweethapscale=1: drive follows the waveform peak (0198) */
+ #define HAP_MAX_US       1000000u /* longest buzz; then it rests as long */
+ #define HAP_DRIVE        0x6au    /* the DT's cont_drv_lvl: never exceeded */
+ 
+@@ -662,6 +663,7 @@ hap_serve(void)
+ 	uint64_t began = 0, rest_until = 0;
+ 	unsigned buzzes = 0, capped = 0;
+ 	unsigned min_ms = 0;
++	(void)PE_parse_boot_argn("sweethapscale", &hap_scale, sizeof(hap_scale));
+ 	if (PE_parse_boot_argn("sweethapmin", &min_ms, sizeof(min_ms)) && min_ms >= 10 && min_ms <= 200) {
+ 		hap_min_us = (uint64_t)min_ms * 1000u;
+ 	}
+@@ -673,7 +675,7 @@ hap_serve(void)
+ 		uint64_t now = hap_now_us(), heard = hap_heard_us;
+ 		bool want = heard != 0 && now - heard < HAP_ACTIVE_US && hap_quiet_us <= heard;
+ 		if (want && !on && now >= rest_until) {
+-			uint8_t drive = hap_drive_for(hap_peak);
++			uint8_t drive = hap_scale ? hap_drive_for(hap_peak) : HAP_DRIVE;   /* 0203: full DT level */
+ 			if (!aw_cont_start(drive)) {
+ 				break;
+ 			}
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index 98a9a43..6bd6cf1 100644
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -1815,7 +1815,7 @@ IOMobileFramebufferUserClient::externalMethod(uint32_t selector, IOExternalMetho
+ 		if (args->scalarInputCount >= 1) {
+ 			bool off = args->scalarInput[0] == 0;
+ 			if (sweet_panel_sleep < 0) {
+-				int ps = 0;
++				int ps = 1;     /* 0203: on by default (0202 tested on the phone); sweetpanelsleep=0 off */
+ 				PE_parse_boot_argn("sweetpanelsleep", &ps, sizeof(ps));
+ 				sweet_panel_sleep = ps;
+ 			}
+@@ -1824,7 +1824,12 @@ IOMobileFramebufferUserClient::externalMethod(uint32_t selector, IOExternalMetho
+ 			bool change = off != fFB->fPowerOff;
+ 			if (change) {
+ 				fFB->fPowerOff = off;
+-				fFB->fFadeStep = (off && panel) ? 6 : 0;    /* 0200: the panel sleeps: no fade; 0202: one black pass */
++				static int black = -1;
++				if (black < 0) {
++					black = 1;      /* 0203: sweetpanelblack=0: no black pass, to see what DCS 28/10 alone do */
++					PE_parse_boot_argn("sweetpanelblack", &black, sizeof(black));
++				}
++				fFB->fFadeStep = (off && panel) ? (black ? 6 : 7) : 0;    /* 0200: no fade; 0202: one black pass */
+ 				fFB->fDirty = true;     /* on: redraw the latest frame */
+ 				if (off) {
+ 					fFB->fOffAt = mach_absolute_time();
