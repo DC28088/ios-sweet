@@ -1,3 +1,23 @@
+## 2026-11-06 19:20 IST: eight-image batch packaged (device test pending)
+- Directory `/home/dan/ios-sweet/shim/out/batch-20261106/`; `SHA256SUMS` and `README.md` there. All eight are temporary
+  `fastboot boot` images with the 0207 shim/stock DTB/ADT unchanged; no partition/root changes.
+- 01/02/03/04 Metal native profiles A-D: `sweetmtl=2`, 120 Hz caller rows/async, 120 Hz all rows/sync, 120 Hz
+  kernel import sync/A55 present, 60 Hz 128-byte rows/sync. Builds A/B/D succeeded; C's CI retry was cancelled in
+  the queue, so 03 reuses A's identical-source kernel with C's boot arguments (manifest notes this).
+- 05 speaker 0212: `sweetamp=2` writes the stock 37-register AW882xx L/R sequences and leaves both amps enabled.
+  No `/dev/sweet-audio`/PCM yet. Sidecar `sidecar/wland-0014/wland` (bf568dc9...) sends a 3 s 697/1209 Hz DTMF
+  after `WLAND_AFE=1`; run it after the >50 s amp init. Audibility unverified.
+- 06 sensors/camera 0214: sensor HID services (`sweetmotion=0x77`) plus read-only `kern.sweet_camprobe`
+  (`sweetcamprobe=1`). No real ADSP sensor samples and no camera capture/AppleCamIn yet.
+- 07 iServices 0209: known-good SSH/SpringBoard diagnostic image (`sweetdtlog=akd,adid,appstored,fairplayd.H2`,
+  `sweetservtrace=1`); Apple ID login remains unfixed.
+- 08 media 0211: row-stride candidate; booted previously with Wi-Fi, Safari/video not validated, H264SW SIGBUS not
+  proven fixed.
+- Image SHA-256 (first 16): 01 b49698d0c7cfa97f, 02 021617d37c95f982, 03 a2362cfe52810836, 04 3284ca664ebaf257,
+  05 d66ebbafbc9f8dff, 06 2df52ef2d5012aac, 07 6cfe48cd8e273475, 08 2be69fce130b3fb6.
+- Next: user connects the phone in fastboot; boot 01/02/03/04 for animation smoothness, 05 + wland 0014 for the
+  speaker checkpoint, 06 for sensor/camera registration, 07 for a fresh iServices trace, 08 for Safari/video.
+
 ## 2026-11-05 22:45 IST: wland 0013 — ADSP audio PD answers; PRI_MI2S clock, config and port start all status 0
 - wland 0011 (CI 42066647562, wland 25dde74f...): graceful ADSP stop request not acked by the live ADSP;
   `WLAND_ADSP_FRESH=1` + PAS auth/reset reloads it. The preserved stale GLINK tails stalled the handshake
