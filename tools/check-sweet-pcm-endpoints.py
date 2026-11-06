@@ -5,7 +5,7 @@ import subprocess,tempfile
 root=Path(__file__).resolve().parents[1]
 p=(root/'xnu/patches/0215-sweet-coreaudio-pcm-ring.patch').read_text().split('diff --git a/bsd/dev/sweet_pcm_ring.h',1)[0]
 s='\n'.join(l[1:] for l in p.splitlines() if l.startswith('+') and not l.startswith('+++'))
-a=s.index('static int pcm_dev_open(');b=s.index('static const struct cdevsw',a);functions=s[a:b]
+a=s.index('static int pcm_dev_open(');b=s.index('static const struct cdevsw',a);functions=s[a:b].replace("user_ssize_t","probe_ssize_t")
 assert 'makedev(major,0)' in s and 'makedev(major,1)' in s
 assert '0600,"sweet-pcm"' in s
 prefix=r'''
@@ -16,17 +16,19 @@ prefix=r'''
 #include <assert.h>
 #include <errno.h>
 #include "sweet_pcm_ring.h"
+#ifndef __unused
 #define __unused __attribute__((unused))
+#endif
 #define FREAD 1
 #define FWRITE 2
 #define minor(d) ((unsigned)(d))
 #define MIN(a,b) ((a)<(b)?(a):(b))
 typedef unsigned dev_t;
-typedef long user_ssize_t;
+typedef long probe_ssize_t;
 typedef char *caddr_t;
 typedef unsigned long u_long;
 struct proc {int pid;};
-struct uio {uint8_t *data;user_ssize_t resid;int reading;};
+struct uio {uint8_t *data;probe_ssize_t resid;int reading;};
 static int root_cred=1,pcm_ring_lock,pcm_reader;
 static struct proc current={11};
 static struct sweet_pcm_ring pcm_ring;
@@ -39,7 +41,7 @@ static int proc_pid(struct proc *p){return p->pid;}
 static struct proc *current_proc(void){return &current;}
 static void lck_mtx_lock(int *p){(void)p;}
 static void lck_mtx_unlock(int *p){(void)p;}
-static user_ssize_t uio_resid(struct uio *u){return u->resid;}
+static probe_ssize_t uio_resid(struct uio *u){return u->resid;}
 static int uiomove(caddr_t b,int n,struct uio *u){
  assert(n>=0 && n<=u->resid);
  if(u->reading)memcpy(u->data,b,(size_t)n);else memcpy(b,u->data,(size_t)n);
