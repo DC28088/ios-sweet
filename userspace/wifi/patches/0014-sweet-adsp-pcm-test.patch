@@ -12,7 +12,7 @@
  
  /* cmd-db aux levels (as in the GPU's arc votes) */
  /* Every cmd-db entry: name, RPMh slave (3 ARC, 4 VRM, 5 BCM), address. */
-@@ -907,10 +912,123 @@
+@@ -907,10 +912,137 @@
  	}
  }
  
@@ -73,11 +73,14 @@
 +
 +static struct sweet_pcm pcm_test;
 +static int pcm_enabled, pcm_started, pcm_reported;
-+static uint64_t pcm_pa;
++static uint64_t pcm_pa,pcm_ready_at;
++static unsigned pcm_delay_ms;
 +static void adsp_pcm_poll(void)
 +{
 +    if(!pcm_enabled || !adspedge_apr_up() || afe_step!=5)return;
 +    if(!pcm_started) {
++        if(!pcm_ready_at){pcm_ready_at=link_ms()+pcm_delay_ms;printf("pcm: AFE ready; setup delay %u ms\n",pcm_delay_ms);}
++        if(link_ms()<pcm_ready_at)return;
 +        pcm_started=1;
 +        pcm_pa=pm_alloc(SWEET_PCM_MAP_BYTES,4096);
 +        if(!pcm_pa) {
@@ -85,7 +88,7 @@
 +            pcm_enabled=0;return;
 +        }
 +        uint8_t zero[SWEET_PCM_STRIDE]={0};
-+        if(speaker_prepare()){pcm_enabled=0;return;}
++        if(speaker_prepare()){pm_free(pcm_pa);pcm_pa=0;pcm_enabled=0;return;}
 +        if(speaker_wanted){
 +            static const int16_t sine[48]={0,214,424,628,820,998,1160,1301,1420,1515,1584,1626,1640,1626,1584,1515,1420,1301,1160,998,820,628,424,214,0,-214,-424,-628,-820,-998,-1160,-1301,-1420,-1515,-1584,-1626,-1640,-1626,-1584,-1515,-1420,-1301,-1160,-998,-820,-628,-424,-214};
 +            for(unsigned f=0;f<SWEET_PCM_PERIOD/4;f++){uint16_t v=(uint16_t)sine[f%48];zero[f*4]=zero[f*4+2]=v;zero[f*4+1]=zero[f*4+3]=v>>8;}
@@ -132,11 +135,22 @@
  static int apr_sent;
  static void adsp_apr_rx(const uint8_t *p, size_t n)
  {
-+	if(pcm_enabled && pcm_started && sweet_pcm_receive(&pcm_test,p,n))return;
++	if(pcm_enabled && pcm_started){
++        struct sweet_apr_msg m;
++        if(!sweet_apr_parse(p,n,&m) && m.src_svc==8 && m.dest_svc==8 &&
++           m.src_domain==APR_DOMAIN_ADSP && m.dest_domain==APR_DOMAIN_APPS &&
++           m.token==pcm_test.token && (m.opcode==0x10329 || m.opcode==APR_BASIC_RSP_RESULT)){
++            uint32_t a=0,b=0;
++            if(m.payload_len>=4)a=(uint32_t)m.payload[0]|(uint32_t)m.payload[1]<<8|(uint32_t)m.payload[2]<<16|(uint32_t)m.payload[3]<<24;
++            if(m.payload_len>=8)b=(uint32_t)m.payload[4]|(uint32_t)m.payload[5]<<8|(uint32_t)m.payload[6]<<16|(uint32_t)m.payload[7]<<24;
++            printf("pcm: ADM response op=%#x ports=%#x/%#x token=%#x bytes=%u words=%#x/%#x\n",m.opcode,m.src_port,m.dest_port,m.token,m.payload_len,a,b);
++        }
++        if(sweet_pcm_receive(&pcm_test,p,n))return;
++    }
  	struct sweet_apr_msg m;
  	if (sweet_apr_parse(p, n, &m)) {
  		printf("apr: malformed packet, %zu bytes\n", n);
-@@ -936,6 +1054,7 @@
+@@ -936,6 +1068,7 @@
  
  static void adsp_apr_poll(void)
  {
@@ -144,18 +158,20 @@
  	if (apr_sent || !adspedge_apr_up())
  		return;
  	uint8_t b[64];
-@@ -949,7 +1068,9 @@
+@@ -949,7 +1082,11 @@
  static int adsp_net(unsigned secs)
  {
  	adsp_last = 0xffffffff;
 -	afe_on = getenv("WLAND_AFE") != NULL;
 +	speaker_wanted = getenv("WLAND_SPEAKER_TONE") != NULL;
++    const char *delay=getenv("WLAND_PCM_DELAY_MS");
++    if(delay){char *end=NULL;unsigned long v=strtoul(delay,&end,10);if(!*delay || *end || v>30000){printf("pcm: invalid setup delay\n");return -1;}pcm_delay_ms=(unsigned)v;}
 +	pcm_enabled = getenv("WLAND_PCM_TEST") != NULL || speaker_wanted;
 +	afe_on = getenv("WLAND_AFE") != NULL || pcm_enabled;
  	if (afe_on)
  		printf("adsp: AFE bring-up test enabled (WLAND_AFE)\n");
  	glink_edge(SMEM_HOST_ADSP, 24);
-@@ -1011,7 +1132,7 @@
+@@ -1011,7 +1148,7 @@
  	adspedge_status();
  	const uint64_t end = secs ? link_ms() + 1000ull * secs : 0;
  	for (uint64_t next = link_ms(); !end || link_ms() < end;) {
