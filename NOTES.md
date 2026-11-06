@@ -1,3 +1,9 @@
+## 2026-11-06 16:05 IST: Metal native profile C (eight-image batch)
+- Branch `codex/metal-native-c` is based on the 0211 media baseline (3df0e99) and changes only the boot-time Metal profile; kernel source is otherwise identical.
+- Profile: kernel-maintained imported BO sync + present work on an A55, 120 Hz. Extra boot arguments: `sweetimportsync=1 sweetpresentcpu=4`.
+- The installed userspace bundle is the native `/System/Library/Extensions/SweetMetal2.bundle`; boot keeps `sweetmtl=2 sweetnative=0`, so no translation-layer selection is requested.
+- This is a settings A/B image, not a claim that the native renderer is smooth. CI artifact and packaged image are recorded in the batch handoff.
+
 ## 2026-11-06: native planar IOSurface row-stride bug confirmed; 0211 fix prepared
 - USER confirms Wi-Fi works and haptics are fine on recovered 0209; YouTube still fails and no sound. Fresh private capture: repeated mediaserverd SIGBUS at same H264SW decoder instruction, destination in RX shared cache. Audio device nodes remain absent. No claim that stride fix alone resolves the decoder fault.
 - Exact target iOS16 IOSurfaceClientGetBytesPerRowOfPlane reads client+0xe0+plane*0x80; plane records begin client+0xd0, so row is record+0x10. Kernel serializer currently writes it at +0x08. Width/height/offset/size/element fields verified separately against native getters.
