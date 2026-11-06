@@ -12,7 +12,7 @@
  
  /* cmd-db aux levels (as in the GPU's arc votes) */
  /* Every cmd-db entry: name, RPMh slave (3 ARC, 4 VRM, 5 BCM), address. */
-@@ -907,10 +912,157 @@
+@@ -907,10 +912,163 @@
  	}
  }
  
@@ -55,6 +55,12 @@
 +    for(unsigned c=0;c<2;c++){
 +        struct sweet_amp_profile p;memset(&p,0,sizeof p);p.channel=c;p.count=(uint32_t)profiles[c].count;
 +        memcpy(p.records,profiles[c].records,profiles[c].count*4);
++        /* Current kernel0214 preserves profile BCLK ratio. Normalize this copy
++         * to 32FS for our 48kHz/16-bit/stereo AFE (1.536MHz), retaining RX/map. */
++        for(unsigned k=0;k<p.count;k++){
++            uint8_t *v=p.records+4*k;
++            if(v[0]==6 && v[1]==0)v[2]&=(uint8_t)~0x30u;
++        }
 +        if(ioctl(speaker_fd,SWEET_AMP_LOAD,&p)){printf("speaker: profile load refused (%d)\n",errno);speaker_stop();return -1;}
 +    }
 +    uint32_t mask=3;
@@ -170,7 +176,7 @@
  	struct sweet_apr_msg m;
  	if (sweet_apr_parse(p, n, &m)) {
  		printf("apr: malformed packet, %zu bytes\n", n);
-@@ -936,6 +1088,7 @@
+@@ -936,6 +1094,7 @@
  
  static void adsp_apr_poll(void)
  {
@@ -178,7 +184,7 @@
  	if (apr_sent || !adspedge_apr_up())
  		return;
  	uint8_t b[64];
-@@ -949,7 +1102,15 @@
+@@ -949,7 +1108,15 @@
  static int adsp_net(unsigned secs)
  {
  	adsp_last = 0xffffffff;
@@ -195,7 +201,7 @@
  	if (afe_on)
  		printf("adsp: AFE bring-up test enabled (WLAND_AFE)\n");
  	glink_edge(SMEM_HOST_ADSP, 24);
-@@ -1011,7 +1172,7 @@
+@@ -1011,7 +1178,7 @@
  	adspedge_status();
  	const uint64_t end = secs ? link_ms() + 1000ull * secs : 0;
  	for (uint64_t next = link_ms(); !end || link_ms() < end;) {

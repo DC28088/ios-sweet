@@ -14,7 +14,7 @@ static size_t make_acf(uint8_t *b)
  for(unsigned c=0;c<2;c++){
   uint8_t *e=b+80+c*64,*d=b+208+c*92;p32(e,2);p16(e+20,c);p32(e+28,4);p32(e+32,92);p32(e+36,208+c*92);
   p32(d+4,0x01000000);p32(d+12,1);p32(d+16,32);p32(d+32,2);p32(d+36,2);p32(d+60,7);
-  for(unsigned i=0;i<7;i++){p16(d+64+4*i,regs[i]);p16(d+66+4*i,regs[i]==0x56?0xdead:0);}
+  for(unsigned i=0;i<7;i++){p16(d+64+4*i,regs[i]);p16(d+66+4*i,regs[i]==0x56?0xdead:regs[i]==6?0x1c20:0);}
   unsigned sum=0;for(unsigned i=4;i<92;i++)sum+=d[i];p32(d,sum);p32(e+40,crc8(d,92));
  }
  return 392;
@@ -41,6 +41,7 @@ static unsigned successful(const struct sweet_aw_profile *p)
 {
  struct mock m={0};struct sweet_aw2032 a;struct sweet_aw_io o=io(&m);
  assert(!sweet_aw2032_prepare(&a,&o,p));assert(a.prepared && !a.active && (m.reg[4]&3)==3 && (m.reg[5]&0x10));
+ assert((m.reg[6]&0xff)==8 && (m.reg[6]&0x1c00)==0x1c00); /* same 32FS as 48k/16-bit stereo AFE; RX/channel preserved */
  assert(m.reg[0x56]==8192 && m.reg[0x56]!=0xdead); /* per-chip, not copied profile calibration */
  assert(!sweet_aw2032_start(&a,0));assert(a.active && m.unmuted);assert((m.reg[5]>>6)>=0x100); /* clamped >=24dB */
  assert(!sweet_aw2032_poll(&a));unsigned calls=m.calls;sweet_aw2032_stop(&a);assert(m.asserted && !a.prepared && !a.active);return calls;

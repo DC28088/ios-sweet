@@ -93,7 +93,7 @@ int sweet_aw2032_prepare(struct sweet_aw2032 *a,const struct sweet_aw_io *io,con
   if(r==3)v=0xefbf; /* stock default mask; owner polls SYSST instead of enabling IRQs */
   if(r==4)v|=3; /* keep both power stages off during profile loading */
   if(r==5){a->profile_volume=(uint16_t)vol_decode(v);v=(v&0x3f)|0x10|vol_encode(720);}
-  if(r==6)v=(v&~0xcfu)|8u; /* stock update_rate: 48kHz,16-bit; keep channel selection */
+  if(r==6)v=(v&~0xffu)|8u; /* 48kHz,16-bit,32 BCLK/frame; keep RX/channel selection */
   if(r==7)v&=~1u; /* feedback off until startup */
   if(r==0x66)v|=0x4000; /* stock CCO mux bypass for 48kHz */
   if(io->write(io->ctx,(uint8_t)r,v))goto fail;
