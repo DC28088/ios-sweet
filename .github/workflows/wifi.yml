@@ -34,6 +34,10 @@ jobs:
             -o /tmp/test-sweet-pcm userspace/adsp/test_sweet_pcm.c userspace/adsp/sweet_pcm.c userspace/adsp/sweet_apr.c
           /tmp/test-sweet-pcm
           python3 tools/check-sweet-amp-model.py
+          python3 tools/check-sweet-glink-peek.py donor/phone/wifi/glink.c
+          cc -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -o /tmp/test-sweet-levels userspace/adsp/test_sweet_pcm_levels.c
+          /tmp/test-sweet-levels
           cc -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer \
             -o /tmp/test-sweet-amp userspace/adsp/test_sweet_aw2032.c userspace/adsp/sweet_aw2032.c
           /tmp/test-sweet-amp
@@ -53,17 +57,21 @@ jobs:
           xcrun --sdk iphoneos clang -target arm64-apple-ios16.0 -O2 -fobjc-arc -framework Foundation \
             -framework SystemConfiguration -o "$GITHUB_WORKSPACE/$out/netsvc" netsvc.m
           cd "$GITHUB_WORKSPACE"
+          xcrun --sdk iphoneos clang -target arm64-apple-ios16.0 -O2 -Wall -Wextra -Werror \
+            -o "$out/sweet-pcm-probe" userspace/adsp/sweet_pcm_probe.c
+          codesign --force --sign - --pagesize 4096 "$out/sweet-pcm-probe"
+          codesign --verify --strict "$out/sweet-pcm-probe"
           codesign --force --sign - --pagesize 4096 "$out/wland"
           codesign --force --sign - --pagesize 4096 --entitlements donor/phone/tools/netsvc-ents.plist "$out/netsvc"
           codesign --verify --strict "$out/wland"
           codesign --verify --strict "$out/netsvc"
-          (cd "$out" && shasum -a 256 wland netsvc > SHA256SUMS)
+          (cd "$out" && shasum -a 256 wland netsvc sweet-pcm-probe > SHA256SUMS)
           python3 - "$out" <<'PY'
           import hashlib, json, pathlib, sys
           out = pathlib.Path(sys.argv[1])
           patches = {str(p): hashlib.sha256(p.read_bytes()).hexdigest()
                      for p in sorted(pathlib.Path('userspace/wifi/patches').glob('*.patch'))}
-          files = {n: hashlib.sha256((out / n).read_bytes()).hexdigest() for n in ('wland', 'netsvc')}
+          files = {n: hashlib.sha256((out / n).read_bytes()).hexdigest() for n in ('wland', 'netsvc', 'sweet-pcm-probe')}
           (out / 'wifi-build.json').write_text(json.dumps(
               {'source_commit': '${{ github.sha }}', 'donor': 'Yofuness/ios-flame sunfish', 'donor_commit': '${{ env.DONOR_COMMIT }}',
                'patches': patches, 'files': files}, indent=2) + '\n')

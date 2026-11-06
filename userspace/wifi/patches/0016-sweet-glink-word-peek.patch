@@ -1,0 +1,29 @@
+--- a/phone/wifi/glink.c
++++ b/phone/wifi/glink.c
+@@ -139,10 +139,23 @@
+ 	if (t >= rx_len)
+ 		t -= rx_len;
+ 	uint8_t *b = buf;
+-	for (size_t i = 0; i < len; i++) {
++	/* The FIFO is device memory: retain aligned 32-bit reads, but reuse each
++	 * word instead of issuing four /dev/pmem syscalls for its four bytes.
++	 * Bound every copy by the word and ring ends, including unaligned peeks. */
++	while (len) {
++		uint32_t shift = t & 3u;
+ 		uint32_t w = rd32(rx_fifo + (t & ~3u));
+-		b[i] = (uint8_t)(w >> (8 * (t & 3)));
+-		if (++t >= rx_len)
++		size_t take = 4u - shift;
++		if (take > len)
++			take = len;
++		if (take > rx_len - t)
++			take = rx_len - t;
++		for (size_t i = 0; i < take; ++i)
++			b[i] = (uint8_t)(w >> (8u * (shift + i)));
++		b += take;
++		len -= take;
++		t += (uint32_t)take;
++		if (t == rx_len)
+ 			t = 0;
+ 	}
+ }
