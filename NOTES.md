@@ -1,3 +1,8 @@
+## 2026-11-06: 0212 native Metal build running; original bundle backed up
+- Reviewed userspace fix/checker/workflow committed 89b4f2126e983d95b56f0f6b46600ff76d126a3a on codex/media-0212, pushed to DC28088/ios-sweet. Native Metal CI run 42205828792 in progress; its new portable planar-layout check passed and full AIR/freedreno bundle build started. Kernel build not required for this userspace change.
+- Existing phone selects /System/Library/Extensions/SweetMetal2.bundle (legacy alias), about 8.5 MiB. Saved a readable 6-file host backup tar with per-file SHA256 inventory under private work/audio-runtime/SweetMetal2-before-0212-private.*. No installed bundle replaced yet; root free about 88 MiB, enough for a similarly sized staged bundle but recheck before install.
+- On artifact success: download legacy bundle + build.json, verify every hash and source commit, stage without overwriting old files, retain original bundle as rollback, then restart graphics processes and perform Safari test. Current 0211/BT playback unchanged while CI runs.
+
 ## 2026-11-06: 0211 restores Bluetooth media audio; planar Metal import blocks video picture; 0212 prepared
 - USER confirms headphones are Bluetooth. On 0211 Safari YouTube now plays audible audio through Bluetooth, but video picture does not play; built-in speaker still silent. Do not claim 3.5 mm or mic success.
 - Fresh reproduction: no mediaserverd/backboardd/SpringBoard crash records; decoded two-plane 640x360 420v surfaces reach WebKit. backboardd logs exact refusal: planar IOSurface textures are not implemented. 0211 stride correction is retained as confirmed partial progress.
