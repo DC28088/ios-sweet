@@ -11,13 +11,15 @@
 #define SWEET_PCM_LIMIT 100u
 struct sweet_pcm {
     unsigned step, waiting, mapped, copp_open, stream_open, failed, done;
-    unsigned sent, completed, inflight;
+    unsigned sent, completed, inflight, limit;
     uint32_t token, pending_op, handle, copp, status;
     uint64_t dsp, deadline;
     unsigned busy,adm_default;
     uint32_t write_token[SWEET_PCM_SLOTS];
 };
 void sweet_pcm_init(struct sweet_pcm *s,uint64_t dsp);
+/* Before first map only; bound write-token uniqueness and playback duration. */
+int sweet_pcm_set_limit(struct sweet_pcm *s,unsigned periods);
 /* next command, after start or a matching response; 0 if waiting/done. */
 size_t sweet_pcm_next(struct sweet_pcm *s,uint8_t *out,size_t cap,uint64_t now);
 /* 1 accepted, 0 unrelated, -1 malformed/matching failure (teardown scheduled). */

@@ -28,8 +28,14 @@ static void p32(uint8_t *p,uint32_t x){p16(p,x);p16(p+2,x>>16);}
 static uint32_t g32(const uint8_t *p){return (uint32_t)p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;}
 void sweet_pcm_init(struct sweet_pcm *s,uint64_t dsp)
 {
-    memset(s,0,sizeof(*s));s->dsp=dsp;s->token=0x140000;
+    memset(s,0,sizeof(*s));s->dsp=dsp;s->token=0x140000;s->limit=SWEET_PCM_LIMIT;
     if(!dsp || (dsp&4095u) || dsp>UINT64_MAX-SWEET_PCM_MAP_BYTES){s->failed=s->done=1;s->status=1;}
+}
+int sweet_pcm_set_limit(struct sweet_pcm *s,unsigned periods)
+{
+    if(!s || s->step!=P_MAP || s->waiting || s->mapped || s->failed ||
+       !periods || periods>10000)return -1;
+    s->limit=periods;return 0;
 }
 void sweet_pcm_abort(struct sweet_pcm *s,uint32_t status)
 {
@@ -73,7 +79,7 @@ size_t sweet_pcm_next(struct sweet_pcm *s,uint8_t *out,size_t cap,uint64_t now)
         return pack(s,out,cap,now,ASM,STREAM,FORMAT,p,24);
     case P_RUN:return pack(s,out,cap,now,ASM,STREAM,RUN,p,12);
     case P_PLAY:{
-        if(s->sent==SWEET_PCM_LIMIT){if(s->inflight)return 0;s->step=P_PAUSE;continue;}
+        if(s->sent==s->limit){if(s->inflight)return 0;s->step=P_PAUSE;continue;}
         unsigned slot=0;while(slot<SWEET_PCM_SLOTS && (s->busy&(1u<<slot)))++slot;
         if(slot==SWEET_PCM_SLOTS)return 0;
         uint64_t a=s->dsp+(uint64_t)slot*SWEET_PCM_STRIDE;

@@ -63,5 +63,19 @@ int main(void)
   }
   if(!invalid)assert(s.copp_open && s.copp==0 && !s.failed && !s.adm_default);
  }
+ sweet_pcm_init(&s,0x190000000ull);assert(s.limit==100);
+ assert(sweet_pcm_set_limit(&s,0)==-1 && sweet_pcm_set_limit(&s,10001)==-1);
+ assert(!sweet_pcm_set_limit(&s,3));setup(&s,0);assert(sweet_pcm_set_limit(&s,4)==-1);
+ for(unsigned i=0;i<3;i++){
+  n=sweet_pcm_next(&s,b,128,200);assert(n && !sweet_apr_parse(b,n,&m) && m.opcode==0x10dab);
+  memcpy(p,m.payload,12);p32(p+12,0);n=reply(r,&m,0x10d99,p,16);assert(sweet_pcm_receive(&s,r,n)==1);
+ }
+ n=sweet_pcm_next(&s,b,128,200);assert(n && !sweet_apr_parse(b,n,&m) && m.opcode==0x10bd3 && s.sent==3);
+ sweet_pcm_init(&s,0x190000000ull);assert(!sweet_pcm_set_limit(&s,10000));setup(&s,0);
+ for(unsigned i=0;i<10000;i++){
+  n=sweet_pcm_next(&s,b,128,200);assert(n && !sweet_apr_parse(b,n,&m));
+  memcpy(p,m.payload,12);p32(p+12,0);n=reply(r,&m,0x10d99,p,16);assert(sweet_pcm_receive(&s,r,n)==1);
+ }
+ assert(s.completed==10000 && !s.failed);
  puts("PASS: PCM ABI vectors, 100 periods, slot ownership, stale replies, ordered teardown, timeout retention and bad packets");
 }
