@@ -69,8 +69,6 @@ Source and engineering history: [development branch](https://github.com/DC28088/
 
 - Consistently smooth animations and fast app opening; sustained 60/120 fps is not achieved.
 - General application speaker audio: diagnostic speaker output works, but the continuous application-audio path is still in progress. Wired headphone audio and microphone support remain unconfirmed.
-- Wi-Fi/Bluetooth coexistence and daemon stability.
-- Cellular mobile data; incoming and outgoing calls already work.
 - iServices, including Apple ID login and the App Store, remain work in progress.
 - Cameras and sensors remain work in progress; GPS and SEP / Face ID are also unfinished.
 - Sleep and power management remain work in progress; boot time also needs improvement.
