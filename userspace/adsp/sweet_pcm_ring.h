@@ -9,7 +9,7 @@
 #include <stddef.h>
 #include <string.h>
 #endif
-#define SWEET_PCM_RING_FRAMES 8192u
+#define SWEET_PCM_RING_FRAMES 65536u
 #define SWEET_PCM_FRAME_BYTES 4u
 /* Caller serializes access. Drop oldest complete frames on overrun; neither
  * producer nor consumer waits. Only raw stereo signed16/48kHz frames. */
