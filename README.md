@@ -4,22 +4,26 @@
 
 This project ports Apple's open-source XNU kernel (xnu-8796, the iOS 16 generation) to the Xiaomi Redmi Note 10 Pro (`sweet`, Qualcomm SM7150 / Snapdragon 732G). On top of it runs the **unmodified iOS 16.7.16 (20H392) userland of the iPhone X**: launchd, the system daemons, backboardd, SpringBoard and the stock apps.
 
-As of **2026-11-02**, the phone boots to the **iOS home screen with Metal GPU acceleration, working touch and hardware buttons, Wi-Fi, Bluetooth, live USB debugging, and battery/charging state**. The graphics stack now includes a native Metal frontend for the Adreno 618. Animation performance is still being improved; GPU acceleration does not yet deliver consistently smooth 60 or 120 fps.
+As of **2026-11-06**, the phone boots to the **iOS home screen with Metal GPU acceleration, working touch and hardware buttons, Wi-Fi, Bluetooth audio, Safari video playback, smooth haptics, and incoming/outgoing cellular calls**. Animations are smoother than earlier builds, and no visual bugs remain in current device testing, but a stable 60 fps is not yet achieved. Speaker audio partially works; general application speaker audio is still in progress.
 
 > Experimental bring-up, not a daily-driver phone OS. Apple's security model is largely disabled. The iOS root occupies `userdata` and replaces Android's user data. Keep partition backups and do not store personal data on this installation.
 
 ## What works
 
-These are results from the development phone, not a compatibility guarantee for every build. The implementation is being developed on [`codex/native-adreno-metal`](https://github.com/DC28088/ios-sweet/tree/codex/native-adreno-metal); the default branch does not yet contain all of that work.
+These are results from the development phone, not a compatibility guarantee for every build. Implementation work spans development branches, including [`codex/native-adreno-metal`](https://github.com/DC28088/ios-sweet/tree/codex/native-adreno-metal) and [`codex/speaker-stream-0218`](https://github.com/DC28088/ios-sweet/tree/codex/speaker-stream-0218); the default branch does not yet contain all of that work.
 
 | Area | Current result |
 | --- | --- |
 | Boot and iOS | Stock Xiaomi bootloader → custom shim → XNU → iPhone X iOS 16.7.16 userland; lock screen, SpringBoard, Settings and stock apps |
 | Touch | Goodix GT9896 touchscreen over GENI I²C, with RPMh power and HID digitizer events; gestures work |
 | Hardware buttons | Power and volume buttons through PMIC/SPMI and HID consumer keys; lock/wake works |
-| GPU / Metal | Adreno 618 executes real GPU rendering for the iOS UI. Native Metal objects, AIR → NIR → freedreno/ir3 shader compilation, command submission and IOSurface integration are operational |
+| GPU / Metal | Adreno 618 renders the iOS UI through native Metal. Animations are smoother than earlier builds, with no remaining visual bugs reported in current testing; stable 60 fps is still in progress |
 | Wi-Fi | WCN3990 scans, joins WPA2 networks, obtains a DHCP address and loads web pages |
-| Bluetooth | WCN3990 UART transport and firmware initialization; pairing with a laptop and headphones confirmed. Bluetooth audio remains unfinished |
+| Bluetooth | WCN3990 transport and pairing work; audio playback through Bluetooth headphones is confirmed |
+| Safari video | Video playback works smoothly, with audio through Bluetooth headphones |
+| Speaker audio | Partially working: built-in speakers produce diagnostic tones; general application speaker audio is still in progress |
+| Haptics | Normal iOS haptics work smoothly |
+| Cellular | Incoming and outgoing calls work; mobile data remains unfinished |
 | Live USB debugging | Kernel console streamed over USB CDC-ECM networking; SSH and a kernel file server support live diagnosis and userspace updates |
 | Battery and charging | PM6150 fuel-gauge voltage/current, charge counting and battery percentage; charger plug/unplug state is reported |
 | Storage | Custom UFS host driver; writable, journaled HFS+ iOS root in `userdata` |
@@ -45,13 +49,13 @@ The kernel work brings up GPU power/clocks, GMU firmware, CP/SQE command process
 
 Recent rendering corrections widen half-precision vertex outputs for A6xx exports and fix sampler-view reference lifetimes. Performance work reuses render surfaces and bindings, uses kernel-owned GPU buffers, scopes imported-buffer cache ownership, and caches aligned constant uploads. Shader-proven UBO bounds remove unnecessary constant-buffer copying while preserving full ranges for unknown or dynamic accesses.
 
-GPU rendering and blur effects work. Some icons/masks and widgets still have visual defects. Recent interaction traces show roughly 35–40 presentations per second in some windows, but app launches and other animations remain sluggish. This is not a sustained frame-rate claim. **120 Hz panel timing is not the same as a 120 fps UI.** Current work measures CPU encoding, SpringBoard execution, submission/fence latency and presentation costs separately.
+GPU rendering, blur effects and Safari video playback work. Current device testing reports no remaining visual bugs, and animations are smoother than earlier builds. A stable 60 fps is still not achieved; no new sustained frame-rate measurement is claimed. **120 Hz panel timing is not the same as a 120 fps UI.** Performance work continues on CPU encoding, SpringBoard execution, submission/fence latency and presentation costs.
 
 ### Wi-Fi and Bluetooth
 
 Wi-Fi required Sweet-specific power/clock votes, a kernel-configured WLAN SMMU stream, board firmware/data selection, the `wland` userspace path, an Apple device-tree WLAN node, and a working `configd` network service for DHCP/routing.
 
-Bluetooth adds the WCN3990 UART/H4 transport, firmware download, in-band sleep handling, the iOS Bluetooth service/transport integration and daemon bootstrap configuration. Pairing works; headphone pairing does not imply working audio. Wi-Fi/Bluetooth coexistence still needs work: Wi-Fi scans have failed while Bluetooth is enabled.
+Bluetooth adds the WCN3990 UART/H4 transport, firmware download, in-band sleep handling, the iOS Bluetooth service/transport integration and daemon bootstrap configuration. Pairing and audio playback through Bluetooth headphones are confirmed working. Wi-Fi/Bluetooth coexistence still needs work: Wi-Fi scans have failed while Bluetooth is enabled.
 
 ### Input, charging and live diagnosis
 
@@ -64,12 +68,12 @@ Source and engineering history: [development branch](https://github.com/DC28088/
 ## Still unfinished
 
 - Consistently smooth animations and fast app opening; sustained 60/120 fps is not achieved.
-- Remaining graphics defects in battery/icon masks, widgets and some Control Center elements. Wallpaper support has received fixes, but poster-extension stability is still under investigation.
-- Speaker/headphone audio, Bluetooth audio and video playback.
+- General application speaker audio: diagnostic speaker output works, but the continuous application-audio path is still in progress. Wired headphone audio and microphone support remain unconfirmed.
 - Wi-Fi/Bluetooth coexistence and daemon stability.
-- End-to-end haptics: an AW8624 driver/probe exists, but normal iOS haptic behavior is not confirmed.
-- Cellular, cameras, sensors, GPS, SEP / Face ID, Apple ID and App Store integration.
-- Reliable sleep, power management and shorter boot time.
+- Cellular mobile data; incoming and outgoing calls already work.
+- iServices, including Apple ID login and the App Store, remain work in progress.
+- Cameras and sensors remain work in progress; GPS and SEP / Face ID are also unfinished.
+- Sleep and power management remain work in progress; boot time also needs improvement.
 - Production security: permissive AMFI/sandbox behavior, a stub AppleKeyStore and no normal data protection.
 
 ## How it boots
