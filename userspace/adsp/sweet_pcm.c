@@ -44,8 +44,10 @@ void sweet_pcm_poll(struct sweet_pcm *s,uint64_t now)
 static size_t pack(struct sweet_pcm *s,uint8_t *out,size_t cap,uint64_t now,uint8_t svc,uint16_t dest,uint32_t op,uint8_t *p,uint16_t len)
 {
     uint16_t src=svc==ASM?dest:0;
-    size_t n=sweet_apr_pack(out,cap,APR_MSG_TYPE_SEQ_CMD,svc,src,dest,s->token+1,op,p,len);
-    if(n){++s->token;s->waiting=1;s->pending_op=op;s->deadline=now+3000;}
+    if(svc==ADM && (op==ADM_OPEN || op==ADM_CLOSE))src=AFE_PORT_ID_PRIMARY_MI2S_RX;
+    uint32_t token=svc==ADM && op==ADM_OPEN?(AFE_PORT_INDEX_PRIMARY_MI2S_RX<<16):s->token+1;
+    size_t n=sweet_apr_pack(out,cap,APR_MSG_TYPE_SEQ_CMD,svc,src,dest,token,op,p,len);
+    if(n){s->token=token;s->waiting=1;s->pending_op=op;s->deadline=now+3000;}
     return n;
 }
 size_t sweet_pcm_next(struct sweet_pcm *s,uint8_t *out,size_t cap,uint64_t now)
@@ -103,6 +105,7 @@ int sweet_pcm_receive(struct sweet_pcm *s,const uint8_t *packet,size_t n)
     if(!s->waiting || m.token!=s->token)return 0;
     unsigned svc=s->step==P_ADM || s->step==P_ROUTE || s->step==P_ADM_CLOSE?ADM:ASM;
     uint16_t port=svc==ASM && s->step!=P_MAP && s->step!=P_UNMAP?STREAM:0;
+    if(s->step==P_ADM || s->step==P_ADM_CLOSE)port=AFE_PORT_ID_PRIMARY_MI2S_RX;
     if(m.src_svc!=svc || m.dest_svc!=svc || m.dest_port!=port)return 0;
     uint32_t status=0,op=0;
     if(m.opcode==MAP_RSP && s->step==P_MAP){
