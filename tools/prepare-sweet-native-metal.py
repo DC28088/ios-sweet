@@ -1140,7 +1140,9 @@ static _Atomic unsigned long long native_wait_until_completed;
                 '    if(_status==RW_CB_ERROR){[self redwoodReturnSlot];[self redwoodDeliverHandlers];return;}\n    if(_status>=RW_CB_COMMITTED){[self failWith:"command buffer committed twice"];return;}')
     s=replace(s,'- (id)iosurface                    { return nil; }',
                 '- (id)iosurface                    { return (id)_nativeSurface; }')
-    s=replace(s,'\tstruct rwa_texture_shape _shape;','\tstruct rwa_texture_shape _shape;\n    CFTypeRef _nativeSurface;')
+    s=replace(s,'- (NSUInteger)iosurfacePlane       { return 0; }',
+                '- (NSUInteger)iosurfacePlane       { return _nativePlane; }')
+    s=replace(s,'\tstruct rwa_texture_shape _shape;','\tstruct rwa_texture_shape _shape;\n    CFTypeRef _nativeSurface;\n    NSUInteger _nativePlane;')
     # keep exact IOSurface object for Metal's iosurface accessor as well as winsys ownership
     # Locate the creation/wrapping code in the donor and add via object_setIvar is
     # unnecessary: private ivars are available to a category setter below.
@@ -1152,15 +1154,16 @@ static _Atomic unsigned long long native_wait_until_completed;
 }
 '''+s[end:]
     s=replace(s,'@property (readonly) struct rwa_texture *mesaTexture;',
-                '@property (readonly) struct rwa_texture *mesaTexture;\n- (void)nativeAttachSurface:(void *)surface;')
+                '@property (readonly) struct rwa_texture *mesaTexture;\n- (void)nativeAttachSurface:(void *)surface plane:(NSUInteger)plane;')
     begin=s.index('\treturn [[RedwoodMetalTexture alloc] initWithRedwoodDevice:self',s.index('- (id)newTextureWithDescriptor:(MTLTextureDescriptor *)d iosurface:'))
     end=s.index('\n}',begin)
     s=s[:begin]+'''    RedwoodMetalTexture *result=[[RedwoodMetalTexture alloc] initWithRedwoodDevice:self texture:texture shape:&shape];
-    [result nativeAttachSurface:s];return result;'''+s[end:]
+    [result nativeAttachSurface:s plane:p];return result;'''+s[end:]
     at=s.index('+ (void)load',s.index('@implementation RedwoodMetalTexture'))
-    s=s[:at]+'''- (void)nativeAttachSurface:(void *)surface {
+    s=s[:at]+'''- (void)nativeAttachSurface:(void *)surface plane:(NSUInteger)plane {
     if(_nativeSurface)CFRelease(_nativeSurface);
     _nativeSurface=surface?CFRetain(surface):NULL;
+    _nativePlane=plane;
 }
 '''+s[at:]
     begin=s.index('- (void)dealloc',s.index('@implementation RedwoodMetalTexture'))
