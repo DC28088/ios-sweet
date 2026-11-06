@@ -1,0 +1,164 @@
+--- a/bsd/dev/sweet_amp.c
++++ b/bsd/dev/sweet_amp.c
+@@ -82,7 +82,7 @@
+ 	bool started, dead, probing;
+ 	uint32_t irq_status, irq_last;
+ 	unsigned sent, got;
+-	int stage;
++	int stage, mode;
+ } as;
+ static int amp_sleep_chan;
+ 
+@@ -378,6 +378,107 @@
+ 	{"BOT", 0x35, 72},
+ };
+ 
++static const uint16_t aw_spk_l[][2] = {
++	{ 0x0003, 0xefbf },  /* reset/power sequence begins */
++	{ 0x0004, 0x4440 },
++	{ 0x0005, 0x00e9 },
++	{ 0x0006, 0x14e8 },
++	{ 0x0007, 0x0371 },
++	{ 0x0008, 0x2108 },
++	{ 0x0009, 0x0708 },
++	{ 0x000a, 0x0030 },
++	{ 0x000b, 0x01e0 },
++	{ 0x000c, 0x0064 },
++	{ 0x000d, 0xa0db },
++	{ 0x000e, 0x2716 },
++	{ 0x000f, 0x5f00 },
++	{ 0x0020, 0x0001 },
++	{ 0x0038, 0x0060 },
++	{ 0x0050, 0x0282 },
++	{ 0x0052, 0x20c6 },
++	{ 0x0053, 0xa040 },
++	{ 0x0054, 0xff19 },
++	{ 0x0055, 0x00d8 },
++	{ 0x0056, 0x20a8 },
++	{ 0x0059, 0x000c },
++	{ 0x005a, 0x2100 },
++	{ 0x0060, 0x0c0b },
++	{ 0x0061, 0x6379 },
++	{ 0x0062, 0x04c1 },
++	{ 0x0063, 0x260f },
++	{ 0x0064, 0x15c3 },
++	{ 0x0065, 0x3d82 },
++	{ 0x0066, 0x7f07 },
++	{ 0x0067, 0x0002 },
++	{ 0x0068, 0x3002 },
++	{ 0x0069, 0x04a0 },
++	{ 0x006a, 0xa068 },
++	{ 0x006b, 0x8884 },
++	{ 0x0070, 0xff00 },
++	{ 0x0071, 0x00c0 },
++};
++
++static const uint16_t aw_spk_r[][2] = {
++	{ 0x0003, 0xefbf },  /* reset/power sequence begins */
++	{ 0x0004, 0x4440 },
++	{ 0x0005, 0x00e9 },
++	{ 0x0006, 0x18e8 },
++	{ 0x0007, 0x0373 },
++	{ 0x0008, 0x2108 },
++	{ 0x0009, 0x0708 },
++	{ 0x000a, 0x0030 },
++	{ 0x000b, 0x01e0 },
++	{ 0x000c, 0x0064 },
++	{ 0x000d, 0xa0db },
++	{ 0x000e, 0x2716 },
++	{ 0x000f, 0x5f00 },
++	{ 0x0020, 0x0001 },
++	{ 0x0038, 0x0060 },
++	{ 0x0050, 0x0282 },
++	{ 0x0052, 0x20c6 },
++	{ 0x0053, 0xa040 },
++	{ 0x0054, 0xff19 },
++	{ 0x0055, 0x00d8 },
++	{ 0x0056, 0x2042 },
++	{ 0x0059, 0x000c },
++	{ 0x005a, 0x2100 },
++	{ 0x0060, 0x0c0b },
++	{ 0x0061, 0x6379 },
++	{ 0x0062, 0x04c1 },
++	{ 0x0063, 0x260f },
++	{ 0x0064, 0x15c3 },
++	{ 0x0065, 0x3d82 },
++	{ 0x0066, 0x7f07 },
++	{ 0x0067, 0x0002 },
++	{ 0x0068, 0x3002 },
++	{ 0x0069, 0x04a0 },
++	{ 0x006a, 0xa068 },
++	{ 0x006b, 0x8884 },
++	{ 0x0070, 0xff00 },
++	{ 0x0071, 0x00c0 },
++};
++
++static int
++amp_write(uint8_t addr, uint16_t reg, uint16_t val)
++{
++	uint8_t tx[3] = {(uint8_t)reg, (uint8_t)(val >> 8), (uint8_t)val};
++	return amp_msg(addr, tx, sizeof(tx), NULL, 0, false);
++}
++
++static bool
++amp_write_seq(uint8_t addr, const uint16_t (*seq)[2], unsigned n)
++{
++	for (unsigned i = 0; i < n; ++i) {
++		int err = amp_write(addr, seq[i][0], seq[i][1]);
++		if (err) {
++			printf("SWEET AMP: write %s reg %#x val %#x failed %d\n",
++			    addr == 0x34 ? "TOP" : "BOT", seq[i][0], seq[i][1], err);
++			return false;
++		}
++	}
++	return true;
++}
++
+ static void
+ amp_thread(void *arg __unused, wait_result_t wr __unused)
+ {
+@@ -419,6 +520,23 @@
+ 		int err = amp_read(amp_chips[c].addr, 0x00, false, v, 2);
+ 		printf("SWEET AMP: %s @%#x: chip ID read -> %d, id %#06x\n", amp_chips[c].name, amp_chips[c].addr,
+ 		    err, (v[0] << 8) | v[1]);
++		if (!err && as.mode >= 2) {
++			bool ok = amp_write_seq(amp_chips[c].addr,
++			    c == 0 ? aw_spk_l : aw_spk_r,
++			    c == 0 ? (unsigned)(sizeof(aw_spk_l) / sizeof(aw_spk_l[0]))
++			           : (unsigned)(sizeof(aw_spk_r) / sizeof(aw_spk_r[0])));
++			uint8_t st[2] = {0, 0}, pw[2] = {0, 0};
++			int e1 = amp_read(amp_chips[c].addr, 0x01, false, st, 2);
++			int e2 = amp_read(amp_chips[c].addr, 0x04, false, pw, 2);
++			printf("SWEET AMP: %s init %s, sysst=%d/%04x sysctrl=%d/%04x\n",
++			    amp_chips[c].name, ok ? "written" : "FAILED", e1, (st[0] << 8) | st[1], e2, (pw[0] << 8) | pw[1]);
++			if (ok) {
++				/* Leave both the reset deasserted and the I2C pins muxed; the
++				 * working amplifier is the point of sweetamp=2. */
++				as.dead = false;
++				continue;
++			}
++		}
+ 		if (!err) {
+ 			char line[96];
+ 			unsigned n = 0;
+@@ -438,9 +556,11 @@
+ 		as.gpio = keep;
+ 	}
+ pins:
++	if (as.mode < 2) {
+ 	amp_wr(as.gpio, AMP_GPIO_CFG(53), cfg53);
+ 	amp_wr(as.gpio, AMP_GPIO_CFG(54), cfg54);
+-	printf("SWEET AMP: probe done; reset and I2C pins restored\n");
++	}
++	printf("SWEET AMP: %s done\n", as.mode >= 2 ? "init" : "probe; reset and I2C pins restored");
+ out:
+ 	(void)thread_terminate(current_thread());
+ }
+@@ -454,6 +574,7 @@
+ 		return;
+ 	}
+ 	as.started = true;
++	as.mode = mode;
+ 	thread_t th;
+ 	if (kernel_thread_start(amp_thread, NULL, &th) == KERN_SUCCESS) {
+ 		thread_deallocate(th);

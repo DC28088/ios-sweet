@@ -1,3 +1,9 @@
+## 2026-11-06 16:10 IST: speaker amp init candidate (eight-image batch)
+- Branch `codex/audio-speaker-0212` is based on the 0211 media baseline (3df0e99). New patch 0212 extends the tested 0197 read-only AW882xx probe.
+- `sweetamp=1` remains the read-only ID probe. `sweetamp=2` resets both amps, reads the ID, writes the stock 37-register speaker sequences (`aw882xx_spk_reg_l.bin` / `_r.bin`), reads back SYSST/SYSCTRL, and leaves both amps out of reset with the I2C pins muxed. This is the first write to the amps; it does not create an I2S clock or PCM by itself.
+- The 0211 baseline has no `/dev/sweet-audio`; the iOS HAL still drops frames. A DTMF/AFE test from wland is the intended audible checkpoint, not claimed here.
+- Risk: unmuting a smart PA with no I2S clock can produce a click/pop. Boot with `sweetamp=1` for the old read-only behavior; `sweetamp=2` is the candidate.
+
 ## 2026-11-06: native planar IOSurface row-stride bug confirmed; 0211 fix prepared
 - USER confirms Wi-Fi works and haptics are fine on recovered 0209; YouTube still fails and no sound. Fresh private capture: repeated mediaserverd SIGBUS at same H264SW decoder instruction, destination in RX shared cache. Audio device nodes remain absent. No claim that stride fix alone resolves the decoder fault.
 - Exact target iOS16 IOSurfaceClientGetBytesPerRowOfPlane reads client+0xe0+plane*0x80; plane records begin client+0xd0, so row is record+0x10. Kernel serializer currently writes it at +0x08. Width/height/offset/size/element fields verified separately against native getters.
