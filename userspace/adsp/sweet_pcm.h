@@ -6,6 +6,7 @@
  * Caller owns DMA until done, !failed and !mapped; an uncertain timeout retains it. */
 #define SWEET_PCM_PERIOD 1920u /* 480 stereo s16 frames = 10 ms at 48 kHz */
 #define SWEET_PCM_STRIDE 4096u
+#define SWEET_PCM_MAP_BYTES 32768u /* known-working reference PCM map window */
 #define SWEET_PCM_SLOTS 4u
 #define SWEET_PCM_LIMIT 100u
 struct sweet_pcm {

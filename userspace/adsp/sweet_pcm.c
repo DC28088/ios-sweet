@@ -29,7 +29,7 @@ static uint32_t g32(const uint8_t *p){return (uint32_t)p[0]|(uint32_t)p[1]<<8|(u
 void sweet_pcm_init(struct sweet_pcm *s,uint64_t dsp)
 {
     memset(s,0,sizeof(*s));s->dsp=dsp;s->token=0x140000;
-    if(!dsp || (dsp&4095u) || dsp>UINT64_MAX-SWEET_PCM_SLOTS*SWEET_PCM_STRIDE){s->failed=s->done=1;s->status=1;}
+    if(!dsp || (dsp&4095u) || dsp>UINT64_MAX-SWEET_PCM_MAP_BYTES){s->failed=s->done=1;s->status=1;}
 }
 void sweet_pcm_abort(struct sweet_pcm *s,uint32_t status)
 {
@@ -54,7 +54,7 @@ size_t sweet_pcm_next(struct sweet_pcm *s,uint8_t *out,size_t cap,uint64_t now)
     if(s->done || s->waiting)return 0;
     for(;;)switch(s->step){
     case P_MAP:
-        p16(p,3);p16(p+2,1);p32(p+8,s->dsp);p32(p+12,s->dsp>>32);p32(p+16,SWEET_PCM_SLOTS*SWEET_PCM_STRIDE);
+        p16(p,3);p16(p+2,1);p32(p+8,s->dsp);p32(p+12,s->dsp>>32);p32(p+16,SWEET_PCM_MAP_BYTES);
         return pack(s,out,cap,now,ASM,0,MAP,p,20);
     case P_ADM:
         p16(p+2,1);p16(p+4,AFE_PORT_ID_PRIMARY_MI2S_RX);p16(p+6,0xffff);p32(p+8,0x10312);

@@ -17,7 +17,7 @@ static void setup(struct sweet_pcm *s)
  for(unsigned i=0;i<6;i++){
   size_t n=sweet_pcm_next(s,b,sizeof(b),100);assert(n && !sweet_apr_parse(b,n,&m));assert(m.opcode==expected[i]);
   assert(!sweet_pcm_next(s,r,sizeof(r),100));memset(p,0,sizeof(p));uint32_t op=APR_BASIC_RSP_RESULT;
-  if(i==0){assert(m.payload_len==20 && g32(m.payload+8)==0x90000000 && g32(m.payload+12)==1 && g32(m.payload+16)==16384);p32(p,77);op=0x10d93;}
+  if(i==0){assert(m.payload_len==20 && g32(m.payload+8)==0x90000000 && g32(m.payload+12)==1 && g32(m.payload+16)==32768);p32(p,77);op=0x10d93;}
   else if(i==1){assert(m.payload_len==28 && m.dest_port==0x1000 && g32(m.payload+16)==48000);p32(p+4,3);op=0x10329;}
   else {p32(p,m.opcode);if(i==2)assert(g32(m.payload+12)==0x10da5);if(i==4)assert(g32(m.payload)==20 && g32(m.payload+8)==48000);}
   n=reply(r,&m,op,p,i==0?4:8);assert(sweet_pcm_receive(s,r,n)==1);
