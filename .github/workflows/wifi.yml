@@ -28,6 +28,12 @@ jobs:
           git -C donor checkout -q FETCH_HEAD
           test "$(git -C donor rev-parse HEAD)" = "$DONOR_COMMIT"
           for p in userspace/wifi/patches/*.patch; do git -C donor apply --verbose "$PWD/$p"; done
+      - name: Check bounded PCM state machine
+        run: |
+          cc -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -o /tmp/test-sweet-pcm userspace/adsp/test_sweet_pcm.c userspace/adsp/sweet_pcm.c userspace/adsp/sweet_apr.c
+          /tmp/test-sweet-pcm
+          cp userspace/adsp/sweet_pcm.c userspace/adsp/sweet_pcm.h donor/phone/wifi/
       - name: Build wland and netsvc for iOS 16 arm64
         run: |
           out=userspace/out/sweet-wifi-ios16
@@ -35,7 +41,7 @@ jobs:
           cd donor/phone/wifi
           xcrun --sdk iphoneos clang -target arm64-apple-ios16.0 -O2 -Wall -Wextra -Wno-unused-parameter \
             -o "$GITHUB_WORKSPACE/$out/wland" wland.c smem.c pmem.c glink.c link.c qmi.c rmtfs.c pdmapper.c \
-            tftp.c scm.c wlfw.c radio.c ipnet.c bridge.c cell.c adspedge.c adsp_smmu.c fastrpc.c sweet_apr.c
+            tftp.c scm.c wlfw.c radio.c ipnet.c bridge.c cell.c adspedge.c adsp_smmu.c fastrpc.c sweet_apr.c sweet_pcm.c
           cd ../tools
           xcrun --sdk iphoneos clang -target arm64-apple-ios16.0 -O2 -fobjc-arc -framework Foundation \
             -framework SystemConfiguration -o "$GITHUB_WORKSPACE/$out/netsvc" netsvc.m
@@ -52,7 +58,7 @@ jobs:
                      for p in sorted(pathlib.Path('userspace/wifi/patches').glob('*.patch'))}
           files = {n: hashlib.sha256((out / n).read_bytes()).hexdigest() for n in ('wland', 'netsvc')}
           (out / 'wifi-build.json').write_text(json.dumps(
-              {'donor': 'Yofuness/ios-flame sunfish', 'donor_commit': '${{ env.DONOR_COMMIT }}',
+              {'source_commit': '${{ github.sha }}', 'donor': 'Yofuness/ios-flame sunfish', 'donor_commit': '${{ env.DONOR_COMMIT }}',
                'patches': patches, 'files': files}, indent=2) + '\n')
           PY
       - uses: actions/upload-artifact@v4

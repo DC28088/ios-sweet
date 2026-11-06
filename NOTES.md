@@ -1,3 +1,10 @@
+## 2026-11-06: Speaker0014 bounded silent PCM test prepared
+- USER confirms smooth Safari video on kernel0211 + graphics0213; speaker remains silent. App-preview fix unconfirmed. Working graphics retained; separate branch codex/speaker-0014 based on audio c9e87ee, main checkout unchanged.
+- Added optional WLAND_PCM_TEST finite ASM/ADM sequence: map 4 coherent pages (audio-ion SID0x1b21 alias1), open PRI_MI2S COPP, open stereo48k/16bit stream, route, format, run, 100 silent 10ms periods, pause/close/COPP close/unmap. No amp/GPIO/profile writes. Requires successful existing AFE startup. Runtime default unchanged when flag absent.
+- Strict service/domain/token correlation, per-slot unique completion tokens, handle/address validation, 3s deadlines. Ambiguous timeout/error retains DMA; successful acknowledged teardown frees it. Native pmem close leaves allocations intact. Low32-bit physical allocation checked before alias; every page zeroed via coherent pm_wr before any map command.
+- Host C99 -Wall -Wextra -Werror test passes: reference ABI fields, complete100-period flow, slot ownership/duplicate completions, ordered teardown, timeout retention, invalid/short/wrong-domain/token responses. CI adds ASan/UBSan. Patch applies to full pinned donor with0013. Full native compile and real DSP result pending.
+- Protocol references: https://github.com/torvalds/linux/blob/master/sound/soc/qcom/qdsp6/q6asm.c and q6adm.c; saved active sunfish PCM sequence used for comparison, not its different amplifier or MI2S port. New implementation is a silent transport probe, not speaker playback or HAL integration.
+
 ## 2026-11-05 22:45 IST: wland 0013 — ADSP audio PD answers; PRI_MI2S clock, config and port start all status 0
 - wland 0011 (CI 42066647562, wland 25dde74f...): graceful ADSP stop request not acked by the live ADSP;
   `WLAND_ADSP_FRESH=1` + PAS auth/reset reloads it. The preserved stale GLINK tails stalled the handshake

@@ -1,0 +1,92 @@
+--- a/phone/wifi/wland.c
++++ b/phone/wifi/wland.c
+@@ -43,6 +43,7 @@
+ #include "adsp_smmu.h"
+ #include "fastrpc.h"
+ #include "sweet_apr.h"
++#include "sweet_pcm.h"
+ 
+ /* cmd-db aux levels (as in the GPU's arc votes) */
+ /* Every cmd-db entry: name, RPMh slave (3 ARC, 4 VRM, 5 BCM), address. */
+@@ -907,10 +908,54 @@
+ 	}
+ }
+ 
++/* 0014: optional bounded silent ASM/ADM playback test; never touches amplifiers.
++ * DMA is freed only after acknowledged close + unmap. Ambiguous failure retains
++ * the allocation rather than letting ADSP DMA into a reused page. */
++static struct sweet_pcm pcm_test;
++static int pcm_enabled, pcm_started, pcm_reported;
++static uint64_t pcm_pa;
++static void adsp_pcm_poll(void)
++{
++    if(!pcm_enabled || !adspedge_apr_up() || afe_step!=5)return;
++    if(!pcm_started) {
++        pcm_started=1;
++        pcm_pa=pm_alloc(SWEET_PCM_SLOTS*SWEET_PCM_STRIDE,4096);
++        if(!pcm_pa || pcm_pa>0x100000000ull-SWEET_PCM_SLOTS*SWEET_PCM_STRIDE) {
++            printf("pcm: no supported low-32-bit DMA allocation; not started\n");
++            if(pcm_pa)pm_free(pcm_pa);
++            pcm_enabled=0;return;
++        }
++        uint8_t zero[SWEET_PCM_STRIDE]={0};
++        for(unsigned i=0;i<SWEET_PCM_SLOTS;i++)if(pm_wr(pcm_pa+i*SWEET_PCM_STRIDE,zero,sizeof zero)) {
++            printf("pcm: zeroing DMA failed; not started\n");pm_free(pcm_pa);pcm_enabled=0;return;
++        }
++        /* audio-ion stream ID 0x1b21, bypass mapping established by adsp_smmu_setup. */
++        sweet_pcm_init(&pcm_test,pcm_pa|(1ull<<32));
++        printf("pcm: silent test starts: 100 periods, 48 kHz stereo s16, PRI_MI2S; amps untouched\n");
++    }
++    sweet_pcm_poll(&pcm_test,link_ms());
++    for(unsigned i=0;i<SWEET_PCM_SLOTS;i++) {
++        uint8_t b[128];size_t n=sweet_pcm_next(&pcm_test,b,sizeof b,link_ms());
++        if(!n)break;
++        if(adspedge_apr_send(b,n)){sweet_pcm_abort(&pcm_test,0xfffffffdu);break;}
++    }
++    if(pcm_test.done && !pcm_reported) {
++        pcm_reported=1;
++        printf("pcm: done failed=%u status=%#x sent=%u completed=%u mapped=%u stream=%u copp=%u\n",
++            pcm_test.failed,pcm_test.status,pcm_test.sent,pcm_test.completed,
++            pcm_test.mapped,pcm_test.stream_open,pcm_test.copp_open);
++        if(!pcm_test.failed && !pcm_test.mapped && !pcm_test.stream_open && !pcm_test.copp_open) {
++            if(pm_free(pcm_pa))printf("pcm: DMA release failed\n");
++            else pcm_pa=0;
++        } else printf("pcm: uncertain DMA ownership: allocation retained until recovery\n");
++    }
++}
++
+ /* 0012: APR on apr_audio_svc: first checkpoint is AVCS_CMD_ADSP_EVENT_GET_STATE. */
+ static int apr_sent;
+ static void adsp_apr_rx(const uint8_t *p, size_t n)
+ {
++	if(pcm_enabled && pcm_started && sweet_pcm_receive(&pcm_test,p,n))return;
+ 	struct sweet_apr_msg m;
+ 	if (sweet_apr_parse(p, n, &m)) {
+ 		printf("apr: malformed packet, %zu bytes\n", n);
+@@ -936,6 +981,7 @@
+ 
+ static void adsp_apr_poll(void)
+ {
++	adsp_pcm_poll();
+ 	if (apr_sent || !adspedge_apr_up())
+ 		return;
+ 	uint8_t b[64];
+@@ -949,7 +995,8 @@
+ static int adsp_net(unsigned secs)
+ {
+ 	adsp_last = 0xffffffff;
+-	afe_on = getenv("WLAND_AFE") != NULL;
++	pcm_enabled = getenv("WLAND_PCM_TEST") != NULL;
++	afe_on = getenv("WLAND_AFE") != NULL || pcm_enabled;
+ 	if (afe_on)
+ 		printf("adsp: AFE bring-up test enabled (WLAND_AFE)\n");
+ 	glink_edge(SMEM_HOST_ADSP, 24);
+@@ -1011,7 +1058,7 @@
+ 	adspedge_status();
+ 	const uint64_t end = secs ? link_ms() + 1000ull * secs : 0;
+ 	for (uint64_t next = link_ms(); !end || link_ms() < end;) {
+-		adspedge_poll(100);
++		adspedge_poll(pcm_enabled ? 2 : 100);
+ 		adsp_rpc_poll();
+ 		adsp_apr_poll();
+ 		if (link_ms() >= next) {
