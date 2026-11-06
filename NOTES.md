@@ -1,3 +1,7 @@
+## 2026-11-06: 0209 recovery Wi-Fi interface published; USER requested SpringBoard restart
+- 0209 USB SSH + SpringBoard reached; UTC corrected. Fresh wland log confirms firmware/HTT READY, initial scan completed, and bridge hello/interface publication. User-facing connectivity and haptic feel still require confirmation. Unlike the failed 0208 boot, this boot passed first-scan publication. This supports an intermittent scan dependency, not a proven kernel regression.
+- Haptic kernel log: continuous mode prepared OK, serving configured 30 ms minimum taps. USER requested SpringBoard restart; identified process 26 was sent SIGTERM for launchd to relaunch it. No daemon, network profile, motor drive, DSP or partition settings changed.
+
 ## 2026-11-06: Wi-Fi toggle failed on 0208; haptics felt weak/long; restored 0209 temporarily
 - USER could not enable Wi-Fi. Live wland firmware log confirms WMI READY + HTT VERSION_CONF + initial scan STARTED, but no terminal scan event and no bridge hello. The bridge gates FW_HELLO/interface publication on radio_scans()>0, so an unfinished first scan can withhold the Wi-Fi interface indefinitely.
 - Targeted restart of native wifid succeeded (new PID), but USER still could not enable Wi-Fi. No saved network settings changed, no wland/ADSP reset performed. This failure is not proof the 0208 kernel patch causes the scan stall.
