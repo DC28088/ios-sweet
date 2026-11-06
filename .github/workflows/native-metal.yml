@@ -11,6 +11,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check planar IOSurface layout and import bounds
         run: python3 tools/check-sweet-planar-import.py
+      - name: Check combined NV12 conversion and memory bounds
+        run: python3 tools/check-sweet-nv12.py --sanitize
       - name: Install native compiler build tools
         run: |
           brew install bison flex ninja
