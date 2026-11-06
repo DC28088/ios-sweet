@@ -46,7 +46,7 @@
 +        printf("speaker: profile validation failed; amps untouched\n");return -1;
 +    }
 +    if(speaker_media){
-+        media_fd=open("/dev/sweet-audio",O_RDONLY|O_NONBLOCK|O_CLOEXEC);
++        media_fd=open("/dev/sweet-pcm",O_RDONLY|O_NONBLOCK|O_CLOEXEC);
 +        if(media_fd<0){printf("speaker: PCM reader unavailable (%d)\n",errno);return -1;}
 +    }
 +    speaker_fd=open(SWEET_AMP_DEVICE,O_RDWR|O_CLOEXEC);

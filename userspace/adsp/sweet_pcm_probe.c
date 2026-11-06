@@ -17,7 +17,7 @@ int main(int argc,char **argv)
  unsigned seconds=30;
  if(argc>2)return 2;
  if(argc==2){char *end;unsigned long v=strtoul(argv[1],&end,10);if(!*argv[1]||*end||v<1||v>60)return 2;seconds=(unsigned)v;}
- int fd=open("/dev/sweet-audio",O_RDONLY|O_NONBLOCK|O_CLOEXEC);
+ int fd=open("/dev/sweet-pcm",O_RDONLY|O_NONBLOCK|O_CLOEXEC);
  if(fd<0){perror("PCM reader");return 1;}
  setvbuf(stdout,NULL,_IONBF,0);
  printf("PCM level probe: %u seconds; aggregate levels only, no audio recorded\n",seconds);

@@ -2,7 +2,7 @@ diff --git a/bsd/dev/sweet_pcm_dev.c b/bsd/dev/sweet_pcm_dev.c
 new file mode 100644
 --- /dev/null
 +++ b/bsd/dev/sweet_pcm_dev.c
-@@ -0,0 +1,89 @@
+@@ -0,0 +1,97 @@
 +/* SPDX-License-Identifier: MIT */
 +/* 0215: existing SweetAudio HAL's nonblocking stereo PCM sink. The audio daemon
 + * alone reads it as root; it feeds the ADSP and supervised amp controller.
@@ -31,8 +31,11 @@ new file mode 100644
 +void sweet_pcm_dev_init(void);
 +static int pcm_dev_open(dev_t d __unused,int flags,int t __unused,struct proc *p)
 +{
++ /* Separate vnodes: XNU calls d_close only on the last reference.
++  * HAL writers must not keep a dead reader's ownership alive. */
++ if(minor(d)==0)return (flags&FREAD)?ENXIO:0;
++ if(minor(d)!=1 || (flags&FWRITE) || !(flags&FREAD))return ENXIO;
 + if(!p)return EPERM;
-+ if(!(flags&FREAD))return 0;
 + if(!kauth_cred_issuser(kauth_cred_get()))return EPERM;
 + lck_mtx_lock(&pcm_ring_lock);int e=pcm_reader?EBUSY:0;
 + if(!e){pcm_reader=proc_pid(p);memset(&pcm_ring,0,sizeof pcm_ring);}
@@ -40,10 +43,11 @@ new file mode 100644
 +}
 +static int pcm_dev_close(dev_t d __unused,int flags,int t __unused,struct proc *p __unused)
 +{
-+ if(flags&FREAD){lck_mtx_lock(&pcm_ring_lock);pcm_reader=0;memset(&pcm_ring,0,sizeof pcm_ring);lck_mtx_unlock(&pcm_ring_lock);}return 0;
++ if(minor(d)==1 && (flags&FREAD)){lck_mtx_lock(&pcm_ring_lock);pcm_reader=0;memset(&pcm_ring,0,sizeof pcm_ring);lck_mtx_unlock(&pcm_ring_lock);}return 0;
 +}
 +static int pcm_dev_write(dev_t d __unused,struct uio *uio,int f __unused)
 +{
++ if(minor(d)!=0)return ENXIO;
 + if(uio_resid(uio)&3)return EINVAL;
 + uint8_t b[1920];int e=0;
 + while(uio_resid(uio)>0){
@@ -57,6 +61,7 @@ new file mode 100644
 +}
 +static int pcm_dev_read(dev_t d __unused,struct uio *uio,int f __unused)
 +{
++ if(minor(d)!=1)return ENXIO;
 + if(!uio_resid(uio))return 0;
 + if(uio_resid(uio)<4 || (uio_resid(uio)&3))return EINVAL;
 + uint8_t b[1920];unsigned want=(unsigned)MIN(uio_resid(uio),(user_ssize_t)sizeof b)/4;
@@ -69,7 +74,7 @@ new file mode 100644
 +}
 +static int pcm_dev_ioctl(dev_t d __unused,u_long cmd,caddr_t data,int f __unused,struct proc *p __unused)
 +{
-+ if(cmd!=SWEET_AUDIO_SET_VOLUME)return ENOTTY;
++ if(minor(d)!=0 || cmd!=SWEET_AUDIO_SET_VOLUME)return ENOTTY;
 + struct sweet_audio_volume *v=(void *)data;if(v->below>720 || v->muted>1)return EINVAL;
 + lck_mtx_lock(&pcm_ring_lock);pcm_volume=*v;
 + if(v->muted)memset(&pcm_ring,0,sizeof pcm_ring);
@@ -89,7 +94,10 @@ new file mode 100644
 + if(!devfs_make_node(makedev(major,0),DEVFS_CHAR,UID_ROOT,GID_WHEEL,0622,"sweet-audio")){
 +  printf("SWEET PCM: device creation failed\n");return;
 + }
-+ printf("SWEET PCM: /dev/sweet-audio ready; stereo48k/s16, bounded nonblocking ring\n");
++ if(!devfs_make_node(makedev(major,1),DEVFS_CHAR,UID_ROOT,GID_WHEEL,0600,"sweet-pcm")){
++  printf("SWEET PCM: reader device creation failed\n");return;
++ }
++ printf("SWEET PCM: /dev/sweet-audio writer and /dev/sweet-pcm reader ready; stereo48k/s16\n");
 +}
 +#endif
 diff --git a/bsd/dev/sweet_pcm_ring.h b/bsd/dev/sweet_pcm_ring.h

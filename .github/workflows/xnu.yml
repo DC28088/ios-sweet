@@ -69,6 +69,7 @@ jobs:
       - name: Check amplifier profile and failure handling
         run: |
           python3 tools/check-sweet-amp-model.py
+          python3 tools/check-sweet-pcm-endpoints.py
           python3 tools/check-sweet-iig-compat.py
           cc -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer \
             -o /tmp/test-sweet-amp userspace/adsp/test_sweet_aw2032.c userspace/adsp/sweet_aw2032.c
