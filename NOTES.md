@@ -1,3 +1,7 @@
+## 2026-11-07: Wi-Fi recovered without reboot; speaker service remains stopped
+- USER did not reboot and confirms Wi-Fi now works. Read-only check: original wland auto recovery PID471 is running; experimental audio PID303 absent. SpringBoard PID407 and backboardd PID320 unchanged from the previous snapshot; no additional UI restart established during this interval. Root available127584KiB (~125MiB).
+- No new boot or DSP session started. Previous FASTBOOT request no longer needed for Wi-Fi recovery. Current app speaker audio remains unresolved; do not restart/remap the old ADSP session. Further audio diagnostics require a fresh boot at a convenient time, with current stability preserved meanwhile.
+
 ## 2026-11-07: USER confirms silent ringtone, broken Wi-Fi and repeated SpringBoard restart; service stopped
 - USER could not test Safari because Wi-Fi unavailable and heard no Settings ringtone. Later reported SpringBoard repeatedly restarting. Stopped experimental PID303 with SIGTERM; subsequent ps confirms it absent. Do not claim service fixes application speaker sound. No automatic startup installed.
 - Root filesystem only11324KiB free (100% used). Found124044KiB of old diagnostic captures in /var/local/spinl. USER explicitly requests creating space then restarting same image before further tests. Archiving exact seven diagnostic files privately with pre/post SHA256 verification before removing phone copies; leave firmware/user data/shader caches intact.
