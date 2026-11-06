@@ -1,3 +1,8 @@
+## 2026-11-06 16:30 IST: speaker DTMF sidecar (wland 0014)
+- Branch `codex/audio-tone-0014` is now based on the full wland 0011-0013 stack (`claude/audio-0009`), not on the kernel-only 0211 branch. It adds wland 0014: after `WLAND_AFE=1` clock/I2S/port-start succeeds, send `AFE_PORTS_CMD_DTMF_CTL` (3 s, 697/1209 Hz) on `PRIMARY_MI2S_RX` and log the status.
+- This is a userspace `wland` artifact, not a boot image. Run it with `WLAND_AFE=1` after booting the 0212 speaker kernel (`sweetamp=2`).
+- DTMF gain is 0 (uncalibrated). A DSP status 0 is the check; audibility still depends on the amp/I2S path.
+
 ## 2026-11-05 22:45 IST: wland 0013 — ADSP audio PD answers; PRI_MI2S clock, config and port start all status 0
 - wland 0011 (CI 42066647562, wland 25dde74f...): graceful ADSP stop request not acked by the live ADSP;
   `WLAND_ADSP_FRESH=1` + PAS auth/reset reloads it. The preserved stale GLINK tails stalled the handshake

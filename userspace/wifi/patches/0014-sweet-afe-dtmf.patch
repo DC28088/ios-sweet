@@ -1,0 +1,92 @@
+--- a/phone/wifi/sweet_apr.h
++++ b/phone/wifi/sweet_apr.h
+@@ -42,6 +42,7 @@
+ /* AFE */
+ #define AFE_PORT_CMD_DEVICE_START         0x000100E5u
+ #define AFE_PORT_CMD_DEVICE_STOP          0x000100E6u
++#define AFE_PORTS_CMD_DTMF_CTL            0x00010102u
+ #define AFE_PORT_CMD_SET_PARAM_V2         0x000100EFu
+ #define AFE_PORT_CMD_SET_PARAM_V3         0x000100FAu
+ #define AFE_SVC_CMD_SET_PARAM             0x000100F3u
+@@ -117,6 +118,10 @@
+                                    uint32_t sample_rate, uint16_t bit_width, uint16_t sd_lines, uint16_t stereo);
+ size_t sweet_apr_afe_clock_v2(uint8_t *out, size_t cap, uint16_t src_port, uint32_t token, uint32_t clk_id,
+                               uint32_t freq_hz, int enable);
++/* AFE_PORTS_CMD_DTMF_CTL: generate a tone on one AFE port (used as the speaker path checkpoint). */
++size_t sweet_apr_afe_dtmf(uint8_t *out, size_t cap, uint16_t src_port, uint32_t token,
++                          uint32_t duration_ms, uint16_t high_hz, uint16_t low_hz, uint16_t gain,
++                          uint16_t port_id);
+ 
+ /*
+  * CS voice: voc_start_voice_call for a modem session (passive MVM/CVS named "default modem voice",
+--- a/phone/wifi/sweet_apr.c
++++ b/phone/wifi/sweet_apr.c
+@@ -5,6 +5,7 @@
+ 
+ static void put16(uint8_t *p, uint16_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); }
+ static void put32(uint8_t *p, uint32_t v) { put16(p, (uint16_t)v); put16(p + 2, (uint16_t)(v >> 16)); }
++static void put64(uint8_t *p, uint64_t v) { put32(p, (uint32_t)v); put32(p + 4, (uint32_t)(v >> 32)); }
+ static void put_param_hdr_v3(uint8_t *p, uint32_t module, uint32_t param, uint32_t size)
+ {
+     put32(p, module);
+@@ -164,6 +165,26 @@
+                           p, sizeof p);
+ }
+ 
++/*
++ * AFE_PORTS_CMD_DTMF_CTL: duration (ms; -1 continuous, 0 disable), high/low frequency, gain,
++ * number of destination ports and the first port id. The port id is the AFE port (0x1000), not
++ * the APR token. One port only.
++ */
++size_t sweet_apr_afe_dtmf(uint8_t *out, size_t cap, uint16_t src_port, uint32_t token,
++                          uint32_t duration_ms, uint16_t high_hz, uint16_t low_hz, uint16_t gain,
++                          uint16_t port_id)
++{
++    uint8_t p[20] = { 0 };
++    put64(p, duration_ms);
++    put16(p + 8, high_hz);
++    put16(p + 10, low_hz);
++    put16(p + 12, gain);
++    put16(p + 14, 1);
++    put16(p + 16, port_id);
++    return sweet_apr_pack(out, cap, APR_MSG_TYPE_SEQ_CMD, APR_SVC_AFE, src_port, 0, token,
++                          AFE_PORTS_CMD_DTMF_CTL, p, sizeof p);
++}
++
+ /* ---- the CS voice sequence ---- */
+ 
+ void sweet_voice_init(struct sweet_voice *v, uint16_t src_port, uint16_t tx_port, uint16_t rx_port)
+--- a/phone/wifi/wland.c
++++ b/phone/wifi/wland.c
+@@ -826,6 +826,9 @@
+ 	case 4:
+ 		n = sweet_apr_afe_port(b, sizeof b, 0, afe_token, 1, AFE_PORT_ID_PRIMARY_MI2S_RX);
+ 		break;
++	case 5:
++		n = sweet_apr_afe_dtmf(b, sizeof b, 0, afe_token, 3000, 1209, 697, 0, AFE_PORT_ID_PRIMARY_MI2S_RX);
++		break;
+ 	default:
+ 		return;
+ 	}
+@@ -897,10 +900,18 @@
+ 			break;
+ 		printf("afe: PRI_MI2S_RX start -> status %u\n", st);
+ 		afe_step = st == 0 ? 5 : -2;
+-		if (st == 0)
+-			printf("afe: PRI_MI2S_RX is running (clock + port enabled)\n");
+-		else
++		if (st == 0) {
++			printf("afe: PRI_MI2S_RX is running (clock + port enabled); sending 3 s DTMF 697/1209 Hz\n");
++			afe_send();
++		} else {
+ 			printf("afe: PRI_MI2S_RX start failed\n");
++		}
++		break;
++	case AFE_PORTS_CMD_DTMF_CTL:
++		if (afe_step != 5)
++			break;
++		printf("afe: DTMF -> status %u\n", st);
++		afe_step = st == 0 ? 6 : -2;
+ 		break;
+ 	default:
+ 		break;
