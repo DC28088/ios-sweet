@@ -1,0 +1,165 @@
+diff --git a/bsd/dev/sweet_haptic.c b/bsd/dev/sweet_haptic.c
+index 1e6e750..3371488 100644
+--- a/bsd/dev/sweet_haptic.c
++++ b/bsd/dev/sweet_haptic.c
+@@ -16,6 +16,13 @@
+  *
+  * Every write is read back; a NACK, an I2C error, a mismatch or a fault bit stops the driver and
+  * puts the chip back into reset.
++ *
++ * 0198: the motor worked (the three test buzzes are felt) but iOS never played on the Actuator (0195:
++ * "serving /dev/sweet-haptic (0 frames written so far)"): VirtualAudio was disabled (0196 enables it,
++ * sweetvaudio=1). Here: the continuous-mode configuration is written once (aw_cont_prepare) and each
++ * buzz only switches mode, clears SYSINT, sets the drive level and GO (about 5 I2C writes instead of
++ * 25: the tap starts ~20 ms sooner); who opens the device and what it writes is logged
++ * ("SWEET HAPTIC: open by ...", "first sound ...", a stats line every 60 s while frames arrive).
+  */
+ #if defined(ARM64_BOARD_CONFIG_SWEET)
+ #include <sys/param.h>
+@@ -30,6 +37,7 @@
+ #include <sys/uio.h>
+ #include <miscfs/devfs/devfs.h>
+ #include <mach/mach_time.h>
++#include <sys/proc.h>
+ 
+ extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
+ extern kern_return_t thread_terminate(thread_t);
+@@ -465,10 +473,46 @@ aw_init(void)
+ 	    aw_wr(0x74, 0x00) && aw_wr(0x75, 0x08) && aw_wr(0x76, 0x03) && aw_wr(0x77, 0xf8);  /* BEMF thresholds */
+ }
+ 
++/* 0198: the static part of aw8624_haptic_cont(), written once after init (the chip keeps it in standby) */
++static bool hap_prepared;
++
++static bool
++aw_cont_prepare(void)
++{
++	const unsigned f0_reg = 1000000000u / (2080u * 260u);   /* f0_pre 208.0 Hz, f0_coeff 260 */
++	hap_prepared = aw_wr(0x49, (uint8_t)(f0_reg >> 8)) && aw_wr(0x4a, (uint8_t)f0_reg) &&
++	    aw_bits(0x2b, (uint8_t)~(1u << 6), (3u << 6)) &&           /* DATCTRL: 1000 Hz LPF (vendor masks) */
++	    aw_bits(0x2b, (uint8_t)~(1u << 5), (1u << 5)) &&
++	    aw_wr(0x48, (uint8_t)((1u << 7) | (1u << 3) | (1u << 0))) &&   /* CONT_CTRL: ZC detect, closed loop, auto brake */
++	    aw_wr(0x4b, 0xf0) && aw_wr(0x4c, 0x6c) &&                  /* TD 0xf06c */
++	    aw_wr(0x4d, 0x11) &&
++	    aw_wr(0x72, 0x08) && aw_wr(0x73, 0xf8) &&
++	    aw_bits(0x78, (uint8_t)~0xfu, 3) &&                        /* BEMF_NUM: 3 brake periods */
++	    aw_wr(0x7a, 0x23) &&                                       /* TIME_NZC */
++	    aw_wr(0x7c, 0x9b);                                         /* overdrive level */
++	printf("SWEET HAPTIC: continuous mode prepared: %s\n", hap_prepared ? "ok" : "FAILED");
++	return hap_prepared;
++}
++
++/* 0198: per buzz only the dynamic part (mode, active, SYSINT clear, drive, GO) */
++static bool
++aw_cont_go(uint8_t drive)
++{
++	uint8_t clr = 0;
++	return aw_bits(0x04, (uint8_t)~((3u << 2) | 1u), (2u << 2)) &&   /* SYSCTRL: CONT, active */
++	    aw_rd(0x02, &clr) == 0 &&                                  /* clear SYSINT (aw8624_haptic_active) */
++	    aw_bits(0x03, (uint8_t)~(1u << 5), 0) &&                   /* UVLO interrupt on */
++	    aw_wr_raw(0x7b, drive) == 0 &&                             /* drive level (DT 0x6a) */
++	    aw_wr_raw(0x05, 0x01) == 0;                                /* GO */
++}
++
+ /* aw8624_haptic_cont(): continuous drive at the preset f0 until GO is cleared */
+ static bool
+ aw_cont_start(uint8_t drive)
+ {
++	if (hap_prepared) {
++		return aw_cont_go(drive);
++	}
+ 	const unsigned f0_reg = 1000000000u / (2080u * 260u);   /* f0_pre 208.0 Hz, f0_coeff 260 */
+ 	uint8_t clr = 0;
+ 	return aw_bits(0x04, (uint8_t)~(3u << 2), (2u << 2)) &&       /* SYSCTRL: play mode CONT */
+@@ -507,13 +551,17 @@ aw_cont_stop(void)
+ 
+ #define HAP_ACTIVE_US    30000u   /* a write that was not silence counts for this long */
+ #define HAP_SILENT_BELOW 256u     /* of 32768 */
+-#define HAP_MIN_US       30000u   /* shortest buzz: a tap */
++#define HAP_MIN_US       hap_min_us /* shortest buzz: a tap (0198: 40 ms, boot-arg sweethapmin=MS, 10..200) */
++static uint64_t hap_min_us = 40000u;
+ #define HAP_MAX_US       1000000u /* longest buzz; then it rests as long */
+ #define HAP_DRIVE        0x6au    /* the DT's cont_drv_lvl: never exceeded */
+ 
+ static volatile uint64_t hap_heard_us, hap_quiet_us;
+ static volatile uint32_t hap_peak;
+ static uint64_t hap_frames;
++static uint64_t hap_writes, hap_loud_writes;     /* 0198 */
++static unsigned hap_opens;
++static bool hap_first_loud;
+ 
+ static uint64_t
+ hap_now_us(void)
+@@ -544,6 +592,10 @@ hap_dev_write(__unused dev_t dev, struct uio *uio, __unused int ioflag)
+ 			peak = v > peak ? v : peak;
+ 		}
+ 		hap_frames += (uint64_t)bytes / 2;
++		hap_writes++;
++		if (peak > HAP_SILENT_BELOW) {
++			hap_loud_writes++;
++		}
+ 		uint64_t now = hap_now_us();
+ 		if (peak > HAP_SILENT_BELOW) {
+ 			if (hap_heard_us == 0 || hap_quiet_us > hap_heard_us || now - hap_heard_us >= HAP_ACTIVE_US) {
+@@ -561,14 +613,23 @@ hap_dev_write(__unused dev_t dev, struct uio *uio, __unused int ioflag)
+ }
+ 
+ static int
+-hap_dev_open(__unused dev_t dev, __unused int flags, __unused int type, __unused struct proc *p)
++hap_dev_open(__unused dev_t dev, __unused int flags, __unused int type, struct proc *p)
++{
++	if (hap_opens++ < 16) {
++		printf("SWEET HAPTIC: open by %s[%d] flags %#x\n", p ? proc_best_name(p) : "?", p ? proc_pid(p) : -1, flags);
++	}
++	return 0;
++}
++
++static int
++hap_dev_close(__unused dev_t dev, __unused int flags, __unused int type, __unused struct proc *p)
+ {
+ 	return 0;
+ }
+ 
+ static const struct cdevsw hap_cdevsw = {
+ 	.d_open       = hap_dev_open,
+-	.d_close      = hap_dev_open,
++	.d_close      = hap_dev_close,
+ 	.d_read       = eno_rdwrt,
+ 	.d_write      = hap_dev_write,
+ 	.d_ioctl      = eno_ioctl,
+@@ -600,7 +661,14 @@ hap_serve(void)
+ 	bool on = false;
+ 	uint64_t began = 0, rest_until = 0;
+ 	unsigned buzzes = 0, capped = 0;
+-	printf("SWEET HAPTIC: serving /dev/sweet-haptic (%llu frames written so far)\n", hap_frames);
++	unsigned min_ms = 0;
++	if (PE_parse_boot_argn("sweethapmin", &min_ms, sizeof(min_ms)) && min_ms >= 10 && min_ms <= 200) {
++		hap_min_us = (uint64_t)min_ms * 1000u;
++	}
++	printf("SWEET HAPTIC: serving /dev/sweet-haptic (%llu frames written so far), taps %llu ms\n", hap_frames,
++	    hap_min_us / 1000u);
++	(void)aw_cont_prepare();     /* 0198: a failed write stops the driver, as every other write */
++	uint64_t stats_at = hap_now_us() + 60000000ull, stats_frames = 0;
+ 	while (!hs.dead) {
+ 		uint64_t now = hap_now_us(), heard = hap_heard_us;
+ 		bool want = heard != 0 && now - heard < HAP_ACTIVE_US && hap_quiet_us <= heard;
+@@ -630,6 +698,19 @@ hap_serve(void)
+ 				hs.dead = true;
+ 			}
+ 		}
++		if (!hap_first_loud && hap_loud_writes) {
++			hap_first_loud = true;
++			printf("SWEET HAPTIC: first sound from iOS after %llu frames (%llu writes), peak %u\n",
++			    hap_frames, hap_writes, hap_peak);
++		}
++		if (now >= stats_at) {
++			if (hap_frames != stats_frames) {
++				printf("SWEET HAPTIC: 60 s: %llu frames total, %llu writes (%llu not silence), %u buzzes, %u capped\n",
++				    hap_frames, hap_writes, hap_loud_writes, buzzes, capped);
++			}
++			stats_frames = hap_frames;
++			stats_at = now + 60000000ull;
++		}
+ 		hap_wait(on ? 2 : 4);
+ 	}
+ 	if (on) {

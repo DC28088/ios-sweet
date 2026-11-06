@@ -1,0 +1,13 @@
+--- a/iokit/Kernel/arm/SweetSurface.cpp
++++ b/iokit/Kernel/arm/SweetSurface.cpp
+@@ -661,7 +661,9 @@
+ 		const struct sweet_surface_plane *pl = &s->planes[i];
+ 		put32(p, 0x00, pl->width);
+ 		put32(p, 0x04, pl->height);
+-		put32(p, 0x08, pl->bytesPerRow);
++		/* iOS 16 client +0xe0: plane base +0xd0, row stride +0x10.
++		 * +0x08 is reserved; writing there made native plane getters return 0. */
++		put32(p, 0x10, pl->bytesPerRow);
+ 		put32(p, 0x0c, pl->offset);
+ 		put32(p, 0x14, pl->size);
+ 		memcpy(p + 0x18, &pl->bytesPerElement, 2);

@@ -22,7 +22,7 @@
 #define STREAM 0x101u
 #define WTOKEN 0x40000000u
 /* Teardown is ordered; if any teardown times out/fails, keep DMA allocated. */
-enum { P_MAP,P_ADM,P_OPEN,P_ROUTE,P_FORMAT,P_RUN,P_PLAY,P_PAUSE,P_CLOSE,P_ADM_CLOSE,P_UNMAP,P_DONE };
+enum { P_MAP,P_OPEN,P_ADM,P_ROUTE,P_FORMAT,P_RUN,P_PLAY,P_PAUSE,P_CLOSE,P_ADM_CLOSE,P_UNMAP,P_DONE };
 static void p16(uint8_t *p,uint16_t x){p[0]=x;p[1]=x>>8;}
 static void p32(uint8_t *p,uint32_t x){p16(p,x);p16(p+2,x>>16);}
 static uint32_t g32(const uint8_t *p){return (uint32_t)p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;}
@@ -45,7 +45,7 @@ static size_t pack(struct sweet_pcm *s,uint8_t *out,size_t cap,uint64_t now,uint
 {
     uint16_t src=svc==ASM?dest:0;
     if(svc==ADM && (op==ADM_OPEN || op==ADM_CLOSE))src=AFE_PORT_ID_PRIMARY_MI2S_RX;
-    uint32_t token=svc==ADM && op==ADM_OPEN?(AFE_PORT_INDEX_PRIMARY_MI2S_RX<<16):s->token+1;
+    uint32_t token=svc==ADM && op==ADM_OPEN?((AFE_PORT_INDEX_PRIMARY_MI2S_RX<<16)|s->adm_default):s->token+1;
     size_t n=sweet_apr_pack(out,cap,APR_MSG_TYPE_SEQ_CMD,svc,src,dest,token,op,p,len);
     if(n){s->token=token;s->waiting=1;s->pending_op=op;s->deadline=now+3000;}
     return n;
@@ -59,7 +59,7 @@ size_t sweet_pcm_next(struct sweet_pcm *s,uint8_t *out,size_t cap,uint64_t now)
         p16(p,3);p16(p+2,1);p32(p+8,s->dsp);p32(p+12,s->dsp>>32);p32(p+16,SWEET_PCM_MAP_BYTES);
         return pack(s,out,cap,now,ASM,0,MAP,p,20);
     case P_ADM:
-        p16(p+2,1);p16(p+4,AFE_PORT_ID_PRIMARY_MI2S_RX);p16(p+6,0xffff);p32(p+8,0x10312);
+        p16(p+2,1);p16(p+4,AFE_PORT_ID_PRIMARY_MI2S_RX);p16(p+6,0xffff);p32(p+8,s->adm_default?0x10314:0x10312);
         p16(p+12,2);p16(p+14,16);p32(p+16,48000);p[20]=1;p[21]=2;
         return pack(s,out,cap,now,ADM,AFE_PORT_ID_PRIMARY_MI2S_RX,ADM_OPEN,p,28);
     case P_OPEN:
@@ -120,10 +120,16 @@ int sweet_pcm_receive(struct sweet_pcm *s,const uint8_t *packet,size_t n)
         /* Map and ADM open require their handle-bearing response, not basic success. */
         if(!status && (s->step==P_MAP || s->step==P_ADM))return 0;
     }
+    /* A legacy Sweet COPP uses stock DEFAULT topology 0x10314. Try it once
+     * after an explicitly rejected null topology; no new map or AFE reset. */
+    if(status && s->step==P_ADM && !s->adm_default && status<=3){
+        s->adm_default=1;s->waiting=0;s->status=status;return 1;
+    }
     if(status){sweet_pcm_abort(s,status);return -1;}
     if(s->step==P_OPEN)s->stream_open=1;
     if(s->step==P_CLOSE){s->stream_open=0;s->busy=s->inflight=0;}
     if(s->step==P_ADM_CLOSE)s->copp_open=0;
     if(s->step==P_UNMAP)s->mapped=0;
+    if(!s->failed)s->status=0;
     s->waiting=0;++s->step;return 1;
 }

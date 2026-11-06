@@ -1,20 +1,76 @@
 --- a/phone/wifi/wland.c
 +++ b/phone/wifi/wland.c
-@@ -43,6 +43,7 @@
+@@ -43,6 +43,11 @@
  #include "adsp_smmu.h"
  #include "fastrpc.h"
  #include "sweet_apr.h"
 +#include "sweet_pcm.h"
++#include "sweet_aw2032.h"
++#include "sweet_amp_ctl.h"
++#include <fcntl.h>
++#include <sys/ioctl.h>
  
  /* cmd-db aux levels (as in the GPU's arc votes) */
  /* Every cmd-db entry: name, RPMh slave (3 ARC, 4 VRM, 5 BCM), address. */
-@@ -907,10 +908,65 @@
+@@ -907,10 +912,123 @@
  	}
  }
  
 +/* 0014: optional bounded silent ASM/ADM playback test; never touches amplifiers.
 + * DMA stays allocated until reboot: PMEM_SMMU has no mapping teardown.
 + * Both DSP handles and SMMU page tables must stop referencing a page before reuse. */
++/* 0214: bounded speaker tone. Only enabled explicitly and only with the kernel
++ * controller, which independently resets both PAs on missing heartbeat/close. */
++static int speaker_fd=-1,speaker_on,speaker_wanted;
++static uint64_t speaker_t0;
++static void speaker_stop(void)
++{
++    if(speaker_fd<0)return;
++    struct sweet_amp_status st;
++    if(ioctl(speaker_fd,SWEET_AMP_STATUS,&st)==0)
++        printf("speaker: status prepared=%u active=%u expired=%u bus=%u SYSST=%#x/%#x\n",st.prepared,st.active,st.expired,st.bus_dead,st.sysst[0],st.sysst[1]);
++    (void)ioctl(speaker_fd,SWEET_AMP_STOP,0);close(speaker_fd);speaker_fd=-1;speaker_on=0;
++    printf("speaker: controller closed; amps reset\n");
++}
++static int speaker_prepare(void)
++{
++    if(!speaker_wanted)return 0;
++    uint8_t blob[65536];
++    FILE *f=fopen("/var/local/fw/awinic/aw882xx_pid_2032_acf.bin","rb");
++    if(!f){printf("speaker: missing private vendor profile\n");return -1;}
++    size_t bytes=fread(blob,1,sizeof blob,f);int ok=!ferror(f) && feof(f);fclose(f);
++    struct sweet_aw_profile profiles[2];
++    if(!ok || sweet_aw_profile_select(blob,bytes,0,&profiles[0]) || sweet_aw_profile_select(blob,bytes,1,&profiles[1])){
++        printf("speaker: profile validation failed; amps untouched\n");return -1;
++    }
++    speaker_fd=open(SWEET_AMP_DEVICE,O_RDWR|O_CLOEXEC);
++    if(speaker_fd<0){printf("speaker: no kernel amp controller (%d)\n",errno);return -1;}
++    atexit(speaker_stop);
++    for(unsigned c=0;c<2;c++){
++        struct sweet_amp_profile p;memset(&p,0,sizeof p);p.channel=c;p.count=(uint32_t)profiles[c].count;
++        memcpy(p.records,profiles[c].records,profiles[c].count*4);
++        if(ioctl(speaker_fd,SWEET_AMP_LOAD,&p)){printf("speaker: profile load refused (%d)\n",errno);speaker_stop();return -1;}
++    }
++    uint32_t mask=3;
++    if(ioctl(speaker_fd,SWEET_AMP_PREPARE,&mask)){printf("speaker: muted amp preparation failed (%d)\n",errno);speaker_stop();return -1;}
++    printf("speaker: both profiles prepared muted; waiting for PCM completions\n");return 0;
++}
++static int speaker_poll(const struct sweet_pcm *s)
++{
++    if(!speaker_wanted || speaker_fd<0)return 0;
++    if(ioctl(speaker_fd,SWEET_AMP_HEARTBEAT,0)){printf("speaker: heartbeat refused (%d)\n",errno);speaker_stop();return -1;}
++    if(s->failed || s->done || (s->sent==SWEET_PCM_LIMIT && !s->inflight)){
++        speaker_stop();return 0;
++    }
++    if(!speaker_on && s->completed && s->sent<SWEET_PCM_LIMIT){
++        struct sweet_amp_start start={3,24*8};
++        if(ioctl(speaker_fd,SWEET_AMP_START,&start)){printf("speaker: clock/fault gate refused output (%d)\n",errno);speaker_stop();return -1;}
++        speaker_on=1;speaker_t0=link_ms();printf("speaker: bounded 1kHz tone on both amps, digital attenuation24dB\n");
++    }
++    if(speaker_on && link_ms()-speaker_t0>=2000){printf("speaker: independent 2s test limit reached\n");speaker_stop();return -1;}
++    return 0;
++}
++
 +static struct sweet_pcm pcm_test;
 +static int pcm_enabled, pcm_started, pcm_reported;
 +static uint64_t pcm_pa;
@@ -29,8 +85,13 @@
 +            pcm_enabled=0;return;
 +        }
 +        uint8_t zero[SWEET_PCM_STRIDE]={0};
++        if(speaker_prepare()){pcm_enabled=0;return;}
++        if(speaker_wanted){
++            static const int16_t sine[48]={0,214,424,628,820,998,1160,1301,1420,1515,1584,1626,1640,1626,1584,1515,1420,1301,1160,998,820,628,424,214,0,-214,-424,-628,-820,-998,-1160,-1301,-1420,-1515,-1584,-1626,-1640,-1626,-1584,-1515,-1420,-1301,-1160,-998,-820,-628,-424,-214};
++            for(unsigned f=0;f<SWEET_PCM_PERIOD/4;f++){uint16_t v=(uint16_t)sine[f%48];zero[f*4]=zero[f*4+2]=v;zero[f*4+1]=zero[f*4+3]=v>>8;}
++        }
 +        for(unsigned i=0;i<SWEET_PCM_MAP_BYTES/SWEET_PCM_STRIDE;i++)if(pm_wr(pcm_pa+i*SWEET_PCM_STRIDE,zero,sizeof zero)) {
-+            printf("pcm: zeroing DMA failed; not started\n");pm_free(pcm_pa);pcm_enabled=0;return;
++            printf("pcm: initializing DMA failed; not started\n");speaker_stop();pm_free(pcm_pa);pcm_enabled=0;return;
 +        }
 +        struct pmem_smmu q;
 +        memset(&q,0,sizeof q);q.op=2;q.nsid=1;q.sid[0]=0x1b21;
@@ -38,17 +99,18 @@
 +        q.len=SWEET_PCM_MAP_BYTES;
 +        if(pm_smmu(&q)) {
 +            printf("pcm: audio-ion SMMU mapping failed; buffer retained, no ASM commands\n");
-+            pcm_enabled=0;return;
++            speaker_stop();pcm_enabled=0;return;
 +        }
 +        sweet_pcm_init(&pcm_test,q.iova|q.alias);
-+        printf("pcm: silent test starts: 100 periods, 48 kHz stereo s16, PRI_MI2S; amps untouched\n");
++        printf("pcm: bounded test starts: 100 periods, 48 kHz stereo s16, PRI_MI2S; speaker=%d\n",speaker_wanted);
 +    }
 +    sweet_pcm_poll(&pcm_test,link_ms());
++    if(speaker_poll(&pcm_test))sweet_pcm_abort(&pcm_test,0xfffffffcu);
 +    for(unsigned i=0;i<SWEET_PCM_SLOTS;i++) {
 +        uint8_t b[128];size_t n=sweet_pcm_next(&pcm_test,b,sizeof b,link_ms());
 +        if(!n)break;
 +        uint32_t op=(uint32_t)b[16]|(uint32_t)b[17]<<8|(uint32_t)b[18]<<16|(uint32_t)b[19]<<24;
-+        if(op!=0x10dab)printf("pcm: command op=%#x step=%u\n",op,pcm_test.step);
++        if(op!=0x10dab)printf("pcm: command op=%#x step=%u\n",op,pcm_test.step); if(op==0x10326)printf("pcm: COPP topology=%#x\n",(uint32_t)b[28]|(uint32_t)b[29]<<8|(uint32_t)b[30]<<16|(uint32_t)b[31]<<24);
 +        if(adspedge_apr_send(b,n)){sweet_pcm_abort(&pcm_test,0xfffffffdu);break;}
 +    }
 +    if(pcm_test.done && !pcm_reported) {
@@ -74,7 +136,7 @@
  	struct sweet_apr_msg m;
  	if (sweet_apr_parse(p, n, &m)) {
  		printf("apr: malformed packet, %zu bytes\n", n);
-@@ -936,6 +992,7 @@
+@@ -936,6 +1054,7 @@
  
  static void adsp_apr_poll(void)
  {
@@ -82,17 +144,18 @@
  	if (apr_sent || !adspedge_apr_up())
  		return;
  	uint8_t b[64];
-@@ -949,7 +1006,8 @@
+@@ -949,7 +1068,9 @@
  static int adsp_net(unsigned secs)
  {
  	adsp_last = 0xffffffff;
 -	afe_on = getenv("WLAND_AFE") != NULL;
-+	pcm_enabled = getenv("WLAND_PCM_TEST") != NULL;
++	speaker_wanted = getenv("WLAND_SPEAKER_TONE") != NULL;
++	pcm_enabled = getenv("WLAND_PCM_TEST") != NULL || speaker_wanted;
 +	afe_on = getenv("WLAND_AFE") != NULL || pcm_enabled;
  	if (afe_on)
  		printf("adsp: AFE bring-up test enabled (WLAND_AFE)\n");
  	glink_edge(SMEM_HOST_ADSP, 24);
-@@ -1011,7 +1069,7 @@
+@@ -1011,7 +1132,7 @@
  	adspedge_status();
  	const uint64_t end = secs ? link_ms() + 1000ull * secs : 0;
  	for (uint64_t next = link_ms(); !end || link_ms() < end;) {

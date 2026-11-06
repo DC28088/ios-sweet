@@ -1,0 +1,435 @@
+diff --git a/bsd/dev/sweet_amp.c b/bsd/dev/sweet_amp.c
+--- a/bsd/dev/sweet_amp.c
++++ b/bsd/dev/sweet_amp.c
+@@ -445,11 +445,18 @@
+ 	(void)thread_terminate(current_thread());
+ }
+ 
++#include "sweet_amp_control.inc"
++
+ void
+ sweet_amp_init(void)
+ {
+ 	int mode = 0;
+ 	(void)PE_parse_boot_argn("sweetamp", &mode, sizeof(mode));
++	if (mode == 2 && !as.started) {
++		as.started = true;
++		amp_control_init();
++		return;
++	}
+ 	if (mode <= 0 || as.started) {
+ 		return;
+ 	}
+diff --git a/bsd/dev/sweet_amp_control.inc b/bsd/dev/sweet_amp_control.inc
+new file mode 100644
+--- /dev/null
++++ b/bsd/dev/sweet_amp_control.inc
+@@ -0,0 +1,181 @@
++/* SPDX-License-Identifier: MIT */
++/* 0214: opt-in speaker controller, root-only, one owner. Kernel polls amplifier
++ * faults and resets both PAs if its owner's heartbeat is absent for 3 seconds.
++ * Device close also stops and resets both. No PCM or vendor data in the kernel.
++ * sweetamp=2 selects this controller; sweetamp=1 retains the old ID-only probe. */
++#include <sys/proc.h>
++#include <kern/locks.h>
++#include "sweet_aw2032.h"
++#include "sweet_amp_ctl.h"
++static LCK_GRP_DECLARE(amp_control_group,"sweet_amp_control");
++static LCK_MTX_DECLARE(amp_control_lock,&amp_control_group);
++static struct {
++    vm_offset_t north;
++    struct sweet_aw2032 amp[2];
++    struct sweet_amp_profile profile[2];
++    uint32_t saved[6],saved_io[6];
++    uint32_t loaded,prepared,active,expired;
++    uint64_t deadline;
++    bool ready,claimed,opened;
++    int owner;
++} ac;
++static const unsigned amp_control_pins[]={49,50,51,52,53,54};
++static void amp_control_deadline(void)
++{clock_interval_to_deadline(3000,NSEC_PER_MSEC,&ac.deadline);}
++static int amp_control_read(void *ctx,uint8_t reg,uint16_t *v)
++{
++    unsigned c=(unsigned)(uintptr_t)ctx;uint8_t b[2]={0,0};
++    int e=amp_read(amp_chips[c].addr,reg,false,b,2);if(e)return e;
++    *v=(uint16_t)((b[0]<<8)|b[1]);return 0;
++}
++static int amp_control_write(void *ctx,uint8_t reg,uint16_t v)
++{
++    unsigned c=(unsigned)(uintptr_t)ctx;
++    uint8_t b[3]={reg,(uint8_t)(v>>8),(uint8_t)v};
++    return amp_msg(amp_chips[c].addr,b,3,NULL,0,false);
++}
++static int amp_control_reset(void *ctx,int asserted)
++{
++    unsigned c=(unsigned)(uintptr_t)ctx;if(!ac.north)return ENODEV;
++    vm_offset_t keep=as.gpio;as.gpio=ac.north;
++    amp_gpio(amp_chips[c].reset_gpio,0,0,0,true,!asserted);as.gpio=keep;
++    uint32_t want=asserted?0:2;
++    return (amp_rd(ac.north,AMP_GPIO_IO(amp_chips[c].reset_gpio))&2)==want?0:EIO;
++}
++static void amp_control_sleep(void *ctx __unused,unsigned ms){amp_wait(ms);}
++static void amp_control_stop(void)
++{
++    for(unsigned c=0;c<2;c++){
++        if(ac.amp[c].io.reset)sweet_aw2032_stop(&ac.amp[c]);
++        else if(ac.north)(void)amp_control_reset((void *)(uintptr_t)c,1);
++    }
++    ac.prepared=ac.active=0;
++    if(ac.claimed){
++        for(unsigned i=0;i<6;i++){
++            amp_wr(as.gpio,AMP_GPIO_IO(amp_control_pins[i]),ac.saved_io[i]);
++            amp_wr(as.gpio,AMP_GPIO_CFG(amp_control_pins[i]),ac.saved[i]);
++        }
++        ac.claimed=false;
++    }
++}
++static int amp_control_bus(void)
++{
++    if(as.dead)return EIO;
++    if(!ac.ready){
++        as.gcc=ml_io_map(AMP_GCC_PA,0x90000);
++        as.gpio=ml_io_map(AMP_WEST_PA,0x80000);
++        ac.north=ml_io_map(AMP_NORTH_PA,0x80000);
++        as.se=ml_io_map(AMP_SE_PA,0x4000);
++        if(!as.gcc || !as.gpio || !ac.north || !as.se)return ENOMEM;
++        ac.ready=true;
++    }
++    if(ac.claimed)return 0;
++    if(!amp_clocks())return EIO;
++    for(unsigned i=0;i<6;i++){
++        ac.saved[i]=amp_rd(as.gpio,AMP_GPIO_CFG(amp_control_pins[i]));
++        ac.saved_io[i]=amp_rd(as.gpio,AMP_GPIO_IO(amp_control_pins[i]));
++    }
++    ac.claimed=true;
++    amp_gpio(53,2,0,0,false,false);amp_gpio(54,2,0,0,false,false);
++    if(!amp_se_init()){amp_control_stop();return EIO;}
++    /* Stock SM7150 pinctrl: mux1, bias disabled, 8mA PRI_MI2S on WEST pins. */
++    for(unsigned i=0;i<4;i++){
++        bool output=amp_control_pins[i]!=52; /* exact Sweet DT: 49/50/51 output-high,52 input-enable */
++        amp_gpio(amp_control_pins[i],1,0,3,output,output);
++        uint32_t want=0xc4u|(output?0x200u:0u);
++        if((amp_rd(as.gpio,AMP_GPIO_CFG(amp_control_pins[i]))&0x3ffu)!=want){amp_control_stop();return EIO;}
++    }
++    for(unsigned c=0;c<2;c++)if(amp_control_reset((void *)(uintptr_t)c,1)){amp_control_stop();return EIO;}
++    return 0;
++}
++static int amp_control_open(dev_t d __unused,int f __unused,int t __unused,struct proc *p)
++{
++    if(!p)return EPERM;
++    lck_mtx_lock(&amp_control_lock);
++    int e=ac.opened?EBUSY:0;
++    if(!e){ac.opened=true;ac.owner=proc_pid(p);ac.loaded=0;ac.expired=0;amp_control_deadline();}
++    lck_mtx_unlock(&amp_control_lock);return e;
++}
++static int amp_control_close(dev_t d __unused,int f __unused,int t __unused,struct proc *p __unused)
++{
++    lck_mtx_lock(&amp_control_lock);amp_control_stop();ac.opened=false;ac.owner=0;ac.loaded=0;
++    lck_mtx_unlock(&amp_control_lock);return 0;
++}
++static int amp_control_ioctl(dev_t d __unused,u_long cmd,caddr_t data,int f __unused,struct proc *p)
++{
++    if(!p)return EPERM;
++    int e=0;lck_mtx_lock(&amp_control_lock);
++    if(!ac.opened || ac.owner!=proc_pid(p)){e=EPERM;goto out;}
++    if(ac.prepared && mach_absolute_time()>=ac.deadline){amp_control_stop();++ac.expired;}
++    switch(cmd){
++    case SWEET_AMP_LOAD:{
++        struct sweet_amp_profile *v=(void *)data;
++        if(ac.prepared || v->channel>1 || !v->count || v->count>SWEET_AMP_PROFILE_MAX){e=EINVAL;break;}
++        ac.profile[v->channel]=*v;ac.loaded|=1u<<v->channel;break;
++    }
++    case SWEET_AMP_PREPARE:{
++        uint32_t mask=*(uint32_t *)data;
++        if(!mask || (mask&~3u) || (ac.loaded&mask)!=mask || ac.expired){e=EINVAL;break;}
++        if(ac.prepared){e=EBUSY;break;}
++        e=amp_control_bus();if(e)break;
++        for(unsigned c=0;c<2;c++)if(mask&(1u<<c)){
++            struct sweet_aw_io io={(void *)(uintptr_t)c,amp_control_read,amp_control_write,amp_control_reset,amp_control_sleep};
++            struct sweet_aw_profile v={ac.profile[c].records,ac.profile[c].count};
++            if(sweet_aw2032_prepare(&ac.amp[c],&io,&v)){e=EIO;break;}
++        }
++        if(e)amp_control_stop();else{ac.prepared=mask;amp_control_deadline();}
++        break;
++    }
++    case SWEET_AMP_HEARTBEAT:
++        if(ac.expired){e=ETIMEDOUT;break;}amp_control_deadline();break;
++    case SWEET_AMP_START:{
++        struct sweet_amp_start *v=(void *)data;
++        if(!v->channels || (v->channels&~ac.prepared) || ac.expired || ac.active){e=EINVAL;break;}
++        for(unsigned c=0;c<2;c++)if(v->channels&(1u<<c)){
++            if(sweet_aw2032_start(&ac.amp[c],v->attenuation_eighth_db)){e=EIO;break;}
++        }
++        if(e)amp_control_stop();else{ac.active=v->channels;amp_control_deadline();}
++        break;
++    }
++    case SWEET_AMP_STOP:amp_control_stop();break;
++    case SWEET_AMP_STATUS:{
++        struct sweet_amp_status *v=(void *)data;memset(v,0,sizeof(*v));
++        v->prepared=ac.prepared;v->active=ac.active;v->expired=ac.expired;v->bus_dead=as.dead;
++        for(unsigned c=0;c<2;c++)v->sysst[c]=ac.amp[c].last_status;break;
++    }
++    default:e=ENOTTY;break;
++    }
++out:lck_mtx_unlock(&amp_control_lock);return e;
++}
++static const struct cdevsw amp_control_cdevsw={
++    .d_open=amp_control_open,.d_close=amp_control_close,.d_read=eno_rdwrt,.d_write=eno_rdwrt,
++    .d_ioctl=amp_control_ioctl,.d_stop=eno_stop,.d_reset=eno_reset,.d_ttys=NULL,
++    .d_select=eno_select,.d_mmap=eno_mmap,.d_strategy=eno_strat,.d_reserved_1=eno_getc,.d_reserved_2=eno_putc,.d_type=0,
++};
++static void amp_control_watch(void *arg __unused,wait_result_t wr __unused)
++{
++    for(;;){
++        amp_wait(50);lck_mtx_lock(&amp_control_lock);
++        if(ac.prepared && mach_absolute_time()>=ac.deadline){
++            amp_control_stop();++ac.expired;printf("SWEET AMP: heartbeat expired; both amps reset\n");
++        }else if(ac.active){
++            for(unsigned c=0;c<2;c++)if((ac.active&(1u<<c)) && sweet_aw2032_poll(&ac.amp[c])){
++                printf("SWEET AMP: channel %u clock/fault check failed (%#x); both amps reset\n",c,ac.amp[c].last_status);
++                amp_control_stop();++ac.expired;break;
++            }
++        }
++        lck_mtx_unlock(&amp_control_lock);
++    }
++}
++static void amp_control_init(void)
++{
++    /* Start the watchdog before publishing a device that can enable output. */
++    thread_t th;if(kernel_thread_start(amp_control_watch,NULL,&th)!=KERN_SUCCESS){printf("SWEET AMP: no watchdog; controller disabled\n");return;}
++    thread_deallocate(th);
++    int major=cdevsw_add(-1,&amp_control_cdevsw);
++    if(major<0){printf("SWEET AMP: controller registration failed\n");return;}
++    if(!devfs_make_node(makedev(major,0),DEVFS_CHAR,UID_ROOT,GID_WHEEL,0600,"sweet-amp")){
++        printf("SWEET AMP: no device node; controller disabled\n");return;
++    }
++    printf("SWEET AMP: /dev/sweet-amp ready; heartbeat 3000ms, faults polled50ms\n");
++}
+diff --git a/bsd/dev/sweet_aw2032.c b/bsd/dev/sweet_aw2032.c
+new file mode 100644
+--- /dev/null
++++ b/bsd/dev/sweet_aw2032.c
+@@ -0,0 +1,145 @@
++/* SPDX-License-Identifier: MIT */
++/* Functional implementation from the public Xiaomi/Awinic PID2032 register ABI:
++ * MiCode/vendor_qcom_opensource_audio-kernel 65be95690af834887f876ca6d4a46df7a0ec50ac,
++ * aw_device.c, aw_init.c, aw_pid_2032_reg.h and aw_bin_parse.c. No vendor profile
++ * values are embedded here. This intentionally supports a bounded diagnostic,
++ * not continuous playback without a supervising owner and fault monitoring. */
++#include "sweet_aw2032.h"
++#ifdef KERNEL
++#include <sys/systm.h>
++#else
++#include <string.h>
++#endif
++static uint16_t g16(const uint8_t *p){return (uint16_t)p[0]|(uint16_t)p[1]<<8;}
++static uint32_t g32(const uint8_t *p){return g16(p)|(uint32_t)g16(p+2)<<16;}
++static unsigned crc8(const uint8_t *p,size_t n)
++{
++ unsigned c=0;for(size_t i=0;i<n;i++){unsigned v=p[i];for(unsigned j=0;j<8;j++){c=(c^v)&1?((c^0x18)>>1)|0x80:c>>1;v>>=1;}}return c;
++}
++/* Writable profile registers only. Excludes ID/reset, status and efuse/OTP. */
++static int profile_reg(unsigned r)
++{
++ return (r>=3 && r<=15) || r==0x15 || r==0x20 || (r>=0x30 && r<=0x38) ||
++        r==0x50 || (r>=0x52 && r<=0x56) || r==0x59 || r==0x5a || (r>=0x60 && r<=0x6c);
++}
++static int validate_profile(const struct sweet_aw_profile *p)
++{
++ if(!p || !p->records || !p->count || p->count>64)return -1;
++ uint64_t seen[2]={0,0};unsigned mandatory=0;
++ for(size_t i=0;i<p->count;i++){
++  unsigned r=g16(p->records+4*i);
++  uint16_t value=g16(p->records+4*i+2);
++  if(r==5 && (value>>12)*48+((value>>6)&63)>720)return -1;
++  if(!profile_reg(r) || (seen[r/64]&(1ull<<(r%64))))return -1;
++  seen[r/64]|=1ull<<(r%64);
++  if(r>=3 && r<=7)mandatory|=1u<<(r-3);
++ }
++ return mandatory==31?0:-1;
++}
++int sweet_aw_profile_select(const uint8_t *b,size_t n,unsigned channel,struct sweet_aw_profile *out)
++{
++ if(out)memset(out,0,sizeof(*out));
++ if(!b || !out || channel>1 || n<80 || n>65536 || g32(b)!=0x0a15f908 || g32(b+64)!=1)return -1;
++ uint32_t table=g32(b+60),count=g32(b+56),length=g32(b+52);
++ if(table!=80 || !count || count>16 || length!=count*64 || length>n-table)return -1;
++ struct sweet_aw_profile chosen={0,0};
++ for(uint32_t i=0;i<count;i++){
++  const uint8_t *e=b+table+64*i;size_t bytes=g32(e+32),at=g32(e+36);
++  if(at<table+length || at>n || bytes>n-at || crc8(b+at,bytes)!=g32(e+40))return -1;
++  for(uint32_t j=0;j<i;j++){
++   const uint8_t *a=b+table+64*j;size_t other=g32(a+36),size=g32(a+32);
++   if(at<other+size && other<at+bytes)return -1;
++  }
++  if(g32(e)!=2 || g16(e+20)!=channel || g16(e+26)!=0)continue;
++  if(chosen.records || g32(e+28)!=4 || bytes<64)return -1;
++  const uint8_t *d=b+at;uint32_t sum=0;for(size_t k=4;k<bytes;k++)sum+=d[k];
++  if(sum!=g32(d) || g32(d+4)!=0x01000000 || g32(d+8)!=0 || g32(d+12)!=1 ||
++     g32(d+16)!=bytes-60 || g32(d+32)!=2 || g32(d+36)!=2)return -1;
++  uint32_t regs=g32(d+60);if(!regs || regs>64 || bytes!=64+regs*4)return -1;
++  chosen.records=d+64;chosen.count=regs;if(validate_profile(&chosen))return -1;
++ }
++ if(!chosen.records)return -1;
++ *out=chosen;return 0;
++}
++static unsigned vol_decode(uint16_t v){unsigned a=v>>6;return (a>>6)*48+(a&63);}
++static uint16_t vol_encode(unsigned v){return (uint16_t)((((v/48)<<6)|(v%48))<<6);}
++static int update(struct sweet_aw2032 *a,uint8_t r,uint16_t mask,uint16_t bits)
++{
++ uint16_t v;if(a->io.read(a->io.ctx,r,&v))return -1;
++ return a->io.write(a->io.ctx,r,(v&~mask)|(bits&mask))?-1:0;
++}
++static int volume(struct sweet_aw2032 *a,unsigned v){return update(a,5,0xffc0,vol_encode(v));}
++static void sleep_ms(struct sweet_aw2032 *a,unsigned n){a->io.sleep_ms(a->io.ctx,n);}
++void sweet_aw2032_stop(struct sweet_aw2032 *a)
++{
++ if(!a || !a->io.reset)return;
++ /* Best effort over I2C, then hardware reset even if the bus has failed. */
++ if(a->verified && a->io.read && a->io.write && a->io.sleep_ms){
++  (void)volume(a,720);(void)update(a,5,0x10,0x10);(void)update(a,7,1,0);
++  (void)update(a,4,2,2);sleep_ms(a,1);(void)update(a,4,1,1);
++ }
++ (void)a->io.reset(a->io.ctx,1);a->active=a->prepared=a->verified=0;
++}
++int sweet_aw2032_prepare(struct sweet_aw2032 *a,const struct sweet_aw_io *io,const struct sweet_aw_profile *p)
++{
++ if(!a || !io || !io->read || !io->write || !io->reset || !io->sleep_ms || validate_profile(p))return -1;
++ memset(a,0,sizeof(*a));a->io=*io;uint16_t id,iv,vv;
++ if(io->reset(io->ctx,1))goto reset_only;
++ sleep_ms(a,2);
++ if(io->reset(io->ctx,0))goto reset_only;
++ sleep_ms(a,20);
++ if(io->read(io->ctx,0,&id) || id!=0x2032)goto reset_only;
++ a->verified=1;
++ if(update(a,4,3,3) || update(a,5,0x10,0x10) || volume(a,720))goto fail;
++ for(size_t i=0;i<p->count;i++){
++  unsigned r=g16(p->records+4*i);uint16_t v=g16(p->records+4*i+2);
++  if(r==0x56)continue; /* device-specific voltage calibration, never profile replay */
++  if(r==3)v=0xefbf; /* stock default mask; owner polls SYSST instead of enabling IRQs */
++  if(r==4)v|=3; /* keep both power stages off during profile loading */
++  if(r==5){a->profile_volume=(uint16_t)vol_decode(v);v=(v&0x3f)|0x10|vol_encode(720);}
++  if(r==6)v=(v&~0xcfu)|8u; /* stock update_rate: 48kHz,16-bit; keep channel selection */
++  if(r==7)v&=~1u; /* feedback off until startup */
++  if(r==0x66)v|=0x4000; /* stock CCO mux bypass for 48kHz */
++  if(io->write(io->ctx,(uint8_t)r,v))goto fail;
++ }
++ if(io->read(io->ctx,0x7a,&iv) || io->read(io->ctx,0x78,&vv))goto fail;
++ int ical=iv&1023,vcal=vv&1023;if(ical&512)ical-=1024;if(vcal&512)vcal-=1024;
++ int numerator=1000+ical,denominator=1000+vcal;
++ if(numerator<=0 || denominator<=0)goto fail;
++ uint32_t calibrated=(uint32_t)(8192u*(uint32_t)numerator/(uint32_t)denominator);
++ if(calibrated>65535 || io->write(io->ctx,0x56,(uint16_t)calibrated))goto fail;
++ a->prepared=1;return 0;
++fail:sweet_aw2032_stop(a);return -1;
++reset_only:(void)io->reset(io->ctx,1);return -1;
++}
++static int status_ok(struct sweet_aw2032 *a)
++{
++ uint16_t s;if(a->io.read(a->io.ctx,1,&s))return -1;a->last_status=s;
++ /* Clock stable + PLL lock, without over-voltage/current/temp, under-voltage or missing clock. */
++ if(s&0xcc2a)return -2;
++ return (s&0x11)==0x11;
++}
++int sweet_aw2032_start(struct sweet_aw2032 *a,unsigned attenuation)
++{
++ if(!a || !a->prepared || a->active)return -1;
++ if(attenuation<192)attenuation=192;
++ if(attenuation<a->profile_volume)attenuation=a->profile_volume;
++ if(attenuation>720)attenuation=720;
++ if(update(a,7,1,1) || update(a,4,1,0))goto fail;
++ sleep_ms(a,2);
++ if(update(a,4,2,0))goto fail;
++ sleep_ms(a,1);
++ unsigned i;for(i=0;i<10;i++){int st=status_ok(a);if(st<0)goto fail;if(st==1)break;sleep_ms(a,2);}if(i==10)goto fail;
++ uint16_t discard;if(a->io.read(a->io.ctx,2,&discard) || a->io.read(a->io.ctx,2,&discard))goto fail;
++ if(update(a,5,0x10,0))goto fail;
++ for(unsigned v=720;v>attenuation;){v=v-attenuation>48?v-48:attenuation;if(volume(a,v))goto fail;
++ sleep_ms(a,1);}
++ a->active=1;return 0;
++fail:sweet_aw2032_stop(a);return -1;
++}
++int sweet_aw2032_poll(struct sweet_aw2032 *a)
++{
++ if(!a || !a->active)return -1;
++ if(status_ok(a)==1)return 0;
++ sweet_aw2032_stop(a);return -1;
++}
+diff --git a/bsd/dev/sweet_aw2032.h b/bsd/dev/sweet_aw2032.h
+new file mode 100644
+--- /dev/null
++++ b/bsd/dev/sweet_aw2032.h
+@@ -0,0 +1,34 @@
++/* SPDX-License-Identifier: MIT */
++#ifndef SWEET_AW2032_H
++#define SWEET_AW2032_H
++#ifdef KERNEL
++#include <sys/types.h>
++#else
++#include <stddef.h>
++#include <stdint.h>
++#endif
++/* ACF is supplied privately from the device's vendor partition, never embedded.
++ * Only per-device Music register profiles are supported; no DSP/OTP programming. */
++struct sweet_aw_profile {const uint8_t *records;size_t count;};
++int sweet_aw_profile_select(const uint8_t *acf,size_t bytes,unsigned channel,struct sweet_aw_profile *out);
++struct sweet_aw_io {
++ void *ctx;
++ int (*read)(void *,uint8_t,uint16_t *);
++ int (*write)(void *,uint8_t,uint16_t);
++ int (*reset)(void *,int asserted);
++ void (*sleep_ms)(void *,unsigned);
++};
++struct sweet_aw2032 {
++ struct sweet_aw_io io;
++ unsigned prepared,active,verified;
++ uint16_t profile_volume,last_status;
++};
++/* Hardware reset, chip-ID check, profile under mute/powerdown, per-chip efuse
++ * calibration, 48kHz/16bit format. Any error asserts the hardware reset. */
++int sweet_aw2032_prepare(struct sweet_aw2032 *,const struct sweet_aw_io *,const struct sweet_aw_profile *);
++/* Diagnostic limit: at least 24dB digital attenuation. Caller must first have
++ * confirmed PCM completions, then poll faults and stop within a bounded trial. */
++int sweet_aw2032_start(struct sweet_aw2032 *,unsigned attenuation_eighth_db);
++int sweet_aw2032_poll(struct sweet_aw2032 *);
++void sweet_aw2032_stop(struct sweet_aw2032 *);
++#endif
+diff --git a/bsd/dev/sweet_amp_ctl.h b/bsd/dev/sweet_amp_ctl.h
+new file mode 100644
+--- /dev/null
++++ b/bsd/dev/sweet_amp_ctl.h
+@@ -0,0 +1,22 @@
++/* SPDX-License-Identifier: MIT */
++#ifndef SWEET_AMP_CTL_H
++#define SWEET_AMP_CTL_H
++#ifdef KERNEL
++#include <sys/types.h>
++#include <sys/ioccom.h>
++#else
++#include <stdint.h>
++#include <sys/ioctl.h>
++#endif
++#define SWEET_AMP_DEVICE "/dev/sweet-amp"
++#define SWEET_AMP_PROFILE_MAX 64u
++struct sweet_amp_profile {uint32_t channel,count;uint8_t records[SWEET_AMP_PROFILE_MAX*4];};
++struct sweet_amp_start {uint32_t channels,attenuation_eighth_db;};
++struct sweet_amp_status {uint32_t prepared,active,expired,bus_dead;uint32_t sysst[2];};
++#define SWEET_AMP_LOAD _IOW('A',1,struct sweet_amp_profile)
++#define SWEET_AMP_PREPARE _IOW('A',2,uint32_t)
++#define SWEET_AMP_HEARTBEAT _IO('A',3)
++#define SWEET_AMP_START _IOW('A',4,struct sweet_amp_start)
++#define SWEET_AMP_STOP _IO('A',5)
++#define SWEET_AMP_STATUS _IOR('A',6,struct sweet_amp_status)
++#endif
+diff --git a/bsd/conf/files b/bsd/conf/files
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -123,6 +123,7 @@
+ bsd/dev/sweet_bt_hci.c			standard
+ bsd/dev/sweet_haptic.c			standard
+ bsd/dev/sweet_amp.c			standard
++bsd/dev/sweet_aw2032.c		standard
+ bsd/dev/sweet_audiohal.c		standard
+ bsd/dev/sweet_files.c			standard
+ bsd/dev/sweet_gpu.c			standard

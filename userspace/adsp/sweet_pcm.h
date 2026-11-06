@@ -14,7 +14,7 @@ struct sweet_pcm {
     unsigned sent, completed, inflight;
     uint32_t token, pending_op, handle, copp, status;
     uint64_t dsp, deadline;
-    unsigned busy;
+    unsigned busy,adm_default;
     uint32_t write_token[SWEET_PCM_SLOTS];
 };
 void sweet_pcm_init(struct sweet_pcm *s,uint64_t dsp);
