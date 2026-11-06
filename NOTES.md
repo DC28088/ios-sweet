@@ -1,3 +1,8 @@
+## 2026-11-06: Speaker0014 native compile passed; high DMA mapping corrected before install
+- Initial source e67d260, run42229231026 SUCCESS including ASan/UBSan and native ARM64 link. Not installed. Saved prior ADSP log confirms physical DMA above4GiB, so low32 direct-alias approach cannot be assumed usable.
+- Revised optional test maps audio-ion SID0x1b21 via existing kernel PMEM_SMMU translating operation, IOVA0x81000000 + alias1<<32, owned coherent16KiB allocation. Kernel validates allocation ownership and page-table bounds. Queries audio-ion fault registers after trial.
+- No PMEM_SMMU teardown exists, so buffer is retained until reboot even after successful DSP unmap, preventing live SMMU page tables referencing freed pages. No looping/repeated remap; one bounded trial per process. No native test run yet; corrected-source rebuild pending. Amp/GPIO/graphics/Wi-Fi unchanged.
+
 ## 2026-11-06: Speaker0014 bounded silent PCM test prepared
 - USER confirms smooth Safari video on kernel0211 + graphics0213; speaker remains silent. App-preview fix unconfirmed. Working graphics retained; separate branch codex/speaker-0014 based on audio c9e87ee, main checkout unchanged.
 - Added optional WLAND_PCM_TEST finite ASM/ADM sequence: map 4 coherent pages (audio-ion SID0x1b21 alias1), open PRI_MI2S COPP, open stereo48k/16bit stream, route, format, run, 100 silent 10ms periods, pause/close/COPP close/unmap. No amp/GPIO/profile writes. Requires successful existing AFE startup. Runtime default unchanged when flag absent.

@@ -8,13 +8,13 @@
  
  /* cmd-db aux levels (as in the GPU's arc votes) */
  /* Every cmd-db entry: name, RPMh slave (3 ARC, 4 VRM, 5 BCM), address. */
-@@ -907,10 +908,54 @@
+@@ -907,10 +908,63 @@
  	}
  }
  
 +/* 0014: optional bounded silent ASM/ADM playback test; never touches amplifiers.
-+ * DMA is freed only after acknowledged close + unmap. Ambiguous failure retains
-+ * the allocation rather than letting ADSP DMA into a reused page. */
++ * DMA stays allocated until reboot: PMEM_SMMU has no mapping teardown.
++ * Both DSP handles and SMMU page tables must stop referencing a page before reuse. */
 +static struct sweet_pcm pcm_test;
 +static int pcm_enabled, pcm_started, pcm_reported;
 +static uint64_t pcm_pa;
@@ -24,17 +24,23 @@
 +    if(!pcm_started) {
 +        pcm_started=1;
 +        pcm_pa=pm_alloc(SWEET_PCM_SLOTS*SWEET_PCM_STRIDE,4096);
-+        if(!pcm_pa || pcm_pa>0x100000000ull-SWEET_PCM_SLOTS*SWEET_PCM_STRIDE) {
-+            printf("pcm: no supported low-32-bit DMA allocation; not started\n");
-+            if(pcm_pa)pm_free(pcm_pa);
++        if(!pcm_pa) {
++            printf("pcm: no coherent DMA allocation; not started\n");
 +            pcm_enabled=0;return;
 +        }
 +        uint8_t zero[SWEET_PCM_STRIDE]={0};
 +        for(unsigned i=0;i<SWEET_PCM_SLOTS;i++)if(pm_wr(pcm_pa+i*SWEET_PCM_STRIDE,zero,sizeof zero)) {
 +            printf("pcm: zeroing DMA failed; not started\n");pm_free(pcm_pa);pcm_enabled=0;return;
 +        }
-+        /* audio-ion stream ID 0x1b21, bypass mapping established by adsp_smmu_setup. */
-+        sweet_pcm_init(&pcm_test,pcm_pa|(1ull<<32));
++        struct pmem_smmu q;
++        memset(&q,0,sizeof q);q.op=2;q.nsid=1;q.sid[0]=0x1b21;
++        q.iova=0x81000000ull;q.alias=1ull<<32;q.pa=pcm_pa;
++        q.len=SWEET_PCM_SLOTS*SWEET_PCM_STRIDE;
++        if(pm_smmu(&q)) {
++            printf("pcm: audio-ion SMMU mapping failed; buffer retained, no ASM commands\n");
++            pcm_enabled=0;return;
++        }
++        sweet_pcm_init(&pcm_test,q.iova|q.alias);
 +        printf("pcm: silent test starts: 100 periods, 48 kHz stereo s16, PRI_MI2S; amps untouched\n");
 +    }
 +    sweet_pcm_poll(&pcm_test,link_ms());
@@ -48,10 +54,13 @@
 +        printf("pcm: done failed=%u status=%#x sent=%u completed=%u mapped=%u stream=%u copp=%u\n",
 +            pcm_test.failed,pcm_test.status,pcm_test.sent,pcm_test.completed,
 +            pcm_test.mapped,pcm_test.stream_open,pcm_test.copp_open);
-+        if(!pcm_test.failed && !pcm_test.mapped && !pcm_test.stream_open && !pcm_test.copp_open) {
-+            if(pm_free(pcm_pa))printf("pcm: DMA release failed\n");
-+            else pcm_pa=0;
-+        } else printf("pcm: uncertain DMA ownership: allocation retained until recovery\n");
++        struct pmem_smmu q;
++        memset(&q,0,sizeof q);q.op=3;q.nsid=1;q.sid[0]=0x1b21;
++        if(pm_smmu(&q))printf("pcm: audio-ion fault status unavailable\n");
++        else printf("pcm: audio-ion FSR=%#x FSYNR=%#x\n",q.fsr,q.fsynr0);
++        /* PMEM_SMMU has no mapping teardown. Retain its 16 KiB backing even
++         * after DSP unmap, so a live page table never points at freed memory. */
++        printf("pcm: coherent DMA allocation retained for SMMU mapping until reboot\n");
 +    }
 +}
 +
@@ -63,7 +72,7 @@
  	struct sweet_apr_msg m;
  	if (sweet_apr_parse(p, n, &m)) {
  		printf("apr: malformed packet, %zu bytes\n", n);
-@@ -936,6 +981,7 @@
+@@ -936,6 +990,7 @@
  
  static void adsp_apr_poll(void)
  {
@@ -71,7 +80,7 @@
  	if (apr_sent || !adspedge_apr_up())
  		return;
  	uint8_t b[64];
-@@ -949,7 +995,8 @@
+@@ -949,7 +1004,8 @@
  static int adsp_net(unsigned secs)
  {
  	adsp_last = 0xffffffff;
@@ -81,7 +90,7 @@
  	if (afe_on)
  		printf("adsp: AFE bring-up test enabled (WLAND_AFE)\n");
  	glink_edge(SMEM_HOST_ADSP, 24);
-@@ -1011,7 +1058,7 @@
+@@ -1011,7 +1067,7 @@
  	adspedge_status();
  	const uint64_t end = secs ? link_ms() + 1000ull * secs : 0;
  	for (uint64_t next = link_ms(); !end || link_ms() < end;) {
