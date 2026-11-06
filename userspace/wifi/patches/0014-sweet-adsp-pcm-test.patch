@@ -12,7 +12,7 @@
  
  /* cmd-db aux levels (as in the GPU's arc votes) */
  /* Every cmd-db entry: name, RPMh slave (3 ARC, 4 VRM, 5 BCM), address. */
-@@ -907,10 +912,156 @@
+@@ -907,10 +912,157 @@
  	}
  }
  
@@ -23,6 +23,7 @@
 + * controller, which independently resets both PAs on missing heartbeat/close. */
 +static int speaker_fd=-1,speaker_on,speaker_wanted,speaker_media,media_fd=-1;
 +static uint64_t speaker_t0;
++static unsigned speaker_tone_periods=100,speaker_tone_peak=1640;
 +static void speaker_stop(void)
 +{
 +    if(media_fd>=0){close(media_fd);media_fd=-1;}
@@ -72,7 +73,7 @@
 +        if(ioctl(speaker_fd,SWEET_AMP_START,&start)){printf("speaker: clock/fault gate refused output (%d)\n",errno);speaker_stop();return -1;}
 +        speaker_on=1;speaker_t0=link_ms();printf("speaker: bounded %s on both amps, digital attenuation24dB\n",speaker_media?"app PCM":"1kHz tone");
 +    }
-+    if(speaker_on && link_ms()-speaker_t0>=(speaker_media?30000u:2000u)){printf("speaker: independent playback test limit reached\n");speaker_stop();return -1;}
++    if(speaker_on && link_ms()-speaker_t0>=(speaker_media?30000u:(speaker_tone_periods*10u+1000u))){printf("speaker: independent playback test limit reached\n");speaker_stop();return -1;}
 +    return 0;
 +}
 +
@@ -97,7 +98,7 @@
 +        if(speaker_prepare()){pm_free(pcm_pa);pcm_pa=0;pcm_enabled=0;return;}
 +        if(speaker_wanted && !speaker_media){
 +            static const int16_t sine[48]={0,214,424,628,820,998,1160,1301,1420,1515,1584,1626,1640,1626,1584,1515,1420,1301,1160,998,820,628,424,214,0,-214,-424,-628,-820,-998,-1160,-1301,-1420,-1515,-1584,-1626,-1640,-1626,-1584,-1515,-1420,-1301,-1160,-998,-820,-628,-424,-214};
-+            for(unsigned f=0;f<SWEET_PCM_PERIOD/4;f++){uint16_t v=(uint16_t)sine[f%48];zero[f*4]=zero[f*4+2]=v;zero[f*4+1]=zero[f*4+3]=v>>8;}
++            for(unsigned f=0;f<SWEET_PCM_PERIOD/4;f++){uint16_t v=(uint16_t)(int16_t)((int32_t)sine[f%48]*(int32_t)speaker_tone_peak/1640);zero[f*4]=zero[f*4+2]=v;zero[f*4+1]=zero[f*4+3]=v>>8;}
 +        }
 +        for(unsigned i=0;i<SWEET_PCM_MAP_BYTES/SWEET_PCM_STRIDE;i++)if(pm_wr(pcm_pa+i*SWEET_PCM_STRIDE,zero,sizeof zero)) {
 +            printf("pcm: initializing DMA failed; not started\n");speaker_stop();pm_free(pcm_pa);pcm_enabled=0;return;
@@ -111,7 +112,7 @@
 +            speaker_stop();pcm_enabled=0;return;
 +        }
 +        sweet_pcm_init(&pcm_test,q.iova|q.alias);
-+        if(speaker_media && sweet_pcm_set_limit(&pcm_test,3000)){speaker_stop();pcm_enabled=0;return;}
++        if(sweet_pcm_set_limit(&pcm_test,speaker_media?3000:speaker_tone_periods)){speaker_stop();pcm_enabled=0;return;}
 +        printf("pcm: bounded test starts: %u periods, 48 kHz stereo s16, PRI_MI2S; speaker=%d media=%d\n",pcm_test.limit,speaker_wanted,speaker_media);
 +    }
 +    sweet_pcm_poll(&pcm_test,link_ms());
@@ -169,7 +170,7 @@
  	struct sweet_apr_msg m;
  	if (sweet_apr_parse(p, n, &m)) {
  		printf("apr: malformed packet, %zu bytes\n", n);
-@@ -936,6 +1087,7 @@
+@@ -936,6 +1088,7 @@
  
  static void adsp_apr_poll(void)
  {
@@ -177,13 +178,16 @@
  	if (apr_sent || !adspedge_apr_up())
  		return;
  	uint8_t b[64];
-@@ -949,7 +1101,12 @@
+@@ -949,7 +1102,15 @@
  static int adsp_net(unsigned secs)
  {
  	adsp_last = 0xffffffff;
 -	afe_on = getenv("WLAND_AFE") != NULL;
 +	speaker_media = getenv("WLAND_SPEAKER_MEDIA") != NULL;
 +    speaker_wanted = getenv("WLAND_SPEAKER_TONE") != NULL || speaker_media;
++    const char *periods=getenv("WLAND_SPEAKER_TONE_PERIODS"),*peak=getenv("WLAND_SPEAKER_TONE_PEAK");
++    if(periods){char *end=NULL;unsigned long v=strtoul(periods,&end,10);if(!*periods || *end || v<100 || v>300){printf("speaker: invalid tone duration\n");return -1;}speaker_tone_periods=(unsigned)v;}
++    if(peak){char *end=NULL;unsigned long v=strtoul(peak,&end,10);if(!*peak || *end || v<256 || v>8192){printf("speaker: invalid tone peak\n");return -1;}speaker_tone_peak=(unsigned)v;}
 +    const char *delay=getenv("WLAND_PCM_DELAY_MS");
 +    if(delay){char *end=NULL;unsigned long v=strtoul(delay,&end,10);if(!*delay || *end || v>30000){printf("pcm: invalid setup delay\n");return -1;}pcm_delay_ms=(unsigned)v;}
 +	pcm_enabled = getenv("WLAND_PCM_TEST") != NULL || speaker_wanted;
@@ -191,7 +195,7 @@
  	if (afe_on)
  		printf("adsp: AFE bring-up test enabled (WLAND_AFE)\n");
  	glink_edge(SMEM_HOST_ADSP, 24);
-@@ -1011,7 +1168,7 @@
+@@ -1011,7 +1172,7 @@
  	adspedge_status();
  	const uint64_t end = secs ? link_ms() + 1000ull * secs : 0;
  	for (uint64_t next = link_ms(); !end || link_ms() < end;) {

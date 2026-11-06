@@ -1,3 +1,7 @@
+## 2026-11-06: Optional longer listening tone prepared; existing gain limit unchanged
+- Both full-source and local corrected tone runs100/100 completed with SYSST0x11 on both amps; audible reply for cued repeat still pending. Shipping Music profiles have receive enabled and left/right selections; neither profile forces silence. Existing runtime24dB attenuation remains stricter than shipping Music volume.
+- Added explicit optional tone period count100..300 and peak256..8192; defaults remain100periods,peak1640. Native independent cap now duration+1000ms (max4s for optional tone), media remains30s. No amplifier gain/protection change. This allows a clearly cued3s test at modest PCM level if quiet1s tone missed; not enabled automatically. Host FSM already tests10000-token maximum and finite teardown; native validation build pending.
+
 ## 2026-11-06: Full source-built repeat also completes100/100; audible response pending
 - macos-26-intel native42254534749 SUCCESS for sourceb5fa0df, verified artifact staged separately. USER secondFASTBOOT: verified0214 temporary boot OKAY, clock corrected, normal SpringBoard/mediaserverd/wlandauto recovered. Gave15–25s listening cue, ran fullSOURCE executable /var/local/bin/wland-0215-copp PID298,15sdelay/adsp60.
 - Second corrected run: both profiles prepared, bothamps active3, SYSST0x11/0x11, expired0/busdead0;100sent/100completed, failed0/status0, mapped0/stream0/copp0 after successful cleanup, SMMUfaultbits0. Local binary patch not used. USER listening answer pending; no audible success claimed.
