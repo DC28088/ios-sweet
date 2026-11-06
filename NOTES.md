@@ -1,3 +1,8 @@
+## 2026-11-06 16:25 IST: camera read-only probe added to sensor image
+- Branch `codex/sensors-camera-0214` adds the sunfish 0211 read-only camera probe to the 0213 sensor HID branch.
+- `sweetcamprobe=1` maps GCC/CAMCC/SLG51000 SE9 and registers `kern.sweet_camprobe`; writing 1 logs clock/GDSC and the camera PMIC state only. It performs no clock, regulator or PMIC writes and does not capture an image.
+- This is the camera half of the requested camera/sensors image: a hardware-state probe, not a working AppleCamIn/ISP stack. The sweet camera sensor/CCI configuration remains unported.
+
 ## 2026-11-06 16:15 IST: sensor HID services candidate (eight-image batch)
 - Branch `codex/sensors-0213` is based on the 0211 media baseline (3df0e99). New patch 0213 imports the sunfish 0228 sensor HID services: accelerometer, gyro, ambient light, proximity, compass, pressure, orientation and device-motion IOHIDEventService objects, selected by `sweetmotion=MASK` (0x77 enables all but proximity).
 - The kernel side accepts samples on `/dev/redwood-motion` (driver not included in this image) and can publish neutral samples when no real sample exists. It does not itself read the sweet ADSP sensor PD. Do not claim working motion, auto-rotate, auto-brightness or camera from this image alone.
