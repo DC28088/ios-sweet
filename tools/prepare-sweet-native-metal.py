@@ -1157,7 +1157,7 @@ static _Atomic unsigned long long native_wait_until_completed;
                 '@property (readonly) struct rwa_texture *mesaTexture;\n- (void)nativeAttachSurface:(void *)surface plane:(NSUInteger)plane;\n- (BOOL)nativeRefreshPlanar;\n- (void)nativeEnablePlanar;\n- (struct rwa_texture *)nativeRenderTexture;')
     method=s.index('- (id)newTextureWithDescriptor:(MTLTextureDescriptor *)d iosurface:')
     at=s.index('\n{',method)+2
-    s=s[:at]+'''
+    s=s[:at]+r'''
     if(s && d && IOSurfaceGetPlaneCount(s) && ([d pixelFormat]==500 || [d pixelFormat]==520)) {
         uint32_t format=IOSurfaceGetPixelFormat(s);
         if(p || (format!='420v' && format!='420f') || IOSurfaceGetPlaneCount(s)!=2 ||
@@ -1241,6 +1241,11 @@ ensure_function_encoder(void)
         '\t\t\t    work->buffers, work->bufferOffsets, work->count);\n'
         '\t}\n'
         '\tif (mesa.render_draw([work->render render], &draw, why, size) != 0) {')
+    # Generated C string literals must retain their escape, not a source newline.
+    for literal in (r'combined YUV requires a read-only NV12 texture\n',
+                    r'combined YUV conversion refused\n',
+                    r'combined NV12 converted to RGBA: %ux%u usage %#x\n'):
+        if literal not in s:raise RuntimeError('Lost generated C string escape: '+repr(literal))
     p.write_text(s)
     shutil.copy2(NATIVE/'frontend/SweetNativeLibrary.inc',src/'SweetNativeLibrary.inc')
     shutil.copy2(NATIVE/'frontend/SweetNativeDrawLog.inc',src/'SweetNativeDrawLog.inc')

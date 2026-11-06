@@ -1,3 +1,7 @@
+## 2026-11-06: 0213 first native compile failed; source-string generator fixed
+- Run42212678992 failed in Objective-C compile: three generated combined-YUV log strings contained literal newlines. Portable plane tests and actual converter ASan/UBSan CI checks passed; no install performed.
+- Fixed insertion to preserve C escapes using raw Python source string; added explicit generated-string assertions. Fresh pinned donor export now emits all three complete C lines correctly. Both local conversion/layout tests pass again. Rebuild pending; phone unchanged.
+
 ## 2026-11-06: 0213 combined NV12 CPU fallback prepared and locally checked
 - Reviewed saved active sunfish frontend CPU fallback (phone/metal2/NativeBridgeMetalFrontend.mm, snapshot 2026-11-05). Chose owned RGBA conversion for combined Metal format500 rather than assuming native multi-plane support in the pinned Mesa. Supports format520 sRGB per primary WebKit enum; deliberately does not mislabel format501 (422) as sRGB.
 - New checked converter: only 8-bit NV12 420v/420f, validates both plane rows/dimensions/allocation bounds, 64 MiB output cap, odd dimensions supported when chroma covers them. Video/full range and BT.601/709/2020 coefficients; honors recognized IOSurface matrix metadata, defaults BT.601 only when absent, rejects unknown string matrices. Source pixels read under IOSurfaceLockReadOnly and never modified.
