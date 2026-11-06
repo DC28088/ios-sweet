@@ -45,7 +45,7 @@ jobs:
           cc -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer \
             -o /tmp/test-sweet-pcm-ring userspace/adsp/test_sweet_pcm_ring.c
           /tmp/test-sweet-pcm-ring
-          cp userspace/adsp/sweet_pcm.c userspace/adsp/sweet_pcm.h userspace/adsp/sweet_aw2032.c userspace/adsp/sweet_aw2032.h userspace/adsp/sweet_amp_ctl.h donor/phone/wifi/
+          cp userspace/adsp/sweet_pcm.c userspace/adsp/sweet_pcm.h userspace/adsp/sweet_pcm_levels.h userspace/adsp/sweet_aw2032.c userspace/adsp/sweet_aw2032.h userspace/adsp/sweet_amp_ctl.h donor/phone/wifi/
       - name: Build wland and netsvc for iOS 16 arm64
         run: |
           out=userspace/out/sweet-wifi-ios16
