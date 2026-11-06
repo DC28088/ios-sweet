@@ -1,0 +1,17 @@
+--- a/phone/wifi/adspedge.c
++++ b/phone/wifi/adspedge.c
+@@ -371,8 +371,12 @@
+ {
+ 	uint64_t end = link_ms() + ms;
+ 	do {
+-		while (pump_one() > 0)
+-			;
++		unsigned batch = 0;
++		while (pump_one() > 0) {
++			/* Hand control back for PCM refills even under continuous sensor RPC. */
++			if (++batch >= 32 || (ms && link_ms() >= end))
++				break;
++		}
+ 		if (ms)
+ 			usleep(1000);
+ 	} while (link_ms() < end);

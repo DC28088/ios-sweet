@@ -69,6 +69,7 @@ jobs:
       - name: Check amplifier profile and failure handling
         run: |
           python3 tools/check-sweet-amp-model.py
+          python3 tools/check-sweet-iig-compat.py
           cc -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer \
             -o /tmp/test-sweet-amp userspace/adsp/test_sweet_aw2032.c userspace/adsp/sweet_aw2032.c
           /tmp/test-sweet-amp
@@ -116,6 +117,8 @@ jobs:
           sudo xcode-select -s "$XC"
           xcodebuild -version
           xcrun --find iig
+          echo "SWEET_REAL_IIG=$(xcrun --find iig)" >> "$GITHUB_ENV"
+          echo "IIG=$GITHUB_WORKSPACE/tools/sweet-iig-compat.py" >> "$GITHUB_ENV"
 
       - name: Build
         working-directory: dxb

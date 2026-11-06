@@ -1,0 +1,12 @@
+--- a/makedefs/MakeInc.def
++++ b/makedefs/MakeInc.def
+@@ -177,6 +177,9 @@
+ 
+ WARNFLAGS_STD := $(WARNFLAGS_STD) \
+ 	-Wno-error=declaration-after-statement
++
++# Xcode26: legacy kernel names intentionally use reserved prefixes.
++WARNFLAGS_STD := $(WARNFLAGS_STD) -Wno-reserved-identifier
+ 
+ # Hand-written sign conversion diagnostics are resolved, but the
+ # auto-generated ones need mig and iig to be updated to fix.  Disable the
