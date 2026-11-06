@@ -1,3 +1,8 @@
+## 2026-11-06: 0211 native stride fix verified on hardware; Wi-Fi startup passed
+- USB SSH works; UTC corrected. Same synthetic two-plane helper now reports widths 64/32 and row strides 64/64, matching requested rows. Baseline 0209 returned 0/0 for those rows. Temporary helper removed. This establishes the serializer fix on hardware, not complete video playback.
+- Fresh wland log: WMI READY, HTT version ready, initial scan completed, interface announced. USER requested to connect Wi-Fi, check haptic feel, then one Safari YouTube/headphone test; result pending. Headphone transport clarification still pending.
+- No audio HAL/firmware/DSP change. Private test capture offset work/audio-runtime/0211-playback-start.json. Phone remains on temporary 0211; no flash. Next inspect crash register/mapping diagnostics if playback still fails.
+
 ## 2026-11-06: 0211 temporary boot accepted; USER confirms headphone sound works
 - USER reports headphone sound works but built-in speaker does not; headphone transport (Bluetooth vs 3.5 mm) asked, pending. Do not assume jack or mic success.
 - USER entered fastboot. 0211 image SHA256 reverified; fastboot Sending/Booting OKAY. Private capture offset work/audio-runtime/0211-capture-start.json. No partition flash; no audio firmware/HAL/DSP changes.
