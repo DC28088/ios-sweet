@@ -77,5 +77,16 @@ int main(void)
   memcpy(p,m.payload,12);p32(p+12,0);n=reply(r,&m,0x10d99,p,16);assert(sweet_pcm_receive(&s,r,n)==1);
  }
  assert(s.completed==10000 && !s.failed);
+ sweet_pcm_init(&s,0x190000000ull);assert(!sweet_pcm_set_limit(&s,SWEET_PCM_STREAM_LIMIT));setup(&s,0);
+ s.sent=s.completed=16383;
+ for(unsigned i=0;i<5;i++){
+  n=sweet_pcm_next(&s,b,128,200);assert(n && !sweet_apr_parse(b,n,&m));
+  memcpy(p,m.payload,12);p32(p+12,0);n=reply(r,&m,0x10d99,p,16);assert(sweet_pcm_receive(&s,r,n)==1);
+ }
+ assert(s.completed==16388 && !s.failed); /* crosses old 16-bit token filter */
+ s.sent=s.completed=SWEET_PCM_STREAM_LIMIT-1;
+ n=sweet_pcm_next(&s,b,128,200);assert(n && !sweet_apr_parse(b,n,&m));
+ memcpy(p,m.payload,12);p32(p+12,0);n=reply(r,&m,0x10d99,p,16);assert(sweet_pcm_receive(&s,r,n)==1);
+ n=sweet_pcm_next(&s,b,128,200);assert(n && !sweet_apr_parse(b,n,&m) && m.opcode==0x10bd3);
  puts("PASS: PCM ABI vectors, 100 periods, slot ownership, stale replies, ordered teardown, timeout retention and bad packets");
 }

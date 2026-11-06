@@ -9,6 +9,8 @@
 #define SWEET_PCM_MAP_BYTES 32768u /* known-working reference PCM map window */
 #define SWEET_PCM_SLOTS 4u
 #define SWEET_PCM_LIMIT 100u
+/* Unique write tokens for ~31 days at10ms; explicit service mode only. */
+#define SWEET_PCM_STREAM_LIMIT 0x0fffffffu
 struct sweet_pcm {
     unsigned step, waiting, mapped, copp_open, stream_open, failed, done;
     unsigned sent, completed, inflight, limit;

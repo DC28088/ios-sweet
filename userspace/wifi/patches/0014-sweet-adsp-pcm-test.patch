@@ -12,7 +12,7 @@
  
  /* cmd-db aux levels (as in the GPU's arc votes) */
  /* Every cmd-db entry: name, RPMh slave (3 ARC, 4 VRM, 5 BCM), address. */
-@@ -907,10 +912,171 @@
+@@ -907,10 +912,202 @@
  	}
  }
  
@@ -21,8 +21,8 @@
 + * Both DSP handles and SMMU page tables must stop referencing a page before reuse. */
 +/* 0214: bounded speaker tone. Only enabled explicitly and only with the kernel
 + * controller, which independently resets both PAs on missing heartbeat/close. */
-+static int speaker_fd=-1,speaker_on,speaker_wanted,speaker_media,media_fd=-1;
-+static uint64_t speaker_t0;
++static int speaker_fd=-1,speaker_on,speaker_wanted,speaker_media,speaker_service,speaker_prepared,media_fd=-1;
++static uint64_t speaker_t0,speaker_last_signal;
 +static unsigned speaker_tone_periods=100,speaker_tone_peak=1640;
 +static void speaker_stop(void)
 +{
@@ -31,7 +31,7 @@
 +    struct sweet_amp_status st;
 +    if(ioctl(speaker_fd,SWEET_AMP_STATUS,&st)==0)
 +        printf("speaker: status prepared=%u active=%u expired=%u bus=%u SYSST=%#x/%#x\n",st.prepared,st.active,st.expired,st.bus_dead,st.sysst[0],st.sysst[1]);
-+    (void)ioctl(speaker_fd,SWEET_AMP_STOP,0);close(speaker_fd);speaker_fd=-1;speaker_on=0;
++    (void)ioctl(speaker_fd,SWEET_AMP_STOP,0);close(speaker_fd);speaker_fd=-1;speaker_on=speaker_prepared=0;
 +    printf("speaker: controller closed; amps reset\n");
 +}
 +static int speaker_prepare(void)
@@ -63,9 +63,10 @@
 +        }
 +        if(ioctl(speaker_fd,SWEET_AMP_LOAD,&p)){printf("speaker: profile load refused (%d)\n",errno);speaker_stop();return -1;}
 +    }
++    if(speaker_service){printf("speaker: service profiles loaded; amps remain off until app PCM\n");return 0;}
 +    uint32_t mask=3;
 +    if(ioctl(speaker_fd,SWEET_AMP_PREPARE,&mask)){printf("speaker: muted amp preparation failed (%d)\n",errno);speaker_stop();return -1;}
-+    printf("speaker: both profiles prepared muted; waiting for PCM completions\n");return 0;
++    speaker_prepared=1;printf("speaker: both profiles prepared muted; waiting for PCM completions\n");return 0;
 +}
 +static int speaker_poll(const struct sweet_pcm *s)
 +{
@@ -74,12 +75,39 @@
 +    if(s->failed || s->done || (s->sent==s->limit && !s->inflight)){
 +        speaker_stop();return 0;
 +    }
++    if(speaker_service)return 0;
 +    if(!speaker_on && s->completed && s->sent<s->limit){
 +        struct sweet_amp_start start={3,24*8};
 +        if(ioctl(speaker_fd,SWEET_AMP_START,&start)){printf("speaker: clock/fault gate refused output (%d)\n",errno);speaker_stop();return -1;}
 +        speaker_on=1;speaker_t0=link_ms();printf("speaker: bounded %s on both amps, digital attenuation24dB\n",speaker_media?"app PCM":"1kHz tone");
 +    }
 +    if(speaker_on && link_ms()-speaker_t0>=(speaker_media?30000u:(speaker_tone_periods*10u+1000u))){printf("speaker: independent playback test limit reached\n");speaker_stop();return -1;}
++    return 0;
++}
++
++/* Service mode keeps the existing DSP/DMA session. Idle stops/resets the PAs
++ * through the same kernel operation used by the validated tone teardown;
++ * profiles/reader remain owned, so new data can prepare them without remapping. */
++static int speaker_activity(const uint8_t *samples,size_t bytes)
++{
++    if(!speaker_service)return 0;
++    unsigned nonzero=0;for(size_t i=0;i<bytes;i++)nonzero|=samples[i];
++    if(nonzero){
++        speaker_last_signal=link_ms();
++        if(!speaker_prepared){
++            uint32_t mask=3;
++            if(ioctl(speaker_fd,SWEET_AMP_PREPARE,&mask))return -1;
++            speaker_prepared=1;
++        }
++        if(!speaker_on){
++            struct sweet_amp_start start={3,24*8};
++            if(ioctl(speaker_fd,SWEET_AMP_START,&start))return -1;
++            speaker_on=1;printf("speaker: app PCM active\n");
++        }
++    }else if(speaker_prepared && link_ms()-speaker_last_signal>=1000){
++        if(ioctl(speaker_fd,SWEET_AMP_STOP,0))return -1;
++        speaker_prepared=speaker_on=0;printf("speaker: idle; amps reset, DSP session retained\n");
++    }
 +    return 0;
 +}
 +
@@ -123,7 +151,7 @@
 +            speaker_stop();pcm_enabled=0;return;
 +        }
 +        sweet_pcm_init(&pcm_test,q.iova|q.alias);
-+        if(sweet_pcm_set_limit(&pcm_test,speaker_media?3000:speaker_tone_periods)){speaker_stop();pcm_enabled=0;return;}
++        if(sweet_pcm_set_limit(&pcm_test,speaker_service?SWEET_PCM_STREAM_LIMIT:speaker_media?3000:speaker_tone_periods)){speaker_stop();pcm_enabled=0;return;}
 +        printf("pcm: bounded test starts: %u periods, 48 kHz stereo s16, PRI_MI2S; speaker=%d media=%d\n",pcm_test.limit,speaker_wanted,speaker_media);
 +    }
 +    sweet_pcm_poll(&pcm_test,link_ms());
@@ -136,10 +164,13 @@
 +        if(op==0x10dab && speaker_media){
 +            uint32_t slot=(uint32_t)b[36]|(uint32_t)b[37]<<8|(uint32_t)b[38]<<16|(uint32_t)b[39]<<24;
 +            uint8_t audio[SWEET_PCM_PERIOD]={0};
-+            ssize_t got=read(media_fd,audio,sizeof audio);
++            ssize_t got=(speaker_service && !pcm_test.completed)?0:read(media_fd,audio,sizeof audio);
 +            if(got<0 && (errno==EAGAIN || errno==EWOULDBLOCK))got=0;
 +            if(got<0 || (got&3) || slot>=SWEET_PCM_SLOTS || pm_wr(pcm_pa+(uint64_t)slot*SWEET_PCM_STRIDE,audio,sizeof audio)){
 +                printf("pcm: media read/DMA refill failed; stopping\n");speaker_stop();sweet_pcm_abort(&pcm_test,0xfffffffbu);break;
++            }
++            if(speaker_activity(audio,sizeof audio)){
++                printf("speaker: service clock/profile gate failed; stopping\n");speaker_stop();sweet_pcm_abort(&pcm_test,0xfffffffau);break;
 +            }
 +            media_bytes+=(uint64_t)got;if(!got)++media_empty;
 +            unsigned nz=0;for(ssize_t k=0;k<got;k++)nz|=audio[k];if(nz)++media_nonzero;
@@ -184,7 +215,7 @@
  	struct sweet_apr_msg m;
  	if (sweet_apr_parse(p, n, &m)) {
  		printf("apr: malformed packet, %zu bytes\n", n);
-@@ -936,6 +1102,7 @@
+@@ -936,6 +1133,7 @@
  
  static void adsp_apr_poll(void)
  {
@@ -192,12 +223,13 @@
  	if (apr_sent || !adspedge_apr_up())
  		return;
  	uint8_t b[64];
-@@ -949,7 +1116,15 @@
+@@ -949,7 +1147,16 @@
  static int adsp_net(unsigned secs)
  {
  	adsp_last = 0xffffffff;
 -	afe_on = getenv("WLAND_AFE") != NULL;
-+	speaker_media = getenv("WLAND_SPEAKER_MEDIA") != NULL;
++	speaker_service = getenv("WLAND_SPEAKER_SERVICE") != NULL;
++    speaker_media = getenv("WLAND_SPEAKER_MEDIA") != NULL || speaker_service;
 +    speaker_wanted = getenv("WLAND_SPEAKER_TONE") != NULL || speaker_media;
 +    const char *periods=getenv("WLAND_SPEAKER_TONE_PERIODS"),*peak=getenv("WLAND_SPEAKER_TONE_PEAK");
 +    if(periods){char *end=NULL;unsigned long v=strtoul(periods,&end,10);if(!*periods || *end || v<100 || v>300){printf("speaker: invalid tone duration\n");return -1;}speaker_tone_periods=(unsigned)v;}
@@ -209,7 +241,7 @@
  	if (afe_on)
  		printf("adsp: AFE bring-up test enabled (WLAND_AFE)\n");
  	glink_edge(SMEM_HOST_ADSP, 24);
-@@ -1011,7 +1186,7 @@
+@@ -1011,7 +1218,7 @@
  	adspedge_status();
  	const uint64_t end = secs ? link_ms() + 1000ull * secs : 0;
  	for (uint64_t next = link_ms(); !end || link_ms() < end;) {

@@ -34,7 +34,7 @@ void sweet_pcm_init(struct sweet_pcm *s,uint64_t dsp)
 int sweet_pcm_set_limit(struct sweet_pcm *s,unsigned periods)
 {
     if(!s || s->step!=P_MAP || s->waiting || s->mapped || s->failed ||
-       !periods || periods>10000)return -1;
+       !periods || (periods>10000 && periods!=SWEET_PCM_STREAM_LIMIT))return -1;
     s->limit=periods;return 0;
 }
 void sweet_pcm_abort(struct sweet_pcm *s,uint32_t status)
@@ -100,7 +100,7 @@ int sweet_pcm_receive(struct sweet_pcm *s,const uint8_t *packet,size_t n)
     struct sweet_apr_msg m;
     if(sweet_apr_parse(packet,n,&m))return -1;
     if(s->done || m.src_domain!=APR_DOMAIN_ADSP || m.dest_domain!=APR_DOMAIN_APPS)return 0;
-    if(m.opcode==WRITE_DONE && m.src_svc==ASM && m.dest_svc==ASM && m.dest_port==STREAM && (m.token&0xffff0000u)==WTOKEN){
+    if(m.opcode==WRITE_DONE && m.src_svc==ASM && m.dest_svc==ASM && m.dest_port==STREAM && (m.token&0xc0000000u)==WTOKEN){
         unsigned slot=m.token&3u;uint64_t a=s->dsp+(uint64_t)slot*SWEET_PCM_STRIDE;
         if(!(s->busy&(1u<<slot)) || s->write_token[slot]!=m.token)return 0;
         if(m.payload_len<16 || g32(m.payload)!=(uint32_t)a || g32(m.payload+4)!=(uint32_t)(a>>32) || g32(m.payload+8)!=s->handle){sweet_pcm_abort(s,0xfffffffeu);return -1;}
