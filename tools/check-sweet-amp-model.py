@@ -11,3 +11,10 @@ for name in ['sweet_aw2032.c','sweet_aw2032.h','sweet_amp_ctl.h']:
  elif name=='sweet_aw2032.h':expected=expected.replace('#include <stddef.h>\n#include <stdint.h>','#ifdef KERNEL\n#include <sys/types.h>\n#else\n#include <stddef.h>\n#include <stdint.h>\n#endif')
  assert actual==expected,name+' kernel/portable source drift'
 print('PASS: kernel amplifier model and ABI match the portable tested sources')
+
+patch=(root/'xnu/patches/0215-sweet-coreaudio-pcm-ring.patch').read_text()
+name='sweet_pcm_ring.h'
+part=patch.split('diff --git a/bsd/dev/'+name+' b/bsd/dev/'+name+'\n',1)[1].split('\ndiff --git',1)[0]
+actual='\n'.join(line[1:] for line in part.splitlines() if line.startswith('+') and not line.startswith('+++'))+'\n'
+assert actual==(root/'userspace/adsp'/name).read_text(),'kernel/portable PCM ring drift'
+print('PASS: kernel PCM ring matches the portable tested source')

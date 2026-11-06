@@ -1,0 +1,176 @@
+diff --git a/bsd/dev/sweet_pcm_dev.c b/bsd/dev/sweet_pcm_dev.c
+new file mode 100644
+--- /dev/null
++++ b/bsd/dev/sweet_pcm_dev.c
+@@ -0,0 +1,89 @@
++/* SPDX-License-Identifier: MIT */
++/* 0215: existing SweetAudio HAL's nonblocking stereo PCM sink. The audio daemon
++ * alone reads it as root; it feeds the ADSP and supervised amp controller.
++ * No DSP address, amplifier write or speaker enable occurs in this driver. */
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <sys/conf.h>
++#include <sys/file.h>
++#include <sys/uio.h>
++#include <sys/proc.h>
++#include <sys/kauth.h>
++#include <sys/errno.h>
++#include <sys/ioccom.h>
++#include <kern/locks.h>
++#include <miscfs/devfs/devfs.h>
++#include "sweet_pcm_ring.h"
++struct sweet_audio_volume {uint32_t below,muted;};
++#define SWEET_AUDIO_SET_VOLUME _IOW('r',1,struct sweet_audio_volume)
++static LCK_GRP_DECLARE(pcm_ring_group,"sweet_pcm_ring");
++static LCK_MTX_DECLARE(pcm_ring_lock,&pcm_ring_group);
++static struct sweet_pcm_ring pcm_ring;
++static struct sweet_audio_volume pcm_volume;
++static int pcm_reader;
++static bool pcm_dev_started;
++void sweet_pcm_dev_init(void);
++static int pcm_dev_open(dev_t d __unused,int flags,int t __unused,struct proc *p)
++{
++ if(!p)return EPERM;
++ if(!(flags&FREAD))return 0;
++ if(!kauth_cred_issuser(kauth_cred_get()))return EPERM;
++ lck_mtx_lock(&pcm_ring_lock);int e=pcm_reader?EBUSY:0;
++ if(!e){pcm_reader=proc_pid(p);memset(&pcm_ring,0,sizeof pcm_ring);}
++ lck_mtx_unlock(&pcm_ring_lock);return e;
++}
++static int pcm_dev_close(dev_t d __unused,int flags,int t __unused,struct proc *p __unused)
++{
++ if(flags&FREAD){lck_mtx_lock(&pcm_ring_lock);pcm_reader=0;memset(&pcm_ring,0,sizeof pcm_ring);lck_mtx_unlock(&pcm_ring_lock);}return 0;
++}
++static int pcm_dev_write(dev_t d __unused,struct uio *uio,int f __unused)
++{
++ if(uio_resid(uio)&3)return EINVAL;
++ uint8_t b[1920];int e=0;
++ while(uio_resid(uio)>0){
++  unsigned n=(unsigned)MIN(uio_resid(uio),(user_ssize_t)sizeof b);
++  e=uiomove((caddr_t)b,(int)n,uio);if(e)break;
++  lck_mtx_lock(&pcm_ring_lock);
++  if(!pcm_volume.muted)sweet_pcm_ring_push(&pcm_ring,b,n/4);
++  lck_mtx_unlock(&pcm_ring_lock);
++ }
++ return e;
++}
++static int pcm_dev_read(dev_t d __unused,struct uio *uio,int f __unused)
++{
++ if(!uio_resid(uio))return 0;
++ if(uio_resid(uio)<4 || (uio_resid(uio)&3))return EINVAL;
++ uint8_t b[1920];unsigned want=(unsigned)MIN(uio_resid(uio),(user_ssize_t)sizeof b)/4;
++ lck_mtx_lock(&pcm_ring_lock);
++ if(pcm_reader!=proc_pid(current_proc())){lck_mtx_unlock(&pcm_ring_lock);return EPERM;}
++ unsigned n=sweet_pcm_ring_pull(&pcm_ring,b,want);
++ lck_mtx_unlock(&pcm_ring_lock);
++ if(!n)return EWOULDBLOCK;
++ return uiomove((caddr_t)b,(int)(n*4),uio);
++}
++static int pcm_dev_ioctl(dev_t d __unused,u_long cmd,caddr_t data,int f __unused,struct proc *p __unused)
++{
++ if(cmd!=SWEET_AUDIO_SET_VOLUME)return ENOTTY;
++ struct sweet_audio_volume *v=(void *)data;if(v->below>720 || v->muted>1)return EINVAL;
++ lck_mtx_lock(&pcm_ring_lock);pcm_volume=*v;
++ if(v->muted)memset(&pcm_ring,0,sizeof pcm_ring);
++ lck_mtx_unlock(&pcm_ring_lock);return 0;
++}
++static const struct cdevsw pcm_dev_cdevsw={
++ .d_open=pcm_dev_open,.d_close=pcm_dev_close,.d_read=pcm_dev_read,.d_write=pcm_dev_write,
++ .d_ioctl=pcm_dev_ioctl,.d_stop=eno_stop,.d_reset=eno_reset,.d_ttys=NULL,.d_select=eno_select,
++ .d_mmap=eno_mmap,.d_strategy=eno_strat,.d_reserved_1=eno_getc,.d_reserved_2=eno_putc,.d_type=0,
++};
++void sweet_pcm_dev_init(void)
++{
++ if(pcm_dev_started)return;
++ pcm_dev_started=true;
++ int major=cdevsw_add(-1,&pcm_dev_cdevsw);if(major<0){printf("SWEET PCM: registration failed\n");return;}
++ /* HAL may write; only root can read the audio stream (permissions + open gate). */
++ if(!devfs_make_node(makedev(major,0),DEVFS_CHAR,UID_ROOT,GID_WHEEL,0622,"sweet-audio")){
++  printf("SWEET PCM: device creation failed\n");return;
++ }
++ printf("SWEET PCM: /dev/sweet-audio ready; stereo48k/s16, bounded nonblocking ring\n");
++}
++#endif
+diff --git a/bsd/dev/sweet_pcm_ring.h b/bsd/dev/sweet_pcm_ring.h
+new file mode 100644
+--- /dev/null
++++ b/bsd/dev/sweet_pcm_ring.h
+@@ -0,0 +1,39 @@
++/* SPDX-License-Identifier: MIT */
++#ifndef SWEET_PCM_RING_H
++#define SWEET_PCM_RING_H
++#ifdef KERNEL
++#include <sys/types.h>
++#include <sys/systm.h>
++#else
++#include <stdint.h>
++#include <stddef.h>
++#include <string.h>
++#endif
++#define SWEET_PCM_RING_FRAMES 8192u
++#define SWEET_PCM_FRAME_BYTES 4u
++/* Caller serializes access. Drop oldest complete frames on overrun; neither
++ * producer nor consumer waits. Only raw stereo signed16/48kHz frames. */
++struct sweet_pcm_ring {
++ uint8_t data[SWEET_PCM_RING_FRAMES*SWEET_PCM_FRAME_BYTES];
++ uint32_t head,tail,count;
++ uint64_t written,read,dropped;
++};
++static inline void sweet_pcm_ring_push(struct sweet_pcm_ring *r,const uint8_t *p,uint32_t n)
++{
++ r->written+=n;
++ if(n>SWEET_PCM_RING_FRAMES){uint32_t skip=n-SWEET_PCM_RING_FRAMES;p+=(size_t)skip*4;r->dropped+=skip;n=SWEET_PCM_RING_FRAMES;}
++ if(n>SWEET_PCM_RING_FRAMES-r->count){uint32_t skip=n-(SWEET_PCM_RING_FRAMES-r->count);r->tail=(r->tail+skip)%SWEET_PCM_RING_FRAMES;r->count-=skip;r->dropped+=skip;}
++ uint32_t first=n<SWEET_PCM_RING_FRAMES-r->head?n:SWEET_PCM_RING_FRAMES-r->head;
++ memcpy(r->data+(size_t)r->head*4,p,(size_t)first*4);
++ memcpy(r->data,p+(size_t)first*4,(size_t)(n-first)*4);
++ r->head=(r->head+n)%SWEET_PCM_RING_FRAMES;r->count+=n;
++}
++static inline uint32_t sweet_pcm_ring_pull(struct sweet_pcm_ring *r,uint8_t *p,uint32_t n)
++{
++ if(n>r->count)n=r->count;
++ uint32_t first=n<SWEET_PCM_RING_FRAMES-r->tail?n:SWEET_PCM_RING_FRAMES-r->tail;
++ memcpy(p,r->data+(size_t)r->tail*4,(size_t)first*4);
++ memcpy(p+(size_t)first*4,r->data,(size_t)(n-first)*4);
++ r->tail=(r->tail+n)%SWEET_PCM_RING_FRAMES;r->count-=n;r->read+=n;return n;
++}
++#endif
+diff --git a/bsd/dev/sweet_amp_control.inc b/bsd/dev/sweet_amp_control.inc
+--- a/bsd/dev/sweet_amp_control.inc
++++ b/bsd/dev/sweet_amp_control.inc
+@@ -167,8 +167,10 @@
+         lck_mtx_unlock(&amp_control_lock);
+     }
+ }
++extern void sweet_pcm_dev_init(void);
+ static void amp_control_init(void)
+ {
++    sweet_pcm_dev_init();
+     /* Start the watchdog before publishing a device that can enable output. */
+     thread_t th;if(kernel_thread_start(amp_control_watch,NULL,&th)!=KERN_SUCCESS){printf("SWEET AMP: no watchdog; controller disabled\n");return;}
+     thread_deallocate(th);
+diff --git a/bsd/conf/files b/bsd/conf/files
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -124,6 +124,7 @@
+ bsd/dev/sweet_haptic.c			standard
+ bsd/dev/sweet_amp.c			standard
+ bsd/dev/sweet_aw2032.c		standard
++bsd/dev/sweet_pcm_dev.c		standard
+ bsd/dev/sweet_audiohal.c		standard
+ bsd/dev/sweet_files.c			standard
+ bsd/dev/sweet_gpu.c			standard
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -673,8 +673,8 @@
+ 	sweet_rpmh_ddr_raise();     /* sweetddr: MC0/SH0 at the most, ACV apps (0169, from HackiOS) */
+ 	sweet_smmu_probe_start();   /* sweetsmmuprobe=1: BCM votes + apps SMMU ID read (0149) */
+ 	sweet_haptic_init();     /* sweethaptic=1|2|3: AW8624 on QUP1 SE3 (bsd/dev/sweet_haptic.c) */
++	sweet_amp_init();        /* sweetamp=1: AW882xx speaker amp ID probe on QUP0 SE4 (bsd/dev/sweet_amp.c, 0197) */
+ 	sweet_audiohal_init();   /* sweetvaudio=0|1: VirtualAudio HAL plug-in (bsd/dev/sweet_audiohal.c, 0196) */
+-	sweet_amp_init();        /* sweetamp=1: AW882xx speaker amp ID probe on QUP0 SE4 (bsd/dev/sweet_amp.c, 0197) */
+ 	sweet_bt_init();         /* sweetbt=1: WCN3990 Bluetooth over QUP0 SE3, com.apple.uart.bluetooth (bsd/dev/sweet_bt.c) */
+ 	flame_wlan_init();       /* /dev/wlan, en0 + Apple80211 for wifid: bsd/dev/flame_wlan.c, from ios-flame 0123 */
+ 	sweet_bb_dev_init();     /* sweetbb=1: /dev/sweet-bb + AppleBaseband for CommCenter (UniXNU QcomBaseband port) */

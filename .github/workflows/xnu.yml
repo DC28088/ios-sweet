@@ -72,6 +72,9 @@ jobs:
           cc -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer \
             -o /tmp/test-sweet-amp userspace/adsp/test_sweet_aw2032.c userspace/adsp/sweet_aw2032.c
           /tmp/test-sweet-amp
+          cc -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -o /tmp/test-sweet-pcm-ring userspace/adsp/test_sweet_pcm_ring.c
+          /tmp/test-sweet-pcm-ring
 
       - name: Fetch build script
         run: |
