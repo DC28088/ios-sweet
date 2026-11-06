@@ -1,3 +1,10 @@
+## 2026-11-06: 0211 build succeeded; verified image awaits FASTBOOT hardware test
+- CI run 42155249166 SUCCESS on source 3df0e9955a208190a5e89ffc0851007d38fd7625 (codex/media-0211). ZIP member CRC and kernel SHA256SUMS verified.
+- Kernel SHA256 fe3b080a3402b4648b0a4492630ba88738b8facf5690af6dc617fd20a1e5c59c. Image work/audio-runtime/shim-boot-0211-media.img, 18038784 bytes, SHA256 2be69fce130b3fb64dfbc59e9513283475cc44ab123d89f8e57bcb3f2b982309. Shim/DTB/ADT byte comparisons pass. Full hardware args retained; sweetbuild=211; broad sweetdtlog removed, cmdline 510 bytes.
+- Exact row-stride ABI fix only; speaker PCM/amp path remains unfinished. Native synthetic fixture on current 0209 returned 0/0 for requested plane rows 64/64; corrected serializer host fixture passes. Playback cure not yet demonstrated.
+- Current phone left on USER-confirmed Wi-Fi/haptics-working 0209. Requested FASTBOOT for temporary 0211 boot; no flash. Next: corrected native row fixture first, Wi-Fi/interface readiness and haptic check, then one Safari playback reproduction; retain 0209 fallback.
+- Saved stock amp source/ACF review in outputs/Audio-Playback-Notes.md. No register or audio userspace change; main DeepSeek branch untouched.
+
 ## 2026-11-06: 0211 media fix building on Intel CI
 - Reviewed code/checker + sanitized notes committed 3df0e9955a208190a5e89ffc0851007d38fd7625 on isolated codex/media-0211 and pushed to existing DC28088/ios-sweet. Run 42155249166 is actively building on macos-15-intel, not queued. No progressing build cancelled.
 - Packaging prepared: preserve 0207 shim/DTB/ADT and working hardware args, sweetbuild=211, no broad sweetdtlog daemon logging (510 bytes). Kernel not available yet; no new image booted. Current phone stays working 0209.
