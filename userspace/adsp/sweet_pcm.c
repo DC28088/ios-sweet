@@ -113,7 +113,9 @@ int sweet_pcm_receive(struct sweet_pcm *s,const uint8_t *packet,size_t n)
         s->mapped=1;
     }else if(m.opcode==ADM_OPEN_RSP && s->step==P_ADM){
         if(m.payload_len<8){sweet_pcm_abort(s,0xfffffffeu);return -1;}
-        status=g32(m.payload);s->copp=g32(m.payload+4);
+        /* ABI: u32 status, u16 copp_id, u16 reserved. Firmware leaves
+         * reserved nonzero; it is not part of the device id. */
+        status=g32(m.payload);s->copp=g32(m.payload+4)&0xffffu;
         if(!status && s->copp<0xff)s->copp_open=1;else if(!status)status=1;
     }else{
         if(sweet_apr_basic_result(&m,&op,&status) || op!=s->pending_op)return 0;
