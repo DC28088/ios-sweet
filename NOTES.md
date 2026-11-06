@@ -1,3 +1,7 @@
+## 2026-11-06: 0208 boot readiness verified
+- USB SSH reachable; corrected UTC. SpringBoard, backboardd, mediaserverd and existing wland auto are running. USER asked for one Wi-Fi + Safari YouTube reproduction and optional Bluetooth headphone result; pending. No playback fix demonstrated.
+- Private playback capture offset recorded in work/audio-runtime/0208-playback-start.json. No audio daemon restart, DSP reset, partition flash or main audio branch change.
+
 ## 2026-11-06: USER pauses Apple ID after failed login; 0208 media diagnostics boot accepted
 - USER reports Apple ID login failed again after 0209 recovery; exact new UI error not supplied. No success claimed. USER authorizes using DeepSeek branches/logs/images and requests an image boot from fastboot.
 - Read main audio handoff/branches: c9e87ee on claude/audio-0009 remains latest local audio commit. Existing 0208 image in main shim/out has truncated sweetdtlog argument (ends backboar); used separately verified workspace package with complete mediaserverd,backboardd logging instead.
