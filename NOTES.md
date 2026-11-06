@@ -1,3 +1,9 @@
+## 2026-11-06 16:15 IST: sensor HID services candidate (eight-image batch)
+- Branch `codex/sensors-0213` is based on the 0211 media baseline (3df0e99). New patch 0213 imports the sunfish 0228 sensor HID services: accelerometer, gyro, ambient light, proximity, compass, pressure, orientation and device-motion IOHIDEventService objects, selected by `sweetmotion=MASK` (0x77 enables all but proximity).
+- The kernel side accepts samples on `/dev/redwood-motion` (driver not included in this image) and can publish neutral samples when no real sample exists. It does not itself read the sweet ADSP sensor PD. Do not claim working motion, auto-rotate, auto-brightness or camera from this image alone.
+- Camera is not included: the sunfish camera stack is sensor/CCI-specific and has not been ported. This image is the sensor-service bring-up half of the camera/sensors request.
+- Boot argument: `sweetmotion=0x77`; if it crash-loops, use 0x03 (accel+gyro) or 0x01.
+
 ## 2026-11-06: native planar IOSurface row-stride bug confirmed; 0211 fix prepared
 - USER confirms Wi-Fi works and haptics are fine on recovered 0209; YouTube still fails and no sound. Fresh private capture: repeated mediaserverd SIGBUS at same H264SW decoder instruction, destination in RX shared cache. Audio device nodes remain absent. No claim that stride fix alone resolves the decoder fault.
 - Exact target iOS16 IOSurfaceClientGetBytesPerRowOfPlane reads client+0xe0+plane*0x80; plane records begin client+0xd0, so row is record+0x10. Kernel serializer currently writes it at +0x08. Width/height/offset/size/element fields verified separately against native getters.
