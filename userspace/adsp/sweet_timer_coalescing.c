@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 static int original,dirty;
 static volatile sig_atomic_t stopping;
 static mach_timebase_info_data_t scale;
@@ -36,17 +37,35 @@ static void measure(const char *label)
  printf("coalescing %s: samples=%u requested_us=1000 avg_us=%llu max_us=%llu errors=%u\n",label,count,
   (unsigned long long)(count?total/count/1000:0),(unsigned long long)(max/1000),errors);
 }
+/* Hold coalescing off for a bounded listening window; always restore. */
+static int hold_off(unsigned seconds)
+{
+ int zero=0;
+ if(sysctlbyname(key,NULL,NULL,&zero,sizeof zero)){printf("coalescing: cannot disable; no setting changed\n");return 1;}
+ dirty=1;printf("coalescing off: seconds=%u\n",seconds);
+ unsigned left=seconds;
+ while(left && !stopping){unsigned n=sleep(left);if(n>=left)break;left=n;}
+ restore();
+ printf("coalescing off finished: restored=%d\n",!dirty);
+ return dirty?1:0;
+}
 int main(int argc,char **argv)
 {
  setvbuf(stdout,NULL,_IONBF,0);
  if(argc==2 && !strcmp(argv[1],"--restore")){int value=1;return sysctlbyname(key,NULL,NULL,&value,sizeof value)?1:0;}
- if(argc!=1)return 2;
+ unsigned off_seconds=0;
+ if(argc==3 && !strcmp(argv[1],"--off")){
+  char *end=NULL;unsigned long v=strtoul(argv[2],&end,10);
+  if(!*argv[2] || *end || v<1 || v>300){printf("coalescing: --off seconds must be1..300\n");return 2;}
+  off_seconds=(unsigned)v;
+ }else if(argc!=1)return 2;
  if(mach_timebase_info(&scale)!=KERN_SUCCESS || !scale.numer || !scale.denom)return 1;
  size_t n=sizeof original;
  if(sysctlbyname(key,&original,&n,NULL,0) || n!=sizeof original || original!=1){
   printf("coalescing: cannot establish enabled baseline; no setting changed\n");return 1;
  }
  signal(SIGTERM,stop_test);signal(SIGINT,stop_test);signal(SIGHUP,stop_test);atexit(restore);
+ if(off_seconds)return hold_off(off_seconds);
  measure("enabled");if(stopping)return 1;
  int zero=0;
  if(sysctlbyname(key,NULL,NULL,&zero,sizeof zero)){printf("coalescing: cannot disable; no setting changed\n");return 1;}
