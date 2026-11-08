@@ -1,3 +1,10 @@
+## 2026-11-09 01:15 IST: SPEAKER AUDIO FIXED (0225) — USER: "sound works perfectly, its instant no delay"
+- Boot 0225 (image 4fe2b8bc...) after charging; migration had finished (sentinel gone, 32 apps installed);
+  SpringBoard restarted on USER request; service wland-0225 pid 561 (run-speaker-0225.py, log
+  /var/local/adsp-0225-011047.log). USER confirms: instant start/stop, no stutter, volume OK, no cut-outs.
+- The service is still started BY HAND each boot (run-speaker-0225.py). TODO: launchd job for wland-0225 so
+  speaker audio comes up automatically; merge claude/speaker-0224 (0bdca82) into the main audio line.
+
 ## 2026-11-09 00:52 IST: migration ran on the SAME 0225 boot; 32 apps INSTALLED; phone then ran out of battery
 - Observed: after the sentinel was created, backboardd/SpringBoard restarted and datamigrator started at once (not
   next boot). SystemAppMigrator installed all 32 apps into /private/var/containers/Bundle/Application (staged dir
