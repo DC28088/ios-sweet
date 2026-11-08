@@ -1,3 +1,15 @@
+## 2026-11-09 02:15 IST: drain fix verified; 0226 panel VCI-off (crack line) building
+- After coreduetd disabled (boot 0225 #4): locked 150 s total CPU 85 s (was 174 s; window had 3 wakes); coreduetd gone,
+  biomed 2.0 s (was 16.6 s); battery +18/+34 mA on USB (was -149/-321). Speaker launchd job WORKS (wland-0225 pid 82
+  at boot). SpringBoard pid 297 (restarted once during boot; cause not checked).
+- Crack line: Xiaomi DT (MiCode sweet-r-oss sweet-sdmmagpie.dtsi + sdmmagpie-sde-display.dtsi + sdmmagpie-regulator.dtsi):
+  K6 panel vddio = pm6150_l13 "ldoa13" (VRM, 1.9 V, pre-off 20 ms), vdda-3p3 = pm6150_l18 "ldoa18" (XOB 3.0 V, pre-off
+  10 ms), reset = pm6150l GPIO 9, reset seq <0 1>,<1 10>, lp11-init; on-command (LP) = 49 cmds incl. DSC enable 9D 01 +
+  89-byte PPS 9E; off (HS) 28/10. Touch is on pm6150l_l11 + tlmm 90 (separate). Only display uses L13A/L18A.
+- 0226 (claude/speaker-0224 d8a2cd0, CI 42521488630): step 1 = VCI (ldoa18) off after sleep-in, on before sleep-out (no
+  re-init). sweetpanelvci=0 disables. Step 2 if the line stays or wake breaks: reset + both rails + 49-cmd re-init.
+  Package: audio-runtime/package-0226.py (outputs USB build-0226/shim-boot-panel-0226.img).
+
 ## 2026-11-09 01:45 IST: LOCKED BATTERY DRAIN #1 = coreduetd busy loop (~0.9 core, ~200-350 mA); disabled
 - Measured (0225, locked 150 s, USB attached): 174 s CPU in 150 s. coreduetd 136 s, biomed 16.6 s, wland-0225 3.3 s,
   wland auto 3.2 s, rest < 3 s each. coreduetd thread "com.apple.coreduet.knowledgestorage.execution" serves an XPC
