@@ -1,3 +1,14 @@
+## 2026-11-09 03:30 IST: 0228 hardware: re-init sent but still black -> 0229 adds the panel reset pulse
+- 0228 boot: sleep 28/10 + VCI off; wake VCI on + "K6 re-init 45/45 commands, 0 needed HS, PPS split 0, ~310 ms -> 0"
+  (90-byte 9E went through the FIFO whole, LP) + 51 level restored. USER: screen stays black. => DDIC ignores the
+  on-command after VCI loss without a reset (Linux always resets after power-on).
+- 0229 (83efd1b, CI 42527667615): sweet_spmi_panel_reset(): only SID 4 0xc8xx (pm6150l GPIO 9 = DT
+  qcom,platform-reset-gpio); reads TYPE/SUBTYPE/MODE/DIG_OUT_SOURCE/EN + APID owner (logged, first 4 calls),
+  refuses unless enabled LV/MV digital output owned by EE0; writes only 0xc844 bit 7 + readback.
+  Sleep: 28/10, reset low, 10 ms, VCI off. Wake: VCI on, 10 ms, reset <0 1>,<1 10>, 45-packet on-command.
+  Package audio-runtime/package-0229.py -> USB build-0229. If still black: check the "reset GPIO" log line
+  (refused?), then suspects = DSI host state after the panel vanished (LP11/ULPS, controller error/reset), vddio.
+
 ## 2026-11-09 03:00 IST: 0227 hardware: VCI cut removes the crack line, but wake stays black -> 0228 full re-init
 - 0227 booted twice. Battery now honest: "16% (curve 14%)" after charging (was 17% vs 1-5%). Phone died once at a real
   ~7-14% under -875 mA load on USB; console ended normally (no panic) -> brownout, not a crash.
