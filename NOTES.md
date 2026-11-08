@@ -1,3 +1,15 @@
+## 2026-11-09 03:00 IST: 0227 hardware: VCI cut removes the crack line, but wake stays black -> 0228 full re-init
+- 0227 booted twice. Battery now honest: "16% (curve 14%)" after charging (was 17% vs 1-5%). Phone died once at a real
+  ~7-14% under -875 mA load on USB; console ended normally (no panic) -> brownout, not a crash.
+- Panel: sleep = 28/10 HS + "panel VCI ldoa18 off -> 0"; wake = "on -> 0" + 11/29 acked + 51 level 561 acked. USER:
+  "no line either. display is completely dark" -> VCI is what feeds the crack line; the DDIC loses its setup when VCI
+  goes. One wake was missed by the power key: SWEET KEYS read error pon-ok=0 (PRE-EXISTING: 33x on 0225, 35x on 0203).
+- Usable fallback image: USB build-0227/shim-boot-0227-novci.img (506e3de0..., cmdline + sweetpanelvci=0); BOOTED now.
+- 0228 (196c550, CI 42524969981): on wake after a VCI cut replay Xiaomi's 45-packet on-command (LP, HS retry; 90-byte
+  9E PPS split via Samsung B0 00 3B 9E offset if the 64-byte FIFO refuses it). Host mock: 45/45, split used.
+  Package audio-runtime/package-0228.py -> USB build-0228. If 0228 wake is still black: add reset GPIO (pm6150l GPIO9,
+  DT <0 1>,<1 10>) before the list, or memory-DMA for the PPS.
+
 ## 2026-11-09 02:30 IST: phone died at "16%" (real ~1%) -> 0227 battery gauge fix; 0227 = 0226 + gauge
 - USER: phone turned off while iOS showed 16%; Android charge screen said 1%. Cause (code + log): SweetBattery seeds
   from the PM6150 QG SDAM (0xb646 valid, 0xb647 SOC) = Android QG's last saved value, stale (17% every boot, while the
