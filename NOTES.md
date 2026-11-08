@@ -1,3 +1,19 @@
+## 2026-11-09 01:30 IST: Wi-Fi daemon died silently; reboot; speaker launchd job; console receiver on USB
+- USER: Wi-Fi disconnected and could not reconnect. Observed: `wland auto` (launchd org.ios-sweet.wland, RunAtLoad,
+  no KeepAlive) exited ~12 min into the boot; wland.log ends on a normal stats line, no .ips, dmesg empty from iOS.
+  Cause UNKNOWN (timing roughly matched a SpringBoard restart; wland-0225 speaker sender ran alongside). It refuses a
+  second start per boot (/var/local/wland.boot) -> rebooted 0225.
+- Console receiver now writes to the USB stick: `python3 tools/sweet-usb-log.py
+  /run/media/dan/MUSIC/ios-sweet-backup/logs/boot-0225-3.txt` (out/err next to it). Grep it for "CRASH wland" if
+  Wi-Fi drops again. wland keeps the previous run as /var/local/wland.log.prev.
+- Speaker auto-start: launchd job /System/Library/LaunchDaemons/org.ios-sweet.speaker.plist added to
+  /System/Library/xpc/launchd.plist (533 jobs; all 532 old jobs identical): `sleep 60` then WLAND_PCM_DELAY_MS=15000
+  WLAND_SPEAKER_SERVICE=1 /var/local/bin/wland-0225 adsp 0 > /var/local/adsp-speaker.log (.prev rotated); RunAtLoad
+  only, never restarts (one DSP session per boot). Rollback: /System/Library/xpc/launchd.plist.pre-speaker (phone)
+  or USB ios-sweet-backup/launchd-20261109/launchd.plist.orig. Effective NEXT boot; this boot started by hand (pid 289).
+- NEXT: USER chose SLEEP over App Store (blocked by Apple attestation, not to be spoofed) and over 120 FPS (long
+  open-ended GPU work). Sleep sub-goal to confirm with USER: locked battery drain / full panel off / tap to wake.
+
 ## 2026-11-09 01:15 IST: SPEAKER AUDIO FIXED (0225) — USER: "sound works perfectly, its instant no delay"
 - Boot 0225 (image 4fe2b8bc...) after charging; migration had finished (sentinel gone, 32 apps installed);
   SpringBoard restarted on USER request; service wland-0225 pid 561 (run-speaker-0225.py, log
