@@ -1,0 +1,37 @@
+diff --git a/iokit/Kernel/arm/SweetBattery.cpp b/iokit/Kernel/arm/SweetBattery.cpp
+--- a/iokit/Kernel/arm/SweetBattery.cpp
++++ b/iokit/Kernel/arm/SweetBattery.cpp
+@@ -292,9 +292,15 @@ SweetBattery::poll(void)
+ 			    sdam[4], sdam[5], sdam[6], sdam[7], sdam[8], sdam[9], sdam[10], sdam[11],
+ 			    sdam[12], sdam[13], sdam[14], sdam[15]);
+ 		}
+-		if (sdamOk && sdam[6] != 0 && sdam[7] <= 100) {
++		/* 0227: the SDAM holds what Android's QG last saved (weeks stale on an iOS-only phone: it
++		 * seeded 17% every boot while the cell was at 1-5%). Trust it only near the curve. */
++		if (sdamOk && sdam[6] != 0 && sdam[7] <= 100 &&
++		    (int32_t)sdam[7] * 1000 - curve < 15000 && curve - (int32_t)sdam[7] * 1000 < 15000) {
+ 			fSocMilli = (int32_t)sdam[7] * 1000;
+ 			fSeededSdam = true;
++		} else if (sdamOk && sdam[6] != 0 && sdam[7] <= 100) {
++			IOLog("SWEET BATTERY: QG SDAM %u%% is far from the curve %d%%: stale, not used\n",
++			    sdam[7], (int)(curve / 1000));
+ 		}
+ 		IOLog("SWEET BATTERY: seed %d%% from %s (curve %d%%)\n", (int)(fSocMilli / 1000),
+ 		    fSeededSdam ? "QG SDAM" : "the OCV table", (int)(curve / 1000));
+@@ -307,9 +313,15 @@ SweetBattery::poll(void)
+ 		}
+ 		/* 0158 (0150 hardware: the curve swung 40-61% under load): drift only at a measured rest,
+ 		 * 2% of the difference per poll; with no valid current hold the counted value. */
+-		if (!fSeededSdam && currentValid && ma > -100 && ma < 100) {
++		/* 0227: also after an SDAM seed (a counted value must not drift away forever) */
++		if (currentValid && ma > -100 && ma < 100) {
+ 			fSocMilli += (curve - fSocMilli) / 50;
+ 		}
++		/* 0227: nearly empty cell (rest-corrected OCV): never show more than curve + 3%, so iOS
++		 * warns and shuts down instead of the phone dying at "16%". */
++		if (ocv > 0 && ocv < 3550 && fSocMilli > curve + 3000) {
++			fSocMilli = curve + 3000;
++		}
+ 	}
+ 	fLastPoll = now;
+ 	if (full) {
