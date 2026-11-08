@@ -1,0 +1,167 @@
+diff --git a/bsd/dev/sweet_spmi.c b/bsd/dev/sweet_spmi.c
+--- a/bsd/dev/sweet_spmi.c
++++ b/bsd/dev/sweet_spmi.c
+@@ -212,4 +212,110 @@ sweet_spmi_write(unsigned sid, unsigned addr, uint8_t val)
+ 	IOLockUnlock(sp_lock);
+ 	return result;
+ }
++
++/*
++ * 0229: the panel reset = PM6150L (SID 4) GPIO 9 (Xiaomi sweet DT: qcom,platform-reset-gpio =
++ * <&pm6150l_gpios 9 0>; pm6150l_gpios = pinctrl@c000, GPIOn at 0xc000 + (n - 1) * 0x100). Only
++ * that peripheral: read TYPE 0x04 / SUBTYPE 0x05 / MODE_CTL 0x40 / DIG_OUT_SOURCE_CTL 0x44 /
++ * EN_CTL 0x46 (Linux pinctrl-spmi-gpio LV/MV layout) and write only 0x44 bit 7 (an LV/MV GPIO
++ * outputs its "invert" bit with source 0). Refuses unless ABL left it an enabled digital output.
++ * Returns 0 and the level read back, or an errno.
++ */
++static int
++sp_panel_read(unsigned addr, uint8_t *out)
++{
++	uint16_t apid = sp_find_apid((4u << 8) | 0xc8u);
++	if (apid == SP_NO_APID || sp_poisoned[apid]) {
++		return ENXIO;
++	}
++	unsigned off = 0x80u * apid;
++	__asm__ volatile("dmb oshst" ::: "memory");
++	*(volatile uint32_t *)(sp_obs + off) = (1u << 27) | ((addr & 0xffu) << 4);
++	__asm__ volatile("dsb osh" ::: "memory");
++	for (unsigned i = 0; i < 1000; ++i) {
++		uint32_t status = sp_rd(sp_obs, off + 0x08u);
++		if (status & 1u) {
++			if (status & 0x0eu) {
++				return EIO;
++			}
++			*out = (uint8_t)sp_rd(sp_obs, off + 0x18u);
++			return 0;
++		}
++		delay(1);
++	}
++	sp_poisoned[apid] = true;
++	printf("SWEET PANEL: SPMI read timeout sid 4 %#x APID=%u disabled\n", addr, apid);
++	return ETIMEDOUT;
++}
++
++int sweet_spmi_panel_reset(int level);
++int
++sweet_spmi_panel_reset(int level)
++{
++	static unsigned logged;
++	if (!sp_ready) {
++		return ENXIO;
++	}
++	IOLockLock(sp_lock);
++	uint8_t type = 0, subtype = 0, mode = 0, src = 0, en = 0;
++	int error = sp_panel_read(0xc804, &type);
++	if (!error) error = sp_panel_read(0xc805, &subtype);
++	if (!error) error = sp_panel_read(0xc840, &mode);
++	if (!error) error = sp_panel_read(0xc844, &src);
++	if (!error) error = sp_panel_read(0xc846, &en);
++	uint16_t apid = sp_find_apid((4u << 8) | 0xc8u);
++	unsigned owner = apid == SP_NO_APID ? 7u : (sp_rd(sp_cfg, 0x700u + 4u * apid) & 7u);
++	if (logged++ < 4 || error) {
++		printf("SWEET PANEL: reset GPIO pm6150l 9: read %d type %#x subtype %#x mode %#x out %#x en %#x owner EE%u\n",
++		    error, type, subtype, mode, src, en, owner);
++	}
++	if (!error && (type != 0x10 || (subtype != 0x10 && subtype != 0x11) || ((mode & 3u) != 1 && (mode & 3u) != 2) ||
++	    !(en & 0x80u) || (src & 0x0fu) != 0 || owner != 0)) {
++		error = EPERM;    /* not the enabled LV/MV digital output Linux would drive: leave it */
++	}
++	if (!error) {
++		if (sp_chnl_apid != apid) {
++			vm_offset_t m = ml_io_map(SP_CHNL_PA + 0x10000u * apid, 0x1000);
++			if (!m) {
++				IOLockUnlock(sp_lock);
++				return ENOMEM;
++			}
++			sp_chnl = m;
++			sp_chnl_apid = apid;
++		}
++		const uint8_t val = (uint8_t)((src & 0x7fu) | (level ? 0x80u : 0u));
++		error = ETIMEDOUT;
++		for (unsigned attempt = 0; attempt < 3; attempt++) {
++			__asm__ volatile("dmb oshst" ::: "memory");
++			*(volatile uint32_t *)(sp_chnl + 0x10u) = val;
++			__asm__ volatile("dmb oshst" ::: "memory");
++			*(volatile uint32_t *)(sp_chnl + 0x00u) = (0x44u << 4);   /* EXT_WRITEL 0xc844 */
++			__asm__ volatile("dsb osh" ::: "memory");
++			uint32_t status = 0;
++			unsigned i;
++			for (i = 0; i < 1000 && !((status = sp_rd(sp_chnl, 0x08u)) & 1u); ++i) {
++				delay(1);
++			}
++			if (i == 1000) {
++				sp_poisoned[apid] = true;
++				break;
++			}
++			if (!(status & 0x0eu)) {
++				error = 0;
++				break;
++			}
++			error = EIO;
++			if (!(status & 0x0au)) {
++				break;
++			}
++			delay(150);
++		}
++		uint8_t back = 0;
++		if (!error && !sp_panel_read(0xc844, &back) && ((back >> 7) & 1u) != (level ? 1u : 0u)) {
++			error = EIO;
++		}
++	}
++	IOLockUnlock(sp_lock);
++	return error;
++}
+ #endif /* ARM64_BOARD_CONFIG_SWEET */
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -229,6 +229,8 @@ static int sweet_panel_sleep = -1;
+ static volatile bool sweet_panel_failed;
+ /* 0226: VCI (L18A) off while the panel sleeps: sweetpanelvci=0 keeps it on (0225 behaviour) */
+ extern "C" int sweet_rpmh_panel_vci(bool on);
++extern "C" int sweet_spmi_panel_reset(int level);   /* 0229: pm6150l GPIO 9, 0 = reset */
++static bool sweet_panel_in_reset;
+ static int sweet_panel_vci = -1;
+ /* 0228: Xiaomi K6 38/0c/0a qcom,mdss-dsi-on-command (MiCode sweet-r-oss dsi-panel-k6-38-0c-0a-fhd-dsc-video.dtsi),
+  * entry = data type, wait ms, payload length, payload. */
+@@ -720,6 +722,8 @@ AppleARMBacklight::applyCall(thread_call_param_t owner, thread_call_param_t)
+ 				sweet_panel_vci = v != 0;
+ 			}
+ 			if (!e1 && !e2 && sweet_panel_vci) {
++				/* 0229: like Linux dsi_panel_power_off: reset low, then the supply (pre-off 10 ms) */
++				sweet_panel_in_reset = sweet_spmi_panel_reset(0) == 0;
+ 				IOSleep(10);                  /* DT vdda-3p3 pre-off sleep */
+ 				sweet_panel_vci_off = sweet_rpmh_panel_vci(false) == 0;
+ 			}
+@@ -734,6 +738,18 @@ AppleARMBacklight::applyCall(thread_call_param_t owner, thread_call_param_t)
+ 				IOSleep(10);
+ 				reinit = ev == 0;
+ 			}
++			if (reinit || sweet_panel_in_reset) {
++				/* 0229: DT qcom,mdss-dsi-reset-sequence = <0 1>, <1 10> before the on-command */
++				int er = sweet_spmi_panel_reset(0);
++				IOSleep(1);
++				if (!er) {
++					er = sweet_spmi_panel_reset(1);
++				}
++				sweet_panel_in_reset = false;
++				IOSleep(10);
++				IOLog("SWEET PANEL: reset pulse -> %d\n", er);
++				reinit = true;    /* after a reset the DDIC always needs the whole on-command */
++			}
+ 			if (reinit) {
+ 				/* 0228: VCI was off, the DDIC lost its setup (0227 hardware: 11/29 acked, screen
+ 				 * black): Xiaomi's whole on-command (sleep out ... DSC 9D/9E ... 53/51 ... 29) */
+@@ -766,6 +782,12 @@ AppleARMBacklight::applyCall(thread_call_param_t owner, thread_call_param_t)
+ 				sweet_panel_vci_off = false;
+ 				IOSleep(10);
+ 			}
++			if (sweet_panel_in_reset) {
++				(void)sweet_spmi_panel_reset(1);
++				sweet_panel_in_reset = false;
++				IOSleep(10);
++				(void)bl->panelInit();
++			}
+ 			(void)bl->sendShort(0x11);
+ 			IOSleep(120);
+ 			(void)bl->sendShort(0x29);
