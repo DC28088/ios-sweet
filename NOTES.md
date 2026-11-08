@@ -1,3 +1,16 @@
+## 2026-11-09 01:45 IST: LOCKED BATTERY DRAIN #1 = coreduetd busy loop (~0.9 core, ~200-350 mA); disabled
+- Measured (0225, locked 150 s, USB attached): 174 s CPU in 150 s. coreduetd 136 s, biomed 16.6 s, wland-0225 3.3 s,
+  wland auto 3.2 s, rest < 3 s each. coreduetd thread "com.apple.coreduet.knowledgestorage.execution" serves an XPC
+  request from dasd (dasd blocked on it) -> CoreDuet -> BiomePubSub/BiomeStreams. Stores small (knowledgeC.db 5 MB,
+  WAL 3.5 MB). cpu_resource .ips for coreduetd since 2026-10-29 (e.g. 56% CPU over 162 s). SIGTERM ignored; SIGKILL
+  -> relaunched (pid 667) and immediately ~0.9 core again. Root cause inside CoreDuet UNKNOWN (no symbols: the
+  ipsw tool download was blocked; fs_usage/lsof/log absent). Next diag option: sweetdtlog=coreduetd,dasd boot-arg.
+- A/B with SIGSTOP (locked): battery current running -149/-321 mA (discharging on USB) vs stopped +32 mA
+  (charging); dasd/SpringBoard/backboardd unaffected for 90 s.
+- FIX (next boot): /private/var/db/com.apple.xpc.launchd/disabled.plist + com.apple.coreduetd = true.
+  Rollback: disabled.plist.pre-coreduetd (same dir) or USB launchd-20261109/disabled.plist.orig. Cost: CoreDuet
+  predictions/suggestions/Screen Time-style knowledge unavailable. Re-measure locked CPU after reboot.
+
 ## 2026-11-09 01:30 IST: Wi-Fi daemon died silently; reboot; speaker launchd job; console receiver on USB
 - USER: Wi-Fi disconnected and could not reconnect. Observed: `wland auto` (launchd org.ios-sweet.wland, RunAtLoad,
   no KeepAlive) exited ~12 min into the boot; wland.log ends on a normal stats line, no .ips, dmesg empty from iOS.
