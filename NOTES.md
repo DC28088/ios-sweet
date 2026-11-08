@@ -1,3 +1,12 @@
+## 2026-11-09 02:30 IST: phone died at "16%" (real ~1%) -> 0227 battery gauge fix; 0227 = 0226 + gauge
+- USER: phone turned off while iOS showed 16%; Android charge screen said 1%. Cause (code + log): SweetBattery seeds
+  from the PM6150 QG SDAM (0xb646 valid, 0xb647 SOC) = Android QG's last saved value, stale (17% every boot, while the
+  curve said 3-5%), and an SDAM seed disabled the at-rest drift to the curve (0162) -> error never corrected.
+- 0227 (9a97c28, CI 42522068917): SDAM seed only within 15 points of the curve (else logged "stale, not used");
+  drift at rest always; rest-corrected OCV < 3550 mV caps shown SOC at curve+3%. Package audio-runtime/package-0227.py
+  (USB build-0227). Boot 0227 directly (contains 0226 panel VCI-off). 0226 CI 42521488630 also built (superseded).
+- USER is charging the phone in the Android charge screen.
+
 ## 2026-11-09 02:15 IST: drain fix verified; 0226 panel VCI-off (crack line) building
 - After coreduetd disabled (boot 0225 #4): locked 150 s total CPU 85 s (was 174 s; window had 3 wakes); coreduetd gone,
   biomed 2.0 s (was 16.6 s); battery +18/+34 mA on USB (was -149/-321). Speaker launchd job WORKS (wland-0225 pid 82
