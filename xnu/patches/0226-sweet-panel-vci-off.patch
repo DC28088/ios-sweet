@@ -1,0 +1,95 @@
+diff --git a/bsd/dev/sweet_rpmh.c b/bsd/dev/sweet_rpmh.c
+--- a/bsd/dev/sweet_rpmh.c
++++ b/bsd/dev/sweet_rpmh.c
+@@ -556,6 +556,40 @@ sweet_rpmh_vreg_set(const char *res, unsigned mv, bool enable)
+ 	return error;
+ }
+ 
++/*
++ * 0226: panel VCI (pm6150_l18 = "ldoa18", an XOB: on/off only, enable register at +4 like
++ * the VRMs) off while the panel sleeps, so the K6 AMOLED is unpowered like on Android (Xiaomi
++ * sweet DT: dsi_panel_pwr_supply_labibb_amoled vdda-3p3 3.0 V, pre-off sleep 10 ms; only the
++ * display uses L18A in the sweet/sdmmagpie DTs). Only this resource; on and off.
++ */
++int sweet_rpmh_panel_vci(bool on);
++int
++sweet_rpmh_panel_vci(bool on)
++{
++	for (unsigned tries = 0; __atomic_exchange_n(&rh_lock, 1, __ATOMIC_ACQUIRE); tries++) {
++		if (tries >= 200) {
++			return EBUSY;
++		}
++		delay(1000);
++	}
++	int error = EIO;
++	struct rh_res found = {0};
++	if (!rh_poisoned) {
++		error = rh_map();
++		if (!error) {
++			error = rh_lookup("ldoa18", RH_VRM, &found);
++		}
++		if (!error) {
++			const uint32_t offsets[1] = {4};
++			const uint32_t values[1] = {on ? 1u : 0u};
++			error = rh_send_cmds("ldoa18", found.addr, 15u, offsets, values, 1, RH_TIMEOUT_US, NULL);
++		}
++	}
++	__atomic_store_n(&rh_lock, 0, __ATOMIC_RELEASE);
++	printf("SWEET RPMH: panel VCI ldoa18 %s -> %d\n", on ? "on" : "off", error);
++	return error;
++}
++
+ static bool
+ rh_arc_name(const char *res)
+ {
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -225,6 +225,10 @@ static AppleARMBacklight *sweet_backlight;
+ static int sweet_panel_hs = -1;
+ static int sweet_panel_sleep = -1;
+ static volatile bool sweet_panel_failed;
++/* 0226: VCI (L18A) off while the panel sleeps: sweetpanelvci=0 keeps it on (0225 behaviour) */
++extern "C" int sweet_rpmh_panel_vci(bool on);
++static int sweet_panel_vci = -1;
++static bool sweet_panel_vci_off;
+ 
+ class AppleCLCD : public IOMobileFramebuffer {
+ 	OSDeclareDefaultStructors(AppleCLCD);
+@@ -658,7 +662,24 @@ AppleARMBacklight::applyCall(thread_call_param_t owner, thread_call_param_t)
+ 			IOSleep(20);
+ 			e2 = bl->sendShort(0x10, sweet_panel_hs);    /* sleep in */
+ 			IOSleep(150);
++			if (sweet_panel_vci < 0) {
++				int v = 1;
++				PE_parse_boot_argn("sweetpanelvci", &v, sizeof(v));
++				sweet_panel_vci = v != 0;
++			}
++			if (!e1 && !e2 && sweet_panel_vci) {
++				IOSleep(10);                  /* DT vdda-3p3 pre-off sleep */
++				sweet_panel_vci_off = sweet_rpmh_panel_vci(false) == 0;
++			}
+ 		} else {
++			if (sweet_panel_vci_off) {
++				const int ev = sweet_rpmh_panel_vci(true);
++				sweet_panel_vci_off = false;
++				if (ev) {
++					sweet_panel_vci = 0;      /* never cut it again this boot */
++				}
++				IOSleep(10);
++			}
+ 			e1 = bl->sendShort(0x11);    /* sleep out */
+ 			IOSleep(120);
+ 			e2 = bl->sendShort(0x29);    /* display on */
+@@ -676,6 +697,11 @@ AppleARMBacklight::applyCall(thread_call_param_t owner, thread_call_param_t)
+ 		}
+ 		if (sweet_panel_failed && bl->fPanelAsleep) {
+ 			/* never leave the panel asleep after a failure */
++			if (sweet_panel_vci_off) {
++				(void)sweet_rpmh_panel_vci(true);
++				sweet_panel_vci_off = false;
++				IOSleep(10);
++			}
+ 			(void)bl->sendShort(0x11);
+ 			IOSleep(120);
+ 			(void)bl->sendShort(0x29);
