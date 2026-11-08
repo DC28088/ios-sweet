@@ -1,0 +1,228 @@
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -198,6 +198,8 @@ class AppleARMBacklight : public IOService {
+ 	static void    applyCall(thread_call_param_t owner, thread_call_param_t);
+ 	int            sendLevel(uint32_t level);
+ 	int            sendShort(uint8_t cmd, bool hs = false);   /* 0200: DCS short write, no parameter; 0202: hs */
++	int            sendPacket(uint8_t dtype, const uint8_t *data, unsigned len, bool hs);   /* 0228 */
++	int            panelInit(void);                           /* 0228: full K6 on-command */
+ 	void           publish(void);
+ 	void           request(uint32_t level, uint32_t value);
+ 	IOLock        *fDsiLock;                   /* 0200: one DSI command at a time */
+@@ -228,6 +230,56 @@ static volatile bool sweet_panel_failed;
+ /* 0226: VCI (L18A) off while the panel sleeps: sweetpanelvci=0 keeps it on (0225 behaviour) */
+ extern "C" int sweet_rpmh_panel_vci(bool on);
+ static int sweet_panel_vci = -1;
++/* 0228: Xiaomi K6 38/0c/0a qcom,mdss-dsi-on-command (MiCode sweet-r-oss dsi-panel-k6-38-0c-0a-fhd-dsc-video.dtsi),
++ * entry = data type, wait ms, payload length, payload. */
++static const uint8_t sweet_k6_on[] = {
++	0x05, 20, 2, 0x11, 0x00,
++	0x39, 0, 3, 0xf0, 0x5a, 0x5a,
++	0x39, 0, 3, 0xb2, 0x01, 0x31,
++	0x39, 0, 6, 0xdf, 0x09, 0x30, 0x95, 0x46, 0xe9,
++	0x39, 0, 3, 0xf0, 0xa5, 0xa5,
++	0x39, 0, 2, 0x9d, 0x01,
++	0x39, 0, 90, 0x9e, 0x11, 0x00, 0x00, 0x89, 0x30, 0x80, 0x09, 0x60, 0x04, 0x38, 0x00, 0x28, 0x02, 0x1c, 0x02, 0x1c, 0x02, 0x00, 0x02, 0x0e, 0x00, 0x20, 0x03, 0xdd, 0x00, 0x07, 0x00, 0x0c, 0x02, 0x77, 0x02, 0x8b, 0x18, 0x00, 0x10, 0xf0, 0x03, 0x0c, 0x20, 0x00, 0x06, 0x0b, 0x0b, 0x33, 0x0e, 0x1c, 0x2a, 0x38, 0x46, 0x54, 0x62, 0x69, 0x70, 0x77, 0x79, 0x7b, 0x7d, 0x7e, 0x01, 0x02, 0x01, 0x00, 0x09, 0x40, 0x09, 0xbe, 0x19, 0xfc, 0x19, 0xfa, 0x19, 0xf8, 0x1a, 0x38, 0x1a, 0x78, 0x1a, 0xb6, 0x2a, 0xf6, 0x2b, 0x34, 0x2b, 0x74, 0x3b, 0x74, 0x6b, 0xf4, 0x00,
++	0x39, 0, 3, 0xf0, 0x5a, 0x5a,
++	0x39, 0, 2, 0x60, 0x21,
++	0x39, 0, 2, 0xf7, 0x0b,
++	0x39, 0, 3, 0xf0, 0xa5, 0xa5,
++	0x39, 0, 3, 0xf0, 0x5a, 0x5a,
++	0x39, 0, 4, 0xb0, 0x00, 0x15, 0xf6,
++	0x39, 0, 2, 0xf6, 0xf0,
++	0x39, 0, 4, 0xb0, 0x00, 0x28, 0xf6,
++	0x39, 0, 2, 0xf6, 0xf0,
++	0x39, 0, 4, 0xb0, 0x00, 0x3b, 0xf6,
++	0x39, 0, 2, 0xf6, 0xf0,
++	0x39, 0, 4, 0xb0, 0x00, 0x0a, 0xf4,
++	0x39, 0, 2, 0xf4, 0x98,
++	0x39, 0, 4, 0xb0, 0x00, 0x11, 0xf4,
++	0x39, 0, 2, 0xf4, 0xee,
++	0x39, 0, 4, 0xb0, 0x00, 0x18, 0xb2,
++	0x39, 0, 2, 0xb2, 0x1c,
++	0x39, 0, 3, 0xfc, 0x5a, 0x5a,
++	0x39, 0, 4, 0xb0, 0x00, 0x11, 0xfe,
++	0x39, 0, 2, 0xfe, 0x00,
++	0x39, 0, 3, 0xfc, 0xa5, 0xa5,
++	0x39, 0, 4, 0xb0, 0x00, 0x0d, 0xb2,
++	0x39, 0, 2, 0xb2, 0x20,
++	0x39, 0, 4, 0xb0, 0x00, 0x0c, 0xb2,
++	0x39, 0, 2, 0xb2, 0x30,
++	0x39, 0, 2, 0xf7, 0x0b,
++	0x39, 0, 3, 0xf0, 0xa5, 0xa5,
++	0x39, 0, 3, 0xf0, 0x5a, 0x5a,
++	0x39, 0, 3, 0xfc, 0x5a, 0x5a,
++	0x39, 0, 8, 0xe1, 0x83, 0x00, 0x00, 0x81, 0x00, 0xf9, 0xf8,
++	0x39, 0, 3, 0xed, 0x00, 0x01,
++	0x39, 0, 4, 0xb0, 0x00, 0x06, 0xf4,
++	0x39, 0, 2, 0xf4, 0x1f,
++	0x39, 0, 3, 0xf0, 0xa5, 0xa5,
++	0x39, 0, 3, 0xfc, 0xa5, 0xa5,
++	0x39, 0, 2, 0x53, 0x28,
++	0x39, 100, 3, 0x51, 0x00, 0x00,
++	0x05, 0, 2, 0x29, 0x00,
++};
++#define SWEET_K6_ON_COUNT 45
+ static bool sweet_panel_vci_off;
+ 
+ class AppleCLCD : public IOMobileFramebuffer {
+@@ -672,6 +724,7 @@ AppleARMBacklight::applyCall(thread_call_param_t owner, thread_call_param_t)
+ 				sweet_panel_vci_off = sweet_rpmh_panel_vci(false) == 0;
+ 			}
+ 		} else {
++			bool reinit = false;
+ 			if (sweet_panel_vci_off) {
+ 				const int ev = sweet_rpmh_panel_vci(true);
+ 				sweet_panel_vci_off = false;
+@@ -679,10 +732,21 @@ AppleARMBacklight::applyCall(thread_call_param_t owner, thread_call_param_t)
+ 					sweet_panel_vci = 0;      /* never cut it again this boot */
+ 				}
+ 				IOSleep(10);
++				reinit = ev == 0;
++			}
++			if (reinit) {
++				/* 0228: VCI was off, the DDIC lost its setup (0227 hardware: 11/29 acked, screen
++				 * black): Xiaomi's whole on-command (sleep out ... DSC 9D/9E ... 53/51 ... 29) */
++				e1 = bl->panelInit();
++				e2 = 0;
++				if (e1) {
++					sweet_panel_vci = 0;      /* keep VCI on from now on: plain 11/29 next time */
++				}
++			} else {
++				e1 = bl->sendShort(0x11);    /* sleep out */
++				IOSleep(120);
++				e2 = bl->sendShort(0x29);    /* display on */
+ 			}
+-			e1 = bl->sendShort(0x11);    /* sleep out */
+-			IOSleep(120);
+-			e2 = bl->sendShort(0x29);    /* display on */
+ 			bl->fSent = 0;               /* resend the brightness: the panel may have reset it */
+ 		}
+ 		absolutetime_to_nanoseconds(mach_absolute_time() - t0, &ns);
+@@ -735,6 +799,125 @@ AppleARMBacklight::panelSleep(bool off)
+ 	thread_call_enter(fCall);
+ }
+ 
++/*
++ * 0228: one DSI packet through the command FIFO (the sendShort/sendLevel path): short 0x05
++ * (data0/data1 in the header) or long 0x39 (WC header, payload little-endian, 0xff padding).
++ */
++int
++AppleARMBacklight::sendPacket(uint8_t dtype, const uint8_t *data, unsigned len, bool hs)
++{
++	volatile uint32_t *dsi = fDsi;
++	const uint32_t ctrl = dsi[DSI_REG_CTRL / 4];
++	if ((ctrl & 3) != 3 || !len || len > 128) {
++		IOLog("SWEET PANEL: packet %#x len %u not sent (ctrl=%#x)\n", dtype, len, ctrl);
++		return ENODEV;
++	}
++	uint32_t words[1 + 32];
++	unsigned n = 1;
++	if (dtype == 0x05) {
++		words[0] = (uint32_t)data[0] | ((len > 1 ? (uint32_t)data[1] : 0u) << 8) | (0x05u << 16) | (0x80u << 24);
++	} else {
++		words[0] = (len & 0xff) | ((len >> 8) << 8) | ((uint32_t)dtype << 16) | (0xc0u << 24);
++		for (unsigned i = 0; i < len; i += 4, n++) {
++			uint32_t w = 0;
++			for (unsigned k = 0; k < 4; k++) {
++				w |= (uint32_t)(i + k < len ? data[i + k] : 0xff) << (8 * k);
++			}
++			words[n] = w;
++		}
++	}
++	const uint32_t dma_ctrl = dsi[DSI_REG_DMA_CTRL / 4];
++	dsi[DSI_REG_CTRL / 4] = ctrl | (1u << 2);
++	dsi[DSI_REG_INT_CTRL / 4] = dsi[DSI_REG_INT_CTRL / 4] | 1u;
++	dsi[DSI_REG_TPG_CTRL / 4] = (1u << 1) | (1u << 2) | (3u << 16);
++	for (unsigned i = 0; i < n; i++) {
++		dsi[DSI_REG_TPG_DMA_DATA / 4] = words[i];
++	}
++	dsi[DSI_REG_DMA_CTRL / 4] = (dma_ctrl & ~((1u << 31) | (1u << 30) | (1u << 26))) | (hs ? 0u : (1u << 26)) | (1u << 28);
++	dsi[DSI_REG_DMA_LENGTH / 4] = n * 4;
++	__asm__ volatile("dsb sy" ::: "memory");
++	dsi[DSI_REG_DMA_TRIGGER / 4] = 1;
++	unsigned us;
++	for (us = 0; us < 50000 && !(dsi[DSI_REG_INT_CTRL / 4] & 1u); us += 50) {
++		IODelay(50);
++	}
++	const bool done = (dsi[DSI_REG_INT_CTRL / 4] & 1u) != 0;
++	const uint32_t ack = dsi[DSI_REG_ACK_ERR / 4];
++	if (done) {
++		dsi[DSI_REG_INT_CTRL / 4] = dsi[DSI_REG_INT_CTRL / 4] | 1u;
++	}
++	dsi[DSI_REG_TPG_CTRL / 4] = 0;
++	dsi[DSI_REG_TPG_FIFO_RESET / 4] = 1;
++	IODelay(1);
++	dsi[DSI_REG_TPG_FIFO_RESET / 4] = 0;
++	dsi[DSI_REG_DMA_CTRL / 4] = dma_ctrl;
++	if (!(ctrl & (1u << 2))) {
++		dsi[DSI_REG_CTRL / 4] = dsi[DSI_REG_CTRL / 4] & ~(1u << 2);
++	}
++	if (!done || ack) {
++		IOLog("SWEET PANEL: packet %#x reg %#x len %u %s: done=%d after %u us ack_err=%#x\n", dtype, data[0], len,
++		    hs ? "HS" : "LP", done, us, ack);
++	}
++	return done ? 0 : ETIMEDOUT;
++}
++
++/*
++ * 0228: Xiaomi's K6 on-command (DT state "dsi_lp_mode"), each packet LP first and HS once if
++ * the FIFO DMA does not complete. The 90-byte 0x9E (DSC PPS) is longer than Qualcomm's 64-byte
++ * command FIFO store: if it fails whole, send its first 59 bytes, then the Samsung DDIC global
++ * parameter offset (B0 00 3B 9E, as the list itself does for F6/F4/B2) and the rest.
++ */
++int
++AppleARMBacklight::panelInit(void)
++{
++	uint64_t t0 = mach_absolute_time(), ns;
++	unsigned sent = 0, hs_used = 0, split = 0;
++	int error = 0;
++	for (unsigned i = 0, c = 0; c < SWEET_K6_ON_COUNT && i + 3 <= sizeof(sweet_k6_on); c++) {
++		const uint8_t dtype = sweet_k6_on[i], wait = sweet_k6_on[i + 1], len = sweet_k6_on[i + 2];
++		const uint8_t *pl = &sweet_k6_on[i + 3];
++		i += 3u + len;
++		int e = sendPacket(dtype, pl, len, false);
++		if (e) {
++			e = sendPacket(dtype, pl, len, true);
++			hs_used += e == 0;
++		}
++		if (e && dtype == 0x39 && len > 60) {
++			const unsigned first = 60;    /* register + 59 parameters */
++			const uint8_t off[3] = {0xb0, 0x00, (uint8_t)(first - 1)};
++			uint8_t sel[4] = {off[0], off[1], off[2], pl[0]};
++			uint8_t rest[64];
++			const unsigned left = len - first;
++			rest[0] = pl[0];
++			for (unsigned k = 0; k < left && k + 1 < sizeof(rest); k++) {
++				rest[k + 1] = pl[first + k];
++			}
++			e = sendPacket(dtype, pl, first, false);
++			if (!e) {
++				e = sendPacket(0x39, sel, sizeof(sel), false);
++			}
++			if (!e) {
++				e = sendPacket(0x39, rest, left + 1, false);
++			}
++			split += e == 0;
++		}
++		if (e) {
++			error = e;
++			IOLog("SWEET PANEL: init command %u (reg %#x len %u) failed\n", c, pl[0], len);
++			break;
++		}
++		sent++;
++		if (wait) {
++			IOSleep(wait);
++		}
++	}
++	absolutetime_to_nanoseconds(mach_absolute_time() - t0, &ns);
++	IOLog("SWEET PANEL: K6 re-init %u/%u commands, %u needed HS, PPS split %u, %llu ms -> %d\n", sent,
++	    SWEET_K6_ON_COUNT, hs_used, split, ns / NSEC_PER_MSEC, error);
++	fSent = 0;
++	return error;
++}
++
+ /* 0200: DCS short write without a parameter (data type 0x05), same FIFO path as sendLevel */
+ int
+ AppleARMBacklight::sendShort(uint8_t cmd, bool hs)
