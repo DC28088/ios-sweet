@@ -14,11 +14,12 @@
 #include <string.h>
 #define SWEET_PCM_FIFO_FRAMES 16384u
 #define SWEET_PCM_FIFO_PERIOD 480u /* frames per DSP period (10 ms at 48 kHz) */
+#define SWEET_PCM_FIFO_HIGH 6144u /* frames over target before a hard cut (128 ms) */
 struct sweet_pcm_fifo {
  uint8_t data[SWEET_PCM_FIFO_FRAMES*4];
  uint32_t at,count,min,prev_min,max,prebuf,window_ms;
  unsigned playing;
- uint64_t window,dropped,trimmed,padded,starts;
+ uint64_t window,dropped,trimmed,padded,starts,cuts;
 };
 static inline void sweet_pcm_fifo_init(struct sweet_pcm_fifo *f,uint32_t prebuf_frames,uint32_t window_ms)
 {
@@ -60,6 +61,9 @@ static inline uint32_t sweet_pcm_fifo_period(struct sweet_pcm_fifo *f,uint8_t *o
  sweet_pcm_fifo_drop(f,n);
  if(n<want){f->padded+=want-n;f->playing=0;return n;} /* source stopped or late: rebuffer */
  if(f->count<f->min)f->min=f->count;
+ /* Hard cap: a HAL burst far beyond any I/O cycle (seen at play/pause, up to
+  * 340 ms) is cut back at once instead of after two windows. */
+ if(f->count>f->prebuf+2*want+SWEET_PCM_FIFO_HIGH){uint32_t d=f->count-(f->prebuf+2*want);sweet_pcm_fifo_drop(f,d);f->trimmed+=d;f->cuts++;f->min=f->prev_min=UINT32_MAX;f->window=now;}
  if(now-f->window>=f->window_ms){
   /* Keep two periods above the prebuffer (a late sender wake drains several at
    * once) and trim only what two consecutive windows never used: HAL cycles and

@@ -112,7 +112,7 @@ static int status_ok(struct sweet_aw2032 *a)
 {
  uint16_t s;if(a->io.read(a->io.ctx,1,&s))return -1;a->last_status=s;
  /* Clock stable + PLL lock, without over-voltage/current/temp, under-voltage or missing clock. */
- if(s&0xcc2a)return -2;
+ if(s&0x482a)return -2; /* 0224: stock faults UVLS|BSTOCS|NOCLKS|OCDS|OTHS; OVPS/OVP2S = self-limiting */
  return (s&0x11)==0x11;
 }
 int sweet_aw2032_start(struct sweet_aw2032 *a,unsigned attenuation)

@@ -19,9 +19,9 @@ static size_t make_acf(uint8_t *b)
  }
  return 392;
 }
-struct mock {uint16_t reg[128];unsigned calls,fail_at,writes,resets,asserted,wrong_id,no_clock,fault,unmuted;int ical,vcal;};
+struct mock {uint16_t reg[128];unsigned calls,fail_at,writes,resets,asserted,wrong_id,no_clock,fault,ovp,unmuted;int ical,vcal;};
 static int step(struct mock *m){return ++m->calls==m->fail_at;}
-static int rd(void *p,uint8_t r,uint16_t *v){struct mock *m=p;if(step(m))return -1;if(r==1)*v=m->fault?0x19:m->no_clock?0:0x11;else *v=m->reg[r];return 0;}
+static int rd(void *p,uint8_t r,uint16_t *v){struct mock *m=p;if(step(m))return -1;if(r==1)*v=m->fault?0x19:m->no_clock?0:m->ovp?0xa711:0x11;else *v=m->reg[r];return 0;}
 static int wr(void *p,uint8_t r,uint16_t v)
 {
  struct mock *m=p;if(step(m))return -1;assert(r<=0x6c);++m->writes;
@@ -62,6 +62,7 @@ int main(int argc,char **argv)
  }
  struct mock m={.wrong_id=1};struct sweet_aw2032 a;struct sweet_aw_io o=io(&m);assert(sweet_aw2032_prepare(&a,&o,&p));assert(m.asserted && !m.writes);sweet_aw2032_stop(&a);assert(!m.writes);
  memset(&m,0,sizeof m);o=io(&m);assert(!sweet_aw2032_prepare(&a,&o,&p));assert(!sweet_aw2032_start(&a,96));assert((m.reg[5]>>6)==(2u<<6)); /* 12dB request kept: quieter than profile is honoured */sweet_aw2032_stop(&a);
+ memset(&m,0,sizeof m);o=io(&m);assert(!sweet_aw2032_prepare(&a,&o,&p));assert(!sweet_aw2032_start(&a,0));m.ovp=1;assert(!sweet_aw2032_poll(&a) && a.active); /* 0224: OVPS/OVP2S/ADPS self-limiting is not a fault (stock mask) */sweet_aw2032_stop(&a);
  memset(&m,0,sizeof m);m.no_clock=1;o=io(&m);assert(!sweet_aw2032_prepare(&a,&o,&p));assert(sweet_aw2032_start(&a,192));assert(m.asserted && !m.unmuted);
  memset(&m,0,sizeof m);o=io(&m);assert(!sweet_aw2032_prepare(&a,&o,&p));assert(!sweet_aw2032_start(&a,192));m.fault=1;assert(sweet_aw2032_poll(&a));assert(m.asserted && !a.active);
  memset(&m,0,sizeof m);m.ical=-512;m.vcal=511;o=io(&m);

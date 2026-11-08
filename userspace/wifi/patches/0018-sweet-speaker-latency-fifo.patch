@@ -125,13 +125,13 @@
          if(!pcm_stats_at)pcm_stats_at=now;
          if(now-pcm_stats_at>=5000){
 -            printf("pcm: live elapsed_ms=%llu sent=%u completed=%u bytes=%llu empty=%llu nonzero=%llu peak=%u max_gap_ms=%llu over10ms=%llu over40ms=%llu underflows=%llu\n",
-+            printf("pcm: live elapsed_ms=%llu sent=%u completed=%u bytes=%llu empty=%llu nonzero=%llu peak=%u max_gap_ms=%llu over10ms=%llu over40ms=%llu underflows=%llu fifo=%u max=%u starts=%llu padded=%llu trimmed=%llu dropped=%llu\n",
++            printf("pcm: live elapsed_ms=%llu sent=%u completed=%u bytes=%llu empty=%llu nonzero=%llu peak=%u max_gap_ms=%llu over10ms=%llu over40ms=%llu underflows=%llu fifo=%u max=%u starts=%llu padded=%llu trimmed=%llu dropped=%llu cuts=%llu\n",
                  (unsigned long long)now,pcm_test.sent,pcm_test.completed,(unsigned long long)media_bytes,
                  (unsigned long long)media_empty,(unsigned long long)media_nonzero,media_levels.peak,
 -                (unsigned long long)pcm_max_gap,(unsigned long long)pcm_gaps10,(unsigned long long)pcm_gaps40,(unsigned long long)pcm_underflows);
 -            media_levels=(struct sweet_pcm_levels){0};pcm_stats_at=now;
 +                (unsigned long long)pcm_max_gap,(unsigned long long)pcm_gaps10,(unsigned long long)pcm_gaps40,(unsigned long long)pcm_underflows,
-+                pcm_fifo.count,pcm_fifo.max,(unsigned long long)pcm_fifo.starts,(unsigned long long)pcm_fifo.padded,(unsigned long long)pcm_fifo.trimmed,(unsigned long long)pcm_fifo.dropped);
++                pcm_fifo.count,pcm_fifo.max,(unsigned long long)pcm_fifo.starts,(unsigned long long)pcm_fifo.padded,(unsigned long long)pcm_fifo.trimmed,(unsigned long long)pcm_fifo.dropped,(unsigned long long)pcm_fifo.cuts);
 +            media_levels=(struct sweet_pcm_levels){0};pcm_stats_at=now;pcm_fifo.max=pcm_fifo.count;
          }
      }

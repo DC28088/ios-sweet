@@ -55,6 +55,7 @@ int main(void)
   assert(f.trimmed+f.dropped>=55000);                    /* stale backlog removed (overflow + trim) */
   assert(steady<=1440+bursts[b]+6*SWEET_PCM_FIFO_PERIOD); /* bounded latency */
   assert(!gaps);                                          /* no gaps in steady playback */
+  uint64_t cuts=f.cuts;run(bursts[b],30000,10000,late,&steady);assert(f.cuts==cuts); /* no hard cuts in steady play */
  }
  /* source stops: pads once and rebuffers; resumes after the prebuffer only */
  sweet_pcm_fifo_init(&f,1440,1000);next_in=1;next_out=0;uint8_t o[SWEET_PCM_FIFO_PERIOD*4];
@@ -62,6 +63,9 @@ int main(void)
  hal(440);assert(sweet_pcm_fifo_period(&f,o,10)==480 && f.playing);
  assert(sweet_pcm_fifo_period(&f,o,20)==480 && sweet_pcm_fifo_period(&f,o,30)==480);
  assert(sweet_pcm_fifo_period(&f,o,40)==0 && !f.playing && f.padded==480);
+ /* a 340 ms HAL burst is cut back to target on the next period */
+ sweet_pcm_fifo_init(&f,1440,1000);next_in=1;next_out=0;hal(2400);assert(sweet_pcm_fifo_period(&f,o,0)==480);
+ hal(16000);assert(sweet_pcm_fifo_period(&f,o,10)==480 && f.cuts==1 && f.count==1440+960);
  /* overflow drops oldest, never splits frames */
  sweet_pcm_fifo_init(&f,480,1000);uint8_t big[4096*4]={0};
  for(unsigned i=0;i<5;i++)sweet_pcm_fifo_push(&f,big,4096);
