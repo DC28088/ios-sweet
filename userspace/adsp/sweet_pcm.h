@@ -7,7 +7,7 @@
 #define SWEET_PCM_PERIOD 1920u /* 480 stereo s16 frames = 10 ms at 48 kHz */
 #define SWEET_PCM_STRIDE 4096u
 #define SWEET_PCM_MAP_BYTES 32768u /* known-working reference PCM map window */
-#define SWEET_PCM_SLOTS 4u
+#define SWEET_PCM_SLOTS 8u /* 8 x 10 ms queued at the DSP: covers ~30 ms late wakes; 8 x 4 KiB = map window */
 #define SWEET_PCM_LIMIT 100u
 /* Unique write tokens for ~31 days at10ms; explicit service mode only. */
 #define SWEET_PCM_STREAM_LIMIT 0x0fffffffu

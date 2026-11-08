@@ -1,0 +1,157 @@
+--- a/phone/wifi/wland.c
++++ b/phone/wifi/wland.c
+@@ -45,10 +45,13 @@
+ #include "sweet_apr.h"
+ #include "sweet_pcm.h"
+ #include "sweet_pcm_levels.h"
++#include "sweet_pcm_fifo.h"
+ #include "sweet_aw2032.h"
+ #include "sweet_amp_ctl.h"
+ #include <fcntl.h>
+ #include <sys/ioctl.h>
++#include <sys/sysctl.h>
++#include <signal.h>
+ 
+ /* cmd-db aux levels (as in the GPU's arc votes) */
+ /* Every cmd-db entry: name, RPMh slave (3 ARC, 4 VRM, 5 BCM), address. */
+@@ -920,9 +923,60 @@ static void afe_result(uint32_t op, uint32_t st)
+  * controller, which independently resets both PAs on missing heartbeat/close. */
+ static int speaker_fd=-1,speaker_on,speaker_wanted,speaker_media,speaker_service,speaker_prepared,media_fd=-1;
+ static uint64_t speaker_t0,speaker_last_signal;
+-static unsigned speaker_tone_periods=100,speaker_tone_peak=1640;
++static unsigned speaker_tone_periods=100,speaker_tone_peak=1640,speaker_atten=0,speaker_idle_ms=10000;
++/* 0018: while app audio plays, 1 ms poll sleeps took 17..33 ms with timer
++ * coalescing on (0221 measurement), so refills missed their 10 ms deadlines,
++ * the DSP consumed ~6% slow and the 1.36 s kernel ring sat full (= the 1-2 s
++ * start/stop lag, and drop-oldest overruns = stutter). Hold coalescing off only
++ * while the amps play; restore the saved value on idle, exit and SIGTERM/INT/HUP. */
++static int coalesce_saved=-1;
++static void coalesce_hold(int off)
++{
++    int v;size_t n=sizeof v;
++    if(off && coalesce_saved<0){
++        if(sysctlbyname("kern.timer.coalescing_enabled",&v,&n,NULL,0)){printf("pcm: timer coalescing state unavailable (%d)\n",errno);return;}
++        int zero=0;if(sysctlbyname("kern.timer.coalescing_enabled",NULL,NULL,&zero,sizeof zero)){printf("pcm: timer coalescing hold refused (%d)\n",errno);return;}
++        coalesce_saved=v;printf("pcm: timer coalescing off while playing (was %d)\n",v);
++    }else if(!off && coalesce_saved>=0){
++        v=coalesce_saved;coalesce_saved=-1;
++        if(sysctlbyname("kern.timer.coalescing_enabled",NULL,NULL,&v,sizeof v))printf("pcm: timer coalescing restore failed (%d)\n",errno);
++        else printf("pcm: timer coalescing restored to %d\n",v);
++    }
++}
++static void coalesce_signal(int sig)
++{
++    if(coalesce_saved>=0){int v=coalesce_saved;(void)sysctlbyname("kern.timer.coalescing_enabled",NULL,NULL,&v,sizeof v);}
++    signal(sig,SIG_DFL);raise(sig);
++}
++
++/* 0018: jitter FIFO (sweet_pcm_fifo.h): drain the kernel ring every refill,
++ * play only real samples after a short prebuffer, trim unused backlog. */
++_Static_assert(SWEET_PCM_FIFO_PERIOD*4==SWEET_PCM_PERIOD,"FIFO period = DSP period");
++static struct sweet_pcm_fifo pcm_fifo;
++static unsigned pcm_prebuf_frames=1440;
++static int pcm_fifo_drain(int fd)
++{
++    for(unsigned i=0;i<128;i++){
++        uint8_t b[SWEET_PCM_PERIOD];
++        ssize_t got=read(fd,b,sizeof b);
++        if(got<0 && (errno==EAGAIN || errno==EWOULDBLOCK))return 0;
++        if(got<0 || (got&3))return -1;
++        if(!got)return 0;
++        sweet_pcm_fifo_push(&pcm_fifo,b,(uint32_t)got/4);
++        if((size_t)got<sizeof b)return 0;
++    }
++    return 0;
++}
++/* One DSP period from the FIFO (silence-padded). Bytes of real samples, or -1. */
++static ssize_t pcm_fifo_period(int fd,uint8_t *out,uint64_t now)
++{
++    if(pcm_fifo_drain(fd))return -1;
++    return (ssize_t)sweet_pcm_fifo_period(&pcm_fifo,out,now)*4;
++}
++
+ static void speaker_stop(void)
+ {
++    coalesce_hold(0);
+     if(media_fd>=0){close(media_fd);media_fd=-1;}
+     if(speaker_fd<0)return;
+     struct sweet_amp_status st;
+@@ -974,7 +1028,7 @@ static int speaker_poll(const struct sweet_pcm *s)
+     }
+     if(speaker_service)return 0;
+     if(!speaker_on && s->completed && s->sent<s->limit){
+-        struct sweet_amp_start start={3,24*8};
++        struct sweet_amp_start start={3,speaker_atten};
+         if(ioctl(speaker_fd,SWEET_AMP_START,&start)){printf("speaker: clock/fault gate refused output (%d)\n",errno);speaker_stop();return -1;}
+         speaker_on=1;speaker_t0=link_ms();printf("speaker: bounded %s on both amps, digital attenuation24dB\n",speaker_media?"app PCM":"1kHz tone");
+     }
+@@ -997,11 +1051,13 @@ static int speaker_activity(const uint8_t *samples,size_t bytes)
+             speaker_prepared=1;
+         }
+         if(!speaker_on){
+-            struct sweet_amp_start start={3,24*8};
++            struct sweet_amp_start start={3,speaker_atten};
+             if(ioctl(speaker_fd,SWEET_AMP_START,&start))return -1;
+-            speaker_on=1;printf("speaker: app PCM active\n");
++            speaker_on=1;coalesce_hold(1);printf("speaker: app PCM active, attenuation %u/8 dB (kernel floor: stock profile)\n",speaker_atten);
+         }
+-    }else if(speaker_prepared && link_ms()-speaker_last_signal>=1000){
++    }else if(speaker_prepared && link_ms()-speaker_last_signal>=speaker_idle_ms){
++        /* 0018: 10 s (was 1 s): a pause/seek must not cost a full amp reset+prepare. */
++        coalesce_hold(0);
+         if(ioctl(speaker_fd,SWEET_AMP_STOP,0))return -1;
+         speaker_prepared=speaker_on=0;printf("speaker: idle; amps reset, DSP session retained\n");
+     }
+@@ -1050,6 +1106,7 @@ static void adsp_pcm_poll(void)
+             speaker_stop();pcm_enabled=0;return;
+         }
+         sweet_pcm_init(&pcm_test,q.iova|q.alias);
++        sweet_pcm_fifo_init(&pcm_fifo,pcm_prebuf_frames,1000);
+         if(sweet_pcm_set_limit(&pcm_test,speaker_service?SWEET_PCM_STREAM_LIMIT:speaker_media?3000:speaker_tone_periods)){speaker_stop();pcm_enabled=0;return;}
+         printf("pcm: bounded test starts: %u periods, 48 kHz stereo s16, PRI_MI2S; speaker=%d media=%d\n",pcm_test.limit,speaker_wanted,speaker_media);
+     }
+@@ -1063,8 +1120,7 @@ static void adsp_pcm_poll(void)
+         if(op==0x10dab && speaker_media){
+             uint32_t slot=(uint32_t)b[36]|(uint32_t)b[37]<<8|(uint32_t)b[38]<<16|(uint32_t)b[39]<<24;
+             uint8_t audio[SWEET_PCM_PERIOD]={0};
+-            ssize_t got=(speaker_service && !pcm_test.completed)?0:read(media_fd,audio,sizeof audio);
+-            if(got<0 && (errno==EAGAIN || errno==EWOULDBLOCK))got=0;
++            ssize_t got=(speaker_service && !pcm_test.completed)?0:pcm_fifo_period(media_fd,audio,link_ms());
+             if(got<0 || (got&3) || slot>=SWEET_PCM_SLOTS || pm_wr(pcm_pa+(uint64_t)slot*SWEET_PCM_STRIDE,audio,sizeof audio)){
+                 printf("pcm: media read/DMA refill failed; stopping\n");speaker_stop();sweet_pcm_abort(&pcm_test,0xfffffffbu);break;
+             }
+@@ -1081,11 +1137,12 @@ static void adsp_pcm_poll(void)
+         uint64_t now=link_ms();
+         if(!pcm_stats_at)pcm_stats_at=now;
+         if(now-pcm_stats_at>=5000){
+-            printf("pcm: live elapsed_ms=%llu sent=%u completed=%u bytes=%llu empty=%llu nonzero=%llu peak=%u max_gap_ms=%llu over10ms=%llu over40ms=%llu underflows=%llu\n",
++            printf("pcm: live elapsed_ms=%llu sent=%u completed=%u bytes=%llu empty=%llu nonzero=%llu peak=%u max_gap_ms=%llu over10ms=%llu over40ms=%llu underflows=%llu fifo=%u max=%u starts=%llu padded=%llu trimmed=%llu dropped=%llu\n",
+                 (unsigned long long)now,pcm_test.sent,pcm_test.completed,(unsigned long long)media_bytes,
+                 (unsigned long long)media_empty,(unsigned long long)media_nonzero,media_levels.peak,
+-                (unsigned long long)pcm_max_gap,(unsigned long long)pcm_gaps10,(unsigned long long)pcm_gaps40,(unsigned long long)pcm_underflows);
+-            media_levels=(struct sweet_pcm_levels){0};pcm_stats_at=now;
++                (unsigned long long)pcm_max_gap,(unsigned long long)pcm_gaps10,(unsigned long long)pcm_gaps40,(unsigned long long)pcm_underflows,
++                pcm_fifo.count,pcm_fifo.max,(unsigned long long)pcm_fifo.starts,(unsigned long long)pcm_fifo.padded,(unsigned long long)pcm_fifo.trimmed,(unsigned long long)pcm_fifo.dropped);
++            media_levels=(struct sweet_pcm_levels){0};pcm_stats_at=now;pcm_fifo.max=pcm_fifo.count;
+         }
+     }
+     if(pcm_test.done && !pcm_reported) {
+@@ -1168,6 +1225,18 @@ static int adsp_net(unsigned secs)
+     const char *periods=getenv("WLAND_SPEAKER_TONE_PERIODS"),*peak=getenv("WLAND_SPEAKER_TONE_PEAK");
+     if(periods){char *end=NULL;unsigned long v=strtoul(periods,&end,10);if(!*periods || *end || v<100 || v>300){printf("speaker: invalid tone duration\n");return -1;}speaker_tone_periods=(unsigned)v;}
+     if(peak){char *end=NULL;unsigned long v=strtoul(peak,&end,10);if(!*peak || *end || v<256 || v>8192){printf("speaker: invalid tone peak\n");return -1;}speaker_tone_peak=(unsigned)v;}
++    /* 0018 tuning: attenuation below the stock profile (kernel never goes louder),
++     * FIFO prebuffer and amp idle timeout. Defaults: stock level, 30 ms, 10 s. */
++    static const struct {const char *name;unsigned *v,min,max,scale;} knobs[]={
++        {"WLAND_SPEAKER_ATTEN_DB",&speaker_atten,0,48,8},{"WLAND_PCM_PREBUF_MS",&pcm_prebuf_frames,10,200,48},
++        {"WLAND_SPEAKER_IDLE_MS",&speaker_idle_ms,1000,60000,1}};
++    for(unsigned k=0;k<sizeof knobs/sizeof knobs[0];k++){
++        const char *e=getenv(knobs[k].name);if(!e)continue;char *end=NULL;unsigned long v=strtoul(e,&end,10);
++        if(!*e || *end || v<knobs[k].min || v>knobs[k].max){printf("pcm: invalid %s\n",knobs[k].name);return -1;}
++        *knobs[k].v=(unsigned)v*knobs[k].scale;
++    }
++    if(speaker_service){signal(SIGTERM,coalesce_signal);signal(SIGINT,coalesce_signal);signal(SIGHUP,coalesce_signal);
++        printf("pcm: service tuning attenuation=%u/8dB prebuffer=%u frames idle=%ums slots=%u\n",speaker_atten,pcm_prebuf_frames,speaker_idle_ms,SWEET_PCM_SLOTS);}
+     const char *delay=getenv("WLAND_PCM_DELAY_MS");
+     if(delay){char *end=NULL;unsigned long v=strtoul(delay,&end,10);if(!*delay || *end || v>30000){printf("pcm: invalid setup delay\n");return -1;}pcm_delay_ms=(unsigned)v;}
+ 	pcm_enabled = getenv("WLAND_PCM_TEST") != NULL || speaker_wanted;

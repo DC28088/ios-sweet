@@ -33,13 +33,13 @@ int main(void)
 {
  struct sweet_pcm s;uint8_t b[128],r[128],p[16];struct sweet_apr_msg m;
  sweet_pcm_init(&s,0x190000000ull);setup(&s,0);assert(s.mapped && s.copp_open && s.stream_open && s.copp==3);
- unsigned live=0;struct sweet_apr_msg queue[4];uint8_t saved[4][128];
+ unsigned live=0;struct sweet_apr_msg queue[SWEET_PCM_SLOTS];uint8_t saved[SWEET_PCM_SLOTS][128];unsigned most=0;
  while(s.completed<100){
-  while(live<4 && s.sent<100){size_t n=sweet_pcm_next(&s,saved[live],128,200);assert(n && !sweet_apr_parse(saved[live],n,&queue[live]));assert(queue[live].opcode==0x10dab && g32(queue[live].payload+12)==1920);++live;}
-  assert(live);m=queue[--live];memcpy(p,m.payload,12);p32(p+12,0);size_t n=reply(r,&m,0x10d99,p,16);
+  while(live<SWEET_PCM_SLOTS && s.sent<100){size_t n=sweet_pcm_next(&s,saved[live],128,200);assert(n && !sweet_apr_parse(saved[live],n,&queue[live]));assert(queue[live].opcode==0x10dab && g32(queue[live].payload+12)==1920);++live;}
+  assert(!sweet_pcm_next(&s,b,128,200) || s.sent==100);if(live>most)most=live;assert(live);m=queue[--live];memcpy(p,m.payload,12);p32(p+12,0);size_t n=reply(r,&m,0x10d99,p,16);
   assert(sweet_pcm_receive(&s,r,n)==1);assert(sweet_pcm_receive(&s,r,n)==0); /* stale completion cannot free slot twice */
  }
- assert(s.sent==100 && !s.inflight);
+ assert(s.sent==100 && !s.inflight && most==SWEET_PCM_SLOTS); /* all slots queue at once */
  const uint32_t end[]={0x10bd3,0x10bcd,0x10327,0x10d94};
  for(unsigned i=0;i<4;i++){size_t n=sweet_pcm_next(&s,b,128,300);assert(n && !sweet_apr_parse(b,n,&m) && m.opcode==end[i]);if(i==2)assert(m.dest_port==3);p32(p,m.opcode);p32(p+4,0);n=reply(r,&m,APR_BASIC_RSP_RESULT,p,8);assert(sweet_pcm_receive(&s,r,n)==1);}
  assert(!sweet_pcm_next(&s,b,128,300));assert(s.done && !s.failed && !s.mapped && !s.stream_open && !s.copp_open);

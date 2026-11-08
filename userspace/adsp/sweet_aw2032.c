@@ -118,7 +118,7 @@ static int status_ok(struct sweet_aw2032 *a)
 int sweet_aw2032_start(struct sweet_aw2032 *a,unsigned attenuation)
 {
  if(!a || !a->prepared || a->active)return -1;
- if(attenuation<192)attenuation=192;
+ /* 0224: floor is the stock Music profile level (never louder than vendor). */
  if(attenuation<a->profile_volume)attenuation=a->profile_volume;
  if(attenuation>720)attenuation=720;
  if(update(a,7,1,1) || update(a,4,1,0))goto fail;

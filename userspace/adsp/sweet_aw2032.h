@@ -22,7 +22,7 @@ struct sweet_aw2032 {
 /* Hardware reset, chip-ID check, profile under mute/powerdown, per-chip efuse
  * calibration, 48kHz/16bit format. Any error asserts the hardware reset. */
 int sweet_aw2032_prepare(struct sweet_aw2032 *,const struct sweet_aw_io *,const struct sweet_aw_profile *);
-/* Diagnostic limit: at least 24dB digital attenuation. Caller must first have
+/* Never louder than the vendor profile volume (0224 dropped the 24dB bring-up floor). Caller must first have
  * confirmed PCM completions, then poll faults and stop within a bounded trial. */
 int sweet_aw2032_start(struct sweet_aw2032 *,unsigned attenuation_eighth_db);
 int sweet_aw2032_poll(struct sweet_aw2032 *);

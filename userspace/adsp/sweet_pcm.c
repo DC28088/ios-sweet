@@ -20,7 +20,7 @@
 #define WRITE 0x10dabu
 #define WRITE_DONE 0x10d99u
 #define STREAM 0x101u
-#define WTOKEN 0x40000000u
+#define WTOKEN 0x40000000u /* | sequence<<3 | slot (SWEET_PCM_SLOTS<=8) */
 /* Teardown is ordered; if any teardown times out/fails, keep DMA allocated. */
 enum { P_MAP,P_OPEN,P_ADM,P_ROUTE,P_FORMAT,P_RUN,P_PLAY,P_PAUSE,P_CLOSE,P_ADM_CLOSE,P_UNMAP,P_DONE };
 static void p16(uint8_t *p,uint16_t x){p[0]=x;p[1]=x>>8;}
@@ -84,8 +84,8 @@ size_t sweet_pcm_next(struct sweet_pcm *s,uint8_t *out,size_t cap,uint64_t now)
         if(slot==SWEET_PCM_SLOTS)return 0;
         uint64_t a=s->dsp+(uint64_t)slot*SWEET_PCM_STRIDE;
         p32(p,a);p32(p+4,a>>32);p32(p+8,s->handle);p32(p+12,SWEET_PCM_PERIOD);p32(p+16,slot);
-        size_t n=sweet_apr_pack(out,cap,APR_MSG_TYPE_SEQ_CMD,ASM,STREAM,STREAM,WTOKEN|(s->sent<<2)|slot,WRITE,p,32);
-        if(n){s->write_token[slot]=WTOKEN|(s->sent<<2)|slot;s->busy|=1u<<slot;++s->sent;++s->inflight;s->deadline=now+3000;}
+        size_t n=sweet_apr_pack(out,cap,APR_MSG_TYPE_SEQ_CMD,ASM,STREAM,STREAM,WTOKEN|((s->sent&0x07ffffffu)<<3)|slot,WRITE,p,32);
+        if(n){s->write_token[slot]=WTOKEN|((s->sent&0x07ffffffu)<<3)|slot;s->busy|=1u<<slot;++s->sent;++s->inflight;s->deadline=now+3000;}
         return n;
     }
     case P_PAUSE:if(!s->stream_open){s->step=P_CLOSE;continue;}return pack(s,out,cap,now,ASM,STREAM,PAUSE,p,0);
@@ -101,7 +101,7 @@ int sweet_pcm_receive(struct sweet_pcm *s,const uint8_t *packet,size_t n)
     if(sweet_apr_parse(packet,n,&m))return -1;
     if(s->done || m.src_domain!=APR_DOMAIN_ADSP || m.dest_domain!=APR_DOMAIN_APPS)return 0;
     if(m.opcode==WRITE_DONE && m.src_svc==ASM && m.dest_svc==ASM && m.dest_port==STREAM && (m.token&0xc0000000u)==WTOKEN){
-        unsigned slot=m.token&3u;uint64_t a=s->dsp+(uint64_t)slot*SWEET_PCM_STRIDE;
+        unsigned slot=m.token&7u;uint64_t a=s->dsp+(uint64_t)slot*SWEET_PCM_STRIDE;
         if(!(s->busy&(1u<<slot)) || s->write_token[slot]!=m.token)return 0;
         if(m.payload_len<16 || g32(m.payload)!=(uint32_t)a || g32(m.payload+4)!=(uint32_t)(a>>32) || g32(m.payload+8)!=s->handle){sweet_pcm_abort(s,0xfffffffeu);return -1;}
         s->busy&=~(1u<<slot);--s->inflight;++s->completed;

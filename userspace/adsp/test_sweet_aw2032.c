@@ -43,7 +43,7 @@ static unsigned successful(const struct sweet_aw_profile *p)
  assert(!sweet_aw2032_prepare(&a,&o,p));assert(a.prepared && !a.active && (m.reg[4]&3)==3 && (m.reg[5]&0x10));
  assert((m.reg[6]&0xff)==8 && (m.reg[6]&0x1c00)==0x1c00); /* same 32FS as 48k/16-bit stereo AFE; RX/channel preserved */
  assert(m.reg[0x56]==8192 && m.reg[0x56]!=0xdead); /* per-chip, not copied profile calibration */
- assert(!sweet_aw2032_start(&a,0));assert(a.active && m.unmuted);assert((m.reg[5]>>6)>=0x100); /* clamped >=24dB */
+ assert(!sweet_aw2032_start(&a,0));assert(a.active && m.unmuted);assert((m.reg[5]>>6)==0); /* 0224: stock profile level (0 here), no 24dB floor */
  assert(!sweet_aw2032_poll(&a));unsigned calls=m.calls;sweet_aw2032_stop(&a);assert(m.asserted && !a.prepared && !a.active);return calls;
 }
 int main(int argc,char **argv)
@@ -57,10 +57,11 @@ int main(int argc,char **argv)
  assert(!sweet_aw_profile_select(b,n,0,&p));unsigned max=successful(&p);
  for(unsigned fail=1;fail<=max;fail++){
   struct mock m={.fail_at=fail};struct sweet_aw2032 a;struct sweet_aw_io o=io(&m);
-  int ret=sweet_aw2032_prepare(&a,&o,&p);if(!ret)ret=sweet_aw2032_start(&a,192);if(!ret)ret=sweet_aw2032_poll(&a);
+  int ret=sweet_aw2032_prepare(&a,&o,&p);if(!ret)ret=sweet_aw2032_start(&a,0);if(!ret)ret=sweet_aw2032_poll(&a);
   assert(ret);assert(m.asserted && !a.prepared && !a.active);
  }
  struct mock m={.wrong_id=1};struct sweet_aw2032 a;struct sweet_aw_io o=io(&m);assert(sweet_aw2032_prepare(&a,&o,&p));assert(m.asserted && !m.writes);sweet_aw2032_stop(&a);assert(!m.writes);
+ memset(&m,0,sizeof m);o=io(&m);assert(!sweet_aw2032_prepare(&a,&o,&p));assert(!sweet_aw2032_start(&a,96));assert((m.reg[5]>>6)==(2u<<6)); /* 12dB request kept: quieter than profile is honoured */sweet_aw2032_stop(&a);
  memset(&m,0,sizeof m);m.no_clock=1;o=io(&m);assert(!sweet_aw2032_prepare(&a,&o,&p));assert(sweet_aw2032_start(&a,192));assert(m.asserted && !m.unmuted);
  memset(&m,0,sizeof m);o=io(&m);assert(!sweet_aw2032_prepare(&a,&o,&p));assert(!sweet_aw2032_start(&a,192));m.fault=1;assert(sweet_aw2032_poll(&a));assert(m.asserted && !a.active);
  memset(&m,0,sizeof m);m.ical=-512;m.vcal=511;o=io(&m);
