@@ -1,3 +1,26 @@
+## 2026-11-09 00:15 IST: 0225 booted (speaker fixes v2); iOS ROOT GROWN TO 107 GiB; app migration armed
+- 0224 (a7c309d, kernel CI 42507039951, wland 42507043455) booted: DSP consumption ~100 periods/s even idle
+  (8 slots fixed the slow sender). USER: "sounds loud"; then sound stopped on a volume change: ch0 SYSST
+  0x2711 = OVPS|ADPS -> our 0xcc2a fault mask reset both amps. Xiaomi AW_PID_2032_SYSST_CHECK_MASK only counts
+  UVLS|BSTOCS|NOCLKS|OCDS|OTHS -> 0225 mask 0x482a. FIFO hit 16384 frames (340 ms) around play/pause -> 0225
+  hard cut to target when >6144 frames over (cuts= in live line).
+- 0225 = claude/speaker-0224 0bdca82, kernel CI 42510127873 (kernel c141e136...), wland CI 42510130899
+  (wland eb04140c...). Image /run/media/dan/MUSIC/ios-sweet-backup/build-0225/shim-boot-0225-speaker.img
+  SHA256 4fe2b8bcc5f4... (USB stick "MUSIC" = PC storage now; /home is FULL). fastboot boot OKAY; service
+  /var/local/bin/wland-0225 started via work/speaker-runtime/run-speaker-0225.py (log /var/local/adsp-0225-*.log).
+  USER listening result PENDING.
+- PHONE ROOT WAS FULL (12 MB free of 16 GiB) -> SpringBoard restart loop. Backed up (sha-verified) + removed old
+  debug dumps (USB ios-sweet-backup/phone-var-local-20261109, phone-var-tmp-20261109). USER then asked for the
+  full userdata size and chose "grow without backup": tools sweet-hfs-grow (userspace/tools/sweet_hfs_grow.c,
+  CI 42509758761, fsctl HFSIOC_RESIZE_VOLUME = _IOW('h',2,u64) on "/") grew the mounted journaled HFS+ root
+  16.00 -> 107.06 GiB (114953269248 B = userdata 114970046464 - 16 MiB: the kernel log ring owns the last
+  4 MiB+4 KiB). 91 GiB free; persisted across the 0225 reboot.
+- Preinstalled apps (USER request): 32 apps in /private/var/staged_system_apps; SystemAppMigrator installs them
+  via InstallCoordination only during data migration. Prefs backed up to USB prefs-before-migration-20261109/
+  prefs.tar; sentinel /private/var/datamigrator/migrate (mobile:mobile) created -> migration runs on the NEXT
+  boot (expect progress UI). If anything resets, restore from prefs.tar. Then restart the speaker service.
+- USER next priority after sound: SLEEP.
+
 ## 2026-11-08/09: speaker 0224 (Claude) — latency/stutter/volume fix built; kernel CI running; NOT booted
 - USER (after the 0219 revert): Codex's speaker audio works but stutters, takes 1-2 s to start/stop with video,
   low volume, thin. Discarded the uncommitted 0222 mkadt.py canvas change (USER: no lower resolution).
