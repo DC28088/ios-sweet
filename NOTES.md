@@ -1,3 +1,55 @@
+## 2026-11-08/09: speaker 0224 (Claude) — latency/stutter/volume fix built; kernel CI running; NOT booted
+- USER (after the 0219 revert): Codex's speaker audio works but stutters, takes 1-2 s to start/stop with video,
+  low volume, thin. Discarded the uncommitted 0222 mkadt.py canvas change (USER: no lower resolution).
+- DIAGNOSIS (code + Codex 0220/0221 live counters, observed): HAL writes on mach time into the kernel ring
+  (`SWEET_PCM_RING_FRAMES` 65536 = 1.36 s, writer never blocks, drop-oldest). The sender refilled only
+  433-486 of 500 DSP periods per 5 s because 1 ms poll sleeps took 17-33 ms under timer coalescing (0221
+  helper: coalescing on avg 18 ms, off 1.0 ms). Consumer ~6% slow -> ring permanently full = the 1-2 s lag
+  (paused/resumed audio waits behind 1.36 s of backlog) + drop-oldest overruns + zero-padded short reads =
+  stutter. Volume: kernel `sweet_aw2032_start` clamped >= 24 dB attenuation; stock Music profile reg5 =
+  2.75 dB (read locally from the private ACF), so playback was ~21 dB under stock.
+- FIX branch `claude/speaker-0224` (from codex/speaker-timer-0221), commit a7c309d, pushed to myfork:
+  wland patch 0018 + userspace/adsp/sweet_pcm_fifo.h jitter FIFO (drain kernel ring each refill, 30 ms
+  prebuffer, rebuffer on dry source, trim backlog unused over two 1 s windows); coalescing off ONLY while the
+  amps play (restored on idle/exit/SIGTERM/INT/HUP); amp idle reset 10 s (was 1 s); 8 DSP slots (was 4);
+  env knobs WLAND_SPEAKER_ATTEN_DB (default 0 = stock), WLAND_PCM_PREBUF_MS, WLAND_SPEAKER_IDLE_MS; 5 s live
+  line gains fifo/max/starts/padded/trimmed/dropped. Kernel: 24 dB floor removed, never louder than the vendor
+  profile. Dropped the never-booted 0218 ISB timer patch so kernel 0224 = 0219 kernel + amp floor change only.
+- Host tests pass locally: FIFO simulation (256..4096-frame HAL cycles, 2/33 ms late wakes, 1.36 s stale backlog:
+  steady FIFO 64-166 ms, no gaps), PCM 8-slot queueing, amp model (stock-level start, fault paths),
+  amp/ring/endpoint/glink checks. Expected total latency ~0.15-0.25 s (FIFO + 80 ms DSP queue), not measured.
+- CI: native sweet-wifi 42507043455 SUCCESS (wland 620366d16e39f9d5..., verified, at
+  work/speaker-runtime/native-0224 -> symlink to /tmp scratch). Kernel xnu 42507039951 in progress (macos-26-intel).
+- DISK: /home is FULL (5 MB free of 61 GB). 0224 artifacts live on tmpfs
+  /tmp/claude-1000/-home-dan-ios-sweet/059c0883-c3ae-45cc-b822-6ab155557f1f/scratchpad/{native-0224,build-0224}
+  (LOST on PC reboot). Nothing deleted; ask USER before freeing space.
+- NEXT: fetch-ci-0224.py + package-0224.py (audio-runtime; outputs to build-0224) -> USER fastboot ->
+  `fastboot -s 21fd1806 boot shim-boot-0224-speaker.img` -> stage-0224.py -> run-speaker-0224.py (one DSP
+  session per boot) -> USER plays video, pause/resume; compare 5 s live counters (completed ~500/5 s,
+  padded/trimmed small). Thin sound NOT addressed beyond volume: suspects iOS d22_speaker_general (iPhone X
+  tuning) and the silent amp I/V-sense input; re-evaluate after the volume fix.
+
+## 2026-11-08 23:05 IST: REVERTED to 0219-speaker (pre-0222, default 1125x2436) — verified; canvas experiments paused
+- USER: "move back to the default resolution, older build, boot the already existing image". Booted
+  shim-boot-0219-speaker.img (the newest pre-0222 image that HAD booted; 0221-timer was never booted) via
+  `fastboot -s 21fd1806 boot` (logs/fastboot-0219-revert.txt OKAY; hash 9c23fbe8c10e... matched its manifest).
+- VERIFIED on boot (fresh section of logs/boot-revert-20261108.txt): boot-args `sweetbuild=219`; log line
+  "AppleCLCD 1080x2400 ... presented as 1125x2436"; backboardd SURF surfaces 1125x2436 bpr 4608; no real panic
+  (gPanicBase debug chatter + `exec DumpPanic` job name only); MobileGestalt REGENERATED: SubType 2436, scale 3.
+- Present stats (busy 10 s windows): copy_avg 3409-6344 us full-frame (was ~20000 us on the 0222/0223 upscale),
+  beam_avg 2667-3607 us with beam_skips=0 — beam alignment works again; 0145-0219 presentation restored.
+- MG cache deleted+synced BEFORE the 0219 boot (backup mg-backup/MobileGestalt.pre-revert-20261108.plist). An
+  interim 0223-xr boot (22:29) was needed ONLY because the fileserver exists only in a booted sweet session and
+  the phone was already in fastboot with a stale XR cache.
+- RECURRING tonight: in-session USB ECM drops (console dead at 22:03 and ~22:32; interface vanished host-side).
+  Self-recovered/was re-asserted at 22:34 (replug era); TCP 2223 + SSH then worked. Same class as the drops noted
+  on the 0203/0205 era. Watch this — 3rd drop today.
+- SEE ALSO the 22:05 entry: 0223-xr second boot; tear diagnosis unchanged: 0222/0223 per-pixel copyScaled = ~20 ms
+  full-frame > 8.33 ms frame → beamWait always skips (log evidence); 0223 only fixed the estimate. IF canvas work
+  resumes: 0224 = fast-copy patch (run-table/NEON inner loop, target <7 ms full-frame) AND/OR a presentcpu=6
+  (A76) repackage A/B — both PARKED by the user's revert decision today. The A/B image was never created; only
+  the verified 0219/0223 images sit in the audio-runtime work dir.
+
 ## 2026-11-08 22:05 IST: 0223-xr SECOND boot live and verified (user asked to re-install the last image)
 - The prior session left a pending `fastboot boot` + receiver; the phone entered fastboot ~21:57 IST and
   `shim-boot-0223-xr.img` (SHA256 990b43a8ee8c20ab... = manifest) booted again: logs/fastboot-0223-xr-2.txt OKAY
