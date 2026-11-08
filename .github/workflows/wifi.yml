@@ -69,6 +69,10 @@ jobs:
             -o "$out/sweet-audio-schedule" userspace/adsp/sweet_audio_schedule.c
           xcrun --sdk iphoneos clang -target arm64-apple-ios16.0 -O2 -Wall -Wextra -Werror \
             -o "$out/sweet-timer-coalescing" userspace/adsp/sweet_timer_coalescing.c
+          xcrun --sdk iphoneos clang -target arm64-apple-ios16.0 -O2 -Wall -Wextra -Werror \
+            -o "$out/sweet-hfs-grow" userspace/tools/sweet_hfs_grow.c
+          codesign --force --sign - --pagesize 4096 "$out/sweet-hfs-grow"
+          codesign --verify --strict "$out/sweet-hfs-grow"
           codesign --force --sign - --pagesize 4096 "$out/sweet-timer-coalescing"
           codesign --verify --strict "$out/sweet-timer-coalescing"
           codesign --force --sign - --pagesize 4096 "$out/sweet-audio-schedule"
@@ -81,13 +85,13 @@ jobs:
           codesign --force --sign - --pagesize 4096 --entitlements donor/phone/tools/netsvc-ents.plist "$out/netsvc"
           codesign --verify --strict "$out/wland"
           codesign --verify --strict "$out/netsvc"
-          (cd "$out" && shasum -a 256 wland netsvc sweet-pcm-probe sweet-audio-timing sweet-audio-schedule sweet-timer-coalescing > SHA256SUMS)
+          (cd "$out" && shasum -a 256 wland netsvc sweet-pcm-probe sweet-audio-timing sweet-audio-schedule sweet-timer-coalescing sweet-hfs-grow > SHA256SUMS)
           python3 - "$out" <<'PY'
           import hashlib, json, pathlib, sys
           out = pathlib.Path(sys.argv[1])
           patches = {str(p): hashlib.sha256(p.read_bytes()).hexdigest()
                      for p in sorted(pathlib.Path('userspace/wifi/patches').glob('*.patch'))}
-          files = {n: hashlib.sha256((out / n).read_bytes()).hexdigest() for n in ('wland', 'netsvc', 'sweet-pcm-probe', 'sweet-audio-timing', 'sweet-audio-schedule', 'sweet-timer-coalescing')}
+          files = {n: hashlib.sha256((out / n).read_bytes()).hexdigest() for n in ('wland', 'netsvc', 'sweet-pcm-probe', 'sweet-audio-timing', 'sweet-audio-schedule', 'sweet-timer-coalescing', 'sweet-hfs-grow')}
           (out / 'wifi-build.json').write_text(json.dumps(
               {'source_commit': '${{ github.sha }}', 'donor': 'Yofuness/ios-flame sunfish', 'donor_commit': '${{ env.DONOR_COMMIT }}',
                'patches': patches, 'files': files}, indent=2) + '\n')
