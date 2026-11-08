@@ -1,4 +1,96 @@
-## 2026-11-06 19:20 IST: eight-image batch packaged (device test pending)
+## 2026-11-08 22:05 IST: 0223-xr SECOND boot live and verified (user asked to re-install the last image)
+- The prior session left a pending `fastboot boot` + receiver; the phone entered fastboot ~21:57 IST and
+  `shim-boot-0223-xr.img` (SHA256 990b43a8ee8c20ab... = manifest) booted again: logs/fastboot-0223-xr-2.txt OKAY
+  (Sending/Booting OKAY). Live capture: logs/boot-0223-xr-2.txt.
+- Verified in the log: boot-args contain `sweetbuild=223 ... sweetfb_mode=4`; backboardd surfaces 828x1792;
+  SpringBoard exec'd; 0 panics. Crash counts (known set): PassKitSpotlight 24, assetsd 20, bluetoothd 12,
+  CommCenter 8, driverkitd 4.
+- MG cache on disk = SubType 1792, scale 2 (mg-backup/MobileGestalt.bootstate-20261108.plist) — same-canvas
+  reboot needs no MG wipe. Total time to first console packet 2026-11-08 ~21:57:53 IST.
+- USER verdict on XR canvas (Split828 status bar provider) and tearing after the 0223 copy-speed fix: PENDING.
+
+## 2026-11-08 07:2x-08:1x IST: 0223 XR BOOTED (commit 9415b5a, CI 42402373045); presents live, stable; USER visual check pending
+- 0223 = tear-band fix ("copy-speed statistic in panel rows, not presented" + mode-1 column-map rem loop). CI xnu run
+  42402373045 SUCCESS (head 9415b5a8a2f9...). Kernel downloaded via HTTP-range fetch (8 threads, ~30 s) from artifact
+  13586347051 into /home/dan/Documents/Codex/2026-11-05/new-chat/work/audio-runtime/kernel-0223/
+  (kernel.development.sweet 25b4ff2fa8dd8daf7b5d40566ca67c3274e8f4dbc27b5b71d07c4825fde9901e, SHA256SUMS verified).
+- Packaged with package-0222.py (base shim-boot-0207-dtlog.img 7ca0d7a7...); both variants share kernel 25b4ff2f:
+  shim-boot-0223-hd.img 191961ba9b6cf8f54e58e1bbdf5fd857e4ed27ed1cf19055443e10b1a9339ee4 (750x1624, fresh this session,
+  manifest 0223-boot-manifest.json) and shim-boot-0223-xr.img 990b43a8ee8c20abb1fdba5e4909ecf232a15eef67f88d7f636c45d9b78c99c1
+  (828x1792, manifest 0223-boot-manifest-xr.json; packaged by the previous session 07:15 IST).
+- MG state OBSERVED via fileserver get (192.168.7.2:2223; saved mg-backup/MobileGestalt.bootstate-20261108.plist):
+  ArtworkDeviceSubType 1792, scale 2 (product description string stale "iPhone X"; pixels are the XR canvas) -> the
+  on-disk cache already matched the 828x1792 canvas, so NO MG rm was needed before the xr boot. (Previous MG pulls:
+  .pre-0222/.post-0222b 2026-11-07 evening, .xr 00:29 IST after the 0222-xr test, .now 00:03.)
+- UNRESOLVED EVENT (honest): while I was preparing the boot the device left fastboot and self-booted ~07:26 IST; console
+  captured 07:26-07:45 in logs/boot-0223-xr.txt: system up (SpringBoard exec) but ZERO presents the whole time and the FB
+  thread in idle ticks (callbacks=20/10s = the 500 ms dark-mode tick) - the panel never got any frame; ended back in
+  fastboot ~07:45 (reboot source unknown; no panic text). The manifest was later flipped to booted:true with
+  booted_at_utc 01:59:54Z (= 07:29:54 IST, edited by the previous agent between my first read and now) - so the previous
+  session had booted 0223-xr at ~07:29. Why THAT boot never presented while MY boot of the SAME file does is unexplained
+  (my boot raced through a normal USB attach; the prior session's kickoff was not logged).
+- CONTROLLED RESULT: fastboot -s 21fd1806 boot shim-boot-0223-xr.img (Sending 17636 KB OKAY / Booting OKAY, log
+  logs/fastboot-0223-xr-2.txt); console logs/boot-0223-xr-2.txt (receiver restarted after the server restart killed the
+  first one; its stdout must go to a FILE - the first receiver died of BrokenPipe because nohup left stdout as my
+  closing pipe, NOT a device issue). Boot healthy: SpringBoard exec'd; per 10 s: presents 342-395, present_avg ~23 ms,
+  copy_avg ~20 ms, beam_skips 342-395, coalesced ~320 (numbers in the 0178-era 380-520 range), missed_deadlines 0-2,
+  callbacks=1200 (FB ticks live, unlike the zero-present boot); no panic string; sweet drivers armed (AMP/PCM/CHARGER/
+  GPU audit v2; cmdline = 0219 manifest + sweetbuild=223 + sweetfb_mode=4, 536 B).
+- Known crash set only: bluetoothd, assetsd, PassKitSpotlight (same pc 0x1f9597198 family). Haptics serving iOS
+  ("60 s: 77312 frames, 6 buzzes"). Wi-Fi scanning.
+- AWAITING USER at the phone: (1) status bar has a REAL provider at 828 (no giant red rdar://45025538 bar - the
+  Split828 provider exists); (2) scroll/animate: the horizontal split bands (tearing) should be GONE.
+  If both pass: XR 828x1792 becomes the presentation of record; the 750x1624 HD idea retests on the same fix
+  (shim-boot-0223-hd.img is ready; MG rm+sync required before an hd boot since the disk cache holds 1792 now).
+- Receiver still running: `python3 tools/sweet-usb-log.py logs/boot-0223-xr-2.txt` (from /home/dan/ios-sweet;
+  err -> logs/receiver-0223-2.err, out -> logs/receiver-0223-2.out). Stop it or leave it for live capture.
+- Lesson (REPEATS): agents hand off mid-flight here - check artifact mtimes and manifest booted flags BEFORE re-running
+  packaging/boot steps, and never let a backgrounded script inherit my shell's stdout/stderr pipes.
+
+## 2026-11-07/08: 0222 HD presentation (750x1624) live; MG-cache reset fixed oversized UI; tear noise diagnosed; 0223 building
+- GOAL kept: lower display resolution at the SAME aspect for performance. Kernel patch xnu/patches/0222-sweet-display-hd.patch
+  (commit 2ea20b6, branch codex/speaker-stream-0222, CI 42397350899 green): AppleCLCD presents **750x1624 @2x = 375x812
+  points** (sweetfb_mode=3 default; the exact old iPhone X point geometry/scale at 44% fewer pixels), nearest-neighbour
+  upscaled onto the whole 1080x2400 panel in copyScaled() (rem-accumulator, 64-bit pair stores). `sweetfb_mode=4` same
+  build presents **828x1792** (real iPhone XR/11 panel; there IS a UIKit status-bar provider at width 828, Split828 notch
+  227x32 - the 750 width has NO provider, cf rdar://45025538/45024438). mkadt.py: /chosen display-scale 2, disp0 canvas
+  750x1624 (committed in the worktree; main tree copy still uncommitted).
+- Package: `/home/dan/Documents/Codex/2026-11-05/new-chat/work/audio-runtime/package-0222.py` (now parameterised:
+  --screen hd|x xr adds `sweetfb_mode=4`, --build/--kernel-dir/--commit/--run; B=build number names the artifacts).
+  Outputs used so far: `shim-boot-0222-hd.img` SHA256 7e365a94a561d9343c5924d182d7412721e1f4c55add65d7f0906071bba11da6
+  (Shas: hd ADT e57c4b5cfd19..., xr ADT bff84f59a324... cmdline 0219 manifest + sweetbuild=222, 521 B) and `shim-boot-0222-xr.img`
+  SHA256 8e0a23cb0262084b3a96e9cd1fa3097315014b9738352a8f5340252648fab2cd (ADT canvas 828x1792 subtype 1792 scale 2,
+  cmdline + `sweetfb_mode=4`, 536 B). NOTE: `0222.adt` on disk currently holds the XR canvas (hd variant re-generates
+  on demand).
+- DEVICE RESULT 0222-hd: booted OKAY; first boot showed oversized UI, huge red rdar bar, Control Centre off-centre,
+  flicker. **ROOT CAUSE = MobileGestalt disk cache** (UIKit laid out 1125x2436@3 over the 750x1624 kernel canvas).
+  Fix WITHOUT a rebuild, via the fileserver only: backed the cache up
+  (mg-backup/MobileGestalt.pre-0222.plist), `tools/sweet-files.py rm
+  /private/var/containers/Shared/SystemGroup/systemgroup.com.apple.mobilegestaltcache/Library/Caches/com.apple.MobileGestalt.plist`
+  + `sync` + reboot. Verified post-reboot cache: pixels 750x1624, ArtworkDeviceSubType 1624, ArtworkDeviceScaleFactor 2
+  (was 2436/scale 3); cache STABLE mid-session (no cfprefsd re-flush). USER CONFIRMED: **UI size now correct, Control
+  Centre centered - the scale fix is DONE via USB, no build for that part.**
+- REMAINING 1: red rdar status bar at 750 (expected: no Split750 provider). Test in flight: boot 0222-xr (828x1792,
+  Split828 provider exists) - user must reboot to fastboot for `fastboot -s 21fd1806 boot shim-boot-0222-xr.img`.
+  MG cache ALREADY deleted+synced for that boot.
+- REMAINING 2: "horizontal split bands (tearing), only when content moves" (screen tearing). DIAGNOSED from the code:
+  present()'s copy-speed statistic was `copy_ns / h` with h = PRESENTED line height (1624), but the upscaled copy writes
+  2400 PANEL rows: fCopyRowNs ran 1.478x high, beamWait() (which models rows as panel rows) started the copy too early
+  and the scan caught the copy mid-frame - new only in the HD presentation (at 1125x2436 the factor was 2436/2400=1.0,
+  which is why 0145-0219 never showed it). FIX = xnu/patches/0223-sweet-display-copy-speed.patch (commit 9415b5a, CI
+  run 42402373045 running): divide the statistic by the PANEL rows actually written (sweet_fb_scaled_row span), plus a
+  while-loop rem fix for the mode 1 (1125 downscale) column map (sim: 2.5M errors -> 0; 750/828 stay exact). After it
+  goes green: `python3 package-0222.py --kernel-dir kernel-0223 --build 223 --commit 9415b5a --run 42402373045`
+  (put the downloaded kernel in kernel-0223/), shas from the manifest, MG rm+sync FIRST, then fastboot boot.
+- UIKit/RE facts kept: provider match = class nativeDisplayWidth vs screen width AND notch(point) vs exclusion area x
+  scale, eps 0.0001; classes only for 828/1080/1125/1170/1242/1284; message "No status bar visual provider for screen %@
+  ... rdar://45025538". Notch point sizes: 828 = 227x32, 1080 226x34.33, 1125 209x30, 1170 210x32, 1242/1284 209.33x30.
+- Lesson (REPEATS): any canvas change needs the MG cache deleted + reboot, and XNU logs only reach the sweetlog
+  partition (no SSH) - fileserver (port 2223, tools/sweet-files.py put/get/rm/mkdir/link/chmod/sync; no ls; get ERR 2
+  = ENOENT) is the only live channel. Phone in fastboot = 21fd1806.
+- PARKED (0219 era): App Store fix - 0219 sweetstore dylib + XNU injection patch, kern_exec.c:488 apply failure.
+  No new attempt this session.
+
 - Directory `/home/dan/ios-sweet/shim/out/batch-20261106/`; `SHA256SUMS` and `README.md` there. All eight are temporary
   `fastboot boot` images with the 0207 shim/stock DTB/ADT unchanged; no partition/root changes.
 - 01/02/03/04 Metal native profiles A-D: `sweetmtl=2`, 120 Hz caller rows/async, 120 Hz all rows/sync, 120 Hz
