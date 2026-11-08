@@ -1,3 +1,17 @@
+## 2026-11-09 00:52 IST: migration ran on the SAME 0225 boot; 32 apps INSTALLED; phone then ran out of battery
+- Observed: after the sentinel was created, backboardd/SpringBoard restarted and datamigrator started at once (not
+  next boot). SystemAppMigrator installed all 32 apps into /private/var/containers/Bundle/Application (staged dir
+  now empty). Migration then HUNG: CoreLocationMigrator -> locationd "com.apple.locationd.synchronous", and
+  locationd itself is deadlocked internally (main thread <- CLHarvestControllerSilo); restarting locationd did not
+  help. Fix applied: /System/Library/DataClassMigrators/CoreLocationMigrator.migrator renamed to
+  CoreLocationMigrator.migrator.sweet-disabled (revert = rename back once location works) + killed the stuck
+  plugin wrapper; next wrapper ran (2+ min CPU). Maps/Preferences migrators also link CoreLocation: may hang too.
+- ~00:50 the phone stopped answering; USER: battery ran out. Sentinel /private/var/datamigrator/migrate was still
+  present -> migration resumes on next boot (journaled HFS+, kernel replays the journal on mount).
+- NEXT: USER charges, fastboot -> boot 0225 again (USB build-0225 image) -> watch migration (spindump the
+  migrationpluginwrapper if CPU stalls) -> home screen -> run-speaker-0225.py -> sound test (volume buttons,
+  pause/resume/seek). Then SLEEP. Speaker sound result on 0225 still PENDING.
+
 ## 2026-11-09 00:15 IST: 0225 booted (speaker fixes v2); iOS ROOT GROWN TO 107 GiB; app migration armed
 - 0224 (a7c309d, kernel CI 42507039951, wland 42507043455) booted: DSP consumption ~100 periods/s even idle
   (8 slots fixed the slow sender). USER: "sounds loud"; then sound stopped on a volume change: ch0 SYSST
