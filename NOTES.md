@@ -1,3 +1,12 @@
+## 2026-11-09 16:40 IST: 0231 hardware: mode 7 (soft reset + snapshot + CTL flush) ran, wake STILL BLACK
+- Log boot-0225-3.txt from line 341502. 5+ cycles, all steps 0 errors; after cold start DSI status 0x8 (0230: 0x2008),
+  stream running. USER: reaches the home screen (touch works) but the display stays black.
+- The usb log receiver re-sends old buffer (repeated boot-args with identical timestamps): not userland restarts.
+- Both sleep builds failed. Panel state after the VCI cut stays unknown: DCS readback returns 0 bytes even from a live panel
+  (our read sequence is wrong). Next diagnostic = fix readback first (compare Linux dsi_ctrl read: cmd engine, BTA, RDBK
+  count), and check the stock DT power sequence (vddio, any panel-enable GPIO, the panel's own PMIC) - no dtc here.
+- Working fallback: the 0227-novci sleep (VCI kept on): wakes reliably, line stays visible while locked.
+
 ## 2026-11-09 16:10 IST: 0230 hardware: cold restart ran as designed, wake STILL BLACK
 - Log: logs/boot-0225-3.txt from line 280701 (the receiver kept running). Sleep: INTF_1 off -> lanes LP-11 (lane_status
   0x1f1f, ctrl 0x1f5), reset low, VCI off. Wake: VCI on, reset pulse, 45/45 on-command in LP with the link idle, no errors;
