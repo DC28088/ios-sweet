@@ -1,3 +1,12 @@
+## 2026-11-09 19:50 IST: 0236 second boot: modem ERR-FATAL with wland 0239 too -> the modem crash is intermittent, not 0005-0018
+- wland 0239 at boot ("boot 43" again = same as the 0235 boot: the old guard would have refused; UUID guard started it).
+  Modem PAS boot OK, glink/qrtr up, rmtfs read modemst1, then "[37] smp2p: modem state 7 ERR-FATAL" -> no Wi-Fi, no SIM.
+  SMEM item 421 (modem crash reason) "not found" (wland-0008 item 421 2/1/0). Log copy /var/local/wland-0236b-fail.log.
+- Record so far: modem ERR-FATAL on 0232 (late hand start, wland-0232) and 0236 #2 (boot, wland 0239); OK on 0234 (0004),
+  0236 #1, 0235 (0239). So the 0232 failure is NOT proof that 0005-0018 breaks Wi-Fi. Cause UNKNOWN (EFS/rmtfs timing?).
+- USER: 0236 "performance feels exactly the same". Next boot 0237: /var/local/bin/wland-0225 = wland-0237 (1b22da17) staged;
+  rollback cp wland-0225.orig wland-0225.
+
 ## 2026-11-09 19:30 IST: 0235 result: no visible change ("jitters, slight delay while opening app still exists")
 - 0235 boot (log from line 485173; usblog missed the first seconds, so the "timer coalescing" init line was not seen;
   active state unconfirmed). Busy windows: ~37 presents/s, present_avg 17 ms = gate (GPU fence) 7.3-7.9 ms + copy 7.2-8.3 ms
