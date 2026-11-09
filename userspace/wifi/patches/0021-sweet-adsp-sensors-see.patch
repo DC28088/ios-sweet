@@ -1,0 +1,130 @@
+diff --git a/phone/wifi/adspedge.c b/phone/wifi/adspedge.c
+index 2c9e488..c8d19dc 100644
+--- a/phone/wifi/adspedge.c
++++ b/phone/wifi/adspedge.c
+@@ -383,6 +383,12 @@ int adspedge_poll(unsigned ms)
+ 	return 0;
+ }
+ 
++/* 0021: one edge command, for the sensors' blocking waits (sns_link pump) */
++int adspedge_pump_one(void)
++{
++	return pump_one();
++}
++
+ int adspedge_ipcrtr_up(void)
+ {
+ 	return ipcrtr && ipcrtr->up;
+diff --git a/phone/wifi/adspedge.h b/phone/wifi/adspedge.h
+index c274d41..6c9b5d3 100644
+--- a/phone/wifi/adspedge.h
++++ b/phone/wifi/adspedge.h
+@@ -13,7 +13,8 @@ int adspedge_open(unsigned timeout_ms);
+ /* Handle everything in the rx fifo; for ms (0 = once). */
+ int adspedge_poll(unsigned ms);
+ 
+-int adspedge_ipcrtr_up(void);		/* IPCRTR open both ways */
++int adspedge_ipcrtr_up(void);
++int adspedge_pump_one(void);	/* 0021 */		/* IPCRTR open both ways */
+ int adspedge_rpc_up(void);		/* fastrpcglink-apps-dsp open both ways */
+ 
+ /* The QRTR handler for packets on IPCRTR (HELLO, NEW_LOOKUP, DATA to our ports). */
+diff --git a/phone/wifi/wland.c b/phone/wifi/wland.c
+index dfbd732..6a363c1 100644
+--- a/phone/wifi/wland.c
++++ b/phone/wifi/wland.c
+@@ -40,6 +40,7 @@
+ #include "bridge.h"
+ #include "cell.h"
+ #include "adspedge.h"
++#include "../sensors/sns_run.h"	/* 0021 */
+ #include "adsp_smmu.h"
+ #include "fastrpc.h"
+ #include "sweet_apr.h"
+@@ -747,6 +748,45 @@ static int adsp_smmu_done;
+ 
+ /* 0010: QRTR on the ADSP's IPCRTR channel: its HELLO, the pd-mapper lookup, and DATA to our ports. */
+ static int adsp_pdmap_announced;
++/*
++ * sweet 0021: sensors (USER: "fix all the sensors"). The SEE client of sunfish (Pixel 4a, the same SM7150 ADSP;
++ * phone/sensors, from ios-redfin's sensd, MIT) runs inside the ADSP loop: the ADSP announces SNS (QMI 400) at
++ * 5:e, sns_service() starts it, sns_link gets the DATA of its ports, sns_tick() runs the streams and posts samples
++ * to /dev/redwood-motion (xnu 0237) for the sensor HID services. WLAND_SNS: the sns options (default
++ * "--sns-motion --sns-secs 0"; WLAND_SNS=0: off).
++ */
++static int adsp_sns_send(uint32_t lport, uint32_t node, uint32_t port, const void *d, size_t n)
++{
++	return qrtr_send(QRTR_TYPE_DATA, lport, node, port, d, (uint32_t)n);
++}
++
++static int adsp_sns_pump(void)
++{
++	return adspedge_pump_one();
++}
++
++static const struct sns_link_ops adsp_sns_ops = { adsp_sns_send, adsp_sns_pump };
++
++static void adsp_sns_setup(void)
++{
++	const char *e = getenv("WLAND_SNS");
++	static char buf[256];
++	char *argv[16];
++	int argc = 0;
++	if (e && !strcmp(e, "0")) {
++		printf("adsp: sensors off (WLAND_SNS=0)\n");
++		return;
++	}
++	snprintf(buf, sizeof(buf), "%s", e && *e ? e : "--sns-motion --sns-secs 0");
++	for (char *t = strtok(buf, " "); t && argc < 15; t = strtok(NULL, " "))
++		argv[argc++] = t;
++	argv[argc] = NULL;
++	for (int i = 0; i < argc; i++)
++		if (sns_opt(argc, argv, &i) != 1)
++			printf("adsp: sensors option %s not understood\n", argv[i]);
++	printf("adsp: sensors %s (%s)\n", sns_wanted() ? "on" : "off", e && *e ? e : "default");
++}
++
+ static void adsp_qrtr(const struct qrtr_hdr *h, const uint8_t *d, uint32_t n)
+ {
+ 	uint32_t w[5] = { 0 };
+@@ -762,6 +802,10 @@ static void adsp_qrtr(const struct qrtr_hdr *h, const uint8_t *d, uint32_t n)
+ 			tftp_handle(h, d, n);
+ 			return;
+ 		}
++		if (sns_wanted() && sns_link_is_port(h->dst_port)) {	/* 0021: an SNS stream's port */
++			sns_link_push(h->dst_port, h->src_node, h->src_port, d, n);
++			return;
++		}
+ 		printf("adsp: qrtr DATA %u:%x -> %u:%x, %u bytes\n", h->src_node, h->src_port, h->dst_node, h->dst_port, n);
+ 		return;
+ 	}
+@@ -784,6 +828,8 @@ static void adsp_qrtr(const struct qrtr_hdr *h, const uint8_t *d, uint32_t n)
+ 		qrtr_send(QRTR_TYPE_NEW_SERVER, QRTR_PORT_CTRL, h->src_node, h->src_port, end, sizeof(end));	/* end of lookup */
+ 	} else if (w[0] == QRTR_TYPE_NEW_SERVER) {
+ 		printf("adsp: qrtr server service %#x instance %#x at %u:%x\n", w[1], w[2], w[3], w[4]);
++		if (w[1] == SNS_QMI_SERVICE && sns_wanted() && (w[3] || w[4]))
++			sns_service(w[3], w[4]);		/* 0021 */
+ 	}
+ }
+ 
+@@ -1280,6 +1326,7 @@ static int adsp_net(unsigned secs)
+ 	}
+ 	printf("adsp: GLINK rx fifo after %llu ms; opening the edge\n", (unsigned long long)(link_ms() - start));
+ 	qrtr_set_transport(adspedge_qrtr_send);
++	adsp_sns_setup();
+ 	adspedge_set_qrtr_cb(adsp_qrtr);
+ 	adspedge_set_apr_cb(adsp_apr_rx);
+ 	if (adspedge_open(30000))
+@@ -1302,9 +1349,11 @@ static int adsp_net(unsigned secs)
+ 	adspedge_status();
+ 	const uint64_t end = secs ? link_ms() + 1000ull * secs : 0;
+ 	for (uint64_t next = link_ms(); !end || link_ms() < end;) {
+-		adspedge_poll(pcm_enabled ? 2 : 100);
++		adspedge_poll(pcm_enabled ? 2 : sns_wanted() ? (sns_dark() ? 20 : 5) : 100);
+ 		adsp_rpc_poll();
+ 		adsp_apr_poll();
++		if (sns_wanted())
++			sns_tick(&adsp_sns_ops);		/* 0021 */
+ 		if (link_ms() >= next) {
+ 			adsp_idle();
+ 			uint64_t pa;

@@ -49,6 +49,9 @@ jobs:
             -o /tmp/test-sweet-pcm-fifo userspace/adsp/test_sweet_pcm_fifo.c
           /tmp/test-sweet-pcm-fifo
           cp userspace/adsp/sweet_pcm.c userspace/adsp/sweet_pcm.h userspace/adsp/sweet_pcm_levels.h userspace/adsp/sweet_pcm_fifo.h userspace/adsp/sweet_aw2032.c userspace/adsp/sweet_aw2032.h userspace/adsp/sweet_amp_ctl.h donor/phone/wifi/
+          # 0021: the SEE sensor client (sunfish phone/sensors, from ios-redfin sensd, MIT: userspace/sensors/LICENSE.redfin)
+          mkdir -p donor/phone/sensors
+          cp userspace/sensors/*.c userspace/sensors/*.h donor/phone/sensors/
       - name: Build wland and netsvc for iOS 16 arm64
         run: |
           out=userspace/out/sweet-wifi-ios16
@@ -56,7 +59,8 @@ jobs:
           cd donor/phone/wifi
           xcrun --sdk iphoneos clang -target arm64-apple-ios16.0 -O2 -Wall -Wextra -Wno-unused-parameter \
             -o "$GITHUB_WORKSPACE/$out/wland" wland.c smem.c pmem.c glink.c link.c qmi.c rmtfs.c pdmapper.c \
-            tftp.c scm.c wlfw.c radio.c ipnet.c bridge.c cell.c adspedge.c adsp_smmu.c fastrpc.c sweet_apr.c sweet_pcm.c sweet_aw2032.c
+            tftp.c scm.c wlfw.c radio.c ipnet.c bridge.c cell.c adspedge.c adsp_smmu.c fastrpc.c sweet_apr.c sweet_pcm.c sweet_aw2032.c \
+            ../sensors/sns_run.c ../sensors/dm_fusion.c ../sensors/sensor.c ../sensors/sns.c ../sensors/pb.c ../sensors/sns_link.c -lm
           cd ../tools
           xcrun --sdk iphoneos clang -target arm64-apple-ios16.0 -O2 -fobjc-arc -framework Foundation \
             -framework SystemConfiguration -o "$GITHUB_WORKSPACE/$out/netsvc" netsvc.m
