@@ -1,3 +1,24 @@
+## 2026-11-10 00:30 IST: 2401 data test: INIT_DRIVER ACCEPTED, handshake complete, endpoints open; then kernel panic
+- 2401 (0240 kernel + sweetipa=1, wland 0241): "INIT_DRIVER answer: ok 1", INIT_COMPLETE, "modem endpoints open, channel
+  states TX 0:2 RX 3:2; pdp_ip0..3 = mux 1..4", rmnet_ipa0 up. Modem then sent IPA QMI 0x27 (63 B) and 0x23
+  INSTALL_FILTER_RULE (2260 B): both "not handled" (redfin answers 0x27/0x23 with success, echoes rule ids from
+  filter_spec_ex byte 168 in TLV 0x15, and sends FILTER_INSTALLED_NOTIF 0x24). CommCenter crashed once (sig 11) and
+  restarted; ~25 s later the kernel panicked (USER: "kernel panicked. stuck in boot"). No panic text in the USB log or
+  the persistent log (logs/persist-2401.txt, last flush before the IPA lines). Panic cause still unknown.
+- Next data build: answer 0x27/0x23 + FILTER_INSTALLED_NOTIF (redfin ipaqmi.c), and flush the persistent log on panic
+  (or ask the USER for a photo of the panic screen).
+
+## 2026-11-10 00:40 IST: OrangeFox screen off/on observed: panel stays powered, NO sleep-in; screen fully dark, no line
+- OrangeFox (Linux 4.14 msm DRM, panel 'xiaomi k6 38 0c 0a fhd dsc video'): DT reset seq <0 1>,<1 10>; reset gpio
+  pm6150l 9; lp11-init; supplies (sysfs consumers of soc:qcom,dsi-display): pm6150_l13 1.9 V (vddio) + pm6150_l18 3.0 V
+  (VCI); DSI ctrl pm6150l_l3 1.2 V.
+- Power-key off/on x3 with a 4 Hz watch (l13, l18, l3c, mdss gdsc, backlight, DPMS): NOTHING changed; drm.debug=0x16:
+  only page flips (FB 170/207 alternating), none during the off time, vblank off/on. => OrangeFox blanks by showing a
+  black frame and stopping updates; panel powered, video running, no 28/10. USER: "line was not visible, screen fully
+  dark". dmesg copy research/ofox-blank-dmesg-20261109.txt (git-ignored).
+- Hypothesis: the line is a property of the panel's display-off/sleep-in state (28/10), not of the lit panel. Test:
+  sleep = black scanout buffer + DCS 51 = 0, no 28/10 and no VCI cut (wake cannot fail). Cost: DDIC + DSI link stay up.
+
 ## 2026-11-09 23:40 IST: mobile data step 1 staged: kernel IPA path (sweetipa=1) + wland 0241 (0239 stack + IPA steps)
 - Kernel IPA code (bsd/dev/sweet_ipa.c + coachz_ipa) is mainline Linux's IPA v4.2 driver order (coachz = SC7180): table
   init by immediate commands before INIT_DRIVER is already there. 0193's panic after INIT_DRIVER is the open bug; 0194
