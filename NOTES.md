@@ -1,3 +1,24 @@
+## 2026-11-09 09:00 IST (03:30 UTC): all 9 builds dispatched; perf + sensors tracks
+- Perf 1 **xnu 0234** (claude/perf-0234, CI 42555473053): scaled present copy on 2 threads (present + helper cpu5),
+  8-row bands interleaved (beamWait stays valid). Measured before (0227, animation): 36 fps, present 18.1 ms = gate 8.1
+  (GPU fence) + acquire 1.6 + copy 8.4 ms on cpu4 (A55). sweetcopythreads=1..4.
+- Perf 2 **xnu 0235** (claude/perf-0235, CI 42555567187): timer_call_slop returns 0 while the display is lit
+  (sweet_timer_nocoal via sweet_dark_set; separate from kern.timer.coalescing_enabled that wland holds for audio).
+  sweetuicoal=0 = old.
+- Perf 3 **xnu 0236** (claude/perf-0236, CI 42555692914; first run 42555600642 cancelled: empty patch, fixed in a
+  follow-up commit, force-push was refused): 0234 + 0235 + sweetcopythreads default 4 (cpu5,3,2 helpers).
+- Sensors 1 **xnu 0237 + wland 0021** (claude/sensors-0237, CI xnu 42556227828, wifi 42556232239): "Pixel 5 repo" =
+  DenialOfGravity/ios-redfin (MIT, via sunfish = Pixel 4a, SAME SM7150). Kernel: codex's 0213 sensor HID services +
+  sunfish 0229 /dev/redwood-motion (bsd/dev/sweet_motion.c, init next to /dev/pmem). wland: sunfish phone/sensors
+  (userspace/sensors, LICENSE.redfin) built in; ADSP announces SNS 0x190 at 5:e (seen in /var/local/adsp-speaker.log);
+  WLAND_SNS options (default --sns-motion --sns-secs 0). Package sweetmotion=0x37.
+- Sensors 2 **xnu 0238 + wland 0022** (claude/sensors-0238, CI xnu 42556304946, wifi 42556308218): + sunfish 0241 (prox
+  Placement), 0243 (DeviceMotion {0xff0c,4}), 0245 (Compass type 2); SNS_DEVMOTION=1 default. Package sweetmotion=0xbf.
+- Microphone: NOT built. Stock mixer_paths: handset-mic = TX macro DEC0/1 <- SWR_MIC <- WCD9375 ADC1/ADC2 (SoundWire codec).
+  Needs AP drivers for LPASS TX macro + SoundWire master + WCD937x (Linux: thousands of lines) - no blind build possible;
+  sunfish's mic path (cs35l41 amp is speaker-only) does not cover it. Both sensor/mic builds went to sensors instead.
+- Sleep 0230/0231 compiled OK; wifi 0019/0020 compiled OK.
+
 ## 2026-11-09 09:30 IST: USER away 8 h: 9-build plan (sleep 2, perf 3, wifi+cell 2, sensors+mic 2); builds on separate branches
 - USER plan: each track its own CI build(s), tested later one by one, then combined. Branches all from claude/speaker-0224 (83efd1b).
 - 0229 hardware (+ live /dev/pmem pokes on 0229 and 0227-novci): line gone, wake black. Findings: LANE_CTRL 0x01000000 (no
