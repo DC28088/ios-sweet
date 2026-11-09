@@ -1,0 +1,197 @@
+From b05f8f2063d3d6aa176b4899a8defad52c2b5ae3 Mon Sep 17 00:00:00 2001
+From: OpenCode <opencode@localhost>
+Date: Tue, 3 Nov 2026 08:21:47 +0530
+Subject: [PATCH 17/20] cell: activate the SIM provisioning session, retry
+ ONLINE, track the SIM in any slot
+
+Observed on 0184: IMEI read, SIM in slot 2 (USIM 'detected'), NAS
+searching on 404-72 with GSM/WCDMA signal, GW primary session 0xffff.
+A multi-SIM modem only camps for emergency service until the host
+activates a provisioning session (qcril's job): UIM 0x38 on the first
+USIM/SIM, secondary on a second card. ONLINE failed once with
+DEVICE_NOT_READY at 2.4 s; now re-asked every 10 s until online.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/userspace/wifi/patches/0003-sweet-cellular-qmi-client.patch b/userspace/wifi/patches/0003-sweet-cellular-qmi-client.patch
+index bbbddbb..e618eb1 100644
+--- a/userspace/wifi/patches/0003-sweet-cellular-qmi-client.patch
++++ b/userspace/wifi/patches/0003-sweet-cellular-qmi-client.patch
+@@ -1,9 +1,9 @@
+ diff --git a/phone/wifi/cell.c b/phone/wifi/cell.c
+ new file mode 100644
+-index 0000000..5688d62
++index 0000000..c4f64eb
+ --- /dev/null
+ +++ b/phone/wifi/cell.c
+-@@ -0,0 +1,654 @@
++@@ -0,0 +1,715 @@
+ +/*
+ + * cell: the modem's cellular side, seen from wland's QRTR link. The modem firmware wland boots for
+ + * the WLAN PD is the whole MPSS image, so its QMI services (DMS 2, NAS 3, VOICE 9, UIM 0xb, ...)
+@@ -16,7 +16,8 @@ index 0000000..5688d62
+ + * State goes to /var/local/cell.status (0600, full identifiers, on the phone only); wland.log gets
+ + * masked identifiers. Commands: one line in /var/local/cell.cmd (answer | hangup | dial NUMBER |
+ + * online | lpm | status), read and removed every second. Off: /var/local/cell.off or sweetcell=0.
+-+ * /var/local/cell.lpm keeps the modem in low power (no automatic ONLINE).
+++ * /var/local/cell.lpm keeps the modem in low power (no automatic ONLINE); /var/local/cell.noprov skips the SIM
+++ * provisioning session (UIM 0x38) that a multi-SIM modem needs before it registers.
+ + */
+ +#include <stdio.h>
+ +#include <stdlib.h>
+@@ -48,7 +49,7 @@ index 0000000..5688d62
+ +static int lte_rssi = 1, lte_rsrq = 1, lte_rsrp = 1, lte_snr = 1, gsm_rssi = 1, wcdma_rssi = 1, wcdma_ecio = 1;
+ +struct call { int used, id, state, type, dir, mode; char number[48]; };
+ +static struct call calls[8];
+-+static uint64_t next_sig, next_srv, next_cmd, status_dirty;
+++static uint64_t next_sig, next_srv, next_cmd, next_mode, status_dirty;
+ +
+ +static uint64_t now_ms(void) { return link_ms(); }
+ +
+@@ -325,8 +326,8 @@ index 0000000..5688d62
+ +		printf("cell: operating mode %u%s%s (offline reason %#x, hw restricted %u)\n", mode, mode == 0 ? " online" : "",
+ +		       mode == 1 ? " low-power" : mode == 6 ? " persistent-low-power" : mode == 3 ? " offline" : "",
+ +		       why && l >= 2 ? (unsigned)(why[0] | why[1] << 8) : 0u, hw);
+-+		if (mode != 0 && !online_asked && access("/var/local/cell.lpm", F_OK)) {
+-+			online_asked = 1;
+++		if (mode != 0 && online_asked < 6 && access("/var/local/cell.lpm", F_OK)) {
+++			online_asked++;
+ +			printf("cell: asking for ONLINE\n");
+ +			req_u8(C_DMS, 0x2e, 1, 0);
+ +		}
+@@ -335,6 +336,8 @@ index 0000000..5688d62
+ +	case 0x2e:
+ +		if (result_ok(m, C_DMS, "set operating mode"))
+ +			printf("cell: operating mode change accepted\n");
+++		else
+++			next_mode = now_ms() + 5000;
+ +		simple(C_DMS, 0x2d);
+ +		break;
+ +	case 0x01:	/* Event Report indication (operating mode changes among them) */
+@@ -345,22 +348,52 @@ index 0000000..5688d62
+ +	status_dirty = 1;
+ +}
+ +
+-+/* UIM card status TLV 0x10: 4 x u16 indices, u8 cards, per card {state, upin state, upin/upuk retries, error,
+-+ * u8 apps, per app {type, state, perso state, perso feature, perso retries, perso unblock retries, u8 aid_len + aid,
+-+ * upin replaces pin1, pin1 state, pin1/puk1 retries, pin2 state, pin2/puk2 retries}} */
+++/* UIM card status TLV 0x10: 4 x u16 indices (GW primary, 1x primary, GW secondary, 1x secondary: slot << 8 | app,
+++ * 0xffff = no session), u8 cards, per card {state, upin state, upin/upuk retries, error, u8 apps, per app {type,
+++ * state, perso state, perso feature, perso retries, perso unblock retries, u8 aid_len + aid, upin replaces pin1,
+++ * pin1 state, pin1/puk1 retries, pin2 state, pin2/puk2 retries}}.
+++ *
+++ * A multi-SIM modem keeps every SIM application "detected" until the host activates a provisioning session on it
+++ * (qcril's job on Android; UIM Change Provisioning Session 0x38): until then NAS only camps for emergency service.
+++ * The first card with a USIM (else SIM) application gets the primary GW session, a second card the secondary. */
+++static int prov_asked[2];	/* per session type (0 primary GW, 1 secondary GW): asked at ms+1 */
+++
+++static void provision(unsigned session, unsigned slot, const uint8_t *aid, unsigned aid_len)
+++{
+++	struct qmi_buf q;
+++	uint8_t change[2] = { (uint8_t)(session ? 2 : 0), 1 };
+++	uint8_t info[2 + 32];
+++	if (aid_len > 32)
+++		return;
+++	info[0] = (uint8_t)slot;
+++	info[1] = (uint8_t)aid_len;
+++	memcpy(info + 2, aid, aid_len);
+++	req_start(C_UIM, &q, 0x38);
+++	qmi_tlv(&q, 0x01, change, 2);
+++	qmi_tlv(&q, 0x10, info, (uint16_t)(2 + aid_len));
+++	printf("[%6llu] cell: activating the %s GW provisioning session on SIM slot %u (AID %u bytes)\n",
+++	       (unsigned long long)now_ms(), session ? "secondary" : "primary", slot, aid_len);
+++	send_req(C_UIM, 0x38, &q);
+++}
+++
+ +static void uim_card_status(const struct qmi_msg *m)
+ +{
+ +	uint16_t l = 0;
+ +	const uint8_t *p = qmi_get(m, 0x10, &l), *e = p + l;
+ +	if (!p || l < 9)
+ +		return;
+++	unsigned gw[2] = { (unsigned)(p[0] | p[1] << 8), (unsigned)(p[4] | p[5] << 8) };
+ +	p += 8;
+-+	unsigned ncards = *p++;
+++	unsigned ncards = *p++, sessions_wanted = 0;
+++	int recorded = 0;
+++	struct { unsigned slot, aid_len; uint8_t aid[32]; } want[2];
+++	card_state = -1;
+ +	for (unsigned c = 0; c < ncards && p + 6 <= e; c++) {
+ +		unsigned state = p[0], err = p[4], napps = p[5];
+ +		p += 6;
+ +		printf("cell: SIM slot %u: card %s (error %u), %u application(s)\n", c + 1,
+ +		       state == 0 ? "absent" : state == 1 ? "present" : state == 2 ? "error" : "?", err, napps);
+++		int gw_app = -1;
+ +		for (unsigned a = 0; a < napps && p + 7 <= e; a++) {
+ +			unsigned type = p[0], ast = p[1], aid = p[6];
+ +			if (p + 7 + aid + 7 > e)
+@@ -370,17 +403,37 @@ index 0000000..5688d62
+ +			static const char *const sn[] = { "unknown", "detected", "pin1-required", "puk1-required", "check-perso",
+ +							  "pin1-blocked", "illegal", "ready" };
+ +			printf("cell:   app %u: %s %s (pin1 state %u)\n", a, type < 6 ? tn[type] : "?", ast < 8 ? sn[ast] : "?", pin1);
+-+			if (c == 0 && (a == 0 || type == 2)) {
+-+				card_state = (int)state;
+-+				app_type = (int)type;
+-+				app_state = (int)ast;
+-+				pin1_state = (int)pin1;
+++			if ((type == 2 || (type == 1 && gw_app < 0)) && state == 1) {
+++				if (gw_app < 0 && sessions_wanted < 2 && aid <= 32) {
+++					want[sessions_wanted].slot = c + 1;
+++					want[sessions_wanted].aid_len = aid;
+++					memcpy(want[sessions_wanted].aid, p + 7, aid);
+++					sessions_wanted++;
+++				}
+++				gw_app = (int)a;
+++				if (!recorded) {
+++					recorded = 1;
+++					card_state = (int)state;
+++					app_type = (int)type;
+++					app_state = (int)ast;
+++					pin1_state = (int)pin1;
+++				}
+ +			}
+ +			p += 7 + aid + 7;
+ +		}
+-+		if (c == 0 && !napps)
+-+			card_state = (int)state;
+++		if (!recorded && state == 1)
+++			card_state = 1;
+ +	}
+++	if (card_state < 0)
+++		card_state = 0;
+++	printf("cell: provisioning sessions: GW primary %s, GW secondary %s\n", gw[0] == 0xffff ? "none" : "active",
+++	       gw[1] == 0xffff ? "none" : "active");
+++	for (unsigned s = 0; s < sessions_wanted; s++)
+++		if (gw[s] == 0xffff && access("/var/local/cell.noprov", F_OK) &&
+++		    (!prov_asked[s] || now_ms() + 1 > (uint64_t)prov_asked[s] + 15000)) {
+++			prov_asked[s] = (int)now_ms() + 1;
+++			provision(s, want[s].slot, want[s].aid, want[s].aid_len);
+++		}
+ +	status_dirty = 1;
+ +}
+ +
+@@ -393,6 +446,10 @@ index 0000000..5688d62
+ +		uim_card_status(m);
+ +	} else if (m->id == 0x2e) {
+ +		result_ok(m, C_UIM, "register events");
+++	} else if (m->id == 0x38) {
+++		if (result_ok(m, C_UIM, "change provisioning session"))
+++			printf("[%6llu] cell: provisioning session activated\n", (unsigned long long)now_ms());
+++		simple(C_UIM, 0x2f);
+ +	} else {
+ +		qmi_dump(m);
+ +	}
+@@ -643,6 +700,10 @@ index 0000000..5688d62
+ +		simple(C_NAS, 0x24);
+ +		next_srv = now + 60000;
+ +	}
+++	if (srv[C_DMS].up && op_mode != 0 && now >= next_mode) {
+++		simple(C_DMS, 0x2d);	/* not online yet ("device not ready" early in boot): ask again */
+++		next_mode = now + 10000;
+++	}
+ +	if (now >= next_cmd) {
+ +		next_cmd = now + 1000;
+ +		FILE *f = fopen(CELL_CMD, "r");
+-- 
+2.51.0
+

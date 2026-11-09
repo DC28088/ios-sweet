@@ -1,0 +1,22 @@
+From bab41ab8246e55f804d12637bc45715c22a59e04 Mon Sep 17 00:00:00 2001
+From: OpenCode <opencode@localhost>
+Date: Fri, 6 Nov 2026 15:58:06 +0530
+Subject: [PATCH 15/21] NOTES: boot 0211 and record working headphone report
+
+
+diff --git a/NOTES.md b/NOTES.md
+index 53f6038..b45c136 100644
+--- a/NOTES.md
++++ b/NOTES.md
+@@ -1,3 +1,8 @@
++## 2026-11-06: 0211 temporary boot accepted; USER confirms headphone sound works
++- USER reports headphone sound works but built-in speaker does not; headphone transport (Bluetooth vs 3.5 mm) asked, pending. Do not assume jack or mic success.
++- USER entered fastboot. 0211 image SHA256 reverified; fastboot Sending/Booting OKAY. Private capture offset work/audio-runtime/0211-capture-start.json. No partition flash; no audio firmware/HAL/DSP changes.
++- Awaiting USB SSH, UTC correction, native synthetic plane-row check (expected 64/64 instead of 0/0), Wi-Fi and Safari reproduction. Playback success not yet demonstrated.
++
+ ## 2026-11-06: 0211 build succeeded; verified image awaits FASTBOOT hardware test
+ - CI run 42155249166 SUCCESS on source 3df0e9955a208190a5e89ffc0851007d38fd7625 (codex/media-0211). ZIP member CRC and kernel SHA256SUMS verified.
+ - Kernel SHA256 fe3b080a3402b4648b0a4492630ba88738b8facf5690af6dc617fd20a1e5c59c. Image work/audio-runtime/shim-boot-0211-media.img, 18038784 bytes, SHA256 2be69fce130b3fb64dfbc59e9513283475cc44ab123d89f8e57bcb3f2b982309. Shim/DTB/ADT byte comparisons pass. Full hardware args retained; sweetbuild=211; broad sweetdtlog removed, cmdline 510 bytes.
+-- 
+2.51.0
+

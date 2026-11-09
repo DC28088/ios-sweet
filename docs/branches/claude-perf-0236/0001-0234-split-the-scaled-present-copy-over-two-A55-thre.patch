@@ -1,0 +1,184 @@
+From 0c3d41b29fedd69365b642628385150555b1f219 Mon Sep 17 00:00:00 2001
+From: OpenCode <twinexotica@gmail.com>
+Date: Mon, 9 Nov 2026 08:46:20 +0530
+Subject: [PATCH 1/3] 0234: split the scaled present copy over two A55 threads
+
+USER: "0 jitters, instant app opening and closing, very smooth animation".
+Measured on 0227 (SWEET FB timing, animation): 359 presents / 10 s
+(36 fps), present 18.1 ms = gate 8.1 (GPU fence) + acquire 1.6 + copy
+8.4 ms on one A55 (sweetpresentcpu=4); max 38 ms.
+
+The 1125x2436 -> 1080x2400 copy now runs on sweetcopythreads threads
+(default 2 here): the present thread plus helpers bound to cpu5 (then 3,
+2), A55s, so the A76s stay with the UI. Rows are dealt in 8-row bands,
+so the threads move down the frame together like one faster copy and
+beamWait's tear avoidance (fCopyRowNs per presented row) stays valid.
+Copies under 64 rows stay on the present thread. sweetcopythreads=1 =
+0229 behaviour. Expect copy_avg_us roughly halved in "SWEET FB: timing".
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/xnu/patches/0234-sweet-fb-parallel-scaled-copy.patch b/xnu/patches/0234-sweet-fb-parallel-scaled-copy.patch
+new file mode 100644
+index 0000000..170b695
+--- /dev/null
++++ b/xnu/patches/0234-sweet-fb-parallel-scaled-copy.patch
+@@ -0,0 +1,155 @@
++diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
++index 9934911..2d6b02c 100644
++--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
+++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
++@@ -304,6 +304,16 @@ public:
++ 	uint32_t      fBandClears;              /* presents since start: band clearing cadence */
++ 	bool          fScaled;                  /* sweetfb_mode=3: 1125x2436 scaled onto 1080x2400 */
++ 	void          copyScaled(uintptr_t src, uint32_t srcBpr, int32_t lx, int32_t ly, int32_t lw, int32_t lh);
+++	/* 0234: the scaled copy split over helper threads, 8-row bands interleaved (top to bottom together) */
+++	void          copyRows(uintptr_t src, uint32_t srcBpr, int32_t lx, int32_t ly, int32_t px0, int32_t px1,
+++	    int32_t py0, int32_t py1, unsigned k, unsigned n);
+++	static void   copyHelper(void *arg, wait_result_t result);
+++	void          copyHelpersStart(void);
+++	IOLock       *fCopyLock;
+++	uint32_t      fCopyGen, fCopyPending;
+++	unsigned      fCopyThreads;             /* 1 = no helpers */
+++	bool          fCopyHelpersTried;
+++	struct { uintptr_t src; uint32_t bpr; int32_t lx, ly, px0, px1, py0, py1; unsigned n; } fCopyJob;
++ 	uintptr_t     fPixels;          /* kernel mapping of the panel memory */
++ 	IOMemoryMap  *fMap;
++ 	SweetSurface *fSurface;         /* the panel memory as an IOSurface */
++@@ -1913,7 +1923,44 @@ AppleCLCD::copyScaled(uintptr_t src, uint32_t srcBpr, int32_t lx, int32_t ly, in
++ 	}
++ 	px1 = px1 > (int32_t)fWidth ? (int32_t)fWidth : px1;
++ 	py1 = py1 > (int32_t)fHeight ? (int32_t)fHeight : py1;
+++	if (!fCopyHelpersTried) {
+++		copyHelpersStart();
+++	}
+++	const unsigned n = fCopyThreads;
+++	if (n <= 1 || py1 - py0 < 64 || fCopyLock == NULL) {
+++		copyRows(src, srcBpr, lx, ly, px0, px1, py0, py1, 0, 1);
+++		return;
+++	}
+++	IOLockLock(fCopyLock);
+++	fCopyJob.src = src;
+++	fCopyJob.bpr = srcBpr;
+++	fCopyJob.lx = lx;
+++	fCopyJob.ly = ly;
+++	fCopyJob.px0 = px0;
+++	fCopyJob.px1 = px1;
+++	fCopyJob.py0 = py0;
+++	fCopyJob.py1 = py1;
+++	fCopyJob.n = n;
+++	fCopyPending = n - 1;
+++	fCopyGen++;
+++	IOLockWakeup(fCopyLock, &fCopyGen, false);
+++	IOLockUnlock(fCopyLock);
+++	copyRows(src, srcBpr, lx, ly, px0, px1, py0, py1, 0, n);
+++	IOLockLock(fCopyLock);
+++	while (fCopyPending) {
+++		IOLockSleep(fCopyLock, &fCopyPending, THREAD_UNINT);
+++	}
+++	IOLockUnlock(fCopyLock);
+++}
+++
+++void
+++AppleCLCD::copyRows(uintptr_t src, uint32_t srcBpr, int32_t lx, int32_t ly, int32_t px0, int32_t px1, int32_t py0,
+++    int32_t py1, unsigned k, unsigned n)
+++{
++ 	for (int32_t py = py0; py < py1; py++) {
+++		if (n > 1 && ((unsigned)py >> 3) % n != k) {
+++			continue;
+++		}
++ 		const uintptr_t srow = src + (uint64_t)(sweet_fb_scaled_row(py) - ly) * srcBpr;
++ 		uint8_t *drow = (uint8_t *)(fDraw + (uint64_t)py * fRowBytes);
++ 		for (int32_t px = px0; px < px1;) {
++@@ -1926,6 +1973,88 @@ AppleCLCD::copyScaled(uintptr_t src, uint32_t srcBpr, int32_t lx, int32_t ly, in
++ 	}
++ }
++ 
+++/*
+++ * 0234 (USER: "0 jitters ... very smooth animation"): under animation the present was gate 8.1 ms (GPU) + copy
+++ * 8.4 ms on one A55 (sweetpresentcpu=4), ~36 fps. The copy now runs on sweetcopythreads threads (default 2):
+++ * the present thread plus helpers bound to cpu5, cpu3, cpu2 (A55s; the A76s stay with the UI). Rows are dealt
+++ * in 8-row bands, so all threads move down the frame together, like one faster copy: beamWait's tear avoidance
+++ * (it measures fCopyRowNs per presented row) stays valid.
+++ */
+++struct sweet_copy_helper_arg { AppleCLCD *fb; unsigned k; int cpu; };
+++
+++void
+++AppleCLCD::copyHelpersStart(void)
+++{
+++	fCopyHelpersTried = true;
+++	int n = 2;
+++	PE_parse_boot_argn("sweetcopythreads", &n, sizeof(n));
+++	n = n < 1 ? 1 : n > 4 ? 4 : n;
+++	fCopyThreads = 1;
+++	if (n == 1) {
+++		IOLog("SWEET FB: copy on the present thread only\n");
+++		return;
+++	}
+++	fCopyLock = IOLockAlloc();
+++	if (fCopyLock == NULL) {
+++		return;
+++	}
+++	static const int cpus[3] = {5, 3, 2};
+++	unsigned started = 0;
+++	for (int k = 1; k < n; k++) {
+++		struct sweet_copy_helper_arg *a = (struct sweet_copy_helper_arg *)IOMalloc(sizeof(*a));
+++		if (a == NULL) {
+++			break;
+++		}
+++		a->fb = this;
+++		a->k = (unsigned)k;
+++		a->cpu = cpus[k - 1];
+++		thread_t t = THREAD_NULL;
+++		if (kernel_thread_start(&AppleCLCD::copyHelper, a, &t) != KERN_SUCCESS) {
+++			IOFree(a, sizeof(*a));
+++			break;
+++		}
+++		thread_deallocate(t);
+++		started++;
+++	}
+++	fCopyThreads = 1 + started;
+++	IOLog("SWEET FB: scaled copy on %u threads (present + cpu5,3,2 helpers)\n", fCopyThreads);
+++}
+++
+++void
+++AppleCLCD::copyHelper(void *arg, wait_result_t result)
+++{
+++	(void)result;
+++	struct sweet_copy_helper_arg *a = (struct sweet_copy_helper_arg *)arg;
+++	AppleCLCD *fb = a->fb;
+++	const unsigned k = a->k;
+++	bool bound = false;
+++	uint32_t seen = 0;
+++	for (;;) {
+++		IOLockLock(fb->fCopyLock);
+++		while (fb->fCopyGen == seen) {
+++			IOLockSleep(fb->fCopyLock, &fb->fCopyGen, THREAD_UNINT);
+++		}
+++		seen = fb->fCopyGen;
+++		const uintptr_t src = fb->fCopyJob.src;
+++		const uint32_t bpr = fb->fCopyJob.bpr;
+++		const int32_t lx = fb->fCopyJob.lx, ly = fb->fCopyJob.ly, px0 = fb->fCopyJob.px0, px1 = fb->fCopyJob.px1;
+++		const int32_t py0 = fb->fCopyJob.py0, py1 = fb->fCopyJob.py1;
+++		const unsigned n = fb->fCopyJob.n;
+++		IOLockUnlock(fb->fCopyLock);
+++		if (!bound) {
+++			bound = sweet_bind_current_thread(a->cpu);
+++		}
+++		if (k < n) {
+++			fb->copyRows(src, bpr, lx, ly, px0, px1, py0, py1, k, n);
+++		}
+++		IOLockLock(fb->fCopyLock);
+++		if (fb->fCopyPending && --fb->fCopyPending == 0) {
+++			IOLockWakeup(fb->fCopyLock, &fb->fCopyPending, false);
+++		}
+++		IOLockUnlock(fb->fCopyLock);
+++	}
+++}
+++
++ bool
++ IOMobileFramebufferUserClient::initWithTask(task_t owningTask, void *securityID, UInt32 type)
++ {
+-- 
+2.51.0
+

@@ -1,0 +1,212 @@
+From d9e3acea621123b30d3420497e1581dee7e73f47 Mon Sep 17 00:00:00 2001
+From: OpenCode <opencode@localhost>
+Date: Thu, 5 Nov 2026 22:46:27 +0530
+Subject: [PATCH 11/11] xnu: trace redacted ADI file and signing call metadata
+
+
+diff --git a/NOTES.md b/NOTES.md
+index d357e95..af92212 100644
+--- a/NOTES.md
++++ b/NOTES.md
+@@ -1,3 +1,26 @@
++## 2026-11-05: post-repair/reboot login still MID invalid; 0210 metadata diagnostics prepared
++- Same 0209 reboot reached iOS. Corrected UTC; verified all five ADI directories still 501:501/0700 and
++  native mobile access passes. USER confirmed Wi-Fi + Safari works; native HTTPS gave public Apple 200
++  and authentication-host HTTP response with TLS validation enabled (404 test endpoint, not auth success).
++- USER retried login: MID invalid persists. Fresh capture: ADIProvisioningStart success,
++  ADIProvisioningEnd -42410 again. Directory access repair is real but NOT the login solution.
++- 0210 extends opt-in diagnostics: adid-only redacted path categories, open flags/protection/result,
++  csops operation/capacity/required blob size, MAC policy/operation/result. No content, IDs or addresses.
++  768-record cap. Targeted blob header read only on XML/DER ERANGE sizing. No syscall behavior changes.
++- Apply/exact-source check, syntax with target generated argument structures, actual C redaction checks
++  pass. Full CI/hardware test pending. Raw logs + directory backups private outside Git.
++- Isolated iServices branch only; main/audio branch dirty and left untouched. No audio services changed.
++  Next: build this diagnostic independently; coordinate any new physical boot with USER around audio tests.
++
++## 2026-11-05: post-repair test hit Wi-Fi failure; USER requested same 0209 reboot
++- USER saw spinner after password, then error connecting to Apple ID server. Native HTTPS to both
++  authentication and public Apple hosts timed out (-1001); akd now reported -8007. USER confirmed Safari
++  pages fail and Wi-Fi stopped. Therefore storage repair's effect on native ADI finalization remains untested.
++- USER explicitly requested same-image reboot and entered fastboot. Checksum reverified; temporary boot
++  Sending + Booting OKAY. Image SHA256 remains 6cfe48cd8e2734759faac8c7d07e7f56d868ad9a1fe7c138d46570cd14f59ca0.
++- New receiver offset: chat work/iserv-runtime/0209-reboot-capture-start.json. Next: UTC, confirm ADI directory
++  repair persisted, native HTTPS, then a fresh login test after Wi-Fi joins. No flash/network config/audio changes.
++
+ ## 2026-11-05: confirmed MID -80009; ADI inaccessible directories repaired; awaiting retest
+ - USER: continue Apple ID, do not clash with OpenCode/DeepSeek audio. Main checkout/NOTES dirty from audio:
+   left untouched; own isolated iServices worktree only. No reboot or audio process/config change.
+diff --git a/docs/ISERV_DIAGNOSTICS.md b/docs/ISERV_DIAGNOSTICS.md
+index 8c28c20..fee4c81 100644
+--- a/docs/ISERV_DIAGNOSTICS.md
++++ b/docs/ISERV_DIAGNOSTICS.md
+@@ -54,3 +54,30 @@ confirmed inspection, refusal of unexpected metadata without mutation, and
+ refusal of symlink candidates. The actual phone repair was performed separately
+ with scoped SSH chmod/chown and verified by a native mobile-UID access check;
+ the mounted-root Python tool has not been applied to a mounted phone image.
++
++## 0210: distinguish failed file probes from code-signing buffer sizing
++
++A fresh reboot confirmed all five repaired ADI directories remain 501:501/0700
++and pass mobile access checks. Wi-Fi/Safari and native HTTPS were then restored.
++The user still reproduced MID invalid; ADIProvisioningEnd still returned -42410.
++Therefore the directory repair does not resolve login.
++
++Patch 0210 extends opt-in sweetservtrace=1 diagnostics only for adid. It records
++selected file syscall flags/protection class/result and a path category whose
++components are restricted to literal standard directory names. Unknown names,
++container UUIDs and per-account ADI filenames are masked. It also records csops
++operation/capacity/required blob size, and MAC policy category/operation/result.
++It prints no file/entitlement contents, audit tokens, target process IDs or user
++addresses. New metadata is capped at 768 records per boot; existing 0209 caps
++remain. It changes no syscall, authentication, activation or signing result.
++
++The required blob size is read only for XML/DER entitlement blob sizing errors;
++other csops operations do not have their output read. The optional existing
++sweetiolog tracing can be enabled for adid/fairplayd.H2 in a separate diagnostic
++boot; its raw output must remain private like every device console capture.
++
++Validation: patch applies to 0209 with exact resulting-source comparison; C
++syntax check uses the target's generated syscall structures and numbers with
++stub kernel declarations. Actual C path-redaction tests cover masking private
++components, retaining static ADI names, rejecting oversized inputs and safe
++NUL-terminated truncation. Full kernel compilation/hardware validation pending.
+diff --git a/xnu/patches/0210-sweet-iserv-redacted-call-metadata.patch b/xnu/patches/0210-sweet-iserv-redacted-call-metadata.patch
+new file mode 100644
+index 0000000..e4031e3
+--- /dev/null
++++ b/xnu/patches/0210-sweet-iserv-redacted-call-metadata.patch
+@@ -0,0 +1,131 @@
++--- a/bsd/dev/arm/systemcalls.c
+++++ b/bsd/dev/arm/systemcalls.c
++@@ -126,6 +126,120 @@
++ 		printf("SWEET ISERV: %s syscall %u errno %d\n", p->p_comm, code, error);
++ 	}
++ }
+++/* 0210: allowlist-only path categories and scalar call metadata. Unknown
+++ * components (including container UUIDs and account identifiers) are masked.
+++ * No file contents, entitlement values, tokens or user pointers are printed.
+++ */
+++static const char *
+++sweet_iserv_path_component(const char *p, size_t n)
+++{
+++#define ISERV_COMPONENT(s) if (n == sizeof(s) - 1 && strncmp(p, s, n) == 0) { return s; }
+++	ISERV_COMPONENT("private") ISERV_COMPONENT("var") ISERV_COMPONENT("db")
+++	ISERV_COMPONENT("containers") ISERV_COMPONENT("Data") ISERV_COMPONENT("System")
+++	ISERV_COMPONENT("Library") ISERV_COMPONENT("Caches") ISERV_COMPONENT("Preferences")
+++	ISERV_COMPONENT("Documents") ISERV_COMPONENT("tmp") ISERV_COMPONENT("adi")
+++	ISERV_COMPONENT(".adi") ISERV_COMPONENT("adi.pb") ISERV_COMPONENT("adi.pb.lock")
+++	ISERV_COMPONENT("com.apple.adid")
+++#undef ISERV_COMPONENT
+++	if (n > 7 && strncmp(p, "adi-", 4) == 0 && strncmp(p + n - 3, ".pb", 3) == 0) {
+++		return "<ADI-state>";
+++	}
+++	return "<other>";
+++}
+++
+++static void
+++sweet_iserv_path_category(user_addr_t address, char *out, size_t capacity)
+++{
+++	char path[512];
+++	size_t copied = 0;
+++	strlcpy(out, "<unavailable>", capacity);
+++	if (copyinstr(address, path, sizeof(path), &copied) != 0) {
+++		return;
+++	}
+++	out[0] = '\0';
+++	for (const char *p = path; *p;) {
+++		while (*p == '/') { p++; }
+++		if (!*p) { break; }
+++		const char *end = strchr(p, '/');
+++		size_t n = end ? (size_t)(end - p) : strlen(p);
+++		strlcat(out, "/", capacity);
+++		strlcat(out, sweet_iserv_path_component(p, n), capacity);
+++		if (!end) { break; }
+++		p = end + 1;
+++	}
+++}
+++
+++static void
+++sweet_iserv_metadata(struct proc *p, unsigned int code, int error, const void *arguments)
+++{
+++	static unsigned int lines;
+++	if (strcmp(p->p_comm, "adid") != 0 || !sweet_iserv_trace_selected(p)) {
+++		return;
+++	}
+++	if (code != SYS_csops && code != SYS_csops_audittoken &&
+++	    code != SYS_open && code != SYS_openat && code != SYS_open_nocancel &&
+++	    code != SYS_open_dprotected_np && code != SYS_stat64 && code != SYS_lstat64 &&
+++	    code != SYS_mkdir && code != SYS_mkdirat && code != SYS___mac_syscall) {
+++		return;
+++	}
+++	if (__atomic_fetch_add(&lines, 1, __ATOMIC_RELAXED) >= 768) {
+++		return;
+++	}
+++	if (code == SYS_csops || code == SYS_csops_audittoken) {
+++		/* Common initial fields have the same syscall slot layout. */
+++		const struct csops_args *a = (const struct csops_args *)arguments;
+++		uint32_t header[2] = { 0, 0 };
+++		unsigned int required = 0;
+++		/* Only XML/DER entitlement blobs have the size header read below. */
+++		if ((a->ops == 7 || a->ops == 16) && error == ERANGE && a->usersize >= sizeof(header) &&
+++		    copyin(a->useraddr, header, sizeof(header)) == 0) {
+++			required = __builtin_bswap32(header[1]);
+++		}
+++		printf("SWEET ISERV META: csops op %u capacity %llu required %u errno %d\n",
+++		    a->ops, (unsigned long long)a->usersize, required, error);
+++		return;
+++	}
+++	if (code == SYS___mac_syscall) {
+++		const struct __mac_syscall_args *a = (const struct __mac_syscall_args *)arguments;
+++		char policy[16];
+++		const char *kind = "other";
+++		if (copyinstr(a->policy, policy, sizeof(policy), NULL) == 0) {
+++			if (strcmp(policy, "AMFI") == 0) { kind = "AMFI"; }
+++			if (strcmp(policy, "Sandbox") == 0) { kind = "Sandbox"; }
+++		}
+++		printf("SWEET ISERV META: policy %s call %d errno %d\n", kind, a->call, error);
+++		return;
+++	}
+++	user_addr_t address = 0;
+++	int flags = 0, protection = 0, dpflags = 0;
+++	switch (code) {
+++	case SYS_open: {
+++		const struct open_args *a = (const struct open_args *)arguments;
+++		address = a->path; flags = a->flags; break;
+++	}
+++	case SYS_open_nocancel: {
+++		const struct open_nocancel_args *a = (const struct open_nocancel_args *)arguments;
+++		address = a->path; flags = a->flags; break;
+++	}
+++	case SYS_openat: {
+++		const struct openat_args *a = (const struct openat_args *)arguments;
+++		address = a->path; flags = a->flags; break;
+++	}
+++	case SYS_open_dprotected_np: {
+++		const struct open_dprotected_np_args *a = (const struct open_dprotected_np_args *)arguments;
+++		address = a->path; flags = a->flags; protection = a->class; dpflags = a->dpflags; break;
+++	}
+++	case SYS_stat64: address = ((const struct stat64_args *)arguments)->path; break;
+++	case SYS_lstat64: address = ((const struct lstat64_args *)arguments)->path; break;
+++	case SYS_mkdir: address = ((const struct mkdir_args *)arguments)->path; break;
+++	case SYS_mkdirat: address = ((const struct mkdirat_args *)arguments)->path; break;
+++	}
+++	char category[192];
+++	sweet_iserv_path_category(address, category, sizeof(category));
+++	printf("SWEET ISERV META: file syscall %u category %s flags %#x protection %d dpflags %#x errno %d\n",
+++	    code, category, flags, protection, dpflags, error);
+++}
+++
++ #endif
++ 
++ void
++@@ -226,6 +340,7 @@
++ 	error = (*(callp->sy_call))(proc, &uthread->uu_arg[0], &(uthread->uu_rval[0]));
++ #if defined(SWEET)
++ 	sweet_iserv_trace(proc, code, error, false, 0);
+++	sweet_iserv_metadata(proc, code, error, &uthread->uu_arg[0]);
++ #endif
++ 	AUDIT_SYSCALL_EXIT(code, proc, uthread, error);
++ 
+-- 
+2.51.0
+

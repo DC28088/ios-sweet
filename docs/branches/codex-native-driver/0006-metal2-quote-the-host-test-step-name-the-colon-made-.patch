@@ -1,0 +1,23 @@
+From 1d63501d70608b05f3e3c8dc4ad34845de0f151e Mon Sep 17 00:00:00 2001
+From: OpenCode <opencode@localhost>
+Date: Fri, 30 Oct 2026 09:47:10 +0530
+Subject: [PATCH 06/13] metal2: quote the host-test step name (the colon made
+ the YAML invalid)
+
+
+diff --git a/.github/workflows/metal2.yml b/.github/workflows/metal2.yml
+index 2ca2f73..94b998e 100644
+--- a/.github/workflows/metal2.yml
++++ b/.github/workflows/metal2.yml
+@@ -15,7 +15,7 @@ jobs:
+           rustup toolchain install 1.98.0 --profile minimal
+           rustup target add aarch64-apple-ios --toolchain 1.98.0
+           python3 --version
+-      - name: Host test: PM4 builder
++      - name: Host test of the PM4 builder
+         run: |
+           clang++ -std=c++17 -Wall -Wextra -I userspace/native/src \
+             userspace/native/test/pm4_test.cpp -o "$RUNNER_TEMP/sweet-pm4-test"
+-- 
+2.51.0
+

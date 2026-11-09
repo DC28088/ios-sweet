@@ -1,0 +1,23 @@
+From ac57dd545623477c7f52018ea249e42e60faed65 Mon Sep 17 00:00:00 2001
+From: OpenCode <opencode@localhost>
+Date: Wed, 21 Oct 2026 22:49:48 +0530
+Subject: [PATCH 09/13] Make the Darwin22 kernel script override win tree
+ assembly
+
+
+diff --git a/ports/UniXNU-sweet/scripts/build-xnu-4k-baseline.sh b/ports/UniXNU-sweet/scripts/build-xnu-4k-baseline.sh
+index 43021b2..2f4ff91 100755
+--- a/ports/UniXNU-sweet/scripts/build-xnu-4k-baseline.sh
++++ b/ports/UniXNU-sweet/scripts/build-xnu-4k-baseline.sh
+@@ -1,4 +1,8 @@
+ #!/usr/bin/env bash
++# Darwin22 device override: build xnu-8796.141.3 with the iOS 16 SDK floor.
++# The extra line keeps this file a different size from UniXNU's Darwin23 script,
++# because the tree copier skips same-size device overrides whose mtime is older
++# than the copy it already made from the UniXNU checkout.
+ set -euo pipefail
+ # Many checks are bare `test -f`; name the one that stops the build.
+ trap 'echo "build-xnu-4k-baseline.sh: line $LINENO: $BASH_COMMAND failed" >&2' ERR
+-- 
+2.51.0
+

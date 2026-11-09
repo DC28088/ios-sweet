@@ -1,0 +1,84 @@
+From d7858f06515aeb7e67fadfc21e0fb94bbce7c05c Mon Sep 17 00:00:00 2001
+From: OpenCode <twinexotica@gmail.com>
+Date: Mon, 9 Nov 2026 08:47:41 +0530
+Subject: [PATCH 2/3] 0236: performance combined: 0234 + 0235, scaled copy on
+ four A55 threads
+
+Third performance build: the parallel copy (0234) with
+sweetcopythreads defaulting to 4 (present thread + cpu5, cpu3, cpu2, all
+A55; the A76s stay with the UI), plus no timer coalescing while the
+display is on (0235). Boot-args sweetcopythreads=1..4 and sweetuicoal=0
+undo each part.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/xnu/patches/0235-sweet-no-timer-coalescing-while-lit.patch b/xnu/patches/0235-sweet-no-timer-coalescing-while-lit.patch
+new file mode 100644
+index 0000000..e3bf262
+--- /dev/null
++++ b/xnu/patches/0235-sweet-no-timer-coalescing-while-lit.patch
+@@ -0,0 +1,58 @@
++diff --git a/bsd/dev/sweet_dark.c b/bsd/dev/sweet_dark.c
++index 5c8df9d..6619faf 100644
++--- a/bsd/dev/sweet_dark.c
+++++ b/bsd/dev/sweet_dark.c
++@@ -41,6 +41,9 @@ static unsigned sweet_dark_cycles;
++ SYSCTL_INT(_kern, OID_AUTO, sweet_display_dark, CTLFLAG_RD | CTLFLAG_LOCKED, &sweet_display_dark, 0,
++     "SWEET: display off, kernel pollers slowed (0200)");
++ 
+++extern int sweet_timer_nocoal;   /* osfmk/kern/timer_call.c (0235) */
+++static int sweet_ui_coal = -1;
+++
++ void
++ sweet_dark_set(int dark)
++ {
++@@ -53,6 +56,13 @@ sweet_dark_set(int dark)
++ 	if (!sweet_dark_enabled) {
++ 		return;
++ 	}
+++	if (sweet_ui_coal < 0) {
+++		int v = 1;
+++		(void)PE_parse_boot_argn("sweetuicoal", &v, sizeof(v));   /* 0 keeps coalescing while lit */
+++		sweet_ui_coal = v != 0;
+++		printf("SWEET DARK: timer coalescing %s while the display is on (0235)\n", sweet_ui_coal ? "off" : "kept");
+++	}
+++	__atomic_store_n(&sweet_timer_nocoal, sweet_ui_coal && !dark ? 1 : 0, __ATOMIC_RELAXED);
++ 	int was = __atomic_exchange_n(&sweet_display_dark, dark ? 1 : 0, __ATOMIC_SEQ_CST);
++ 	if (!dark) {
++ 		thread_wakeup((event_t)&sweet_display_dark);    /* slowed pollers restart now */
++diff --git a/osfmk/kern/timer_call.c b/osfmk/kern/timer_call.c
++index f8c8180..9131265 100644
++--- a/osfmk/kern/timer_call.c
+++++ b/osfmk/kern/timer_call.c
++@@ -1899,6 +1899,15 @@ timer_compute_leeway(thread_t cthread, int32_t urgency, int32_t *tshift, uint64_
++ 
++ int timer_user_idle_level;
++ 
+++#if defined(ARM64_BOARD_CONFIG_SWEET)
+++/*
+++ * 0235: no timer coalescing while the display is on (bsd/dev/sweet_dark.c sets it). The macOS-config leeways
+++ * delayed 1 ms waits to 17-33 ms (speaker work, 0225); UI timers (run loops, animations, app launch) get the same
+++ * jitter. Display off: as before. Separate from kern.timer.coalescing_enabled, which wland holds off for audio.
+++ */
+++int sweet_timer_nocoal = 1;   /* the display is on at boot */
+++#endif
+++
++ uint64_t
++ timer_call_slop(uint64_t deadline, uint64_t now, uint32_t flags, thread_t cthread, boolean_t *pratelimited)
++ {
++@@ -1908,6 +1917,9 @@ timer_call_slop(uint64_t deadline, uint64_t now, uint32_t flags, thread_t cthrea
++ 	uint32_t urgency = (flags & TIMER_CALL_URGENCY_MASK);
++ 
++ 	if (mach_timer_coalescing_enabled &&
+++#if defined(ARM64_BOARD_CONFIG_SWEET)
+++	    !sweet_timer_nocoal &&
+++#endif
++ 	    (deadline > now) && (urgency != TIMER_CALL_SYS_CRITICAL)) {
++ 		timer_compute_leeway(cthread, urgency, &tcs_shift, &tcs_max_abstime, pratelimited);
++ 
+diff --git a/xnu/patches/0236-sweet-fb-copy-four-threads.patch b/xnu/patches/0236-sweet-fb-copy-four-threads.patch
+new file mode 100644
+index 0000000..e69de29
+-- 
+2.51.0
+

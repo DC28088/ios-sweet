@@ -1,0 +1,376 @@
+From 79f8745315553c6de395afb10b7d3409016d550e Mon Sep 17 00:00:00 2001
+From: OpenCode <opencode@localhost>
+Date: Thu, 5 Nov 2026 19:27:22 +0530
+Subject: [PATCH 06/11] xnu 0206 + 0207: ADSP SMMU streams via /dev/pmem;
+ DisplayPipePlaneBaseAlignment as a dictionary
+
+0207 fixes Safari/YouTube media: VideoToolbox (FPSupport_ShouldApplyVideoTrackMatrix)
+CFDictionaryGetValue()s PlaneBaseAlignmentLinear from the display's
+DisplayPipePlaneBaseAlignment, published as a bare number since 0046:
+mediaserverd threw '-[__NSCFNumber objectForKey:]: unrecognized selector'
+and aborted on every play (found with 0205 sweetdtlog + the shared cache's
+local symbols).
+
+0206: PMEM_SMMU (op 1 identity, 2 translating bank 39-bit with the SM7150
+reference values, 3 fault status) for the ADSP's 0x1b20-0x1b2f streams, for
+the adspboot port (sweet userland SMMU access stalls a CPU). Unused until
+then.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/xnu/patches/0206-sweet-pmem-adsp-smmu-streams.patch b/xnu/patches/0206-sweet-pmem-adsp-smmu-streams.patch
+new file mode 100644
+index 0000000..fa67a1f
+--- /dev/null
++++ b/xnu/patches/0206-sweet-pmem-adsp-smmu-streams.patch
+@@ -0,0 +1,313 @@
++diff --git a/bsd/dev/sweet_pmem.c b/bsd/dev/sweet_pmem.c
++index e06ae75..aadd568 100644
++--- a/bsd/dev/sweet_pmem.c
+++++ b/bsd/dev/sweet_pmem.c
++@@ -43,6 +43,7 @@ extern boolean_t pmap_valid_address(uint64_t pa);
++ extern vm_map_address_t phystokv(uint64_t pa);
++ extern vm_offset_t ml_io_map_unmappable(vm_offset_t phys_addr, vm_size_t size, unsigned int flags);
++ extern void ml_io_unmap(vm_offset_t addr, vm_size_t sz);
+++extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
++ extern void _disable_preemption(void);
++ extern void _enable_preemption(void);
++ void sweet_pmem_init(void);
++@@ -77,6 +78,27 @@ struct pmem_rpmh {
++ #define PMEM_RPMH       _IOW('P', 5, struct pmem_rpmh)
++ extern int sweet_rpmh_write(const char *res, unsigned n, const uint32_t *offsets, const uint32_t *values);
++ 
+++/*
+++ * 0206: apps-SMMU (0x15000000) streams for the audio DSP, in the kernel: on sweet wland's own reads of the SMMU through
+++ * /dev/pmem stalled a CPU (0141, 0191c) while the kernel's (WLAN 0149, IPA 0193) work. For the ADSP port of ios-flame
+++ * adspboot (smmu.c, MIT): op 1 = SIDs through a translation-off bank (identity, as WLAN), op 2 = SIDs through a
+++ * translating bank (AArch64 S1, 39-bit, 4 KB pages: iova and iova|alias -> pa, the buffer one of our allocations;
+++ * reference values of the SM7150 sound_sm7150.c as ios-flame au9: SCTLR 0x1127, TCR 0x00803519, TCR2 0x38011, MAIR0
+++ * 0xf404ff44, CBAR 0x1f300, leaf 0xe43), op 3 = the fault state of the bank a SID goes to (read only).
+++ */
+++struct pmem_smmu {
+++	uint32_t op;            /* 1 identity, 2 translate, 3 status */
+++	uint32_t nsid;          /* 1..8 */
+++	uint16_t sid[8];
+++	uint32_t mask;          /* op 1: SMR mask */
+++	int32_t  cb;            /* out */
+++	uint64_t iova, alias, pa, len;  /* op 2 */
+++	uint32_t fsr, fsynr0;   /* op 3 out */
+++	uint64_t far;           /* op 3 out */
+++	int32_t  slot[8];       /* out: SMR per SID */
+++};
+++#define PMEM_SMMU       _IOWR('P', 7, struct pmem_smmu)
+++
++ #define PMEM_MAPS       16              /* 2 MB device windows, round robin */
++ #define PMEM_WIN        0x200000ULL
++ 
++@@ -327,6 +349,262 @@ pm_do_alloc(struct pmem_alloc *a)
++ 	return 0;
++ }
++ 
+++/* ---- 0206: apps-SMMU streams for the audio DSP ---- */
+++#define SM_PA           0x15000000ULL
+++static volatile uint32_t *sm_gr0, *sm_gr1, *sm_cbp[128];
+++static uint32_t sm_nsmr, sm_ncb, sm_npage;
+++static uint64_t sm_taken[2];
+++
+++static int
+++sm_map(void)
+++{
+++	if (sm_gr0) {
+++		return 0;
+++	}
+++	volatile uint32_t *g0 = (volatile uint32_t *)ml_io_map(SM_PA, 0x1000);
+++	if (!g0) {
+++		return ENOMEM;
+++	}
+++	const uint32_t id0 = g0[0x20 / 4], id1 = g0[0x24 / 4];
+++	const uint64_t psize = (id1 >> 31) ? 0x10000 : 0x1000;
+++	sm_nsmr = id0 & 0xff;
+++	sm_ncb = id1 & 0xff;
+++	sm_npage = 1u << (((id1 >> 28) & 7) + 1);
+++	if (psize != 0x1000 || sm_nsmr > 128 || sm_ncb > 128 || ((uint64_t)sm_npage + sm_ncb) * psize > 0x100000) {
+++		printf("SWEET SMMU: ADSP: unexpected geometry smr=%u cb=%u page=%#llx x %u\n", sm_nsmr, sm_ncb, psize, sm_npage);
+++		return ENODEV;
+++	}
+++	sm_gr1 = (volatile uint32_t *)ml_io_map(SM_PA + 0x1000, 0x1000);
+++	if (!sm_gr1) {
+++		return ENOMEM;
+++	}
+++	sm_gr0 = g0;
+++	return 0;
+++}
+++
+++static volatile uint32_t *
+++sm_cb(uint32_t c)
+++{
+++	if (c >= sm_ncb) {
+++		return NULL;
+++	}
+++	if (!sm_cbp[c]) {
+++		sm_cbp[c] = (volatile uint32_t *)ml_io_map(SM_PA + ((uint64_t)sm_npage + c) * 0x1000, 0x1000);
+++	}
+++	return sm_cbp[c];
+++}
+++
+++/* a free bank: no valid SMR's S2CR points at it, CBAR 0, SCTLR.M 0, not taken by us before */
+++static int
+++sm_free_cb(void)
+++{
+++	uint64_t used[2] = {sm_taken[0], sm_taken[1]};
+++	for (uint32_t i = 0; i < sm_nsmr; i++) {
+++		const uint32_t smr = sm_gr0[(0x800 + 4 * i) / 4], s2cr = sm_gr0[(0xc00 + 4 * i) / 4];
+++		if ((smr >> 31) && ((s2cr >> 16) & 3) == 0) {
+++			used[(s2cr & 0xff) / 64] |= 1ull << ((s2cr & 0xff) % 64);
+++		}
+++	}
+++	for (uint32_t c = 0; c < sm_ncb; c++) {
+++		volatile uint32_t *cbp;
+++		if (used[c / 64] & (1ull << (c % 64)) || sm_gr1[c] != 0 || !(cbp = sm_cb(c)) || (cbp[0] & 1)) {
+++			continue;
+++		}
+++		sm_taken[c / 64] |= 1ull << (c % 64);
+++		return (int)c;
+++	}
+++	return -1;
+++}
+++
+++/* route each SID to bank cb with its own SMR (an exact SMR for the SID is reused); each write read back (0192) */
+++static int
+++sm_route(struct pmem_smmu *q, uint32_t mask, int cb)
+++{
+++	for (uint32_t k = 0; k < q->nsid; k++) {
+++		const uint32_t want = (1u << 31) | ((mask & 0x7fff) << 16) | (q->sid[k] & 0x7fff);
+++		int slot = -1;
+++		for (uint32_t i = 0; i < sm_nsmr && slot < 0; i++) {
+++			if ((sm_gr0[(0x800 + 4 * i) / 4] & 0x80007fffu) == ((1u << 31) | q->sid[k])) {
+++				slot = (int)i;
+++			}
+++		}
+++		for (uint32_t i = 0; i < sm_nsmr && slot < 0; i++) {
+++			if (sm_gr0[(0x800 + 4 * i) / 4] >> 31) {
+++				continue;
+++			}
+++			sm_gr0[(0xc00 + 4 * i) / 4] = (uint32_t)cb;
+++			sm_gr0[(0x800 + 4 * i) / 4] = want;
+++			if (sm_gr0[(0x800 + 4 * i) / 4] == want && (sm_gr0[(0xc00 + 4 * i) / 4] & 0xff) == (uint32_t)cb) {
+++				slot = (int)i;
+++			} else {
+++				sm_gr0[(0x800 + 4 * i) / 4] = 0;    /* refused (owned elsewhere): clear, next */
+++			}
+++		}
+++		if (slot < 0) {
+++			printf("SWEET SMMU: ADSP %#x: no SMR takes it\n", q->sid[k]);
+++			return ENOSPC;
+++		}
+++		sm_gr0[(0xc00 + 4 * slot) / 4] = (uint32_t)cb;
+++		sm_gr0[(0x800 + 4 * slot) / 4] = want;
+++		q->slot[k] = slot;
+++	}
+++	sm_gr0[0x70 / 4] = 0;                       /* sTLBGSYNC */
+++	for (int i = 0; i < 1000 && (sm_gr0[0x74 / 4] & 1); i++) {
+++		delay(1000);
+++	}
+++	for (uint32_t k = 0; k < q->nsid; k++) {
+++		printf("SWEET SMMU: ADSP %#x -> CB%d via SMR%d: SMR %#x S2CR %#x\n", q->sid[k], cb, q->slot[k],
+++		    sm_gr0[(0x800 + 4 * q->slot[k]) / 4], sm_gr0[(0xc00 + 4 * q->slot[k]) / 4]);
+++	}
+++	return 0;
+++}
+++
+++static int
+++sm_identity(struct pmem_smmu *q)
+++{
+++	int cb = sm_free_cb();
+++	volatile uint32_t *cbp = cb >= 0 ? sm_cb((uint32_t)cb) : NULL;
+++	if (!cbp) {
+++		printf("SWEET SMMU: ADSP identity: no free bank\n");
+++		return ENOSPC;
+++	}
+++	cbp[0] = 0;
+++	cbp[0x58 / 4] = 0xffffffff;
+++	cbp[0x20 / 4] = 0;
+++	cbp[0x24 / 4] = 0;
+++	cbp[0x30 / 4] = 0;
+++	cbp[0x10 / 4] = 0;
+++	cbp[0x38 / 4] = 0;
+++	cbp[0x3c / 4] = 0;
+++	sm_gr1[(0x800 + 4 * cb) / 4] = 0x00000001;  /* CBA2R: AArch64 */
+++	sm_gr1[cb] = 0x0001f000;                    /* CBAR: S1, S2 bypass */
+++	cbp[0] = 0x000000e0;                        /* SCTLR: CFCFG | CFIE | CFRE, M = 0 */
+++	q->cb = cb;
+++	return sm_route(q, q->mask, cb);
+++}
+++
+++static int
+++sm_translate(struct pmem_smmu *q)
+++{
+++	if (!q->len || ((q->iova | q->pa | q->len) & 0xfff) || q->iova + q->len > (1ull << 32) ||
+++	    ((q->iova ^ (q->iova + q->len - 1)) >> 21) || (q->alias & ((1ull << 30) - 1)) || q->alias >= (1ull << 39)) {
+++		return EINVAL;  /* one 2 MB block below 4 GB, 4 KB aligned; the alias whole GBs */
+++	}
+++	bool ours = false;
+++	for (int i = 0; i < PMEM_LIST_MAX && !ours; i++) {
+++		ours = pm_alloc[i].va && q->pa >= pm_alloc[i].pa && q->pa + q->len <= pm_alloc[i].pa + pm_alloc[i].size;
+++	}
+++	if (!ours) {
+++		printf("SWEET SMMU: ADSP translate: %#llx+%#llx is not a /dev/pmem allocation\n", q->pa, q->len);
+++		return EPERM;
+++	}
+++	vm_offset_t tva = 0;
+++	if (kmem_alloc_contig(kernel_map, &tva, 3 * PAGE_SIZE, PAGE_MASK, 0, 0, KMA_DATA | KMA_ZERO,
+++	    VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
+++		return ENOMEM;
+++	}
+++	const uint64_t tpa = ptoa_64(pmap_find_phys(kernel_pmap, (addr64_t)tva));
+++	uint64_t *l1 = (uint64_t *)tva, *l2 = (uint64_t *)(tva + PAGE_SIZE), *l3 = (uint64_t *)(tva + 2 * PAGE_SIZE);
+++	const uint64_t leaf = 3ull | 1ull << 6 | 2ull << 8 | 1ull << 10 | 1ull << 11;   /* 0xe43 */
+++	l1[(q->iova >> 30) & 0x1ff] = (tpa + PAGE_SIZE) | 3;
+++	l1[((q->iova | q->alias) >> 30) & 0x1ff] = (tpa + PAGE_SIZE) | 3;
+++	l2[(q->iova >> 21) & 0x1ff] = (tpa + 2 * PAGE_SIZE) | 3;
+++	for (uint64_t o = 0; o < q->len; o += 0x1000) {
+++		l3[((q->iova + o) >> 12) & 0x1ff] = (q->pa + o) | leaf;
+++	}
+++	flush_dcache64((addr64_t)tpa, 3 * PAGE_SIZE, TRUE);    /* clean to PoC before the walker sees it */
+++	int cb = sm_free_cb();
+++	volatile uint32_t *cbp = cb >= 0 ? sm_cb((uint32_t)cb) : NULL;
+++	if (!cbp) {
+++		printf("SWEET SMMU: ADSP translate: no free bank\n");
+++		return ENOSPC;    /* the 3 table pages stay allocated (small, once) */
+++	}
+++	const uint64_t ttbr = tpa | ((uint64_t)cb << 48);       /* ASID = bank */
+++	const uint32_t tcr = 25u | 1u << 8 | 1u << 10 | 3u << 12 | 1u << 23, tcr2 = 1u | 1u << 4 | 7u << 15;
+++	const uint32_t cbar = 1u << 16 | 3u << 8 | 0xfu << 12, sctlr = 0x1127;
+++	cbp[0] = 0;
+++	cbp[0x58 / 4] = 0xffffffff;
+++	cbp[0x20 / 4] = (uint32_t)ttbr;
+++	cbp[0x24 / 4] = (uint32_t)(ttbr >> 32);
+++	cbp[0x28 / 4] = 0;
+++	cbp[0x2c / 4] = 0;
+++	cbp[0x30 / 4] = tcr;
+++	cbp[0x10 / 4] = tcr2;
+++	cbp[0x38 / 4] = 0xf404ff44;
+++	cbp[0x3c / 4] = 0;
+++	sm_gr1[(0x800 + 4 * cb) / 4] = 0x00000001;
+++	sm_gr1[cb] = cbar;
+++	cbp[0x610 / 4] = (uint32_t)cb;              /* TLBIASID */
+++	cbp[0x618 / 4] = 0;                         /* TLBIALL */
+++	cbp[0x7f0 / 4] = 0;                         /* TLBSYNC */
+++	for (int i = 0; i < 1000 && (cbp[0x7f4 / 4] & 1); i++) {
+++		delay(1000);
+++	}
+++	cbp[0] = sctlr;                             /* SCTLR last */
+++	const uint64_t rb = ((uint64_t)cbp[0x24 / 4] << 32) | cbp[0x20 / 4];
+++	const bool ok = rb == ttbr && cbp[0x30 / 4] == tcr && (cbp[0x10 / 4] & 7) == (tcr2 & 7) &&
+++	    (cbp[0] & ~0x1000u) == (sctlr & ~0x1000u) && sm_gr1[cb] == cbar;
+++	printf("SWEET SMMU: ADSP translate CB%d tables %#llx: %#llx+%#llx (alias %#llx) -> %#llx; TTBR0 %#llx TCR %#x TCR2 %#x "
+++	    "SCTLR %#x CBAR %#x -> %s\n", cb, tpa, q->iova, q->len, q->alias, q->pa, rb, cbp[0x30 / 4], cbp[0x10 / 4], cbp[0],
+++	    sm_gr1[cb], ok ? "ok" : "NOT as written");
+++	if (!ok) {
+++		return EIO;
+++	}
+++	q->cb = cb;
+++	return sm_route(q, 0, cb);
+++}
+++
+++static int
+++sm_status(struct pmem_smmu *q)
+++{
+++	q->cb = -1;
+++	for (uint32_t i = 0; i < sm_nsmr; i++) {
+++		const uint32_t smr = sm_gr0[(0x800 + 4 * i) / 4];
+++		if ((smr >> 31) && (smr & 0x7fff) == q->sid[0]) {
+++			q->slot[0] = (int)i;
+++			q->cb = (int)(sm_gr0[(0xc00 + 4 * i) / 4] & 0xff);
+++			break;
+++		}
+++	}
+++	volatile uint32_t *cbp = q->cb >= 0 ? sm_cb((uint32_t)q->cb) : NULL;
+++	if (!cbp) {
+++		return ENOENT;
+++	}
+++	q->fsr = cbp[0x58 / 4];
+++	q->far = ((uint64_t)cbp[0x64 / 4] << 32) | cbp[0x60 / 4];
+++	q->fsynr0 = cbp[0x68 / 4];
+++	return 0;
+++}
+++
+++static int
+++pm_smmu(struct pmem_smmu *q)
+++{
+++	if (q->nsid < 1 || q->nsid > 8) {
+++		return EINVAL;
+++	}
+++	for (uint32_t k = 0; k < q->nsid; k++) {
+++		/* the audio DSP's streams only (stock DT: audio-ion 0x1b21, fastrpc cbs 0x1b23-0x1b28, usb audio 0x1b2f) */
+++		if ((q->sid[k] & ~0xfu) != 0x1b20) {
+++			printf("SWEET SMMU: refused SID %#x (only the ADSP's 0x1b20-0x1b2f)\n", q->sid[k]);
+++			return EPERM;
+++		}
+++	}
+++	int err = sm_map();
+++	if (err) {
+++		return err;
+++	}
+++	switch (q->op) {
+++	case 1:
+++		return sm_identity(q);
+++	case 2:
+++		return sm_translate(q);
+++	case 3:
+++		return sm_status(q);
+++	default:
+++		return EINVAL;
+++	}
+++}
+++
++ static int
++ pm_ioctl(__unused dev_t dev, u_long cmd, caddr_t data, __unused int flag, __unused struct proc *p)
++ {
++@@ -360,6 +638,9 @@ pm_ioctl(__unused dev_t dev, u_long cmd, caddr_t data, __unused int flag, __unus
++ 	case PMEM_SMC:
++ 		pm_smc((struct pmem_smc *)data);
++ 		break;
+++	case PMEM_SMMU:     /* 0206 */
+++		err = pm_smmu((struct pmem_smmu *)data);
+++		break;
++ 	case PMEM_LIST: {
++ 		struct pmem_list *l = (struct pmem_list *)data;
++ 		bzero(l, sizeof(*l));
+diff --git a/xnu/patches/0207-sweet-display-plane-alignment-dict.patch b/xnu/patches/0207-sweet-display-plane-alignment-dict.patch
+new file mode 100644
+index 0000000..b44ba8a
+--- /dev/null
++++ b/xnu/patches/0207-sweet-display-plane-alignment-dict.patch
+@@ -0,0 +1,28 @@
++diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
++index 6bd6cf1..479307d 100644
++--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
+++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
++@@ -403,7 +403,22 @@ AppleCLCD::start(IOService *provider)
++ 
++ 	setProperty(kIOUserClientClassKey, "IOMobileFramebufferUserClient");
++ 	setProperty("external", false);
++-	setProperty("DisplayPipePlaneBaseAlignment", 64ULL, 32);
+++	/*
+++	 * 0207: a dictionary, as on a real AppleCLCD: VideoToolbox (FPSupport_ShouldApplyVideoTrackMatrix, every video and
+++	 * Safari media item) reads IOService DisplayPipePlaneBaseAlignment and CFDictionaryGetValue()s
+++	 * "PlaneBaseAlignmentLinear" from it. The bare number published since 0046 made mediaserverd throw
+++	 * "-[__NSCFNumber objectForKey:]: unrecognized selector" and abort on every YouTube/web media play (0202-0205).
+++	 */
+++	{
+++		OSDictionary *align = OSDictionary::withCapacity(1);
+++		OSNumber *linear = OSNumber::withNumber(64ULL, 32);
+++		if (align != NULL && linear != NULL) {
+++			align->setObject("PlaneBaseAlignmentLinear", linear);
+++			setProperty("DisplayPipePlaneBaseAlignment", align);
+++		}
+++		OSSafeReleaseNULL(linear);
+++		OSSafeReleaseNULL(align);
+++	}
++ 	registerService();
++ 	IOLog("SWEET FB: AppleCLCD %ux%u stride %u at 0x%llx, default surface %u, presented as %ux%u\n",
++ 	    fWidth, fHeight, fRowBytes, fPhys, fSurface->id, fLogicalW, fLogicalH);
+-- 
+2.51.0
+

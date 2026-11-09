@@ -1,0 +1,423 @@
+From 129aefb13e719aa1aa7be9fb5c3d48136e890430 Mon Sep 17 00:00:00 2001
+From: OpenCode <opencode@localhost>
+Date: Wed, 21 Oct 2026 21:58:56 +0530
+Subject: [PATCH 01/13] Start UniXNU sweet iOS16 port and build pinned AArch64
+ menu
+
+
+diff --git a/.github/workflows/unixnu-menu.yml b/.github/workflows/unixnu-menu.yml
+new file mode 100644
+index 0000000..2ea8669
+--- /dev/null
++++ b/.github/workflows/unixnu-menu.yml
+@@ -0,0 +1,48 @@
++name: UniXNU AArch64 menu
++
++on:
++  workflow_call:
++  workflow_dispatch:
++
++permissions:
++  contents: read
++
++jobs:
++  menu:
++    runs-on: ubuntu-24.04
++    timeout-minutes: 35
++    steps:
++      - uses: actions/checkout@v4
++      - name: Install compiler dependencies
++        run: |
++          sudo apt-get update
++          sudo apt-get install -y build-essential uuid-dev nasm acpica-tools clang-18 llvm-18 lld-18 python3-setuptools
++      - name: Fetch pinned UniXNU and Mu base
++        run: |
++          git init -q upstream-unixnu
++          git -C upstream-unixnu fetch --depth 1 https://github.com/UniXNU/UniXNU.git 89801d6e9265ba9aa49e56de642565288d679f83
++          git -C upstream-unixnu checkout --detach FETCH_HEAD
++          git init -q mu-basecore
++          git -C mu-basecore fetch --depth 1 https://github.com/microsoft/mu_basecore.git cfb93724a06ff86ff5ba971413368a7809ee42a5
++          git -C mu-basecore checkout --detach FETCH_HEAD
++          git -C mu-basecore submodule update --init --depth 1 -- MdePkg/Library/BaseFdtLib/libfdt MdePkg/Library/MipiSysTLib/mipisyst BaseTools/Source/C/BrotliCompress/brotli
++      - name: Compile generic menu applications
++        env:
++          CLANG_BIN: /usr/lib/llvm-18/bin/
++          JOBS: 4
++        run: |
++          export UNIXNU_EDK2="$GITHUB_WORKSPACE/mu-basecore"
++          export UNIXNU_BUILD_DIR="$GITHUB_WORKSPACE/menu-build"
++          bash upstream-unixnu/package/build.sh -b DEBUG -t CLANGPDB
++          mkdir -p out
++          cp menu-build/Build/Out/AARCH64-DEBUG/UniXNU.efi out/
++          cp menu-build/Build/Out/AARCH64-DEBUG/UniXNUDxe.efi out/
++          cp ports/UniXNU-sweet/sources.json out/source-inputs.json
++          printf '%s\n' 'Generic AArch64 UEFI menu only. Not a sweet boot.img or an iOS16 kernel. No hardware tests executed.' > out/README.txt
++          (cd out && sha256sum *.efi > SHA256SUMS)
++      - uses: actions/upload-artifact@v4
++        if: always()
++        with:
++          name: unixnu-menu-aarch64
++          path: out/
++          if-no-files-found: warn
+diff --git a/.github/workflows/xnu.yml b/.github/workflows/xnu.yml
+index a2ec821..5039333 100644
+--- a/.github/workflows/xnu.yml
++++ b/.github/workflows/xnu.yml
+@@ -12,6 +12,10 @@ on:
+       machine_config:
+         description: xnu MACHINE_CONFIG
+         default: SWEET
++      uefi_menu:
++        description: Build the generic UniXNU AArch64 menu for the new sweet UEFI port
++        type: boolean
++        default: false
+       graphics_only:
+         description: Build iOS16 Turnip and Metal userspace instead of the kernel
+         type: boolean
+@@ -42,7 +46,7 @@ env:
+ 
+ jobs:
+   build:
+-    if: ${{ inputs.graphics_only != true }}
++    if: ${{ inputs.graphics_only != true && inputs.uefi_menu != true }}
+     # macos-14 still ships Xcode 15.x: its iig matches the xnu-8796 IORPC ABI
+     # (Xcode 16's iig emits IORPC.kernelContent, which this xnu lacks)
+     runs-on: macos-14
+@@ -170,3 +174,7 @@ jobs:
+   graphics:
+     if: ${{ inputs.graphics_only == true }}
+     uses: ./.github/workflows/metal.yml
++
++  uefi_menu:
++    if: ${{ inputs.uefi_menu == true }}
++    uses: ./.github/workflows/unixnu-menu.yml
+diff --git a/NOTES.md b/NOTES.md
+index 09accd0..5195d13 100644
+--- a/NOTES.md
++++ b/NOTES.md
+@@ -2,6 +2,35 @@
+ 
+ ## Current local device state (2026-10-21, read first)
+ 
++- **PLAN CHANGED: UniXNU UEFI architecture, KEEP iOS16 (2026-10-21):** user
++  explicitly switched to unixnu.com/porting and selected keep16/adaptnewstack.
++  Work now on codex/unixnu-ios16-sweet; legacy GPU work preserved on
++  codex/adreno-power-audit at4e84f4e. Do not continue0114RPMh experiment as the
++  main plan unless asked. Prepared ports/UniXNU-sweet board/feeds/defconfig,
++  sources.json and README; CLI defconfig/status succeeds (example/readiness
++  flag still gates build/packing). New UniXNU pin89801d6e9265ba9aa49e56de642565288d679f83.
++  Exact sweet Mu source tagicmi/Mu-Silicium-marble-davinci at
++  098e303fd9703669ab06d38744cad14d49c0f702 uses old sweet.conf/library paths;
++  port overlay ports/uefi-sweet translates base0x9fc00000/size3MiB to TOML.
++  Current upstreamMu42fe563 has sweet_k6a, NOT exactsweet; never substitute.
++  Reference clone research/unixnu-reference/mu-sweet still fetching at last
++  check (session93738), no submodules initialized. Alternative reference
++  sm7150-sweet7d53df4 cloned, read only, no scripts run.
++  Apple20H392 rawKernelCache/DeviceTree/StaticTrustCache extracted via ranged
++  ZIP with CRC and pinned SHA; files under research/unixnu-ios16-out/ipsw/20H392.
++  Original kernel decoded to ARM64 Mach-O50937856bytes SHA256
++  2ec297bac95bcba01046fd0148e97e7e5885c05a6c18827f39f534ba375c1221.
++  Original kernel Darwin22.6 XNU8796.142.1.703.8; OSS8796.141.3 pinned for port.
++  Upstream is Darwin23/iOS17/4K: its kernel patches, prelink/archive builders,
++  graphics ABI and4K integration still require iOS16 adaptation. No new kernel
++  or board firmware compiled; no new userdata layout, LBAs, UUIDs or prelink
++  addresses guessed. Current installed root remains HFS+; upstreamAPFSwindows
++  cannot be applied to it unchanged. Generic menu-only CI workflow added and
++  exposed as uefi_menu=true through existing xnu workflow, testsfalse. Its EFI
++  outputs are NOT a phone boot.img or proof of firmware compatibility.
++  No device changes this turn. Phone last left running0113; oldUSB receiver
++  bounded1800s may have expired. No tests added/run. Initial menu CI pending.
++
+ - **0113 TEMPORARY BOOT / RPMh CX TIMEOUT (2026-10-21):** user authorized
+   boot; fastboot product sweetin verified, image SHA matched. fastboot boot
+   sent16992KB OKAY0.514s, BootingOKAY0.130s. No partition flashing/root writes.
+diff --git a/ports/UniXNU-sweet/.gitignore b/ports/UniXNU-sweet/.gitignore
+new file mode 100644
+index 0000000..94a339a
+--- /dev/null
++++ b/ports/UniXNU-sweet/.gitignore
+@@ -0,0 +1,7 @@
++.cache/
++out/
++local.toml
++*.ipsw
++*.img
++*.dtb
++*.adt
+diff --git a/ports/UniXNU-sweet/README.md b/ports/UniXNU-sweet/README.md
+new file mode 100644
+index 0000000..e16ecc9
+--- /dev/null
++++ b/ports/UniXNU-sweet/README.md
+@@ -0,0 +1,68 @@
++# UniXNU sweet: iOS16 migration
++
++The owner selected UniXNU's porting architecture while retaining iOS16.7.16,
++20H392, iPhone10,3/D22AP. This device directory follows the upstream board,
++defconfig and feed layout. It is an initial source configuration, not a
++bootable port. The upstream `example` readiness flag deliberately prevents
++building or packing an incomplete board.
++
++## First milestone
++
++Build an exact sweet UEFI with framebuffer, button input, storage protocols and
++the UniXNU menu. Then integrate DarwinBoot and a diagnostic XNU payload. Use
++temporary fastboot boots for bring-up. The running HFS+ iOS installation and
++its recovery remain the fallback; no new userdata layout is selected here.
++
++An exact-board Mu-Silicium reference exists in tagicmi's fork (pin in
++sources.json). Its sweet.conf places the3MiB firmware at0x9fc00000; the adjacent
++ports/uefi-sweet directory translates that input to the current TOML format.
++The old package uses DeviceMemoryMapLib/DeviceConfigurationMapLib and legacy
++paths; current Mu uses a different configuration/build contract. Reconcile
++those interfaces, vendor dependencies and output naming before compiling.
++Current Project-Silicium has sweet_k6a, a different device. Do not substitute it.
++
++## iOS16 integration
++
++The base UniXNU tree selects XNU10063/Darwin23 and iOS17 deployment targets.
++This directory overrides XNU to8796.141.3/Darwin22 and libpthread514.100.2.
++These overrides select source identities; they do not make the current4KiB
++patches, corecrypto14, prelink ABI or Metal builders compatible with iOS16.
++Adapt those interfaces deliberately. Audit the selected iOS16 kernelcache
++before setting prelink roots, slides, initialization addresses and trust pins.
++NativeAdreno's A740 power/command implementation still needs an A618 backend.
++
++Do not import the old stub IOSurface into the prelinked path blindly: evaluate
++using the matching original iOS16 IOSurface/IOMobileGraphics modules instead.
++Storage should start with a diagnostic payload; board power and UFS must be
++adapted before mounting the installed root. The current root is HFS+; upstream's
++raw APFS windows do not describe that on-device layout. GPT LBAs and UUIDs are
++intentionally absent until measured, rather than copied from sheng.
++
++## Configure the workspace
++
++From a UniXNU checkout at the source pin in sources.json:
++
++```
++./unixnu defconfig sweet_ios16_defconfig -D /home/dan/ios-sweet/ports/UniXNU-sweet --out /home/dan/ios-sweet/research/unixnu-ios16-out
++./unixnu status -D /home/dan/ios-sweet/ports/UniXNU-sweet --out /home/dan/ios-sweet/research/unixnu-ios16-out
++```
++
++These commands configure/report the source workspace. They do not compile,
++boot, write the phone or establish hardware compatibility. Keep proprietary
++firmware, Apple components and device-specific inputs outside Git.
++
++References: https://unixnu.com/porting/ and its firmware/device-tree pages.
++
++## Initial build artifact
++
++The unixnu-menu workflow builds generic AArch64 UniXNU.efi/UniXNUDxe.efi on
++Ubuntu from pinned sources. Dispatch the existing xnu workflow on this branch
++with uefi_menu=true, graphics_only=false, run_tests=false. This compiles the
++menu applications, not a sweet firmware/boot image or the iOS16 kernel. The
++board remains gated until its firmware integration is complete.
++
++The target raw kernelcache, DeviceTree and StaticTrustCache were extracted by
++HTTP ranges with ZIP CRC checking, SHA256-pinned in board.toml, and retained
++outside Git. The kernelcache is LZFSE and was decoded on Fedora using the
++already available lzfse library. Its original version is8796.142.1.703.8; the
++source baseline8796.141.3 therefore needs an explicit prelink ABI audit.
+diff --git a/ports/UniXNU-sweet/board.toml b/ports/UniXNU-sweet/board.toml
+new file mode 100644
+index 0000000..1954ab2
+--- /dev/null
++++ b/ports/UniXNU-sweet/board.toml
+@@ -0,0 +1,49 @@
++# iOS16 sweet device definition, under development.
++# UniXNU's readiness gate stays enabled until the legacy UEFI and Darwin22
++# integration have been ported. defconfig/status/IPSW extraction are available.
++[board]
++name = "sweet"
++soc = "SM7150"
++description = "Redmi Note 10 Pro / Pro Max (sweet/sweetin), iOS16 migration"
++kit = "sweet"
++example = true
++
++[ipsw]
++url = "https://updates.cdn-apple.com/2025FallFCS/fullrestores/122-77006/1158E502-D76D-4226-AA06-ED5E30CD1111/iPhone10,3,iPhone10,6_16.7.16_20H392_Restore.ipsw"
++product = "iPhone10,3"
++version = "16.7.16"
++build = "20H392"
++device_class = "d22ap"
++chip_id = 0x8015
++board_id = 6
++fetch = ["KernelCache", "DeviceTree", "StaticTrustCache"]
++
++[kernel]
++defconfig = "sweet_ios16_defconfig"
++
++# No prelink addresses/roots, userdata LBAs or payload root UUID are borrowed
++# from sheng. Fill these from the selected iOS16 kernelcache and sweet GPT.
++
++[firmware]
++config = "sweet"
++dsc = "Platforms/Xiaomi/sweetPkg/sweet.dsc"
++fd = "Build/sweetPkg/{target}_CLANGPDB/FV/SILICIUM_UEFI.fd"
++packages = ["{uefi}", "{uefi}/Platforms/Xiaomi", "{tree}/package", "{tree}/drivers/DarwinBoot", "{edk2}"]
++
++[firmware.defines]
++DEVICE_MODEL = "sweet"
++
++# Matches the saved stock Android boot header; packing remains gated until
++# BootShim, the actual firmware output and the payload handoff are integrated.
++[bootimg.image]
++header_version = 2
++base = 0
++kernel_offset = 0x8000
++ramdisk_offset = 0x1000000
++tags_offset = 0x100
++pagesize = 4096
++
++[ipsw.sha256]
++"kernelcache.release.iphone10b" = "2d6a13d040aaf87cec09bb6906d43e9bd8cea951e43d1aa1cd62707dfdc5aaec"
++"DeviceTree.d22ap.im4p" = "480e8b0888949b4128b7aa2cd254497581c69e1bafa596a760b2fa955a8a6368"
++"087-86698-044.dmg.trustcache" = "63e01c03b31e1532a5581a24865490673f0b5c297b0199fe0095637c6100ef4b"
+diff --git a/ports/UniXNU-sweet/configs/sweet_ios16_defconfig b/ports/UniXNU-sweet/configs/sweet_ios16_defconfig
+new file mode 100644
+index 0000000..8214274
+--- /dev/null
++++ b/ports/UniXNU-sweet/configs/sweet_ios16_defconfig
+@@ -0,0 +1,11 @@
++# Configuration for the new source-port effort, not the old SWEET machine.
++# These platform selections need Darwin22 source adaptation before linking.
++CONFIG_XNU_ARM_DT_PLATFORM=y
++CONFIG_XNU_ARMCPU=y
++# CONFIG_XNU_ARMVIRT_PLATFORM is not set
++# CONFIG_XNU_NATIVE_UFS is not set
++# CONFIG_XNU_NATIVE_ADRENO is not set
++# CONFIG_XNU_SOURCE_CORECRYPTO14 is not set
++# CONFIG_XNU_SOURCE_PTHREAD is not set
++# Native storage/power, original iOS16 libraries and graphics are staged after
++# the UEFI menu/framebuffer/payload milestone. No sheng power driver is selected.
+diff --git a/ports/UniXNU-sweet/feeds.toml b/ports/UniXNU-sweet/feeds.toml
+new file mode 100644
+index 0000000..a140a7d
+--- /dev/null
++++ b/ports/UniXNU-sweet/feeds.toml
+@@ -0,0 +1,19 @@
++# The owner's selected target is iOS16. Do not inherit Darwin23/iOS17 feeds.
++# The 4K patches and archive builders still need adaptation to these pins.
++[[source]]
++name = "xnu"
++kind = "refer"
++git = "https://github.com/apple-oss-distributions/xnu.git"
++ref = "xnu-8796.141.3"
++commit = "1b191cb58250d0705d8a51287127505aa4bc0789"
++darwin = "22.6.0"
++version = "8796.141.3"
++driverkit_tag = "xnu-8796.141.3"
++trustcache_tag = "xnu-8796.141.3"
++
++[[source]]
++name = "libpthread"
++kind = "refer"
++git = "https://github.com/apple-oss-distributions/libpthread.git"
++ref = "libpthread-514.100.2"
++commit = "a6c70ca0e544347a0377babf748f831577ec24f9"
+diff --git a/ports/UniXNU-sweet/package/README.md b/ports/UniXNU-sweet/package/README.md
+new file mode 100644
+index 0000000..5689ae8
+--- /dev/null
++++ b/ports/UniXNU-sweet/package/README.md
+@@ -0,0 +1,5 @@
++# Sweet package staging
++
++Place the sweet UniXNU menu configuration and device kits here once the UEFI
++handoff is integrated. No sheng GPU, power, touch, root UUID or trust-cache
++configuration is installed by this directory.
+diff --git a/ports/UniXNU-sweet/sources.json b/ports/UniXNU-sweet/sources.json
+new file mode 100644
+index 0000000..8384869
+--- /dev/null
++++ b/ports/UniXNU-sweet/sources.json
+@@ -0,0 +1,59 @@
++{
++  "unixnu": {
++    "repository": "https://github.com/UniXNU/UniXNU",
++    "revision": "89801d6e9265ba9aa49e56de642565288d679f83"
++  },
++  "mu_sweet": {
++    "repository": "https://github.com/tagicmi/Mu-Silicium-marble-davinci",
++    "revision": "098e303fd9703669ab06d38744cad14d49c0f702",
++    "device": "Platforms/Xiaomi/sweetPkg",
++    "legacy_config": "Resources/Configs/sweet.conf",
++    "fd_base": "0x9fc00000",
++    "fd_size": "0x300000",
++    "hardware_verified_here": false
++  },
++  "alternative_edk2": {
++    "repository": "https://github.com/Cristiano1103/sm7150-sweet",
++    "revision": "7d53df4a0797d14274b2176092bea2d718b4d04b"
++  },
++  "current_mu": {
++    "repository": "https://github.com/Project-Silicium/Mu-Silicium",
++    "revision": "42fe563791e51bf5500c2e470ed294ca0c94b97c",
++    "observation": "Has sweet_k6a, not exact sweet; do not use that board configuration."
++  },
++  "target": {
++    "product": "iPhone10,3",
++    "version": "16.7.16",
++    "build": "20H392",
++    "device_class": "d22ap",
++    "ap_chip_id": "0x8015",
++    "ap_board_id": 6,
++    "manifest_sha256": "2d1452103a2f5ad71cb78d94454977fc70632472201980a468c247fba14b10b7",
++    "kernelcache_decompressed_sha256": "2ec297bac95bcba01046fd0148e97e7e5885c05a6c18827f39f534ba375c1221",
++    "kernel_version": "Darwin Kernel Version 22.6.0: Tue Jul  2 20:47:35 PDT 2024; root:xnu-8796.142.1.703.8~1/RELEASE_ARM64_T8015",
++    "raw_members": [
++      {
++        "member": "kernelcache.release.iphone10b",
++        "bytes": 18204358,
++        "sha256": "2d6a13d040aaf87cec09bb6906d43e9bd8cea951e43d1aa1cd62707dfdc5aaec"
++      },
++      {
++        "member": "Firmware/all_flash/DeviceTree.d22ap.im4p",
++        "bytes": 33719,
++        "sha256": "480e8b0888949b4128b7aa2cd254497581c69e1bafa596a760b2fa955a8a6368"
++      },
++      {
++        "member": "Firmware/087-86698-044.dmg.trustcache",
++        "bytes": 66289,
++        "sha256": "63e01c03b31e1532a5581a24865490673f0b5c297b0199fe0095637c6100ef4b"
++      }
++    ]
++  },
++  "readiness": {
++    "uefi_compiled": false,
++    "kernel_adapted": false,
++    "bootable": false,
++    "tests_run": false,
++    "device_modified": false
++  }
++}
+diff --git a/ports/uefi-sweet/Resources/Configs/sweet.toml b/ports/uefi-sweet/Resources/Configs/sweet.toml
+new file mode 100644
+index 0000000..67cd5c9
+--- /dev/null
++++ b/ports/uefi-sweet/Resources/Configs/sweet.toml
+@@ -0,0 +1,21 @@
++# Translation of the exact sweet legacy Mu-Silicium sweet.conf, not sweet_k6a.
++# Reference commit098e303fd9703669ab06d38744cad14d49c0f702.
++# This is configuration input for the UEFI port; not a complete firmware tree.
++[boot_shim]
++requires_kernel_header = true
++
++[uefi_fd]
++base = 0x9fc00000
++size = 0x00300000
++
++[boot_image_kernel]
++kernel_compression = "gzip"
++append_dtb = true
++
++[boot_image]
++header_version = 2
++base = 0
++kernel_offset = 0x8000
++ramdisk_offset = 0x1000000
++tags_offset = 0x100
++pagesize = 4096
+-- 
+2.51.0
+

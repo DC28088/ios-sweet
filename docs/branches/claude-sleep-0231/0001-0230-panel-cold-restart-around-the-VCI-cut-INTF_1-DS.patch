@@ -1,0 +1,368 @@
+From 18ba975b8406d11097c1b4bc53bb948fe69143ef Mon Sep 17 00:00:00 2001
+From: OpenCode <twinexotica@gmail.com>
+Date: Mon, 9 Nov 2026 08:38:17 +0530
+Subject: [PATCH 1/2] 0230: panel cold restart around the VCI cut (INTF_1 + DSI
+ video off/on)
+
+0229 hardware + live /dev/pmem pokes: after a VCI cut or a reset pulse the
+K6 DDIC never shows a picture again, whatever we send (whole on-command in
+LP or HS). Reads with the stream running never return (RDBK_DATA_CTRL stays
+0; the ABL's link-idle reads left 0x29 bytes). Stopping only the DSI video
+engine while INTF_1 kept pushing overflowed the DSI FIFO and the stream did
+not restart. The DT says qcom,mdss-dsi-lp11-init: Linux and the ABL stop the
+timing engine and the video engine, so the lanes sit in LP-11 during the
+reset and the on-command goes out in command mode, and start video last.
+
+Sleep: 28/10 (HS) -> INTF_1 timing engine off, 25 ms -> DSI video engine off
+(lanes LP-11) -> DCS read 0x0A (expect 0x08) -> reset low -> VCI off.
+Wake: VCI on -> reset pulse (link idle) -> clear DSI errors -> on-command
+(LP, command mode) -> DCS read 0x0A (expect 0x9c) -> DSI video on -> INTF_1
+on. beamWait skipped while the stream is off. Link state logged at each
+step ("SWEET PANEL: link (...)"). sweetpanelcold=0 = the 0229 sequence;
+bits 2 (soft reset + snapshot restore) and 4 (CTL0 flush) are off here.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/xnu/patches/0230-sweet-panel-cold-restart.patch b/xnu/patches/0230-sweet-panel-cold-restart.patch
+new file mode 100644
+index 0000000..7a481b1
+--- /dev/null
++++ b/xnu/patches/0230-sweet-panel-cold-restart.patch
+@@ -0,0 +1,334 @@
++diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
++index 9934911..b67ef02 100644
++--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
+++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
++@@ -200,6 +200,15 @@ class AppleARMBacklight : public IOService {
++ 	int            sendShort(uint8_t cmd, bool hs = false);   /* 0200: DCS short write, no parameter; 0202: hs */
++ 	int            sendPacket(uint8_t dtype, const uint8_t *data, unsigned len, bool hs);   /* 0228 */
++ 	int            panelInit(void);                           /* 0228: full K6 on-command */
+++	int            fifoDma(const uint32_t *words, unsigned n, bool hs, unsigned *us_out, uint32_t *ack_out);   /* 0230 */
+++	int            readDcs(uint8_t reg, const char *tag);     /* 0230: DCS read with BTA, raw readback logged */
+++	void           logLanes(const char *tag);                 /* 0230 */
+++	bool           coldStop(void);                            /* 0230: INTF_1 + DSI video engine off */
+++	void           coldStart(void);                           /* 0230: DSI video engine + INTF_1 on */
+++	volatile uint32_t *fIntf1, *fCtl0;                        /* 0230 */
+++	uint32_t       fCtrlSaved;
+++	uint32_t       fDsiSnap[0x200 / 4];                       /* 0231: DSI0 0x000-0x1ff as the ABL left it */
+++	bool           fSnapped;
++ 	void           publish(void);
++ 	void           request(uint32_t level, uint32_t value);
++ 	IOLock        *fDsiLock;                   /* 0200: one DSI command at a time */
++@@ -283,6 +292,19 @@ static const uint8_t sweet_k6_on[] = {
++ };
++ #define SWEET_K6_ON_COUNT 45
++ static bool sweet_panel_vci_off;
+++/*
+++ * 0230: 0229 + live pokes (/dev/pmem) on hardware: after a VCI cut or a reset the DDIC never comes back, whatever
+++ * we send (LP or HS, whole on-command, after the reset pulse): it needs a cold link start. Linux (DT
+++ * qcom,mdss-dsi-lp11-init) and the ABL stop the INTF timing engine and the DSI video engine, so the lanes sit in
+++ * LP-11 while the panel is reset and the on-command goes out in command mode; only then does video start again.
+++ * We kept the ABL's HS stream running through the reset. Live test: stopping only the DSI video engine while
+++ * INTF_1 kept pushing overflowed the DSI FIFO (0xdddd....) and the stream never restarted: INTF must stop first and
+++ * start last. sweetpanelcold=0 restores the 0229 sequence. sweetpanelcold bits (default per build):
+++ *   1 stop/start INTF_1 + DSI video around the power cut, 2 DSI soft reset + ABL register snapshot restore before
+++ *   video on, 4 CTL0 flush after INTF on.
+++ */
+++static int sweet_panel_cold = -1;
+++static volatile bool sweet_panel_stream_off;   /* 0230: INTF_1 stopped: no beam waits */
++ 
++ class AppleCLCD : public IOMobileFramebuffer {
++ 	OSDeclareDefaultStructors(AppleCLCD);
++@@ -505,6 +527,16 @@ extern "C" vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
++ #define DSI_REG_DMA_LENGTH      0x04c
++ #define DSI_REG_ACK_ERR         0x068
++ #define DSI_REG_DMA_TRIGGER     0x090
+++#define DSI_REG_STATUS          0x008   /* 0230 */
+++#define DSI_REG_FIFO_STATUS     0x00c   /* error bits write-1-to-clear */
+++#define DSI_REG_RDBK_DATA0      0x06c   /* RDBK_DATA0..3, then RDBK_DATATYPE0/1 */
+++#define DSI_REG_LANE_STATUS     0x0a8
+++#define DSI_REG_LANE_CTRL       0x0ac
+++#define DSI_REG_DLN0_PHY_ERR    0x0b4
+++#define DSI_REG_CLK_STATUS      0x120
+++#define DSI_REG_SOFT_RESET      0x118
+++#define DSI_REG_CLK_CTRL        0x11c
+++#define DSI_REG_RDBK_DATA_CTRL  0x1d0   /* bits 31:16 bytes read back (the ABL's ID reads leave 0x29 here) */
++ #define DSI_REG_TIMEOUT_STATUS  0x0c0
++ #define DSI_REG_INT_CTRL        0x110
++ #define DSI_REG_TPG_CTRL        0x15c
++@@ -721,6 +753,16 @@ AppleARMBacklight::applyCall(thread_call_param_t owner, thread_call_param_t)
++ 				PE_parse_boot_argn("sweetpanelvci", &v, sizeof(v));
++ 				sweet_panel_vci = v != 0;
++ 			}
+++			if (sweet_panel_cold < 0) {
+++				int c = 1;
+++				PE_parse_boot_argn("sweetpanelcold", &c, sizeof(c));
+++				sweet_panel_cold = c;
+++			}
+++			if (!e1 && !e2 && sweet_panel_vci && (sweet_panel_cold & 1)) {
+++				if (!bl->coldStop()) {
+++					sweet_panel_vci = 0;   /* could not stop the stream: keep the panel powered (0225 sleep) */
+++				}
+++			}
++ 			if (!e1 && !e2 && sweet_panel_vci) {
++ 				/* 0229: like Linux dsi_panel_power_off: reset low, then the supply (pre-off 10 ms) */
++ 				sweet_panel_in_reset = sweet_spmi_panel_reset(0) == 0;
++@@ -753,16 +795,33 @@ AppleARMBacklight::applyCall(thread_call_param_t owner, thread_call_param_t)
++ 			if (reinit) {
++ 				/* 0228: VCI was off, the DDIC lost its setup (0227 hardware: 11/29 acked, screen
++ 				 * black): Xiaomi's whole on-command (sleep out ... DSC 9D/9E ... 53/51 ... 29) */
+++				if (bl->fCtrlSaved) {
+++					/* 0230: link idle (LP-11): clear stale DSI errors, then the on-command in command mode */
+++					bl->fDsi[DSI_REG_FIFO_STATUS / 4] = bl->fDsi[DSI_REG_FIFO_STATUS / 4];
+++					bl->fDsi[DSI_REG_ACK_ERR / 4] = bl->fDsi[DSI_REG_ACK_ERR / 4];
+++					bl->fDsi[DSI_REG_TIMEOUT_STATUS / 4] = bl->fDsi[DSI_REG_TIMEOUT_STATUS / 4];
+++					bl->fDsi[DSI_REG_DLN0_PHY_ERR / 4] = bl->fDsi[DSI_REG_DLN0_PHY_ERR / 4];
+++					bl->logLanes("wake, idle");
+++				}
++ 				e1 = bl->panelInit();
++ 				e2 = 0;
++ 				if (e1) {
++ 					sweet_panel_vci = 0;      /* keep VCI on from now on: plain 11/29 next time */
++ 				}
+++				if (bl->fCtrlSaved) {
+++					(void)bl->readDcs(0x0a, "after on-command, link idle");   /* 0x9c = booster, normal, awake, on */
+++				}
++ 			} else {
+++				if (bl->fCtrlSaved) {
+++					bl->coldStart();         /* 0230: plain 11/29 need the stream (sendShort checks video) */
+++				}
++ 				e1 = bl->sendShort(0x11);    /* sleep out */
++ 				IOSleep(120);
++ 				e2 = bl->sendShort(0x29);    /* display on */
++ 			}
+++			if (bl->fCtrlSaved) {
+++				bl->coldStart();             /* 0230: video last, as Linux */
+++			}
++ 			bl->fSent = 0;               /* resend the brightness: the panel may have reset it */
++ 		}
++ 		absolutetime_to_nanoseconds(mach_absolute_time() - t0, &ns);
++@@ -777,6 +836,9 @@ AppleARMBacklight::applyCall(thread_call_param_t owner, thread_call_param_t)
++ 		}
++ 		if (sweet_panel_failed && bl->fPanelAsleep) {
++ 			/* never leave the panel asleep after a failure */
+++			if (bl->fCtrlSaved) {
+++				bl->coldStart();
+++			}
++ 			if (sweet_panel_vci_off) {
++ 				(void)sweet_rpmh_panel_vci(true);
++ 				sweet_panel_vci_off = false;
++@@ -828,9 +890,8 @@ AppleARMBacklight::panelSleep(bool off)
++ int
++ AppleARMBacklight::sendPacket(uint8_t dtype, const uint8_t *data, unsigned len, bool hs)
++ {
++-	volatile uint32_t *dsi = fDsi;
++-	const uint32_t ctrl = dsi[DSI_REG_CTRL / 4];
++-	if ((ctrl & 3) != 3 || !len || len > 128) {
+++	const uint32_t ctrl = fDsi[DSI_REG_CTRL / 4];
+++	if (!(ctrl & 1u) || !len || len > 128) {   /* 0230: the video engine is off during a cold wake */
++ 		IOLog("SWEET PANEL: packet %#x len %u not sent (ctrl=%#x)\n", dtype, len, ctrl);
++ 		return ENODEV;
++ 	}
++@@ -848,6 +909,22 @@ AppleARMBacklight::sendPacket(uint8_t dtype, const uint8_t *data, unsigned len,
++ 			words[n] = w;
++ 		}
++ 	}
+++	unsigned us;
+++	uint32_t ack;
+++	const int e = fifoDma(words, n, hs, &us, &ack);
+++	if (e || ack) {
+++		IOLog("SWEET PANEL: packet %#x reg %#x len %u %s: done=%d after %u us ack_err=%#x\n", dtype, data[0], len,
+++		    hs ? "HS" : "LP", e == 0, us, ack);
+++	}
+++	return e;
+++}
+++
+++/* 0230: the 0228 command-FIFO DMA (TPG embedded mode), shared by writes and reads */
+++int
+++AppleARMBacklight::fifoDma(const uint32_t *words, unsigned n, bool hs, unsigned *us_out, uint32_t *ack_out)
+++{
+++	volatile uint32_t *dsi = fDsi;
+++	const uint32_t ctrl = dsi[DSI_REG_CTRL / 4];
++ 	const uint32_t dma_ctrl = dsi[DSI_REG_DMA_CTRL / 4];
++ 	dsi[DSI_REG_CTRL / 4] = ctrl | (1u << 2);
++ 	dsi[DSI_REG_INT_CTRL / 4] = dsi[DSI_REG_INT_CTRL / 4] | 1u;
++@@ -864,7 +941,8 @@ AppleARMBacklight::sendPacket(uint8_t dtype, const uint8_t *data, unsigned len,
++ 		IODelay(50);
++ 	}
++ 	const bool done = (dsi[DSI_REG_INT_CTRL / 4] & 1u) != 0;
++-	const uint32_t ack = dsi[DSI_REG_ACK_ERR / 4];
+++	*ack_out = dsi[DSI_REG_ACK_ERR / 4];
+++	*us_out = us;
++ 	if (done) {
++ 		dsi[DSI_REG_INT_CTRL / 4] = dsi[DSI_REG_INT_CTRL / 4] | 1u;
++ 	}
++@@ -876,13 +954,157 @@ AppleARMBacklight::sendPacket(uint8_t dtype, const uint8_t *data, unsigned len,
++ 	if (!(ctrl & (1u << 2))) {
++ 		dsi[DSI_REG_CTRL / 4] = dsi[DSI_REG_CTRL / 4] & ~(1u << 2);
++ 	}
++-	if (!done || ack) {
++-		IOLog("SWEET PANEL: packet %#x reg %#x len %u %s: done=%d after %u us ack_err=%#x\n", dtype, data[0], len,
++-		    hs ? "HS" : "LP", done, us, ack);
++-	}
++ 	return done ? 0 : ETIMEDOUT;
++ }
++ 
+++/*
+++ * 0230: DCS read (LP): "set maximum return packet size" 1, then DCS read 0x06 with the BTA flag (header bit 29),
+++ * RDBK_DATA_CTRL cleared first (Linux 6G v2.1+). Live on 0229 a read while video streamed never came back
+++ * (RDBK_DATA_CTRL count stayed 0); the ABL's reads (link idle) left 0x29 bytes there. So reads are made with the
+++ * link idle. 0x0A power mode: 0x08 asleep, 0x9c awake + display on.
+++ */
+++int
+++AppleARMBacklight::readDcs(uint8_t reg, const char *tag)
+++{
+++	volatile uint32_t *dsi = fDsi;
+++	if (!(dsi[DSI_REG_CTRL / 4] & 1u)) {
+++		return ENODEV;
+++	}
+++	uint32_t after[6], ack1 = 0, ack2 = 0;
+++	unsigned us1 = 0, us2 = 0;
+++	dsi[DSI_REG_RDBK_DATA_CTRL / 4] = 1;
+++	__asm__ volatile("dsb sy" ::: "memory");
+++	dsi[DSI_REG_RDBK_DATA_CTRL / 4] = 0;
+++	const uint32_t mrps = 1u | (0x37u << 16) | (0x80u << 24);
+++	const uint32_t rd = (uint32_t)reg | (0x06u << 16) | (0xa0u << 24);
+++	int e = fifoDma(&mrps, 1, false, &us1, &ack1);
+++	if (!e) {
+++		e = fifoDma(&rd, 1, false, &us2, &ack2);
+++	}
+++	IODelay(1000);
+++	for (unsigned k = 0; k < 6; k++) {
+++		after[k] = dsi[DSI_REG_RDBK_DATA0 / 4 + k];
+++	}
+++	const uint32_t to = dsi[DSI_REG_TIMEOUT_STATUS / 4], cnt = dsi[DSI_REG_RDBK_DATA_CTRL / 4];
+++	IOLog("SWEET PANEL: read %#x (%s) -> %d after %u+%u us ack %#x/%#x timeout %#x count %#x rdbk %08x %08x %08x %08x "
+++	    "type %08x %08x\n", reg, tag, e, us1, us2, ack1, ack2, to, cnt, after[0], after[1], after[2], after[3],
+++	    after[4], after[5]);
+++	return e;
+++}
+++
+++void
+++AppleARMBacklight::logLanes(const char *tag)
+++{
+++	volatile uint32_t *dsi = fDsi;
+++	IOLog("SWEET PANEL: link (%s): ctrl %#x status %#x fifo %#x lane_status %#x lane_ctrl %#x int %#x ack %#x "
+++	    "timeout %#x phy_err %#x clk_status %#x intf1 en %#x frame %u line %u\n",
+++	    tag, dsi[DSI_REG_CTRL / 4], dsi[DSI_REG_STATUS / 4], dsi[DSI_REG_FIFO_STATUS / 4],
+++	    dsi[DSI_REG_LANE_STATUS / 4], dsi[DSI_REG_LANE_CTRL / 4], dsi[DSI_REG_INT_CTRL / 4],
+++	    dsi[DSI_REG_ACK_ERR / 4], dsi[DSI_REG_TIMEOUT_STATUS / 4], dsi[DSI_REG_DLN0_PHY_ERR / 4],
+++	    dsi[DSI_REG_CLK_STATUS / 4], fIntf1 ? fIntf1[0] : 0xdead, fIntf1 ? fIntf1[0xac / 4] : 0,
+++	    fIntf1 ? fIntf1[0xb0 / 4] : 0);
+++}
+++
+++/*
+++ * 0230: stop the stream the ABL started, INTF first (finishes the frame it is on), then the DSI video engine:
+++ * the lanes go to LP-11 (lane_status stop bits 0x1f), as Linux dsi_display_disable + sde encoder disable.
+++ */
+++bool
+++AppleARMBacklight::coldStop(void)
+++{
+++	if (fIntf1 == NULL) {
+++		fIntf1 = (volatile uint32_t *)ml_io_map(0x0ae6b800ULL, 0x100);     /* INTF_1 (DT sde-intf-off 0x6b800) */
+++	}
+++	if (fCtl0 == NULL) {
+++		fCtl0 = (volatile uint32_t *)ml_io_map(0x0ae02000ULL, 0x200);      /* CTL0 */
+++	}
+++	const uint32_t ctrl = fDsi[DSI_REG_CTRL / 4];
+++	if (fIntf1 == NULL || fCtl0 == NULL || (ctrl & 3) != 3 || !(fIntf1[0] & 1)) {
+++		IOLog("SWEET PANEL: cold stop refused (intf1 %d en %#x ctl0 %d dsi ctrl %#x)\n", fIntf1 != NULL,
+++		    fIntf1 ? fIntf1[0] : 0, fCtl0 != NULL, ctrl);
+++		return false;
+++	}
+++	if (!fSnapped) {
+++		for (unsigned i = 0; i < sizeof(fDsiSnap) / 4; i++) {
+++			fDsiSnap[i] = fDsi[i];
+++		}
+++		fSnapped = true;
+++		IOLog("SWEET PANEL: DSI0 snapshot: video %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x lane %08x "
+++		    "timers %08x %08x clkout %08x eot %08x compr %08x %08x\n", fDsiSnap[0x10 / 4], fDsiSnap[0x14 / 4],
+++		    fDsiSnap[0x18 / 4], fDsiSnap[0x1c / 4], fDsiSnap[0x20 / 4], fDsiSnap[0x24 / 4], fDsiSnap[0x28 / 4],
+++		    fDsiSnap[0x2c / 4], fDsiSnap[0x30 / 4], fDsiSnap[0x34 / 4], fDsiSnap[0x38 / 4], fDsiSnap[0xac / 4],
+++		    fDsiSnap[0xb8 / 4], fDsiSnap[0xbc / 4], fDsiSnap[0xc4 / 4], fDsiSnap[0xc8 / 4], fDsi[0x2a0 / 4],
+++		    fDsi[0x2a4 / 4]);
+++	}
+++	logLanes("sleep, streaming");
+++	fIntf1[0] = 0;                       /* INTF_1 timing engine off */
+++	__asm__ volatile("dsb sy" ::: "memory");
+++	IOSleep(25);                         /* > 2 frames at 120 Hz */
+++	fDsi[DSI_REG_CTRL / 4] = ctrl & ~(1u << 1);   /* DSI video engine off */
+++	__asm__ volatile("dsb sy" ::: "memory");
+++	IODelay(500);
+++	fCtrlSaved = ctrl;
+++	sweet_panel_stream_off = true;
+++	logLanes("sleep, stopped");
+++	(void)readDcs(0x0a, "asleep, link idle");     /* expect 0x08: proves the read path on a live panel */
+++	return true;
+++}
+++
+++/* 0230: start it again in Linux's order: (optional soft reset) -> DSI video engine -> INTF_1 timing engine. */
+++void
+++AppleARMBacklight::coldStart(void)
+++{
+++	const uint32_t ctrl = fCtrlSaved;
+++	fCtrlSaved = 0;
+++	if (!ctrl || fIntf1 == NULL) {
+++		return;
+++	}
+++	unsigned restored = 0, differ = 0;
+++	if (sweet_panel_cold & 2) {
+++		/* Linux dsi_ctrl_hw_cmn_soft_reset: controller off, clocks forced on, SOFT_RESET pulse, controller on */
+++		fDsi[DSI_REG_CTRL / 4] = ctrl & ~7u;
+++		__asm__ volatile("dsb sy" ::: "memory");
+++		const uint32_t clk = fDsi[DSI_REG_CLK_CTRL / 4];
+++		fDsi[DSI_REG_CLK_CTRL / 4] = clk | 0x23fu;
+++		__asm__ volatile("dsb sy" ::: "memory");
+++		fDsi[DSI_REG_SOFT_RESET / 4] = 1;
+++		__asm__ volatile("dsb sy" ::: "memory");
+++		IODelay(10);
+++		fDsi[DSI_REG_SOFT_RESET / 4] = 0;
+++		__asm__ volatile("dsb sy" ::: "memory");
+++		/* configuration registers only (Linux dsi_ctrl_hw_cmn setup_* writers), restored where they changed */
+++		static const uint16_t cfg[] = {0x10, 0x14, 0x18, 0x1c, 0x20, 0x24, 0x28, 0x2c, 0x30, 0x34, 0x38, 0x3c,
+++		    0x40, 0x44, 0x50, 0x54, 0x58, 0x5c, 0x60, 0x64, 0x84, 0x88, 0xac, 0xb0, 0xb8, 0xbc, 0xc4, 0xc8, 0x10c};
+++		for (unsigned i = 0; i < sizeof(cfg) / sizeof(cfg[0]); i++) {
+++			const unsigned w = cfg[i] / 4;
+++			if (fDsi[w] != fDsiSnap[w]) {
+++				differ++;
+++				if (fSnapped) {
+++					fDsi[w] = fDsiSnap[w];
+++					restored++;
+++				}
+++			}
+++		}
+++		fDsi[DSI_REG_CLK_CTRL / 4] = clk;
+++		fDsi[DSI_REG_CTRL / 4] = ctrl & ~(1u << 1);
+++		__asm__ volatile("dsb sy" ::: "memory");
+++	}
+++	fDsi[DSI_REG_FIFO_STATUS / 4] = fDsi[DSI_REG_FIFO_STATUS / 4];   /* W1C stale errors */
+++	fDsi[DSI_REG_CTRL / 4] = ctrl;       /* DSI video engine on: waits for the INTF timing */
+++	__asm__ volatile("dsb sy" ::: "memory");
+++	IODelay(100);
+++	fIntf1[0] = 1;                       /* INTF_1 timing engine on */
+++	__asm__ volatile("dsb sy" ::: "memory");
+++	if ((sweet_panel_cold & 4) && fCtl0) {
+++		fCtl0[0x110 / 4] = 1u << 1;          /* CTL_INTF_FLUSH: INTF_1 */
+++		fCtl0[0x18 / 4] = 0x80020041u;       /* CTL_FLUSH: VIG0 | LM0 | CTL | INTF */
+++	}
+++	sweet_panel_stream_off = false;
+++	IOSleep(30);
+++	IOLog("SWEET PANEL: cold start (mode %d): soft reset regs differ %u restored %u\n", sweet_panel_cold, differ, restored);
+++	logLanes("wake, streaming");         /* expect lane stop bits clear (0x1f00) and frame counting */
+++}
+++
++ /*
++  * 0228: Xiaomi's K6 on-command (DT state "dsi_lp_mode"), each packet LP first and HS once if
++  * the FIFO DMA does not complete. The 90-byte 0x9E (DSC PPS) is longer than Qualcomm's 64-byte
++@@ -1609,7 +1831,7 @@ AppleCLCD::beamWait(uint32_t rows)
++ 	if (!fBeamProbed) {
++ 		beamProbe();
++ 	}
++-	if (!fBeam || rows == 0 || rows > fBeamLast - fBeamFirst) {
+++	if (!fBeam || rows == 0 || rows > fBeamLast - fBeamFirst || sweet_panel_stream_off) {
++ 		return;
++ 	}
++ 	const uint64_t avg = fCopyRowNs ? fCopyRowNs : 1100;
+-- 
+2.51.0
+

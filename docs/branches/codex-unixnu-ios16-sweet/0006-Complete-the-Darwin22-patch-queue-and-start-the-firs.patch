@@ -1,0 +1,4266 @@
+From e975694ea7df41d8396907327d5c399396a4a48c Mon Sep 17 00:00:00 2001
+From: OpenCode <opencode@localhost>
+Date: Wed, 21 Oct 2026 22:41:57 +0530
+Subject: [PATCH 06/13] Complete the Darwin22 patch queue and start the first
+ sweet kernel build
+
+
+diff --git a/.github/workflows/unixnu-kernel.yml b/.github/workflows/unixnu-kernel.yml
+new file mode 100644
+index 0000000..4959dfb
+--- /dev/null
++++ b/.github/workflows/unixnu-kernel.yml
+@@ -0,0 +1,121 @@
++name: UniXNU sweet Darwin22 kernel
++
++on:
++  workflow_dispatch:
++    inputs:
++      jobs:
++        description: Parallel make jobs
++        default: "4"
++  push:
++    branches: [codex/unixnu-ios16-sweet]
++    paths:
++      - "ports/UniXNU-sweet/**"
++      - "tools/build-sweet-kernel.py"
++      - "tools/unixnu-kernel-port.py"
++      - ".github/workflows/unixnu-kernel.yml"
++
++concurrency:
++  group: unixnu-sweet-kernel-${{ github.ref }}
++  cancel-in-progress: true
++
++permissions:
++  contents: read
++
++env:
++  UNIXNU_REPO: https://github.com/UniXNU/UniXNU.git
++  UNIXNU_SHA: 89801d6e9265ba9aa49e56de642565288d679f83
++  XNU_REPO: https://github.com/apple-oss-distributions/xnu.git
++  XNU_SHA: 1b191cb58250d0705d8a51287127505aa4bc0789
++
++jobs:
++  patch_queue:
++    runs-on: ubuntu-24.04
++    timeout-minutes: 15
++    steps:
++      - uses: actions/checkout@v4
++      - name: Fetch the pinned Apple XNU source
++        run: |
++          git init -q xnu
++          git -C xnu fetch --depth 1 "$XNU_REPO" "$XNU_SHA"
++          git -C xnu checkout --detach FETCH_HEAD
++      - name: Apply the staged Darwin22 queue to pristine XNU
++        run: |
++          python3 tools/unixnu-kernel-port.py \
++            --source xnu \
++            --patches ports/UniXNU-sweet/patches/xnu \
++            --replacements ports/UniXNU-sweet/kernel-port \
++            --check \
++            --report patch-report.json
++          python3 - <<'PY'
++          import json
++          report = json.load(open('patch-report.json'))
++          assert report['complete'], report
++          assert report['rejected'] == 0, report
++          print(f"{report['applied']} patches apply; {report['skipped']} skipped")
++          PY
++      - uses: actions/upload-artifact@v4
++        if: always()
++        with:
++          name: unixnu-sweet-patch-report
++          path: patch-report.json
++          if-no-files-found: warn
++
++  kernel:
++    needs: patch_queue
++    runs-on: macos-14
++    timeout-minutes: 180
++    env:
++      UNIXNU_OUT: ${{ github.workspace }}/out
++      UNIXNU_DEVICE: ${{ github.workspace }}/ports/UniXNU-sweet
++    steps:
++      - uses: actions/checkout@v4
++      - name: Select Xcode and install build tools
++        run: |
++          sudo xcode-select -s /Applications/Xcode.app
++          xcodebuild -version
++          xcrun --find iig
++          brew install cmake ninja unifdef
++      - name: Fetch pinned UniXNU and submodules
++        run: |
++          git init -q unixnu
++          git -C unixnu fetch --depth 1 "$UNIXNU_REPO" "$UNIXNU_SHA"
++          git -C unixnu checkout --detach FETCH_HEAD
++          git -C unixnu submodule update --init --recursive --depth 1
++      - name: Configure and assemble the sweet tree
++        run: |
++          ./unixnu/unixnu defconfig sweet_ios16_defconfig \
++            -D "$UNIXNU_DEVICE" --out "$UNIXNU_OUT"
++          ./unixnu/unixnu tree -D "$UNIXNU_DEVICE" --out "$UNIXNU_OUT"
++          readlink -f "$UNIXNU_OUT/sweet/tree/patches/xnu"
++          test -f "$UNIXNU_OUT/sweet/tree/patches/xnu/source-machine-layer.patch"
++          test ! -e "$UNIXNU_OUT/sweet/tree/patches/xnu/zzz-boot-progress.patch"
++          grep -q 'miphoneos-version-min=16.0' \
++            "$UNIXNU_OUT/sweet/tree/scripts/build-xnu-4k-baseline.sh"
++      - name: Compile the Darwin22 kernel
++        run: |
++          python3 tools/build-sweet-kernel.py \
++            --out "$UNIXNU_OUT" --device "$UNIXNU_DEVICE" \
++            --jobs "${{ inputs.jobs || '4' }}"
++      - name: Record the built kernel
++        if: always()
++        run: |
++          find "$UNIXNU_OUT/sweet/tree/build/xnu" -maxdepth 4 \
++            \( -name 'mach.development.*' -o -name '*.unstripped*' \) 2>/dev/null | head -20
++          mkdir -p kernel-out
++          cp "$UNIXNU_OUT/sweet/tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf" kernel-out/ 2>/dev/null || true
++          cp "$UNIXNU_OUT/sweet/tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837" kernel-out/ 2>/dev/null || true
++          (cd kernel-out && sha256sum * > SHA256SUMS 2>/dev/null || true)
++      - uses: actions/upload-artifact@v4
++        if: always()
++        with:
++          name: unixnu-sweet-darwin22-kernel
++          path: kernel-out/
++          if-no-files-found: warn
++      - uses: actions/upload-artifact@v4
++        if: always()
++        with:
++          name: unixnu-sweet-darwin22-logs
++          path: |
++            out/sweet/logs/
++            out/sweet/tree/build/xnu/**/*.log
++          if-no-files-found: warn
+diff --git a/NOTES.md b/NOTES.md
+index 6b01b7d..5201e77 100644
+--- a/NOTES.md
++++ b/NOTES.md
+@@ -2,6 +2,34 @@
+ 
+ ## Current local device state (2026-10-21, read first)
+ 
++- **UEFI MENU PROTOTYPE SENT / DARWIN22 PATCH QUEUE COMPLETE (2026-10-21):**
++  phone was already in FASTBOOT; verified bundled SHA256SUMS, then
++  `fastboot boot research/unixnu-ios16-out/firmware-39636995649/Mu-sweet.img`
++  sent2168KB OKAY0.075s, BootingOKAY0.130s, no flash. Phone left fastboot and
++  no USB device appeared, so the firmware/menu ran far enough to leave the
++  bootloader; the actual on-screen UniXNU menu needs user confirmation. No
++  partition/root write and no iOS boot claim.
++  Kernel port: audited all51 pinned UniXNU XNU patches against XNU8796.141.3.
++  44 apply cumulatively (40 unchanged,4 Darwin22 replacements:
++  apple-only-cpu-tunables, external-archive-dependencies,
++  native-aes-personality, source-machine-layer). 7 deferred with reasons in
++  ports/UniXNU-sweet/kernel-port/skip.json (owner SystemOS cache, PGZ Darwin23
++  only, CoreEntitlements, freezer condition, SPTM,zzy/zzz dependents).
++  Reproducer tools/unixnu-kernel-port.py; report kernel-port/progress.json.
++  Staged queue is ports/UniXNU-sweet/patches/xnu (device module chosen by
++  UniXNU) and the pinned build script now uses the iOS16.0 deployment floor.
++  board.toml no longer gated as example and has the first ArmDTPlatform archive
++  builder. New CI .github/workflows/unixnu-kernel.yml: Linux patch gate plus
++  macOS-14 XNU compile with prelink intentionally skipped. NOT pushed/run yet,
++  no kernel compiled locally, no prelink and no hardware kernel test.
++  DarwinBoot submodule fetched at85332b3; its BootArgs.h is Darwin23-only for
++  the tail of the structure: iOS16 arm64 boot_args has CommandLine[608] and
++  bootFlags at0x32c, memSizeActual at0x334 (total0x33c), while DarwinBoot
++  writes1024 command-line bytes and places them at0x478. Needs a Darwin22
++  BootArgs variant before any kernel hand-off; do not boot a DarwinBoot image
++  built from the unmodified header.
++  No tests added/run beyond patch application checks.
++
+ - **FIRST UniXNU SWEET UEFI PROTOTYPE BUILD SUCCESS, NOT BOOTED:** CI39636995649
+   succeeded on4d353bf61d5dc254895014503550d4aeb66391a7. Artifacts downloaded
+   research/unixnu-ios16-out/firmware-39636995649; published SHA256 pass.
+diff --git a/ports/UniXNU-sweet/README.md b/ports/UniXNU-sweet/README.md
+index 1bc1e3d..882d803 100644
+--- a/ports/UniXNU-sweet/README.md
++++ b/ports/UniXNU-sweet/README.md
+@@ -76,16 +76,28 @@ The output name is SWEET_UEFI.fd (confirmed from its source packaging script).
+ NativePrelink's input parser also reads the selected iOS16 kernelcache:18
+ segments and239 prelinked components. No native kernel has been linked yet.
+ 
+-## First UEFI prototype built
++## First UEFI prototype built and sent
+ 
+ CI39636995649 succeeded on4d353bf after pinning setuptools80.9.0 for the
+ legacy build tools. Verified artifacts are in
+ research/unixnu-ios16-out/firmware-39636995649: Mu-sweet.img and SWEET_UEFI.fd.
+ The image contains the generic UniXNU application and registrar in the sweet
+-FV. It does not contain DarwinBoot or a native iOS16 kernel/payload. It has not
+-been booted on the phone. The compiled FD, ARM64 BootShim header and appended
+-DTB were inspected against the packed image, and published SHA256 checks pass.
+-See ../uefi-sweet/initial-build.json for exact hashes and header parameters.
++FV. It does not contain DarwinBoot or a native iOS16 kernel/payload.
++On 2026-10-21 it was sent with `fastboot boot` (temporary, no flash); the phone
++left fastboot. The on-screen menu result still needs the user's confirmation;
++the host saw no USB device afterwards. The compiled FD, ARM64 BootShim header
++and appended DTB were inspected against the packed image, and published SHA256
++checks pass. See ../uefi-sweet/initial-build.json for exact hashes and header
++parameters.
++
++## Darwin22 kernel patch queue
++
++The upstream 51-patch queue was audited against XNU 8796.141.3: 44 apply
++(4 with Darwin22 replacements in `kernel-port/`), 7 are deferred with reasons
++in `kernel-port/skip.json`. The staged `patches/xnu` and the iOS16 deployment
++floor are wired into the UniXNU device layout, and
++`.github/workflows/unixnu-kernel.yml` runs the first macOS compile without
++prelink. A clean patch application is not a compiled or bootable kernel.
+ 
+ The reference firmware DTB has matching SM7150 ID365 and generic board ID0;
+ the saved phone tree has board ID46. This difference is recorded for the first
+diff --git a/ports/UniXNU-sweet/board.toml b/ports/UniXNU-sweet/board.toml
+index 43bed86..50e9aa4 100644
+--- a/ports/UniXNU-sweet/board.toml
++++ b/ports/UniXNU-sweet/board.toml
+@@ -6,7 +6,10 @@ name = "sweet"
+ soc = "SM7150"
+ description = "Redmi Note 10 Pro / Pro Max (sweet/sweetin), iOS16 migration"
+ kit = "sweet"
+-example = true
++# The kernel step is now buildable from the Darwin22 patch queue below. The
++# board stays incomplete (no payload/DarwinBoot boot path, no UFS/GPU backend),
++# so do not describe its output as a bootable iOS16 port.
++example = false
+ 
+ [ipsw]
+ url = "https://updates.cdn-apple.com/2025FallFCS/fullrestores/122-77006/1158E502-D76D-4226-AA06-ED5E30CD1111/iPhone10,3,iPhone10,6_16.7.16_20H392_Restore.ipsw"
+@@ -20,6 +23,11 @@ fetch = ["KernelCache", "DeviceTree", "StaticTrustCache"]
+ 
+ [kernel]
+ defconfig = "sweet_ios16_defconfig"
++# First compile milestone: the generic DT platform only. ArmCpu, corecrypto,
++# UFS and the Adreno stack are added after this kernel builds.
++archives = [
++  "build-arm-driver.py ArmDTPlatform",
++]
+ 
+ [kernel.prelink]
+ # Decoded ordinary ARM64 Mach-O from the selected 20H392 restore identity.
+diff --git a/ports/UniXNU-sweet/kernel-port/README.md b/ports/UniXNU-sweet/kernel-port/README.md
+index 96dd25b..a89a0a0 100644
+--- a/ports/UniXNU-sweet/kernel-port/README.md
++++ b/ports/UniXNU-sweet/kernel-port/README.md
+@@ -1,18 +1,30 @@
+ # Darwin22 source adaptation
+ 
+-This directory stages replacements for the current UniXNU kernel patches on
+-XNU8796.141.3. It is not wired into the generic kernel build: that build still
+-needs a complete replacement patch module and matching archive/prelink scripts.
+-The board readiness flag remains set.
++UniXNU at `89801d6e9265ba9aa49e56de642565288d679f83` applies 51 XNU patches
++sorted from `patches/xnu`. The selected Apple source is XNU `8796.141.3`
++(`1b191cb5`, Darwin 22.6.0), while upstream targets XNU `10063`/Darwin 23.
+ 
+-The first upstream patch, apple-only-cpu-tunables, rejects the iOS16 start.s
+-context. Its replacement preserves the same non-Apple CPU guard using the
+-actual iOS16 source layout. The archive-dependency replacement targets
+-Darwin22's .unstripped link rule rather than Darwin23's .unstripped.noctf.
+-Source application was checked; no kernel was compiled or executed.
+-progress.json records the next unresolved patch. Do not
+-interpret a patch applying cleanly as a working4KiB kernel or driver.
++`progress.json` records the full audit. Every selected patch applies
++cumulatively to a pristine source tree:
+ 
+-Reference: UniXNU89801d6e9265ba9aa49e56de642565288d679f83 patches/xnu;
+-Apple XNU1b191cb58250d0705d8a51287127505aa4bc0789. The source patch retains
+-the Apple source's license and the upstream patch's attribution/provenance.
++- 44 apply: 40 unchanged upstream, 4 with replacement patches here.
++- 7 are deliberately deferred; `skip.json` records why for each.
++- `tools/unixnu-kernel-port.py` reproduces the check. It never compiles code.
++
++The four replacements are context/layout adaptations, not behavior changes:
++
++| Patch | Darwin22 difference |
++| --- | --- |
++| `apple-only-cpu-tunables.patch` | guards the actual iOS16 `start.s` MIDR/tunables block |
++| `external-archive-dependencies.patch` | targets `.unstripped`, the real Darwin22 link product (not `.noctf`) |
++| `native-aes-personality.patch` | inserts the personalities after the shorter iOS16 `KernelConfigTables.cpp` table |
++| `source-machine-layer.patch` | adds `CONFIG_APPLE_AMCC`, the missing `nos_arm_asm/nos_arm_pmap` bits, and gates the absent AMCC sources |
++
++The device's `../patches/xnu` is the staged queue that UniXNU assembles as
++`tree/patches/xnu`; it already contains the replacements and omits the deferred
++patches. `../scripts/build-xnu-4k-baseline.sh` is the pinned upstream build
++script with the deployment floor changed from iOS 17.0 to 16.0.
++
++Applying a patch is not a compile, a link, a prelink or a hardware result. The
++first macOS kernel build is in `.github/workflows/unixnu-kernel.yml`; prelink
++against the 20H392 kernelcache is intentionally not part of that first run.
+diff --git a/ports/UniXNU-sweet/kernel-port/native-aes-personality.patch b/ports/UniXNU-sweet/kernel-port/native-aes-personality.patch
+new file mode 100644
+index 0000000..6fa7465
+--- /dev/null
++++ b/ports/UniXNU-sweet/kernel-port/native-aes-personality.patch
+@@ -0,0 +1,54 @@
++diff --git a/iokit/KernelConfigTables.cpp b/iokit/KernelConfigTables.cpp
++--- a/iokit/KernelConfigTables.cpp
+++++ b/iokit/KernelConfigTables.cpp
++@@ -54,6 +54,50 @@
++     "   {"
++     "     'IOClass'         = IOPanicPlatform;"
++     "     'IOProviderClass' = IOPlatformExpertDevice;"
++     "     'IOProbeScore'    = 0:32;"
++     "   }"
+++#if defined(XNU_NATIVE_AES) && XNU_NATIVE_AES
+++    "   ,{"
+++    "     'IOClass'         = NativeAES;"
+++    "     'IOProviderClass' = IOResources;"
+++    "     'IOResourceMatch' = IOBSD;"
+++    "     'IOProbeScore'    = 1000:32;"
+++    "   }"
+++#endif
+++#if defined(XNU_NATIVE_VIRTIO_BLOCK) && XNU_NATIVE_VIRTIO_BLOCK
+++    "   ,{"
+++    "     'IOClass'         = NativeVirtioBlock;"
+++    "     'IOProviderClass' = IOPlatformDevice;"
+++    "     'IOProbeScore'    = 1000:32;"
+++    "   }"
+++#endif
+++#if defined(XNU_NATIVE_VIRTIO_CONSOLE) && XNU_NATIVE_VIRTIO_CONSOLE
+++    "   ,{"
+++    "     'IOClass'         = NativeVirtioConsole;"
+++    "     'IOProviderClass' = IOPlatformDevice;"
+++    "     'IOProbeScore'    = 1000:32;"
+++    "   }"
+++#endif
+++#if defined(XNU_NATIVE_RAM_BLOCK) && XNU_NATIVE_RAM_BLOCK
+++    "   ,{"
+++    "     'IOClass'         = NativeRamBlock;"
+++    "     'IOMatchCategory' = NativeRamBlock;"
+++    "     'IOProviderClass' = IOResources;"
+++    "     'IOResourceMatch' = IOBSD;"
+++    "     'IOProbeScore'    = 1000:32;"
+++    "   }"
+++#endif
+++#if defined(XNU_NATIVE_UFS) && XNU_NATIVE_UFS
+++    "   ,{"
+++    "     'IOClass'         = NativeUfs;"
+++    "     'IOProviderClass' = IOPlatformDevice;"
+++    "     'IOProbeScore'    = 1000:32;"
+++    "   }"
+++    "   ,{"
+++    "     'IOClass'         = NativeUfs;"
+++    "     'IOMatchCategory' = NativeUfsRoot;"
+++    "     'IOProviderClass' = IOPlatformExpertDevice;"
+++    "     'IOProbeScore'    = 500:32;"
+++    "   }"
+++#endif
++     ")";
+diff --git a/ports/UniXNU-sweet/kernel-port/progress.json b/ports/UniXNU-sweet/kernel-port/progress.json
+index 3e5c2e3..9c0d446 100644
+--- a/ports/UniXNU-sweet/kernel-port/progress.json
++++ b/ports/UniXNU-sweet/kernel-port/progress.json
+@@ -1,79 +1,244 @@
+ {
+-  "xnu_revision": "1b191cb58250d0705d8a51287127505aa4bc0789",
+-  "unixnu_revision": "89801d6e9265ba9aa49e56de642565288d679f83",
+-  "order": "sorted patches/xnu, stops at first unresolved rejection",
++  "xnu": {
++    "revision": "1b191cb58250d0705d8a51287127505aa4bc0789",
++    "version": "8796.141.3",
++    "darwin": "22.6.0",
++    "archive_sha256": "6f725962608800b26767242a0a19b8ed1c79e2bf1a0f659506f15ab0737c5acc",
++    "source_url": "https://github.com/apple-oss-distributions/xnu.git"
++  },
++  "unixnu": {
++    "revision": "89801d6e9265ba9aa49e56de642565288d679f83",
++    "patches": "patches/xnu"
++  },
++  "queue": {
++    "total": 51,
++    "applied": 44,
++    "darwin22_replacements": 4,
++    "deferred": 7,
++    "rejected": 0
++  },
++  "replacements": [
++    "apple-only-cpu-tunables.patch",
++    "external-archive-dependencies.patch",
++    "native-aes-personality.patch",
++    "source-machine-layer.patch"
++  ],
++  "verification": "Each selected patch applies cumulatively with git apply to a pristine XNU 8796.141.3 tree.",
++  "compiled": false,
++  "prelinked": false,
++  "runtime_verified": false,
++  "tests_run": false,
+   "results": [
+     {
+       "patch": "apple-only-cpu-tunables.patch",
+-      "state": "iOS16 replacement staged and applied"
++      "state": "applied with Darwin22 replacement"
+     },
+     {
+       "patch": "architectural-timer-entry.patch",
+-      "state": "upstream applied to iOS16"
++      "state": "applied upstream"
+     },
+     {
+       "patch": "armvirt-platform-personality.patch",
+-      "state": "upstream applied to iOS16"
++      "state": "applied upstream"
+     },
+     {
+       "patch": "cxx-flag-dependencies.patch",
+-      "state": "upstream applied to iOS16"
++      "state": "applied upstream"
+     },
+     {
+       "patch": "disabled-deferred-reclaim.patch",
+-      "state": "upstream applied to iOS16"
++      "state": "applied upstream"
+     },
+     {
+       "patch": "external-archive-dependencies.patch",
+-      "state": "iOS16 replacement staged and applied"
++      "state": "applied with Darwin22 replacement"
+     },
+     {
+       "patch": "kernel-sdk-root.patch",
+-      "state": "upstream applied to iOS16"
++      "state": "applied upstream"
+     },
+     {
+       "patch": "local-availability.patch",
+-      "state": "upstream applied to iOS16"
++      "state": "applied upstream"
+     },
+     {
+       "patch": "mockfs-intermediate-lookup.patch",
+-      "state": "upstream applied to iOS16"
++      "state": "applied upstream"
+     },
+     {
+       "patch": "mockfs-memory-device-width.patch",
+-      "state": "upstream applied to iOS16"
++      "state": "applied upstream"
+     },
+     {
+       "patch": "mockfs-statfs.patch",
+-      "state": "upstream applied to iOS16"
++      "state": "applied upstream"
+     },
+     {
+       "patch": "mockfs-test-file.patch",
+-      "state": "upstream applied to iOS16"
++      "state": "applied upstream"
+     },
+     {
+       "patch": "mockfs-typed-allocation.patch",
+-      "state": "upstream applied to iOS16"
++      "state": "applied upstream"
+     },
+     {
+       "patch": "native-4k-bootstrap-capacity.patch",
+-      "state": "upstream applied to iOS16"
++      "state": "applied upstream"
+     },
+     {
+       "patch": "native-4k-signature-hash-cache.patch",
+-      "state": "upstream applied to iOS16"
++      "state": "applied upstream"
+     },
+     {
+       "patch": "native-4k-user-abi.patch",
+-      "state": "upstream applied to iOS16"
++      "state": "applied upstream"
+     },
+     {
+       "patch": "native-aes-personality.patch",
+-      "state": "needs port",
+-      "diagnostic": "error: patch failed: iokit/KernelConfigTables.cpp:61\nerror: iokit/KernelConfigTables.cpp: patch does not apply"
++      "state": "applied with Darwin22 replacement"
++    },
++    {
++      "patch": "native-arm-pan.patch",
++      "state": "applied upstream"
++    },
++    {
++      "patch": "native-dt-panic-region.patch",
++      "state": "applied upstream"
++    },
++    {
++      "patch": "native-priv-work-interval.patch",
++      "state": "applied upstream"
++    },
++    {
++      "patch": "native-quiet-managed-page-report.patch",
++      "state": "applied upstream"
++    },
++    {
++      "patch": "native-smp-secondary.patch",
++      "state": "applied upstream"
++    },
++    {
++      "patch": "native-trust-cache-runtime.patch",
++      "state": "applied upstream"
++    },
++    {
++      "patch": "native-union-getattrlistbulk.patch",
++      "state": "applied upstream"
++    },
++    {
++      "patch": "native-work-interval-soft-fail.patch",
++      "state": "applied upstream"
++    },
++    {
++      "patch": "native-work-interval-trace.patch",
++      "state": "applied upstream"
++    },
++    {
++      "patch": "non-apple-cache-monitor.patch",
++      "state": "applied upstream"
++    },
++    {
++      "patch": "non-apple-iommu-bootstrap.patch",
++      "state": "applied upstream"
++    },
++    {
++      "patch": "non-apple-pmap-field.patch",
++      "state": "applied upstream"
++    },
++    {
++      "patch": "null-root-media.patch",
++      "state": "applied upstream"
++    },
++    {
++      "patch": "offline-component-load-probes.patch",
++      "state": "applied upstream"
++    },
++    {
++      "patch": "offline-legacy-start.patch",
++      "state": "applied upstream"
++    },
++    {
++      "patch": "offline-native-gpu-broker.patch",
++      "state": "applied upstream"
++    },
++    {
++      "patch": "offline-owner-boot-manifest.patch",
++      "state": "applied upstream"
++    },
++    {
++      "patch": "offline-owner-cache-carrier.patch",
++      "state": "applied upstream"
++    },
++    {
++      "patch": "offline-owner-root-binding-audit.patch",
++      "state": "applied upstream"
++    },
++    {
++      "patch": "offline-owner-root-crypto-probe.patch",
++      "state": "applied upstream"
++    },
++    {
++      "patch": "offline-owner-systemos-mount.patch",
++      "state": "deferred",
++      "reason": "Owner-project SystemOS cache mount (XNU_OWNER_* APFS UUIDs, dyld preboot cache). Not part of the first sweet bring-up, which mounts the existing HFS+ root. Needs a full Darwin22 rewrite, not a context fix."
++    },
++    {
++      "patch": "offline-owner-z-air-init.patch",
++      "state": "applied upstream"
++    },
++    {
++      "patch": "offline-pgz-alignment-probe.patch",
++      "state": "applied upstream"
++    },
++    {
++      "patch": "pgz-aligned-validation.patch",
++      "state": "deferred",
++      "reason": "Patches zone_id_require_aligned(), which does not exist in XNU 8796. Darwin23-only hardening; not required to build or boot."
++    },
++    {
++      "patch": "public-entitlements-header.patch",
++      "state": "deferred",
++      "reason": "Switches CodeSignature/Entitlements.h to CoreEntitlements, which Darwin22 does not use. Darwin23-only source layout."
++    },
++    {
++      "patch": "published-freezer-condition.patch",
++      "state": "deferred",
++      "reason": "Edits FREEZE_ENABLED_DEFAULT, absent from XNU 8796. Darwin23-only memorystatus code."
++    },
++    {
++      "patch": "sheng-platform-power.patch",
++      "state": "applied upstream"
++    },
++    {
++      "patch": "source-corecrypto14-bootstrap.patch",
++      "state": "applied upstream"
++    },
++    {
++      "patch": "source-machine-layer.patch",
++      "state": "applied with Darwin22 replacement"
++    },
++    {
++      "patch": "source-pthread-bootstrap.patch",
++      "state": "applied upstream"
++    },
++    {
++      "patch": "zzw-native-adreno-sandbox-grant.patch",
++      "state": "applied upstream"
++    },
++    {
++      "patch": "zzx-pmap-sync-64bit-pa.patch",
++      "state": "deferred",
++      "reason": "Edits osfmk/arm64/sptm/pmap/pmap.c; SPTM does not exist in Darwin22."
++    },
++    {
++      "patch": "zzy-native-gpu-addon-mount.patch",
++      "state": "deferred",
++      "reason": "Depends on the offline-owner kern_exec.c context (SystemOS cache mount). Deferred with that feature."
++    },
++    {
++      "patch": "zzz-boot-progress.patch",
++      "state": "deferred",
++      "reason": "Depends on the offline-owner kern_exec.c context and Darwin23 sleh.c/Makefile layout. Optional observation layer; deferred."
+     }
+-  ],
+-  "compiled": false,
+-  "runtime_verified": false,
+-  "tests_run": false
++  ]
+ }
+diff --git a/ports/UniXNU-sweet/kernel-port/skip.json b/ports/UniXNU-sweet/kernel-port/skip.json
+new file mode 100644
+index 0000000..6a800b0
+--- /dev/null
++++ b/ports/UniXNU-sweet/kernel-port/skip.json
+@@ -0,0 +1,12 @@
++{
++  "comment": "Patches of the pinned UniXNU queue that are deliberately not applied to Darwin22. Each entry records why. They are not replaced by a fake no-op: the staging script removes them from the build queue.",
++  "patches": {
++    "offline-owner-systemos-mount.patch": "Owner-project SystemOS cache mount (XNU_OWNER_* APFS UUIDs, dyld preboot cache). Not part of the first sweet bring-up, which mounts the existing HFS+ root. Needs a full Darwin22 rewrite, not a context fix.",
++    "pgz-aligned-validation.patch": "Patches zone_id_require_aligned(), which does not exist in XNU 8796. Darwin23-only hardening; not required to build or boot.",
++    "public-entitlements-header.patch": "Switches CodeSignature/Entitlements.h to CoreEntitlements, which Darwin22 does not use. Darwin23-only source layout.",
++    "published-freezer-condition.patch": "Edits FREEZE_ENABLED_DEFAULT, absent from XNU 8796. Darwin23-only memorystatus code.",
++    "zzy-native-gpu-addon-mount.patch": "Depends on the offline-owner kern_exec.c context (SystemOS cache mount). Deferred with that feature.",
++    "zzx-pmap-sync-64bit-pa.patch": "Edits osfmk/arm64/sptm/pmap/pmap.c; SPTM does not exist in Darwin22.",
++    "zzz-boot-progress.patch": "Depends on the offline-owner kern_exec.c context and Darwin23 sleh.c/Makefile layout. Optional observation layer; deferred."
++  }
++}
+diff --git a/ports/UniXNU-sweet/kernel-port/source-machine-layer.patch b/ports/UniXNU-sweet/kernel-port/source-machine-layer.patch
+new file mode 100644
+index 0000000..c95a78f
+--- /dev/null
++++ b/ports/UniXNU-sweet/kernel-port/source-machine-layer.patch
+@@ -0,0 +1,38 @@
++diff --git a/config/MASTER b/config/MASTER
++--- a/config/MASTER
+++++ b/config/MASTER
++@@ -320,6 +320,8 @@ options   CONFIG_PMAP_PPL			# <config_pmap_ppl>
++ # Compile XNU with PPL support.
++ options   CONFIG_PMAP_PPL			# <config_pmap_ppl>
++ 
+++options   CONFIG_APPLE_AMCC			# <apple_amcc>
+++
++ options   NOS_ARM_ASM			# <nos_arm_asm>
++ options   NOS_ARM_PMAP			# <nos_arm_pmap>
++ 
++diff --git a/config/MASTER.arm64.bcm2837 b/config/MASTER.arm64.bcm2837
++--- a/config/MASTER.arm64.bcm2837
+++++ b/config/MASTER.arm64.bcm2837
++@@ -16,7 +16,7 @@
++ #  Standard Apple OS Configurations:
++ #  -------- ----- -- ---------------
++ #
++-#  KERNEL_BASE =    [ arm64 config_pmap_ppl xsmall msgb_small config_embedded config_requires_u32_munging ARM_EXTRAS_BASE ]
+++#  KERNEL_BASE =    [ arm64 config_pmap_ppl nos_arm_asm nos_arm_pmap xsmall msgb_small config_embedded config_requires_u32_munging ARM_EXTRAS_BASE ]
++ #  KERNEL_RELEASE = [ KERNEL_BASE ]
++ #  KERNEL_DEV =     [ KERNEL_BASE development mach_assert config_xnupost proc_ref_debug ]
++ #  KERNEL_DEBUG =   [ KERNEL_BASE debug mach_assert config_xnupost config_waitq_stats config_workloop_debug ]
++diff --git a/osfmk/conf/files.arm64 b/osfmk/conf/files.arm64
++--- a/osfmk/conf/files.arm64
+++++ b/osfmk/conf/files.arm64
++@@ -25,8 +25,8 @@ osfmk/arm64/WKdmCompress_4k.s	standard
++ osfmk/arm64/WKdmData.s		standard
++ osfmk/arm64/lz4_decode_arm64.s  standard
++ osfmk/arm64/lz4_encode_arm64.s  standard
++-osfmk/arm64/amcc_rorgn_ppl.c optional nos_arm_asm config_pmap_ppl
++-osfmk/arm64/amcc_rorgn_common.c optional nos_arm_asm
+++osfmk/arm64/amcc_rorgn_ppl.c optional nos_arm_asm config_pmap_ppl apple_amcc
+++osfmk/arm64/amcc_rorgn_common.c optional nos_arm_asm apple_amcc
++ osfmk/arm64/bcopy.s standard
++ osfmk/arm64/bzero.s standard
++ osfmk/arm/caches.c		standard
+diff --git a/ports/UniXNU-sweet/patches/xnu/apple-only-cpu-tunables.patch b/ports/UniXNU-sweet/patches/xnu/apple-only-cpu-tunables.patch
+new file mode 100644
+index 0000000..6bc7ec0
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/apple-only-cpu-tunables.patch
+@@ -0,0 +1,25 @@
++--- a/osfmk/arm64/start.s
+++++ b/osfmk/arm64/start.s
++@@ -33,7 +33,9 @@
++ #include <mach_assert.h>
++ #include <machine/asm.h>
++ #include "assym.s"
+++#if defined(APPLE_ARM64_ARCH_FAMILY)
++ #include <arm64/tunables/tunables.s>
+++#endif
++ #include <arm64/exception_asm.h>
++ 
++ #if __ARM_KERNEL_PROTECT__
++@@ -774,10 +776,12 @@
++ 	// Initialization common to all non-virtual Apple targets
++ #endif  // APPLE_ARM64_ARCH_FAMILY
++ 
+++#if defined(APPLE_ARM64_ARCH_FAMILY)
++ 	// Read MIDR before start of per-SoC tunables
++ 	mrs x12, MIDR_EL1
++ 
++ 	APPLY_TUNABLES x12, x13, x14
+++#endif
++ 
++ 
++ #if HAS_CLUSTER
+diff --git a/ports/UniXNU-sweet/patches/xnu/architectural-timer-entry.patch b/ports/UniXNU-sweet/patches/xnu/architectural-timer-entry.patch
+new file mode 100644
+index 0000000..635ed0d
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/architectural-timer-entry.patch
+@@ -0,0 +1,11 @@
++--- a/osfmk/arm64/start.s
+++++ b/osfmk/arm64/start.s
++@@ -697,7 +697,7 @@
++ 	dsb		ish
++ 
++ 
++-#if defined(BCM2837)
+++#if defined(BCM2837) && (!defined(XNU_NATIVE_ARCH_TIMER) || !XNU_NATIVE_ARCH_TIMER)
++ 	// Setup timer interrupt routing; must be done before MMU is enabled
++ 	mrs		x15, MPIDR_EL1						// Load MPIDR to get CPU number
++ 	and		x15, x15, #0xFF						// CPU number is in MPIDR Affinity Level 0
+diff --git a/ports/UniXNU-sweet/patches/xnu/armvirt-platform-personality.patch b/ports/UniXNU-sweet/patches/xnu/armvirt-platform-personality.patch
+new file mode 100644
+index 0000000..fefd299
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/armvirt-platform-personality.patch
+@@ -0,0 +1,28 @@
++diff --git a/iokit/KernelConfigTables.cpp b/iokit/KernelConfigTables.cpp
++index 559a9db..080332e 100644
++--- a/iokit/KernelConfigTables.cpp
+++++ b/iokit/KernelConfigTables.cpp
++@@ -35,6 +35,23 @@
++ const char * gIOKernelConfigTables =
++     "("
++     "   {"
+++    "     'IOClass'         = ArmCpu;"
+++    "     'IOProviderClass' = IOPlatformDevice;"
+++    "     'IOProbeScore'    = 2000:32;"
+++    "   },"
+++    "   {"
+++    "     'IOClass'         = ArmVirtPlatform;"
+++    "     'IOProviderClass' = IOPlatformExpertDevice;"
+++    "     'IONameMatch'     = 'linux,dummy-virt';"
+++    "     'IOProbeScore'    = 10000:32;"
+++    "   },"
+++    "   {"
+++    "     'IOClass'         = ArmDTPlatform;"
+++    "     'IOProviderClass' = IOPlatformExpertDevice;"
+++    "     'IONameMatch'     = 'device-tree';"
+++    "     'IOProbeScore'    = 5000:32;"
+++    "   },"
+++    "   {"
++     "     'IOClass'         = IOPanicPlatform;"
++     "     'IOProviderClass' = IOPlatformExpertDevice;"
++     "     'IOProbeScore'    = 0:32;"
+diff --git a/ports/UniXNU-sweet/patches/xnu/cxx-flag-dependencies.patch b/ports/UniXNU-sweet/patches/xnu/cxx-flag-dependencies.patch
+new file mode 100644
+index 0000000..08adcde
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/cxx-flag-dependencies.patch
+@@ -0,0 +1,104 @@
++diff --git a/bsd/conf/Makefile.template b/bsd/conf/Makefile.template
++index 1e2c5d1..882c1c9 100644
++--- a/bsd/conf/Makefile.template
+++++ b/bsd/conf/Makefile.template
++@@ -544,7 +544,7 @@ $(COBJS): .CFLAGS
++ 	$(_v)$(REPLACECONTENTS) $@ $(KCC) $(CFLAGS) $(INCFLAGS)
++ $(CXXOBJS): .CXXFLAGS
++ .CXXFLAGS: ALWAYS
++-	$(_v)$(REPLACECONTENTS) $@ $(KC++) $(CXXFLAGS) $(INCFLAGS)
+++	$(_v)$(REPLACECONTENTS) $@ $(KC++) $(CFLAGS) $(CXXFLAGS) $(INCFLAGS)
++ $(SOBJS): .SFLAGS
++ .SFLAGS: ALWAYS
++ 	$(_v)$(REPLACECONTENTS) $@ $(S_KCC) $(SFLAGS) $(INCFLAGS)
++diff --git a/iokit/conf/Makefile.template b/iokit/conf/Makefile.template
++index 2b3b974..c300580 100644
++--- a/iokit/conf/Makefile.template
+++++ b/iokit/conf/Makefile.template
++@@ -209,7 +209,7 @@ $(COBJS): .CFLAGS
++ 	$(_v)$(REPLACECONTENTS) $@ $(KCC) $(CFLAGS) $(INCFLAGS)
++ $(CXXOBJS): .CXXFLAGS
++ .CXXFLAGS: ALWAYS
++-	$(_v)$(REPLACECONTENTS) $@ $(KC++) $(CXXFLAGS) $(INCFLAGS)
+++	$(_v)$(REPLACECONTENTS) $@ $(KC++) $(CFLAGS) $(CXXFLAGS) $(INCFLAGS)
++ $(SOBJS): .SFLAGS
++ .SFLAGS: ALWAYS
++ 	$(_v)$(REPLACECONTENTS) $@ $(S_KCC) $(SFLAGS) $(INCFLAGS)
++diff --git a/libkern/conf/Makefile.template b/libkern/conf/Makefile.template
++index f0c8a72..c382184 100644
++--- a/libkern/conf/Makefile.template
+++++ b/libkern/conf/Makefile.template
++@@ -144,7 +144,7 @@ $(COBJS): .CFLAGS
++ 	$(_v)$(REPLACECONTENTS) $@ $(KCC) $(CFLAGS) $(INCFLAGS)
++ $(CXXOBJS): .CXXFLAGS
++ .CXXFLAGS: ALWAYS
++-	$(_v)$(REPLACECONTENTS) $@ $(KC++) $(CXXFLAGS) $(INCFLAGS)
+++	$(_v)$(REPLACECONTENTS) $@ $(KC++) $(CFLAGS) $(CXXFLAGS) $(INCFLAGS)
++ $(SOBJS): .SFLAGS
++ .SFLAGS: ALWAYS
++ 	$(_v)$(REPLACECONTENTS) $@ $(S_KCC) $(SFLAGS) $(INCFLAGS)
++diff --git a/libsa/conf/Makefile.template b/libsa/conf/Makefile.template
++index b20de6a..5a21d5d 100644
++--- a/libsa/conf/Makefile.template
+++++ b/libsa/conf/Makefile.template
++@@ -59,7 +59,7 @@ $(COBJS): .CFLAGS
++ 	$(_v)$(REPLACECONTENTS) $@ $(KCC) $(CFLAGS) $(INCFLAGS)
++ $(CXXOBJS): .CXXFLAGS
++ .CXXFLAGS: ALWAYS
++-	$(_v)$(REPLACECONTENTS) $@ $(KC++) $(CXXFLAGS) $(INCFLAGS)
+++	$(_v)$(REPLACECONTENTS) $@ $(KC++) $(CFLAGS) $(CXXFLAGS) $(INCFLAGS)
++ $(SOBJS): .SFLAGS
++ .SFLAGS: ALWAYS
++ 	$(_v)$(REPLACECONTENTS) $@ $(S_KCC) $(SFLAGS) $(INCFLAGS)
++diff --git a/osfmk/conf/Makefile.template b/osfmk/conf/Makefile.template
++index 5126a45..4d7c60b 100644
++--- a/osfmk/conf/Makefile.template
+++++ b/osfmk/conf/Makefile.template
++@@ -389,7 +389,7 @@ $(COBJS): .CFLAGS
++ 	$(_v)$(REPLACECONTENTS) $@ $(KCC) $(CFLAGS) $(INCFLAGS)
++ $(CXXOBJS): .CXXFLAGS
++ .CXXFLAGS: ALWAYS
++-	$(_v)$(REPLACECONTENTS) $@ $(KC++) $(CXXFLAGS) $(INCFLAGS)
+++	$(_v)$(REPLACECONTENTS) $@ $(KC++) $(CFLAGS) $(CXXFLAGS) $(INCFLAGS)
++ $(SOBJS): .SFLAGS
++ .SFLAGS: ALWAYS
++ 	$(_v)$(REPLACECONTENTS) $@ $(S_KCC) $(SFLAGS) $(INCFLAGS)
++diff --git a/pexpert/conf/Makefile.template b/pexpert/conf/Makefile.template
++index 2d65891..30b79ba 100644
++--- a/pexpert/conf/Makefile.template
+++++ b/pexpert/conf/Makefile.template
++@@ -78,7 +78,7 @@ $(COBJS): .CFLAGS
++ 	$(_v)$(REPLACECONTENTS) $@ $(KCC) $(CFLAGS) $(INCFLAGS)
++ $(CXXOBJS): .CXXFLAGS
++ .CXXFLAGS: ALWAYS
++-	$(_v)$(REPLACECONTENTS) $@ $(KC++) $(CXXFLAGS) $(INCFLAGS)
+++	$(_v)$(REPLACECONTENTS) $@ $(KC++) $(CFLAGS) $(CXXFLAGS) $(INCFLAGS)
++ $(SOBJS): .SFLAGS
++ .SFLAGS: ALWAYS
++ 	$(_v)$(REPLACECONTENTS) $@ $(S_KCC) $(SFLAGS) $(INCFLAGS)
++diff --git a/san/conf/Makefile.template b/san/conf/Makefile.template
++index 349746a..0902e06 100644
++--- a/san/conf/Makefile.template
+++++ b/san/conf/Makefile.template
++@@ -55,7 +55,7 @@ $(COBJS): .CFLAGS
++ 	$(_v)$(REPLACECONTENTS) $@ $(KCC) $(CFLAGS) $(INCFLAGS)
++ $(CXXOBJS): .CXXFLAGS
++ .CXXFLAGS: ALWAYS
++-	$(_v)$(REPLACECONTENTS) $@ $(KC++) $(CXXFLAGS) $(INCFLAGS)
+++	$(_v)$(REPLACECONTENTS) $@ $(KC++) $(CFLAGS) $(CXXFLAGS) $(INCFLAGS)
++ $(SOBJS): .SFLAGS
++ .SFLAGS: ALWAYS
++ 	$(_v)$(REPLACECONTENTS) $@ $(S_KCC) $(SFLAGS) $(INCFLAGS)
++diff --git a/security/conf/Makefile.template b/security/conf/Makefile.template
++index 67b6106..308d638 100644
++--- a/security/conf/Makefile.template
+++++ b/security/conf/Makefile.template
++@@ -81,7 +81,7 @@ $(COBJS): .CFLAGS
++ 	$(_v)$(REPLACECONTENTS) $@ $(KCC) $(CFLAGS) $(INCFLAGS)
++ $(CXXOBJS): .CXXFLAGS
++ .CXXFLAGS: ALWAYS
++-	$(_v)$(REPLACECONTENTS) $@ $(KC++) $(CXXFLAGS) $(INCFLAGS)
+++	$(_v)$(REPLACECONTENTS) $@ $(KC++) $(CFLAGS) $(CXXFLAGS) $(INCFLAGS)
++ $(SOBJS): .SFLAGS
++ .SFLAGS: ALWAYS
++ 	$(_v)$(REPLACECONTENTS) $@ $(S_KCC) $(SFLAGS) $(INCFLAGS)
+diff --git a/ports/UniXNU-sweet/patches/xnu/disabled-deferred-reclaim.patch b/ports/UniXNU-sweet/patches/xnu/disabled-deferred-reclaim.patch
+new file mode 100644
+index 0000000..3b1ae40
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/disabled-deferred-reclaim.patch
+@@ -0,0 +1,11 @@
++diff --git a/osfmk/vm/vm_user.c b/osfmk/vm/vm_user.c
++--- a/osfmk/vm/vm_user.c
+++++ b/osfmk/vm/vm_user.c
++@@ -4503,7 +4503,6 @@
++ 	(void) task;
++ 	(void) address;
++ 	(void) size;
++-	(void) indices;
++ 	return KERN_NOT_SUPPORTED;
++ #endif /* CONFIG_DEFERRED_RECLAIM */
++ }
+diff --git a/ports/UniXNU-sweet/patches/xnu/external-archive-dependencies.patch b/ports/UniXNU-sweet/patches/xnu/external-archive-dependencies.patch
+new file mode 100644
+index 0000000..94cbe40
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/external-archive-dependencies.patch
+@@ -0,0 +1,12 @@
++--- a/makedefs/MakeInc.kernel
+++++ b/makedefs/MakeInc.kernel
++@@ -143,6 +143,9 @@
++ 	$(_v)$(LIBTOOL) -static -csD -filelist link.filelist -o $@
++ 	$(_v)$(LN) $(call function_convert_build_config_to_objdir,$(CURRENT_BUILD_CONFIG))/lib$(KERNEL_FILE_NAME).a $(OBJROOT)/lib$(KERNEL_FILE_NAME).a
++ endif
+++
+++# Explicit external archives participate in incremental relinking (Darwin22 target).
+++$(TARGET)/$(KERNEL_FILE_NAME).unstripped: $(XNU_EXTERNAL_KERNEL_ARCHIVES)
++ 
++ $(TARGET)/$(KERNEL_FILE_NAME).unstripped: $(addprefix $(TARGET)/,$(foreach component,$(COMPONENT_LIST),$(component)/$(CURRENT_KERNEL_CONFIG)/$(component).filelist)) lastkerneldataconst.o lastkernelconstructor.o nonlto.o $(SRCROOT)/config/version.c $(SRCROOT)/config/MasterVersion $(LDFILES_KERNEL_ONLY) .LDFLAGS $(filter %/MakeInc.kernel,$(MAKEFILE_LIST))
++ 	$(_v)${MAKE} -f $(firstword $(MAKEFILE_LIST)) version.o
+diff --git a/ports/UniXNU-sweet/patches/xnu/kernel-sdk-root.patch b/ports/UniXNU-sweet/patches/xnu/kernel-sdk-root.patch
+new file mode 100644
+index 0000000..81826e4
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/kernel-sdk-root.patch
+@@ -0,0 +1,25 @@
++diff --git a/makedefs/MakeInc.def b/makedefs/MakeInc.def
++index c66add1..3e1121d 100644
++--- a/makedefs/MakeInc.def
+++++ b/makedefs/MakeInc.def
++@@ -667,7 +667,8 @@ LDFLAGS_KERNEL_GEN = \
++ 	-Wl,-headerpad,152
++ 
++ # LDFLAGS_KERNEL_SDK	= -L$(SDKROOT)/usr/local/lib/kernel -lfirehose_kernel
++-LDFLAGS_KERNEL_SDK	= -L$(SDKROOT)/usr/local/lib/kernel -L$(SDKROOT)/usr/local/lib/kernel/platform
+++export KERNEL_SDKROOT ?= $(SDKROOT)
+++LDFLAGS_KERNEL_SDK	= -L$(KERNEL_SDKROOT)/usr/local/lib/kernel -L$(KERNEL_SDKROOT)/usr/local/lib/kernel/platform
++ 
++ LDFLAGS_KERNEL_RELEASE	=
++ LDFLAGS_KERNEL_DEVELOPMENT =
++@@ -911,8 +912,8 @@ INCFLAGS_IMPORT	= $(patsubst %, -I$(OBJROOT)/EXPORT_HDRS/%, $(COMPONENT_IMPORT_L
++ INCFLAGS_EXTERN	= -I$(SRCROOT)/EXTERNAL_HEADERS
++ INCFLAGS_GEN	= -I$(SRCROOT)/$(COMPONENT) -I$(OBJROOT)/EXPORT_HDRS/$(COMPONENT)
++ INCFLAGS_LOCAL	= -I.
++-INCFLAGS_SDK	= -I$(SDKROOT)/usr/local/include/kernel
++-INCFLAGS_PLATFORM = -I$(SDKROOT)/$(KPINCDIR)/platform
+++INCFLAGS_SDK	= -I$(KERNEL_SDKROOT)/usr/local/include/kernel -I$(KERNEL_SDKROOT)/usr/local/include
+++INCFLAGS_PLATFORM = -I$(KERNEL_SDKROOT)/$(KPINCDIR)/platform
++ 
++ INCFLAGS	= $(INCFLAGS_LOCAL) $(INCFLAGS_GEN) $(INCFLAGS_IMPORT) $(INCFLAGS_EXTERN) $(INCFLAGS_MAKEFILE) $(INCFLAGS_SDK) $(INCFLAGS_PLATFORM)
++ 
+diff --git a/ports/UniXNU-sweet/patches/xnu/local-availability.patch b/ports/UniXNU-sweet/patches/xnu/local-availability.patch
+new file mode 100644
+index 0000000..4d1708a
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/local-availability.patch
+@@ -0,0 +1,12 @@
++diff --git a/bsd/sys/make_symbol_aliasing.sh b/bsd/sys/make_symbol_aliasing.sh
++--- a/bsd/sys/make_symbol_aliasing.sh
+++++ b/bsd/sys/make_symbol_aliasing.sh
++@@ -34,7 +34,7 @@
++ SDKROOT="$1"
++ OUTPUT="$2"
++ 
++-AVAILABILITY_PL="${SDKROOT}/${DRIVERKITROOT}/usr/local/libexec/availability.pl"
+++AVAILABILITY_PL="${XNU_AVAILABILITY_PL:-${SDKROOT}/${DRIVERKITROOT}/usr/local/libexec/availability.pl}"
++ 
++ if [ ! -x "${AVAILABILITY_PL}" ] ; then
++     echo "Unable to locate ${AVAILABILITY_PL} (or not executable)" >&2
+diff --git a/ports/UniXNU-sweet/patches/xnu/mockfs-intermediate-lookup.patch b/ports/UniXNU-sweet/patches/xnu/mockfs-intermediate-lookup.patch
+new file mode 100644
+index 0000000..c9b33e9
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/mockfs-intermediate-lookup.patch
+@@ -0,0 +1,11 @@
++--- a/bsd/miscfs/mockfs/mockfs_vnops.c
+++++ b/bsd/miscfs/mockfs/mockfs_vnops.c
++@@ -108,7 +108,7 @@
++ 	fsnode = (mockfs_fsnode_t) dvp->v_data;
++ 	target_fsnode = NULL;
++ 
++-	if ((op == LOOKUP) && (fsnode->type == MOCKFS_ROOT)) {
+++	if ((op == LOOKUP || !(cnp->cn_flags & ISLASTCN)) && (fsnode->type == MOCKFS_ROOT)) {
++ 		/*
++ 		 * Okay, we're looking in the root directory, so we aren't necessarily
++ 		 *   going to fail.  What are we looking for?
+diff --git a/ports/UniXNU-sweet/patches/xnu/mockfs-memory-device-width.patch b/ports/UniXNU-sweet/patches/xnu/mockfs-memory-device-width.patch
+new file mode 100644
+index 0000000..cef7849
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/mockfs-memory-device-width.patch
+@@ -0,0 +1,18 @@
++diff --git a/bsd/miscfs/mockfs/mockfs_vfsops.c b/bsd/miscfs/mockfs/mockfs_vfsops.c
++index 325bb06..bea8e6e 100644
++--- a/bsd/miscfs/mockfs/mockfs_vfsops.c
+++++ b/bsd/miscfs/mockfs/mockfs_vfsops.c
++@@ -99,9 +99,11 @@ mockfs_mountroot(mount_t mp, vnode_t rvp, __unused vfs_context_t ctx)
++ 
++ 	if (!VNOP_IOCTL(rvp, DKIOCGETMEMDEVINFO, (caddr_t)&memdev_info, 0, NULL)) {
++ 		/*
++-		 * For the moment, we won't try to optimize when mi_phys is true.
+++		 * The legacy ioctl exposes a 32-bit base page. A 64-bit kernel
+++		 * virtual address cannot be represented; use the real device I/O
+++		 * path instead. Physical memory is not supported by this optimization.
++ 		 */
++-		if (!mockfs_mount_data->mockfs_physical_memory) {
+++		if (!memdev_info.mi_phys && (sizeof(uintptr_t) == sizeof(uint32_t))) {
++ 			mockfs_mount_data->mockfs_memory_backed = memdev_info.mi_mdev;
++ 			mockfs_mount_data->mockfs_physical_memory = memdev_info.mi_phys;
++ 			mockfs_mount_data->mockfs_memdev_base = memdev_info.mi_base;
+diff --git a/ports/UniXNU-sweet/patches/xnu/mockfs-statfs.patch b/ports/UniXNU-sweet/patches/xnu/mockfs-statfs.patch
+new file mode 100644
+index 0000000..6a5eef6
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/mockfs-statfs.patch
+@@ -0,0 +1,37 @@
++--- a/bsd/miscfs/mockfs/mockfs_vfsops.c
+++++ b/bsd/miscfs/mockfs/mockfs_vfsops.c
++@@ -286,6 +286,27 @@
++ 	return 0;
++ }
++ 
+++static int
+++mockfs_getattr(mount_t mp, struct vfs_attr *attributes, __unused vfs_context_t ctx)
+++{
+++	mockfs_fsnode_t root = ((mockfs_mount_t)mp->mnt_data)->mockfs_root;
+++	uint64_t nodes = 1 + (root->child_a != NULL) + (root->child_b != NULL) + (root->child_c != NULL);
+++	uint64_t bytes = mp->mnt_devvp->v_specinfo->si_devsize;
+++	uint64_t blocks = bytes / 4096 + ((bytes & 4095) != 0);
+++	VFSATTR_RETURN(attributes, f_bsize, 4096);
+++	VFSATTR_RETURN(attributes, f_iosize, 4096);
+++	VFSATTR_RETURN(attributes, f_blocks, blocks);
+++	VFSATTR_RETURN(attributes, f_bused, blocks);
+++	VFSATTR_RETURN(attributes, f_bfree, 0);
+++	VFSATTR_RETURN(attributes, f_bavail, 0);
+++	VFSATTR_RETURN(attributes, f_files, nodes);
+++	VFSATTR_RETURN(attributes, f_ffree, 0);
+++	VFSATTR_RETURN(attributes, f_objcount, nodes);
+++	VFSATTR_RETURN(attributes, f_maxobjcount, nodes);
+++	VFSATTR_RETURN(attributes, f_fssubtype, 0);
+++	return 0;
+++}
+++
++ int
++ mockfs_init(__unused struct vfsconf * vfsc)
++ {
++@@ -296,5 +317,6 @@
++ 	.vfs_unmount = mockfs_unmount,
++ 	.vfs_root = mockfs_root,
++ 	.vfs_sync = mockfs_sync,
+++	.vfs_getattr = mockfs_getattr,
++ 	.vfs_init = mockfs_init,
++ };
+diff --git a/ports/UniXNU-sweet/patches/xnu/mockfs-test-file.patch b/ports/UniXNU-sweet/patches/xnu/mockfs-test-file.patch
+new file mode 100644
+index 0000000..8204567
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/mockfs-test-file.patch
+@@ -0,0 +1,271 @@
++--- a/bsd/miscfs/mockfs/mockfs_fsnode.h
+++++ b/bsd/miscfs/mockfs/mockfs_fsnode.h
++@@ -46,7 +46,8 @@
++ enum mockfs_fsnode_type {
++ 	MOCKFS_ROOT,
++ 	MOCKFS_DEV,
++-	MOCKFS_FILE
+++	MOCKFS_FILE,
+++	MOCKFS_TEST_FILE
++ };
++ 
++ /*
++@@ -58,6 +59,7 @@
++  *   VREG access).
++  */
++ struct mockfs_fsnode {
+++	uint64_t               backing_offset; /* Offline two-file image only. */
++ 	uint64_t               size;    /* Bytes of data; 0 unless type is MOCKFS_FILE */
++ 	uint8_t                type;    /* Serves as a unique identifier for now */
++ 	mount_t                mnt;     /* The mount that this node belongs to */
++@@ -66,6 +68,7 @@
++ 	                                /* TODO: Replace child_a/child_b with something more flexible */
++ 	struct mockfs_fsnode * child_a; /* TEMPORARY */
++ 	struct mockfs_fsnode * child_b; /* TEMPORARY */
+++	struct mockfs_fsnode * child_c; /* Offline test input. */
++ };
++ 
++ typedef struct mockfs_fsnode * mockfs_fsnode_t;
++--- a/bsd/miscfs/mockfs/mockfs_fsnode.c
+++++ b/bsd/miscfs/mockfs/mockfs_fsnode.c
++@@ -74,6 +74,7 @@
++ 	case MOCKFS_DEV:
++ 		break;
++ 	case MOCKFS_FILE:
+++	case MOCKFS_TEST_FILE:
++ 		/*
++ 		 * For a regular file, size is meaningful, but it will always be equal to the
++ 		 * size of the backing device.
++@@ -145,6 +146,12 @@
++ 		}
++ 	}
++ 
+++	if (fsnp->child_c) {
+++		if ((rvalue = mockfs_fsnode_destroy(fsnp->child_c))) {
+++			panic("mockfs: failed to destroy test node");
+++		}
+++	}
+++
++ 	/*
++ 	 * We need to orphan this node before we destroy it.
++ 	 */
++@@ -202,6 +209,9 @@
++ 	} else if (!parent->child_b) {
++ 		parent->child_b = child;
++ 		child->parent = parent;
+++	} else if (!parent->child_c) {
+++		parent->child_c = child;
+++		child->parent = parent;
++ 	} else {
++ 		rvalue = ENOMEM;
++ 	}
++@@ -243,6 +253,9 @@
++ 	} else if (parent->child_b == fsnp) {
++ 		parent->child_b = NULL;
++ 		fsnp->parent = NULL;
+++	} else if (parent->child_c == fsnp) {
+++		parent->child_c = NULL;
+++		fsnp->parent = NULL;
++ 	} else {
++ 		panic("mockfs_fsnode_orphan insanity, fsnp->parent != parent->child; fsnp = %p (in case gdb is screwing with you)", fsnp);
++ 	}
++@@ -278,6 +291,8 @@
++ 		*child = parent->child_a;
++ 	} else if ((parent->child_b) && (parent->child_b->type == type)) {
++ 		*child = parent->child_b;
+++	} else if ((parent->child_c) && (parent->child_c->type == type)) {
+++		*child = parent->child_c;
++ 	} else {
++ 		rvalue = ENOENT;
++ 	}
++@@ -322,7 +337,7 @@
++ 		 * We need to create the vnode; this will be unpleasant.
++ 		 */
++ 		vnfs_param.vnfs_mp = fsnp->mnt;
++-		vnfs_param.vnfs_vtype = (fsnp->type == MOCKFS_FILE) ? VREG : VDIR;
+++		vnfs_param.vnfs_vtype = ((fsnp->type == MOCKFS_FILE) || (fsnp->type == MOCKFS_TEST_FILE)) ? VREG : VDIR;
++ 		vnfs_param.vnfs_str = "mockfs";
++ 		vnfs_param.vnfs_dvp = (fsnp->type == MOCKFS_ROOT) ? NULL : fsnp->parent->vp;
++ 		vnfs_param.vnfs_fsnode = fsnp;
++--- a/bsd/miscfs/mockfs/mockfs_vnops.c
+++++ b/bsd/miscfs/mockfs/mockfs_vnops.c
++@@ -29,6 +29,7 @@
++ #include <miscfs/mockfs/mockfs.h>
++ #include <miscfs/mockfs/mockfs_vnops.h>
++ #include <sys/ubc.h>
+++#include <sys/fcntl.h>
++ #include <sys/mount_internal.h>
++ #include <sys/vnode_internal.h>
++ #include <vfs/vfs_support.h>
++@@ -46,6 +47,11 @@
++  *   each function does in generic terms.
++  */
++ int mockfs_lookup(struct vnop_lookup_args * ap);
+++static int mockfs_readonly_open(struct vnop_open_args *ap)
+++{
+++	return (ap->a_mode & FWRITE) ? EROFS : 0;
+++}
+++
++ int mockfs_getattr(struct vnop_getattr_args * ap);
++ int mockfs_read(struct vnop_read_args * ap);
++ int mockfs_strategy(struct vnop_strategy_args * ap);
++@@ -117,10 +123,15 @@
++ 		 *   accidentally commit a change to the init_process pathname.  We map from name to node type
++ 		 *   here, as mockfs doesn't current use names; just unique types.
++ 		 */
++-		if (!strncmp(cnp->cn_nameptr, "sbin", 5)) {
+++		if (!strncmp(cnp->cn_nameptr, "sbin", 5) ||
+++		    !strncmp(cnp->cn_nameptr, "usr", 4) || !strncmp(cnp->cn_nameptr, "lib", 4)) {
++ 			target_fsnode = fsnode;
++ 		} else if (!strncmp(cnp->cn_nameptr, "dev", 4)) {
++ 			mockfs_fsnode_child_by_type(fsnode, MOCKFS_DEV, &target_fsnode);
+++		} else if (!strncmp(cnp->cn_nameptr, "dyld", 5)) {
+++			mockfs_fsnode_child_by_type(fsnode, MOCKFS_TEST_FILE, &target_fsnode);
+++		} else if (!strncmp(cnp->cn_nameptr, "probe.bin", 10)) {
+++			mockfs_fsnode_child_by_type(fsnode, MOCKFS_TEST_FILE, &target_fsnode);
++ 		} else if (!strncmp(cnp->cn_nameptr, "launchd", 8)) {
++ 			mockfs_fsnode_child_by_type(fsnode, MOCKFS_FILE, &target_fsnode);
++ 		} else {
++@@ -392,8 +403,12 @@
++ 	 *   This also means that their request should always be contiguous, so the run calculation is easy!
++ 	 */
++ 	if (vp->v_type == VREG) {
++-		*bpn = foffset / blksize;
++-		*run = fsnode->size - foffset;
+++		if (foffset < 0 || (uint64_t)foffset > fsnode->size) {
+++			return EINVAL;
+++		}
+++		*bpn = (fsnode->backing_offset + foffset) / blksize;
+++		/* File metadata is exact; block I/O may include allocated zero padding. */
+++		*run = ((fsnode->size + 4095) & ~4095ULL) - foffset;
++ 
++ 		if (ap->a_size > *run) {
++ 			/* We've been asked for more data than the backing device can provide; we're done. */
++@@ -411,9 +426,9 @@
++ 	{ .opve_op = &vnop_default_desc, .opve_impl = (VOPFUNC) vn_default_error }, /* default */
++ 	{ .opve_op = &vnop_lookup_desc, .opve_impl = (VOPFUNC) mockfs_lookup }, /* lookup */
++ 	{ .opve_op = &vnop_create_desc, .opve_impl = (VOPFUNC) err_create },/* create */
++-	{ .opve_op = &vnop_open_desc, .opve_impl = (VOPFUNC) err_open }, /* open */
+++	{ .opve_op = &vnop_open_desc, .opve_impl = (VOPFUNC) mockfs_readonly_open }, /* open */
++ 	{ .opve_op = &vnop_mknod_desc, .opve_impl = (VOPFUNC) err_mknod }, /* mknod */
++-	{ .opve_op = &vnop_close_desc, .opve_impl = (VOPFUNC) err_close }, /* close */
+++	{ .opve_op = &vnop_close_desc, .opve_impl = (VOPFUNC) nop_close }, /* close */
++ 	{ .opve_op = &vnop_access_desc, .opve_impl = (VOPFUNC) err_access }, /* access */
++ 	{ .opve_op = &vnop_getattr_desc, .opve_impl = (VOPFUNC) mockfs_getattr }, /* getattr */
++ 	{ .opve_op = &vnop_setattr_desc, .opve_impl = (VOPFUNC) err_setattr }, /* setattr */
++@@ -421,7 +436,7 @@
++ 	{ .opve_op = &vnop_write_desc, .opve_impl = (VOPFUNC) err_write }, /* write */
++ 	{ .opve_op = &vnop_ioctl_desc, .opve_impl = (VOPFUNC) err_ioctl }, /* ioctl */
++ 	{ .opve_op = &vnop_select_desc, .opve_impl = (VOPFUNC) err_select }, /* select */
++-	{ .opve_op = &vnop_mmap_desc, .opve_impl = (VOPFUNC) err_mmap }, /* mmap */
+++	{ .opve_op = &vnop_mmap_desc, .opve_impl = (VOPFUNC) nop_mmap }, /* mmap */
++ 	{ .opve_op = &vnop_fsync_desc, .opve_impl = (VOPFUNC) nop_fsync }, /* fsync */
++ 	{ .opve_op = &vnop_remove_desc, .opve_impl = (VOPFUNC) err_remove }, /* remove */
++ 	{ .opve_op = &vnop_link_desc, .opve_impl = (VOPFUNC) err_link }, /* link */
++--- a/bsd/miscfs/mockfs/mockfs_vfsops.c
+++++ b/bsd/miscfs/mockfs/mockfs_vfsops.c
++@@ -34,12 +34,23 @@
++ #include <miscfs/mockfs/mockfs_vnops.h>
++ #include <miscfs/specfs/specdev.h>
++ #include <sys/disk.h>
+++#include <sys/buf.h>
+++#include <sys/kauth.h>
++ #include <sys/errno.h>
++ #include <sys/malloc.h>
++ #include <sys/mount_internal.h>
++ #include <sys/vnode_internal.h>
++ 
++ static LCK_GRP_DECLARE(mockfs_mtx_grp, "mockfs-mutex");
+++
+++/* Bounded offline input container, not a deployment filesystem or trust claim.
+++ * Two unmodified files: /sbin/launchd and /probe.bin; all offsets native 4K.
+++ */
+++struct mockfs_test_header {
+++	char magic[8];
+++	uint32_t version, count;
+++	uint64_t launch_offset, launch_size, test_offset, test_size;
+++};
++ 
++ int mockfs_mountroot(mount_t mp, vnode_t rvp, __unused vfs_context_t ctx);
++ 
++@@ -68,6 +79,10 @@
++ 	mockfs_fsnode_t root_fsnode = NULL;
++ 	mockfs_fsnode_t dev_fsnode = NULL;
++ 	mockfs_fsnode_t file_fsnode = NULL;
+++	mockfs_fsnode_t test_fsnode = NULL;
+++	struct mockfs_test_header header = {0};
+++	buf_t header_buf = NULL;
+++	boolean_t test_image = FALSE;
++ 	mockfs_mount_t mockfs_mount_data = NULL;
++ 	dk_memdev_info_t memdev_info;
++ 
++@@ -113,6 +128,42 @@
++ 
++ 	lck_mtx_init(&mockfs_mount_data->mockfs_mnt_mtx, &mockfs_mtx_grp, LCK_ATTR_NULL);
++ 
+++	mp->mnt_data = (typeof(mp->mnt_data))mockfs_mount_data;
+++
+++	/* Legacy single-Mach-O images retain their original mapping. */
+++	rvalue = buf_meta_bread(rvp, 0, 4096, vfs_context_ucred(ctx), &header_buf);
+++	if (!rvalue) {
+++		memcpy(&header, (void *)buf_dataptr(header_buf), sizeof(header));
+++	}
+++	if (header_buf) {
+++		buf_brelse(header_buf);
+++	}
+++	if (rvalue) {
+++		goto done;
+++	}
+++	if (!memcmp(header.magic, "N4KROOT", 8)) {
+++		uint64_t bytes = rvp->v_specinfo->si_devsize;
+++		if (header.version != 1 || header.count != 2 || bytes > 32 * 1024 * 1024 ||
+++		    header.launch_offset != 4096 || !header.launch_size || !header.test_size ||
+++		    (header.test_offset & 4095) || header.test_offset < 8192 || header.test_offset > bytes ||
+++		    header.launch_size > header.test_offset - header.launch_offset ||
+++		    header.test_size > bytes - header.test_offset) {
+++			rvalue = EINVAL;
+++			goto done;
+++		}
+++		rvalue = mockfs_fsnode_create(mp, MOCKFS_TEST_FILE, &test_fsnode);
+++		if (rvalue) {
+++			goto done;
+++		}
+++		file_fsnode->backing_offset = header.launch_offset;
+++		file_fsnode->size = header.launch_size;
+++		test_fsnode->backing_offset = header.test_offset;
+++		test_fsnode->size = header.test_size;
+++		mockfs_mount_data->mockfs_memory_backed = FALSE;
+++		test_image = TRUE;
+++	}
+++
+++
++ 	/*
++ 	 * All of the needed nodes/structures have been set up; now we just need to establish the relationships
++ 	 *   between the various mockfs nodes.
++@@ -125,11 +176,18 @@
++ 		goto done;
++ 	}
++ 
+++	if (test_image && (rvalue = mockfs_fsnode_adopt(root_fsnode, test_fsnode))) {
+++		goto done;
+++	}
+++
++ 	mockfs_mount_data->mockfs_root = root_fsnode;
++ 	mp->mnt_data = (typeof(mp->mnt_data))mockfs_mount_data;
++ 
++ done:
++ 	if (rvalue) {
+++		if (test_fsnode) {
+++			mockfs_fsnode_destroy(test_fsnode);
+++		}
++ 		if (file_fsnode) {
++ 			mockfs_fsnode_destroy(file_fsnode);
++ 		}
++@@ -142,6 +200,7 @@
++ 		if (mockfs_mount_data) {
++ 			lck_mtx_destroy(&mockfs_mount_data->mockfs_mnt_mtx, &mockfs_mtx_grp);
++ 			kfree_type(struct mockfs_mount, mockfs_mount_data);
+++		mp->mnt_data = NULL;
++ 		}
++ 	}
++ 
+diff --git a/ports/UniXNU-sweet/patches/xnu/mockfs-typed-allocation.patch b/ports/UniXNU-sweet/patches/xnu/mockfs-typed-allocation.patch
+new file mode 100644
+index 0000000..cc494ff
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/mockfs-typed-allocation.patch
+@@ -0,0 +1,22 @@
++diff --git a/bsd/miscfs/mockfs/mockfs_fsnode.c b/bsd/miscfs/mockfs/mockfs_fsnode.c
++index e000126..a470fc8 100644
++--- a/bsd/miscfs/mockfs/mockfs_fsnode.c
+++++ b/bsd/miscfs/mockfs/mockfs_fsnode.c
++@@ -85,7 +85,7 @@ mockfs_fsnode_create(mount_t mp, uint8_t type, mockfs_fsnode_t * fsnpp)
++ 		goto done;
++ 	}
++ 
++-	*fsnpp = kalloc_type(mockfs_fsnode_t, Z_WAITOK | Z_ZERO | Z_NOFAIL);
+++	*fsnpp = kalloc_type(struct mockfs_fsnode, Z_WAITOK | Z_ZERO | Z_NOFAIL);
++ 	(*fsnpp)->size = new_size;
++ 	(*fsnpp)->type = type;
++ 	(*fsnpp)->mnt = mp;
++@@ -154,7 +154,7 @@ mockfs_fsnode_destroy(mockfs_fsnode_t fsnp)
++ 		}
++ 	}
++ 
++-	kfree_type(mockfs_fsnode_t, fsnp);
+++	kfree_type(struct mockfs_fsnode, fsnp);
++ done:
++ 	return rvalue;
++ }
+diff --git a/ports/UniXNU-sweet/patches/xnu/native-4k-bootstrap-capacity.patch b/ports/UniXNU-sweet/patches/xnu/native-4k-bootstrap-capacity.patch
+new file mode 100644
+index 0000000..a047677
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/native-4k-bootstrap-capacity.patch
+@@ -0,0 +1,61 @@
++--- a/osfmk/arm/pmap/pmap.h
+++++ b/osfmk/arm/pmap/pmap.h
++@@ -115,6 +115,11 @@
++  * Upper limit on how many pages can be consumed by bootstrap page tables
++  */
++ #define BOOTSTRAP_TABLE_SIZE (ARM_PGBYTES * 34)
+++#elif !defined(APPLE_ARM64_ARCH_FAMILY) && !__ARM_16K_PG__
+++/* Native 4 KiB: two roots plus up to seven L2 pages per 6 GiB mapping.
+++ * The physical and virtual bases may each straddle an extra 1 GiB region.
+++ */
+++#define BOOTSTRAP_TABLE_SIZE (ARM_PGBYTES * 16)
++ #else /* defined(ARM_LARGE_MEMORY) */
++ #define BOOTSTRAP_TABLE_SIZE (ARM_PGBYTES * 8)
++ #endif /* defined(ARM_LARGE_MEMORY) */
++--- a/osfmk/arm64/start.s
+++++ b/osfmk/arm64/start.s
++@@ -426,6 +426,10 @@
++ 
++ 	/* allocate an L2 table */
++ 3:	add	$4, $4, PGBYTES
+++	/* Refuse before a new table can overwrite adjacent kernel globals. */
+++	add $6, x25, #(BOOTSTRAP_TABLE_BYTES >> 12), lsl #12
+++	cmp $4, $6
+++	b.hs Lbootstrap_tables_exhausted
++ 
++ 	/* create_l1_table_entry(virt_base, L1 table, L2 table, scratch1, scratch2, scratch3) */
++ 	create_l1_table_entry	$0, $3, $4, $6, $7, $8
++@@ -528,8 +532,8 @@
++ 	// Invalidate all entries in the bootstrap page tables
++ 	mov		x0, #(ARM_TTE_EMPTY)				// Load invalid entry template
++ 	mov		x1, x25								// Start at V=P pagetable root
++-	mov		x2, #(TTE_PGENTRIES)				// Load number of entries per page
++-	lsl		x2, x2, #2							// Shift by 2 for num entries on 4 pages
+++	mov		x2, #(BOOTSTRAP_TABLE_BYTES / ARM_PGBYTES)
+++	lsl		x2, x2, #(ARM_PGSHIFT - TTE_SHIFT) // Clear the whole reserved pool
++ 
++ Linvalidate_bootstrap:							// do {
++ 	str		x0, [x1], #(1 << TTE_SHIFT)			//   Invalidate and advance
++@@ -613,6 +617,12 @@
++ 	lsr		x5,  x24, #(ARM_TT_L2_SHIFT)
++ 	create_bootstrap_mapping x14, x15, x5, x3, x2, x9, x10, x11, x12, x13
++ 
+++	b Lbootstrap_tables_ready
+++Lbootstrap_tables_exhausted:
+++	// MMU is still off. Stop with the offending cursor/end preserved for
+++	// the early debugger rather than corrupting memory or forging a map.
+++	b Lbootstrap_tables_exhausted
+++Lbootstrap_tables_ready:
++ 	/* Ensure TTEs are visible */
++ 	dsb		ish
++ 
++--- a/osfmk/arm64/genassym.c
+++++ b/osfmk/arm64/genassym.c
++@@ -270,6 +270,7 @@
++ 
++ 
++ 	DECLARE("PGBYTES", ARM_PGBYTES);
+++	DECLARE("BOOTSTRAP_TABLE_BYTES", BOOTSTRAP_TABLE_SIZE);
++ 	DECLARE("PGSHIFT", ARM_PGSHIFT);
++ 
++ 	DECLARE("VM_MIN_KERNEL_ADDRESS", VM_MIN_KERNEL_ADDRESS);
+diff --git a/ports/UniXNU-sweet/patches/xnu/native-4k-signature-hash-cache.patch b/ports/UniXNU-sweet/patches/xnu/native-4k-signature-hash-cache.patch
+new file mode 100644
+index 0000000..9e17f53
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/native-4k-signature-hash-cache.patch
+@@ -0,0 +1,257 @@
++--- a/bsd/sys/ubc_internal.h
+++++ b/bsd/sys/ubc_internal.h
++@@ -158,6 +158,13 @@
++ 	void *XNU_PTRAUTH_SIGNED_PTR("cs_blob.csb_csm_obj") csb_csm_obj;
++ 	bool csb_csm_managed;
++ #endif
+++
+++	/* Native 4K authenticators derived only from fully verified original
+++	 * 16K blocks. Append fields to preserve the existing binary prefix.
+++	 */
+++	const uint8_t   *csb_native4k_hashes;
+++	vm_size_t       csb_native4k_hashes_size;
+++	vm_size_t       csb_native4k_hash_count;
++ };
++ 
++ /*
++--- a/bsd/kern/ubc_subr.c
+++++ b/bsd/kern/ubc_subr.c
++@@ -69,6 +69,7 @@
++ #include <kern/thread.h>
++ #include <vm/pmap.h>
++ #include <vm/vm_kern.h>
+++#include <vm/vm_map.h>
++ #include <vm/vm_protos.h> /* last */
++ 
++ #include <libkern/crypto/sha1.h>
++@@ -108,6 +109,9 @@
++ 
++ static boolean_t ubc_cs_supports_multilevel_hash(struct cs_blob *blob);
++ static kern_return_t ubc_cs_convert_to_multilevel_hash(struct cs_blob *blob);
+++#if defined(XNU_NATIVE_CS_HASH_CACHE) && XNU_NATIVE_CS_HASH_CACHE
+++static int cs_native4k_prepare(vnode_t vp, struct cs_blob *blob);
+++#endif
++ 
++ ZONE_DEFINE_TYPE(ubc_info_zone, "ubc_info zone", struct ubc_info,
++     ZC_ZFREE_CLEARMEM);
++@@ -371,7 +375,11 @@
++ 	if (ntohl(cd->magic) != CSMAGIC_CODEDIRECTORY) {
++ 		return EBADEXEC;
++ 	}
++-	if ((cd->pageSize != PAGE_SHIFT_4K) && (cd->pageSize != PAGE_SHIFT)) {
+++	if ((cd->pageSize != PAGE_SHIFT_4K) && (cd->pageSize != PAGE_SHIFT)
+++#if defined(XNU_NATIVE_CS_HASH_CACHE) && XNU_NATIVE_CS_HASH_CACHE
+++	    && !(PAGE_SHIFT == 12 && cd->pageSize == 14)
+++#endif
+++	    ) {
++ 		printf("disallowing unsupported code signature page shift: %u\n", cd->pageSize);
++ 		return EBADEXEC;
++ 	}
++@@ -3925,6 +3933,13 @@
++ static void
++ cs_blob_cleanup(struct cs_blob *blob)
++ {
+++	if (blob->csb_native4k_hashes != NULL) {
+++		kmem_free(kernel_map, (vm_offset_t)blob->csb_native4k_hashes,
+++		    blob->csb_native4k_hashes_size);
+++		blob->csb_native4k_hashes = NULL;
+++		blob->csb_native4k_hashes_size = 0;
+++		blob->csb_native4k_hash_count = 0;
+++	}
++ 	if (blob->csb_entitlements != NULL) {
++ 		amfi->OSEntitlements_invalidate(blob->csb_entitlements);
++ 		osobject_release(blob->csb_entitlements);
++@@ -4858,6 +4873,14 @@
++ 		error = EINVAL;
++ 		goto out;
++ 	}
+++
+++#if defined(XNU_NATIVE_CS_HASH_CACHE) && XNU_NATIVE_CS_HASH_CACHE
+++	/* Authenticate before publishing the signed object or taking its locks. */
+++	error = cs_native4k_prepare(vp, &tmp_blob);
+++	if (error != 0) {
+++		goto out;
+++	}
+++#endif
++ 
++ 	/*
++ 	 * The vnode_lock, linked list traversal, and marking of the memory object as
++@@ -5726,6 +5749,121 @@
++ 
++ unsigned long cs_validate_page_no_hash = 0;
++ unsigned long cs_validate_page_bad_hash = 0;
+++
+++#if defined(XNU_NATIVE_CS_HASH_CACHE) && XNU_NATIVE_CS_HASH_CACHE
+++__attribute__((used)) const uint32_t cs_native4k_hash_cache_version = 1;
+++unsigned long cs_native4k_full_blocks = 0;
+++unsigned long cs_native4k_page_checks = 0;
+++unsigned long cs_native4k_ready_blobs = 0;
+++
+++/* The original signed 16K hash authenticates the whole immutable input
+++ * buffer first. Only then derive native-page digests from that same buffer.
+++ * Publish nothing until every original block has passed, and make the
+++ * derived array readonly before its owning RO cs_blob can become visible.
+++ * VM fault validation consequently performs no vnode I/O under object locks.
+++ */
+++__attribute__((noinline))
+++static int
+++cs_native4k_prepare(vnode_t vp, struct cs_blob *blob)
+++{
+++	const CS_CodeDirectory *cd = blob->csb_cd;
+++	const struct cs_hash *md = blob->csb_hashtype;
+++	vm_offset_t storage = 0;
+++	vm_size_t allocation = 0, count = 0;
+++	uint8_t *buffer = NULL;
+++	uint64_t limit, offset;
+++	int error = EBADEXEC;
+++	kern_return_t kr;
+++
+++	if (blob->csb_hash_pageshift <= PAGE_SHIFT) {
+++		return 0;
+++	}
+++	if (PAGE_SHIFT != 12 || blob->csb_hash_pageshift != 14 || cd == NULL || md == NULL ||
+++	    md->cs_size == 0 || md->cs_size > CS_HASH_MAX_SIZE ||
+++	    md->cs_digest_size > CS_HASH_MAX_SIZE || blob->csb_base_offset < 0 ||
+++	    (blob->csb_base_offset & PAGE_MASK) || blob->csb_hash_firstlevel_pageshift ||
+++	    ((ntohl(cd->version) >= CS_SUPPORTSSCATTER) && ntohl(cd->scatterOffset))) {
+++		return ENOTSUP;
+++	}
+++	limit = ntohl(cd->codeLimit);
+++	if (!limit || ((ntohl(cd->version) >= CS_SUPPORTSCODELIMIT64) &&
+++	    ntohll(cd->codeLimit64) && ntohll(cd->codeLimit64) != limit) ||
+++	    ntohl(cd->nCodeSlots) != ((limit + 16383) >> 14)) {
+++		return ENOTSUP;
+++	}
+++	count = (limit + PAGE_MASK) >> PAGE_SHIFT;
+++	if (os_mul_overflow(count, (vm_size_t)md->cs_size, &allocation) ||
+++	    round_page_overflow(allocation, &allocation)) {
+++		return EOVERFLOW;
+++	}
+++	kr = kmem_alloc(kernel_map, &storage, allocation,
+++	    KMA_KOBJECT | KMA_DATA | KMA_ZERO, VM_KERN_MEMORY_SECURITY);
+++	if (kr != KERN_SUCCESS) {
+++		return ENOMEM;
+++	}
+++	buffer = kalloc_data(16384, Z_WAITOK);
+++	for (offset = 0; offset < limit; offset += 16384) {
+++		union cs_hash_union ctx;
+++		uint8_t digest[CS_HASH_MAX_SIZE];
+++		const uint8_t *expected;
+++		const char *lower = blob->csb_mem_kaddr;
+++		const char *upper = lower + blob->csb_mem_size;
+++		size_t length = MIN((uint64_t)16384, limit - offset);
+++		int resid = 0;
+++		off_t position;
+++		if (os_add_overflow(blob->csb_base_offset, (off_t)offset, &position)) {
+++			error = EOVERFLOW;
+++			goto out;
+++		}
+++		error = vn_rdwr(UIO_READ, vp, (caddr_t)buffer, (int)length, position,
+++		    UIO_SYSSPACE, 0, vfs_context_ucred(vfs_context_current()),
+++		    &resid, current_proc());
+++		if (error || resid) {
+++			error = error ? error : EIO;
+++			goto out;
+++		}
+++		expected = hashes(cd, (uint32_t)(offset >> 14), md->cs_size, lower, upper);
+++		if (expected == NULL) {
+++			error = EBADEXEC;
+++			goto out;
+++		}
+++		md->cs_init(&ctx);
+++		md->cs_update(&ctx, buffer, length);
+++		md->cs_final(digest, &ctx);
+++		if (bcmp(expected, digest, md->cs_size)) {
+++			os_atomic_inc(&cs_validate_page_bad_hash, relaxed);
+++			error = EBADEXEC;
+++			goto out;
+++		}
+++		os_atomic_inc(&cs_native4k_full_blocks, relaxed);
+++		for (size_t sub = 0; sub < length; sub += PAGE_SIZE) {
+++			size_t bytes = MIN((size_t)PAGE_SIZE, length - sub);
+++			vm_size_t index = (offset + sub) >> PAGE_SHIFT;
+++			md->cs_init(&ctx);
+++			md->cs_update(&ctx, buffer + sub, bytes);
+++			md->cs_final(digest, &ctx);
+++			memcpy((void *)(storage + index * md->cs_size), digest, md->cs_size);
+++		}
+++	}
+++	kr = vm_map_protect(kernel_map, storage, storage + allocation, VM_PROT_READ, TRUE);
+++	if (kr != KERN_SUCCESS) {
+++		error = EPERM;
+++		goto out;
+++	}
+++	blob->csb_native4k_hashes = (const uint8_t *)storage;
+++	blob->csb_native4k_hashes_size = allocation;
+++	blob->csb_native4k_hash_count = count;
+++	storage = 0;
+++	os_atomic_inc(&cs_native4k_ready_blobs, relaxed);
+++	error = 0;
+++out:
+++	kfree_data(buffer, 16384);
+++	if (storage) {
+++		kmem_free(kernel_map, storage, allocation);
+++	}
+++	return error;
+++}
+++#endif
++ static boolean_t
++ cs_validate_hash(
++ 	struct cs_blob          *blobs,
++@@ -5749,6 +5887,7 @@
++ 	off_t                   codeLimit = 0;
++ 	const char              *lower_bound, *upper_bound;
++ 	vm_offset_t             kaddr, blob_addr;
+++	boolean_t               native4k_cached = FALSE;
++ 
++ 	/* retrieve the expected hash */
++ 	found_hash = FALSE;
++@@ -5784,15 +5923,31 @@
++ 			if (hashtype->cs_digest_size > sizeof(actual_hash)) {
++ 				panic("hash size too large");
++ 			}
++-			if (offset & ((1U << blob->csb_hash_pageshift) - 1)) {
++-				panic("offset not aligned to cshash boundary");
+++			codeLimit = ntohl(cd->codeLimit);
+++#if defined(XNU_NATIVE_CS_HASH_CACHE) && XNU_NATIVE_CS_HASH_CACHE
+++			if (PAGE_SHIFT == 12 && blob->csb_hash_pageshift == 14) {
+++				vm_size_t index = (vm_size_t)offset >> PAGE_SHIFT;
+++				if ((offset & PAGE_MASK) || offset >= codeLimit ||
+++				    blob->csb_native4k_hashes == NULL ||
+++				    index >= blob->csb_native4k_hash_count ||
+++				    hashtype->cs_size > blob->csb_native4k_hashes_size ||
+++				    index > (blob->csb_native4k_hashes_size - hashtype->cs_size) / hashtype->cs_size) {
+++					*bytes_processed = PAGE_SIZE;
+++					*tainted = CS_VALIDATE_TAINTED;
+++					return FALSE;
+++				}
+++				hash = blob->csb_native4k_hashes + index * hashtype->cs_size;
+++				native4k_cached = TRUE;
+++				os_atomic_inc(&cs_native4k_page_checks, relaxed);
+++			} else
+++#endif
+++			{
+++				if (offset & ((1U << blob->csb_hash_pageshift) - 1)) {
+++					panic("offset not aligned to cshash boundary");
+++				}
+++				hash = hashes(cd, (uint32_t)(offset >> blob->csb_hash_pageshift),
+++				    hashtype->cs_size, lower_bound, upper_bound);
++ 			}
++-
++-			codeLimit = ntohl(cd->codeLimit);
++-
++-			hash = hashes(cd, (uint32_t)(offset >> blob->csb_hash_pageshift),
++-			    hashtype->cs_size,
++-			    lower_bound, upper_bound);
++ 			if (hash != NULL) {
++ 				bcopy(hash, expected_hash, hashtype->cs_size);
++ 				found_hash = TRUE;
++@@ -5822,7 +5977,7 @@
++ 	} else {
++ 		*tainted = 0;
++ 
++-		size = (1U << blob->csb_hash_pageshift);
+++		size = native4k_cached ? PAGE_SIZE : (1U << blob->csb_hash_pageshift);
++ 		*bytes_processed = size;
++ 
++ 		const uint32_t *asha1, *esha1;
+diff --git a/ports/UniXNU-sweet/patches/xnu/native-4k-user-abi.patch b/ports/UniXNU-sweet/patches/xnu/native-4k-user-abi.patch
+new file mode 100644
+index 0000000..2d66c48
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/native-4k-user-abi.patch
+@@ -0,0 +1,85 @@
++diff --git a/bsd/kern/mach_loader.c b/bsd/kern/mach_loader.c
++index 4435c16..665536f 100644
++--- a/bsd/kern/mach_loader.c
+++++ b/bsd/kern/mach_loader.c
++@@ -511,8 +511,12 @@ load_machfile(
++ 
++ #if defined(__arm64__)
++ 	if (result->is_64bit_addr) {
+++#if !defined(APPLE_ARM64_ARCH_FAMILY) && !__ARM_16K_PG__
+++		vm_map_set_page_shift(map, FOURK_PAGE_SHIFT);
+++#else
++ 		/* enforce 16KB alignment of VM map entries */
++ 		vm_map_set_page_shift(map, SIXTEENK_PAGE_SHIFT);
+++#endif
++ 	} else {
++ 		vm_map_set_page_shift(map, page_shift_user32);
++ 	}
++diff --git a/osfmk/arm/arm_init.c b/osfmk/arm/arm_init.c
++index 8fe43b6..a81d6c4 100644
++--- a/osfmk/arm/arm_init.c
+++++ b/osfmk/arm/arm_init.c
++@@ -399,6 +399,10 @@ arm_init(
++ 
++ 
++ 	{
+++		/* Native non-Apple 4K builds expose the hardware page size at any RAM size. */
+++#if !defined(APPLE_ARM64_ARCH_FAMILY) && !__ARM_16K_PG__
+++		PAGE_SHIFT_CONST = ARM_PGSHIFT;
+++#else
++ 		/*
++ 		 * Select the advertised kernel page size.
++ 		 */
++@@ -417,8 +421,14 @@ arm_init(
++ 			PAGE_SHIFT_CONST = ARM_PGSHIFT;
++ 		}
++ 
+++#endif
+++
+++#if !defined(APPLE_ARM64_ARCH_FAMILY) && !__ARM_16K_PG__
+++		page_shift_user32 = ARM_PGSHIFT;
+++#else
++ 		/* 32-bit apps always see 16KB page size */
++ 		page_shift_user32 = PAGE_MAX_SHIFT;
+++#endif
++ #ifdef  APPLETYPHOON
++ 		if (PE_parse_boot_argn("cpus_defeatures", &cpus_defeatures, sizeof(cpus_defeatures))) {
++ 			if ((cpus_defeatures & 0xF) != 0) {
++diff --git a/osfmk/arm/commpage/commpage.c b/osfmk/arm/commpage/commpage.c
++index 896a7c8..315ecea 100644
++--- a/osfmk/arm/commpage/commpage.c
+++++ b/osfmk/arm/commpage/commpage.c
++@@ -185,8 +185,13 @@ commpage_populate(void)
++ #if __arm64__
++ 	*((uint8_t*)(_COMM_PAGE_USER_PAGE_SHIFT_32_LEGACY + _COMM_PAGE_RW_OFFSET)) = (uint8_t) page_shift_user32;
++ 	*((uint8_t*)(_COMM_PAGE_USER_PAGE_SHIFT_32 + _COMM_PAGE_RO_OFFSET)) = (uint8_t) page_shift_user32;
+++#if !defined(APPLE_ARM64_ARCH_FAMILY) && !__ARM_16K_PG__
+++	*((uint8_t*)(_COMM_PAGE_USER_PAGE_SHIFT_64_LEGACY + _COMM_PAGE_RW_OFFSET)) = (uint8_t) FOURK_PAGE_SHIFT;
+++	*((uint8_t*)(_COMM_PAGE_USER_PAGE_SHIFT_64 + _COMM_PAGE_RO_OFFSET)) = (uint8_t) FOURK_PAGE_SHIFT;
+++#else
++ 	*((uint8_t*)(_COMM_PAGE_USER_PAGE_SHIFT_64_LEGACY + _COMM_PAGE_RW_OFFSET)) = (uint8_t) SIXTEENK_PAGE_SHIFT;
++ 	*((uint8_t*)(_COMM_PAGE_USER_PAGE_SHIFT_64 + _COMM_PAGE_RO_OFFSET)) = (uint8_t) SIXTEENK_PAGE_SHIFT;
+++#endif
++ #endif /* __arm64__ */
++ 
++ 	commpage_update_timebase();
++diff --git a/osfmk/vm/vm_shared_region.c b/osfmk/vm/vm_shared_region.c
++index 0bb45c5..1ab7232 100644
++--- a/osfmk/vm/vm_shared_region.c
+++++ b/osfmk/vm/vm_shared_region.c
++@@ -778,11 +778,15 @@ vm_shared_region_create(
++ 			sub_map = vm_map_create_options(pmap_nested, 0,
++ 			    (vm_map_offset_t)size, VM_MAP_CREATE_PAGEABLE);
++ 
+++#if !defined(APPLE_ARM64_ARCH_FAMILY) && !__ARM_16K_PG__
+++			vm_map_set_page_shift(sub_map, FOURK_PAGE_SHIFT);
+++#else
++ 			if (is_64bit ||
++ 			    page_shift_user32 == SIXTEENK_PAGE_SHIFT) {
++ 				/* enforce 16KB alignment of VM map entries */
++ 				vm_map_set_page_shift(sub_map, SIXTEENK_PAGE_SHIFT);
++ 			}
+++#endif
++ #if __ARM_MIXED_PAGE_SIZE__
++ 			if (cputype == CPU_TYPE_ARM64 &&
++ 			    target_page_shift == FOURK_PAGE_SHIFT) {
+diff --git a/ports/UniXNU-sweet/patches/xnu/native-aes-personality.patch b/ports/UniXNU-sweet/patches/xnu/native-aes-personality.patch
+new file mode 100644
+index 0000000..6fa7465
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/native-aes-personality.patch
+@@ -0,0 +1,54 @@
++diff --git a/iokit/KernelConfigTables.cpp b/iokit/KernelConfigTables.cpp
++--- a/iokit/KernelConfigTables.cpp
+++++ b/iokit/KernelConfigTables.cpp
++@@ -54,6 +54,50 @@
++     "   {"
++     "     'IOClass'         = IOPanicPlatform;"
++     "     'IOProviderClass' = IOPlatformExpertDevice;"
++     "     'IOProbeScore'    = 0:32;"
++     "   }"
+++#if defined(XNU_NATIVE_AES) && XNU_NATIVE_AES
+++    "   ,{"
+++    "     'IOClass'         = NativeAES;"
+++    "     'IOProviderClass' = IOResources;"
+++    "     'IOResourceMatch' = IOBSD;"
+++    "     'IOProbeScore'    = 1000:32;"
+++    "   }"
+++#endif
+++#if defined(XNU_NATIVE_VIRTIO_BLOCK) && XNU_NATIVE_VIRTIO_BLOCK
+++    "   ,{"
+++    "     'IOClass'         = NativeVirtioBlock;"
+++    "     'IOProviderClass' = IOPlatformDevice;"
+++    "     'IOProbeScore'    = 1000:32;"
+++    "   }"
+++#endif
+++#if defined(XNU_NATIVE_VIRTIO_CONSOLE) && XNU_NATIVE_VIRTIO_CONSOLE
+++    "   ,{"
+++    "     'IOClass'         = NativeVirtioConsole;"
+++    "     'IOProviderClass' = IOPlatformDevice;"
+++    "     'IOProbeScore'    = 1000:32;"
+++    "   }"
+++#endif
+++#if defined(XNU_NATIVE_RAM_BLOCK) && XNU_NATIVE_RAM_BLOCK
+++    "   ,{"
+++    "     'IOClass'         = NativeRamBlock;"
+++    "     'IOMatchCategory' = NativeRamBlock;"
+++    "     'IOProviderClass' = IOResources;"
+++    "     'IOResourceMatch' = IOBSD;"
+++    "     'IOProbeScore'    = 1000:32;"
+++    "   }"
+++#endif
+++#if defined(XNU_NATIVE_UFS) && XNU_NATIVE_UFS
+++    "   ,{"
+++    "     'IOClass'         = NativeUfs;"
+++    "     'IOProviderClass' = IOPlatformDevice;"
+++    "     'IOProbeScore'    = 1000:32;"
+++    "   }"
+++    "   ,{"
+++    "     'IOClass'         = NativeUfs;"
+++    "     'IOMatchCategory' = NativeUfsRoot;"
+++    "     'IOProviderClass' = IOPlatformExpertDevice;"
+++    "     'IOProbeScore'    = 500:32;"
+++    "   }"
+++#endif
++     ")";
+diff --git a/ports/UniXNU-sweet/patches/xnu/native-arm-pan.patch b/ports/UniXNU-sweet/patches/xnu/native-arm-pan.patch
+new file mode 100644
+index 0000000..cda8457
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/native-arm-pan.patch
+@@ -0,0 +1,14 @@
++--- a/pexpert/pexpert/arm64/BCM2837.h
+++++ b/pexpert/pexpert/arm64/BCM2837.h
++@@ -18,6 +18,11 @@
++ #define __ARM_COHERENT_CACHE__    1
++ #define __ARM_DEBUG__             7
++ #define __ARM64_PMAP_SUBPAGE_L1__ 1
+++
+++/* Explicit native ARMv8.1+ bring-up; the original A53 target has no PAN. */
+++#if defined(XNU_NATIVE_PAN) && XNU_NATIVE_PAN
+++#define __ARM_PAN_AVAILABLE__      1
+++#endif
++ 
++ #ifndef ASSEMBLER
++ 
+diff --git a/ports/UniXNU-sweet/patches/xnu/native-dt-panic-region.patch b/ports/UniXNU-sweet/patches/xnu/native-dt-panic-region.patch
+new file mode 100644
+index 0000000..7ba1a04
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/native-dt-panic-region.patch
+@@ -0,0 +1,42 @@
++--- a/pexpert/arm/pe_init.c
+++++ b/pexpert/arm/pe_init.c
++@@ -102,7 +102,7 @@
++ static void
++ check_for_panic_log(void)
++ {
++-#ifdef PLATFORM_PANIC_LOG_PADDR
+++#if defined(PLATFORM_PANIC_LOG_PADDR) && !(defined(XNU_DT_PANIC_REGION) && XNU_DT_PANIC_REGION)
++ 	gPanicBase = ml_io_map_wcomb(PLATFORM_PANIC_LOG_PADDR, PLATFORM_PANIC_LOG_SIZE);
++ 	panic_text_len = PLATFORM_PANIC_LOG_SIZE - sizeof(struct embedded_panic_header);
++ 	gPanicSize = PLATFORM_PANIC_LOG_SIZE;
++@@ -132,7 +132,10 @@
++ 		return;
++ 	}
++ 
++-	if (kSuccess != SecureDTGetProperty(entry, "reg", (void const **)&reg_prop, &size)) {
+++	if (kSuccess != SecureDTGetProperty(entry, "reg", (void const **)&reg_prop, &size) ||
+++	    size != 2 * sizeof(*reg_prop) || !reg_prop[0] ||
+++	    reg_prop[1] < sizeof(struct embedded_panic_header) ||
+++	    reg_prop[0] > UINTPTR_MAX - reg_prop[1]) {
++ 		return;
++ 	}
++ 
++@@ -140,11 +143,17 @@
++ 		return;
++ 	}
++ 
++-	if (kSuccess != SecureDTGetProperty(chosen, "embedded-panic-log-size", (void const **) &panic_region_length, &size)) {
+++	if (kSuccess != SecureDTGetProperty(chosen, "embedded-panic-log-size", (void const **) &panic_region_length, &size) ||
+++	    size != sizeof(*panic_region_length) ||
+++	    panic_region_length[0] < sizeof(struct embedded_panic_header) ||
+++	    panic_region_length[0] > reg_prop[1]) {
++ 		return;
++ 	}
++ 
++ 	gPanicBase = ml_io_map_wcomb(reg_prop[0], panic_region_length[0]);
+++	if (!gPanicBase) {
+++		return;
+++	}
++ 
++ 	/* Deduct the size of the panic header from the panic region size */
++ 	panic_text_len = panic_region_length[0] - sizeof(struct embedded_panic_header);
+diff --git a/ports/UniXNU-sweet/patches/xnu/native-priv-work-interval.patch b/ports/UniXNU-sweet/patches/xnu/native-priv-work-interval.patch
+new file mode 100644
+index 0000000..c1feffa
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/native-priv-work-interval.patch
+@@ -0,0 +1,21 @@
++diff --git a/bsd/kern/kern_priv.c b/bsd/kern/kern_priv.c
++index 88adf2d..05e7679 100644
++--- a/bsd/kern/kern_priv.c
+++++ b/bsd/kern/kern_priv.c
++@@ -82,6 +82,16 @@ priv_check_cred(kauth_cred_t cred, int priv, int flags)
++ #endif
++ 	int error;
++ 
+++	/*
+++	 * CoreAnimation creates its render-server work interval as an ordinary user, and
+++	 * UIKit processes (SpringBoard, apps) abort with "Failed to create work interval"
+++	 * without it. This board loads no Sandbox/AMFI privilege policy that would grant it,
+++	 * and the policy set that is present denies it, so it is decided before the policies.
+++	 */
+++	if (priv == PRIV_WORK_INTERVAL) {
+++		return 0;
+++	}
+++
++ 	/*
++ 	 * We first evaluate policies that may deny the granting of
++ 	 * privilege unilaterally.
+diff --git a/ports/UniXNU-sweet/patches/xnu/native-quiet-managed-page-report.patch b/ports/UniXNU-sweet/patches/xnu/native-quiet-managed-page-report.patch
+new file mode 100644
+index 0000000..a2ece03
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/native-quiet-managed-page-report.patch
+@@ -0,0 +1,24 @@
++diff --git a/iokit/Kernel/IOMemoryDescriptor.cpp b/iokit/Kernel/IOMemoryDescriptor.cpp
++index 65955af..7cf41e4 100644
++--- a/iokit/Kernel/IOMemoryDescriptor.cpp
+++++ b/iokit/Kernel/IOMemoryDescriptor.cpp
++@@ -33,6 +33,10 @@
++ #include <IOKit/system.h>
++ #include <IOKit/IOLib.h>
++ #include <IOKit/IOMemoryDescriptor.h>
+++/* Native board kernels map driver-owned (managed) pages through physical descriptors on purpose: GPU buffer views and the
+++ * scanout hand-off. The DEVELOPMENT report below then ran once per segment of every such mapping, with a backtrace, hundreds of
+++ * times a second while the UI animates (int-148 msgbuf), and pushed every other message out of the 128 KiB buffer. */
+++#define NATIVE_QUIET_MANAGED_PAGE_REPORT 1
++ #include <IOKit/IOMapper.h>
++ #include <IOKit/IODMACommand.h>
++ #include <IOKit/IOKitKeysPrivate.h>
++@@ -5236,7 +5240,7 @@ IOMemoryDescriptor::populateDevicePager(
++ 			break;
++ 		}
++ 
++-#if DEBUG || DEVELOPMENT
+++#if (DEBUG || DEVELOPMENT) && !NATIVE_QUIET_MANAGED_PAGE_REPORT
++ 		if ((kIOMemoryTypeUPL != type)
++ 		    && pmap_has_managed_page((ppnum_t) atop_64(physAddr), (ppnum_t) atop_64(physAddr + segLen - 1))) {
++ 			OSReportWithBacktrace("IOMemoryDescriptor physical with managed page 0x%qx:0x%qx",
+diff --git a/ports/UniXNU-sweet/patches/xnu/native-smp-secondary.patch b/ports/UniXNU-sweet/patches/xnu/native-smp-secondary.patch
+new file mode 100644
+index 0000000..a757f29
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/native-smp-secondary.patch
+@@ -0,0 +1,24 @@
++--- a/pexpert/pexpert/arm64/board_config.h
+++++ b/pexpert/pexpert/arm64/board_config.h
++@@ -134,7 +134,7 @@
++ #include <pexpert/arm64/BCM2837.h>
++ 
++ #define MAX_L2_CLINE                   6
++-#define MAX_CPUS                       4
+++#define MAX_CPUS                       8 /* sheng: SM8550 has eight cores */
++ #define MAX_CPU_CLUSTERS               1
++ 
++ #define CORE_NCTRS                     8 /* Placeholder; KPC is not enabled for this target */
++--- a/osfmk/arm64/start.s
+++++ b/osfmk/arm64/start.s
++@@ -145,8 +145,8 @@
++ 	adrp	x19, EXT(ResetHandlerData)@page			// Get address of the reset handler data
++ 	add		x19, x19, EXT(ResetHandlerData)@pageoff
++ 	mrs		x15, MPIDR_EL1						// Load MPIDR to get CPU number
++-#if HAS_CLUSTER
++-	and		x0, x15, #0xFFFF					// CPU number in Affinity0, cluster ID in Affinity1
+++#if HAS_CLUSTER || defined(BCM2837)
+++	and		x0, x15, #0xFFFF					// CPU number in Affinity0, cluster ID in Affinity1 (SM8550 numbers cores in Affinity1)
++ #else
++ 	and		x0, x15, #0xFF						// CPU number is in MPIDR Affinity Level 0
++ #endif
+diff --git a/ports/UniXNU-sweet/patches/xnu/native-trust-cache-runtime.patch b/ports/UniXNU-sweet/patches/xnu/native-trust-cache-runtime.patch
+new file mode 100644
+index 0000000..1d088a2
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/native-trust-cache-runtime.patch
+@@ -0,0 +1,11 @@
++--- a/osfmk/kern/startup.c
+++++ b/osfmk/kern/startup.c
++@@ -751,7 +751,7 @@
++ 	csm_initialize_provisioning_profiles();
++ #endif
++ 
++-#ifndef BCM2837
+++#if !defined(BCM2837) || (defined(XNU_NATIVE_TRUST_CACHE) && XNU_NATIVE_TRUST_CACHE)
++ 	kernel_bootstrap_log("trust_cache_init");
++ 
++ 	/* Initialize the runtime for the trust cache interface */
+diff --git a/ports/UniXNU-sweet/patches/xnu/native-union-getattrlistbulk.patch b/ports/UniXNU-sweet/patches/xnu/native-union-getattrlistbulk.patch
+new file mode 100644
+index 0000000..64f3c19
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/native-union-getattrlistbulk.patch
+@@ -0,0 +1,65 @@
++--- a/bsd/vfs/vfs_attrlist.c
+++++ b/bsd/vfs/vfs_attrlist.c
++@@ -4191,6 +4191,9 @@
++ 
++ 	FV_LOCK(fvdata);
++ 
+++#if CONFIG_UNION_MOUNTS
+++unionread:
+++#endif
++ 	/*
++ 	 * getattrlistbulk(2) maintains its offset in fv_offset. However
++ 	 * if the offset in the file glob is set (or reset) to 0, the directory
++@@ -4282,6 +4285,52 @@
++ 		    &count, &eofflag, ctx);
++ 		ut->uu_flag &= ~UT_KERN_RAGE_VNODES;
++ 	}
+++
+++#if CONFIG_UNION_MOUNTS
+++	/* Match getdirentriesattr: consume the upper directory before moving
+++	 * this open descriptor to the corresponding lower union directory.
+++	 * Snapshot enumeration must stay on the requested snapshot directory.
+++	 * Recheck lower-directory access before publishing the new vnode.
+++	 */
+++	if (!error && !count && eofflag &&
+++	    !(uap->options & FSOPT_LIST_SNAPSHOT) &&
+++	    (dvp->v_mount->mnt_flag & MNT_UNION)) {
+++		vnode_t uvp;
+++		int union_error = lookup_traverse_union(dvp, &uvp, ctx);
+++		if (!union_error) {
+++			if (uvp->v_type != VDIR) {
+++				union_error = ENOTDIR;
+++			}
+++#if CONFIG_MACF
+++			if (!union_error) {
+++				union_error = mac_vnode_check_readdir(ctx, uvp);
+++			}
+++#endif
+++			if (!union_error) {
+++				union_error = vnode_authorize(uvp, NULL, action, ctx);
+++			}
+++			if (!union_error) {
+++				union_error = vnode_ref_ext(uvp, fp->fp_glob->fg_flag & O_EVTONLY, 0);
+++			}
+++			if (!union_error) {
+++				fp_set_data(fp, uvp);
+++				fp->fp_glob->fg_offset = 0;
+++				vnode_rele_internal(dvp, fp->fp_glob->fg_flag & O_EVTONLY, 0, 0);
+++				vnode_put(dvp);
+++				dvp = uvp;
+++				/* The existing zero-offset path discards upper EOF and
+++				 * buffered dirents before constructing the lower UIO. */
+++				goto unionread;
+++			}
+++			vnode_put(uvp);
+++		}
+++		/* No corresponding lower directory is ordinary end-of-directory;
+++		 * other failures must not silently hide lower entries. */
+++		if (union_error != ENOENT) {
+++			error = union_error;
+++		}
+++	}
+++#endif
++ 
++ 	if (count) {
++ 		fvdata->fv_offset = uio_offset(auio);
+diff --git a/ports/UniXNU-sweet/patches/xnu/native-work-interval-soft-fail.patch b/ports/UniXNU-sweet/patches/xnu/native-work-interval-soft-fail.patch
+new file mode 100644
+index 0000000..ba28cf8
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/native-work-interval-soft-fail.patch
+@@ -0,0 +1,23 @@
++diff --git a/osfmk/kern/work_interval.c b/osfmk/kern/work_interval.c
++index 96e985d..46ef2b3 100644
++--- a/osfmk/kern/work_interval.c
+++++ b/osfmk/kern/work_interval.c
++@@ -1115,7 +1115,7 @@ kern_work_interval_create(thread_t thread,
++ 			return KERN_FAILURE;
++ 		}
++ 		if (!task_is_app(creating_task)) {
++-#if XNU_TARGET_OS_OSX
+++#if XNU_TARGET_OS_OSX || 1  /* sheng: UIKit aborts on a refused CA_CLIENT interval; soft-fail it as macOS does */
++ 			/*
++ 			 * Soft-fail the case of a non-app pretending to be an
++ 			 * app, by allowing it to press the buttons, but they're
++@@ -1131,7 +1131,8 @@ kern_work_interval_create(thread_t thread,
++ #endif /* XNU_TARGET_OS_OSX */
++ 		}
++ 		if (task_set_ca_client_wi(creating_task, true) == false) {
++-			return KERN_FAILURE;
+++			/* sheng: a second CA_CLIENT interval in a task is accepted but not connected, instead of aborting the app */
+++			create_flags |= WORK_INTERVAL_FLAG_IGNORED;
++ 		}
++ 	}
++ 
+diff --git a/ports/UniXNU-sweet/patches/xnu/native-work-interval-trace.patch b/ports/UniXNU-sweet/patches/xnu/native-work-interval-trace.patch
+new file mode 100644
+index 0000000..f855f6e
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/native-work-interval-trace.patch
+@@ -0,0 +1,43 @@
++diff --git a/bsd/kern/sys_work_interval.c b/bsd/kern/sys_work_interval.c
++index b544bf3..662bb00 100644
++--- a/bsd/kern/sys_work_interval.c
+++++ b/bsd/kern/sys_work_interval.c
++@@ -38,6 +38,22 @@
++ 
++ #include <libkern/libkern.h>
++ 
+++#include <sys/proc.h>
+++#include <kern/policy_internal.h>
+++
+++/* Board bring-up diagnostic: the last work-interval CREATE2 results, read by the boot-progress banner. */
+++char native_wi_log[4][100];
+++volatile unsigned native_wi_count;
+++static void
+++native_wi_note(const char *what, int error, int kret, uint32_t flags)
+++{
+++	char name[20];
+++	proc_selfname(name, sizeof(name));
+++	unsigned slot = native_wi_count++ % 4;
+++	snprintf(native_wi_log[slot], sizeof(native_wi_log[slot]), "WI#%u p%d %s %s err=%d kret=%d flags=%x app=%d",
+++	    native_wi_count, proc_selfpid(), name, what, error, kret, flags, (int)task_is_app(current_task()));
+++}
+++
++ int
++ work_interval_ctl(__unused proc_t p, struct work_interval_ctl_args *uap,
++     __unused int32_t *retval)
++@@ -69,6 +85,7 @@ work_interval_ctl(__unused proc_t p, struct work_interval_ctl_args *uap,
++ 		}
++ 
++ 		if ((error = priv_check_cred(kauth_cred_get(), PRIV_WORK_INTERVAL, 0)) != 0) {
+++			native_wi_note("priv", error, 0, create_params.wicp_create_flags);
++ 			return error;
++ 		}
++ 
++@@ -79,6 +96,7 @@ work_interval_ctl(__unused proc_t p, struct work_interval_ctl_args *uap,
++ 		};
++ 
++ 		kret = kern_work_interval_create(current_thread(), &create_args);
+++		native_wi_note("create", 0, kret, create_params.wicp_create_flags);
++ 
++ 		/* thread already has a work interval */
++ 		if (kret == KERN_FAILURE) {
+diff --git a/ports/UniXNU-sweet/patches/xnu/non-apple-cache-monitor.patch b/ports/UniXNU-sweet/patches/xnu/non-apple-cache-monitor.patch
+new file mode 100644
+index 0000000..781f1d0
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/non-apple-cache-monitor.patch
+@@ -0,0 +1,29 @@
++diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
++index 985370e..a688021 100644
++--- a/osfmk/arm64/arm_vm_init.c
+++++ b/osfmk/arm64/arm_vm_init.c
++@@ -2150,7 +2150,9 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
++ 	arm_vm_physmap_init(args);
++ 	set_mmu_ttb_alternate(cpu_ttep & TTBR_BADDR_MASK);
++ 
+++#if XNU_MONITOR
++ 	ml_enable_monitor();
+++#endif
++ 
++ 	set_mmu_ttb(invalid_ttep & TTBR_BADDR_MASK);
++ 
++diff --git a/osfmk/arm64/caches_asm.s b/osfmk/arm64/caches_asm.s
++index f2c2a00..385f3ab 100644
++--- a/osfmk/arm64/caches_asm.s
+++++ b/osfmk/arm64/caches_asm.s
++@@ -276,6 +276,10 @@ L_cpudr_loop:
++  */
++ 	.text
++ 	.align 2
+++#if !defined(APPLE_ARM64_ARCH_FAMILY)
+++	.globl EXT(CleanPoC_DcacheRegion_Force_nopreempt_nohid)
+++LEXT(CleanPoC_DcacheRegion_Force_nopreempt_nohid)
+++#endif
++ LEXT(CleanPoC_DcacheRegion_internal)
++ 	#define CLINE_FLUSH_STRIDE MMU_CLINE
++ 
+diff --git a/ports/UniXNU-sweet/patches/xnu/non-apple-iommu-bootstrap.patch b/ports/UniXNU-sweet/patches/xnu/non-apple-iommu-bootstrap.patch
+new file mode 100644
+index 0000000..8bac3ee
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/non-apple-iommu-bootstrap.patch
+@@ -0,0 +1,79 @@
++diff --git a/osfmk/arm/pmap/pmap.c b/osfmk/arm/pmap/pmap.c
++index 7db00b6..9f9d7bf 100644
++--- a/osfmk/arm/pmap/pmap.c
+++++ b/osfmk/arm/pmap/pmap.c
++@@ -84,8 +84,12 @@
++ 
++ #include <arm64/proc_reg.h>
++ #include <pexpert/arm64/boot.h>
+++#if XNU_MONITOR_ANS2_SART
++ #include <arm64/ppl/sart.h>
+++#endif
+++#if XNU_MONITOR_UAT_PPL
++ #include <arm64/ppl/uat.h>
+++#endif
++ 
++ #if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
++ #include <arm64/amcc_rorgn.h>
++@@ -883,6 +887,8 @@ PMAP_SUPPORT_PROTOTYPES(
++ 	vm_prot_t allow_mode,
++ 	int options), ARM_FORCE_FAST_FAULT_INDEX);
++ 
+++MARK_AS_PMAP_TEXT static void pmap_phys_write_disable(vm_address_t va);
+++
++ MARK_AS_PMAP_TEXT static boolean_t
++ arm_force_fast_fault_with_flush_range(
++ 	ppnum_t ppnum,
++@@ -2267,13 +2273,17 @@ pmap_bootstrap(
++ 	/**
++ 	 * Bootstrap any necessary UAT data structures and values needed from the device tree.
++ 	 */
+++#if XNU_MONITOR_UAT_PPL
++ 	uat_bootstrap();
+++#endif
++ 
++ 
++ 	/**
++ 	 * Bootstrap any necessary SART data structures and values needed from the device tree.
++ 	 */
+++#if XNU_MONITOR_ANS2_SART
++ 	sart_bootstrap();
+++#endif
++ 
++ 	/**
++ 	 * Don't make any assumptions about the alignment of avail_start before this
++@@ -4809,13 +4819,13 @@ pmap_page_protect_options_with_flush_range(
++ 		if (pvh_ptep_is_iommu(pte_p)) {
++ #if XNU_MONITOR
++ 			if (__improbable(pvh_flags & PVH_FLAG_LOCKDOWN_MASK)) {
++-				panic("pmap_page_protect: ppnum 0x%x locked down, cannot be owned by iommu %p, pve_p=%p",
++-				    ppnum, ptep_get_iommu(pte_p), pve_p);
+++				panic("pmap_page_protect: ppnum 0x%x locked down, cannot be owned by iommu ptep %p, pve_p=%p",
+++				    ppnum, pte_p, pve_p);
++ 			}
++ #endif
++ 			if (remove && (options & PMAP_OPTIONS_COMPRESSOR)) {
++-				panic("pmap_page_protect: attempt to compress ppnum 0x%x owned by iommu %p, pve_p=%p",
++-				    ppnum, ptep_get_iommu(pte_p), pve_p);
+++				panic("pmap_page_protect: attempt to compress ppnum 0x%x owned by iommu ptep %p, pve_p=%p",
+++				    ppnum, pte_p, pve_p);
++ 			}
++ 			goto protect_skip_pve_pass1;
++ 		}
++@@ -12026,6 +12036,7 @@ pmap_unpin_kernel_pages(vm_offset_t kva __unused, size_t nbytes __unused)
++ #endif /* !XNU_MONITOR */
++ 
++ 
+++#if PMAP_CS_PPL_MONITOR || PMAP_CS_INCLUDE_CODE_SIGNING
++ MARK_AS_PMAP_TEXT static inline void
++ pmap_cs_lockdown_pages(vm_address_t kva, vm_size_t size, bool ppl_writable)
++ {
++@@ -12046,6 +12057,8 @@ pmap_cs_unlockdown_pages(vm_address_t kva, vm_size_t size, bool ppl_writable)
++ #endif
++ }
++ 
+++#endif /* PMAP_CS_PPL_MONITOR || PMAP_CS_INCLUDE_CODE_SIGNING */
+++
++ /**
++  * Perform basic validation checks on the destination only and
++  * corresponding offset/sizes prior to writing to a read only allocation.
+diff --git a/ports/UniXNU-sweet/patches/xnu/non-apple-pmap-field.patch b/ports/UniXNU-sweet/patches/xnu/non-apple-pmap-field.patch
+new file mode 100644
+index 0000000..2fb23fb
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/non-apple-pmap-field.patch
+@@ -0,0 +1,12 @@
++diff --git a/osfmk/arm/pmap/pmap.h b/osfmk/arm/pmap/pmap.h
++--- a/osfmk/arm/pmap/pmap.h
+++++ b/osfmk/arm/pmap/pmap.h
++@@ -473,7 +473,7 @@
++ #if HAS_APPLE_PAC
++ 	bool disable_jop;
++ #else
++-	bool reserved10;
+++	bool reserved13;
++ #endif /* HAS_APPLE_PAC */
++ 
++ 	bool reserved11;
+diff --git a/ports/UniXNU-sweet/patches/xnu/null-root-media.patch b/ports/UniXNU-sweet/patches/xnu/null-root-media.patch
+new file mode 100644
+index 0000000..0af8163
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/null-root-media.patch
+@@ -0,0 +1,27 @@
++diff --git a/iokit/Kernel/IOService.cpp b/iokit/Kernel/IOService.cpp
++index 4903e7d..c22edff 100644
++--- a/iokit/Kernel/IOService.cpp
+++++ b/iokit/Kernel/IOService.cpp
++@@ -5257,14 +5257,16 @@ IOService::setRootMedia(IOService * root)
++ 	const OSMetaClass * ioblockstoragedriverClass;
++ 	bool unhide;
++ 
++-	ioblockstoragedriverClass = OSMetaClass::getMetaClassWithName(gIOBlockStorageDriverKey);
++-	assert(ioblockstoragedriverClass);
+++	if (root) {
+++		ioblockstoragedriverClass = OSMetaClass::getMetaClassWithName(gIOBlockStorageDriverKey);
+++		assert(ioblockstoragedriverClass);
++ 
++-	while (root) {
++-		if (root->metaCast(ioblockstoragedriverClass)) {
++-			break;
+++		while (root) {
+++			if (root->metaCast(ioblockstoragedriverClass)) {
+++				break;
+++			}
+++			root = root->getProvider();
++ 		}
++-		root = root->getProvider();
++ 	}
++ 
++ 	LOCKWRITENOTIFY();
+diff --git a/ports/UniXNU-sweet/patches/xnu/offline-component-load-probes.patch b/ports/UniXNU-sweet/patches/xnu/offline-component-load-probes.patch
+new file mode 100644
+index 0000000..94bf523
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/offline-component-load-probes.patch
+@@ -0,0 +1,188 @@
++--- a/bsd/kern/bsd_init.c
+++++ b/bsd/kern/bsd_init.c
++@@ -478,5 +478,88 @@
++  * of the tro_ucred field so that the uthread structure can be
++  * used like any other.
++  */
+++#if DEVELOPMENT || DEBUG
+++extern kern_return_t OSKextLoadKextWithIdentifier(const char *identifier);
+++volatile int native_apfs_load_status = -1;
+++volatile uint32_t native_apfs_registered = 0;
+++volatile uintptr_t native_apfs_vfsops = 0;
+++
+++__attribute__((noinline)) void
+++native_apfs_probe_checkpoint(void)
+++{
+++	__asm__ volatile("" ::: "memory");
+++}
+++
+++static void
+++native_apfs_load_probe(void)
+++{
+++	int enabled = 0;
+++	if (!PE_parse_boot_argn("offline-apfs-load", &enabled, sizeof(enabled)) || !enabled) {
+++		return;
+++	}
+++	native_apfs_load_status = OSKextLoadKextWithIdentifier("com.apple.filesystems.apfs");
+++	mount_list_lock();
+++	for (struct vfstable *entry = vfsconf; entry; entry = entry->vfc_next) {
+++		if (!strncmp(entry->vfc_name, "apfs", MFSNAMELEN)) {
+++			native_apfs_registered = 1;
+++			native_apfs_vfsops = (uintptr_t)entry->vfc_vfsops;
+++			break;
+++		}
+++	}
+++	mount_list_unlock();
+++	native_apfs_probe_checkpoint();
+++}
+++
+++volatile int native_iogpu_load_status = -1;
+++
+++__attribute__((noinline)) void
+++native_iogpu_probe_checkpoint(void)
+++{
+++	__asm__ volatile("" ::: "memory");
+++}
+++
+++static void
+++native_iogpu_load_probe(void)
+++{
+++	int enabled = 0;
+++	if (!PE_parse_boot_argn("offline-iogpu-load", &enabled, sizeof(enabled)) || !enabled) {
+++		return;
+++	}
+++	native_iogpu_load_status = OSKextLoadKextWithIdentifier("com.apple.iokit.IOGPUFamily");
+++	native_iogpu_probe_checkpoint();
+++}
+++
+++volatile int native_mobile_graphics_load_status = -1;
+++
+++__attribute__((noinline)) void
+++native_mobile_graphics_probe_checkpoint(void)
+++{
+++	__asm__ volatile("" ::: "memory");
+++}
+++
+++static void
+++native_mobile_graphics_load_probe(void)
+++{
+++	int enabled = 0;
+++	if (!PE_parse_boot_argn("offline-mobile-graphics-load", &enabled, sizeof(enabled)) || !enabled) {
+++		return;
+++	}
+++	native_mobile_graphics_load_status = OSKextLoadKextWithIdentifier("com.apple.iokit.IOMobileGraphicsFamily");
+++	native_mobile_graphics_probe_checkpoint();
+++	int legacy_register = 0;
+++	if (native_mobile_graphics_load_status == 0 &&
+++	    PE_parse_boot_argn("offline-legacy-register", &legacy_register, sizeof(legacy_register)) && legacy_register) {
+++		extern void native_legacy_display_probe(void);
+++		native_legacy_display_probe();
+++	}
+++	int client_probe = 0;
+++	if (native_mobile_graphics_load_status == 0 &&
+++	    PE_parse_boot_argn("offline-mobile-graphics-client", &client_probe, sizeof(client_probe)) && client_probe) {
+++		extern void native_mobile_graphics_client_probe(void);
+++		native_mobile_graphics_client_probe();
+++	}
+++}
+++#endif
+++
++ void
++ bsd_init(void)
++@@ -698,6 +774,27 @@
++ 	/* Initialize the file systems. */
++ 	bsd_init_kprintf("calling vfsinit\n");
++ 	vfsinit();
+++#if DEVELOPMENT || DEBUG
+++	native_apfs_load_probe();
+++	native_mobile_graphics_load_probe();
+++	native_iogpu_load_probe();
+++#if defined(XNU_ADRENO_FIRMWARE_PROBE) && XNU_ADRENO_FIRMWARE_PROBE
+++	extern void native_adreno_firmware_probe(void);
+++	native_adreno_firmware_probe();
+++#endif
+++#if defined(XNU_ADRENO_PM4_PROBE) && XNU_ADRENO_PM4_PROBE
+++	extern void native_adreno_pm4_probe(void);
+++	native_adreno_pm4_probe();
+++#endif
+++#if defined(XNU_SMMU4K_PROBE) && XNU_SMMU4K_PROBE
+++	extern void native_smmu4k_probe(void);
+++	native_smmu4k_probe();
+++#endif
+++#if defined(XNU_CONSTANT_UPLOADS_PROBE) && XNU_CONSTANT_UPLOADS_PROBE
+++	extern void native_constants_probe(void);
+++	native_constants_probe();
+++#endif
+++#endif
++ 
++ #if CONFIG_PROC_UUID_POLICY
++ 	/* Initial proc_uuid_policy subsystem */
++--- a/iokit/Kernel/IOUserClient.cpp
+++++ b/iokit/Kernel/IOUserClient.cpp
++@@ -6693,3 +6693,66 @@
++ OSMetaClassDefineReservedUnused(IOUserClient2022, 1);
++ OSMetaClassDefineReservedUnused(IOUserClient2022, 2);
++ OSMetaClassDefineReservedUnused(IOUserClient2022, 3);
+++
+++#if DEVELOPMENT || DEBUG
+++extern "C" {
+++volatile uint32_t native_mobile_graphics_abstract_null_mask;
+++volatile uint64_t native_mobile_graphics_client_object;
+++volatile uint64_t native_mobile_graphics_client_vptr;
+++volatile uint64_t native_mobile_graphics_client_meta;
+++volatile uint32_t native_mobile_graphics_client_size;
+++volatile int native_mobile_graphics_client_init = -1;
+++volatile uint32_t native_mobile_graphics_client_results[3] = {~0U, ~0U, ~0U};
+++volatile int native_mobile_graphics_client_released;
+++
+++__attribute__((noinline)) void
+++native_mobile_graphics_client_checkpoint(void)
+++{
+++	__asm__ volatile("" ::: "memory");
+++}
+++
+++void
+++native_mobile_graphics_client_probe(void)
+++{
+++	const char *abstract_names[] = {"IOMobileFramebuffer", "IOMobileFramebufferService", "IOMobileFramebufferLegacy"};
+++	for (unsigned i = 0; i < 3; i++) {
+++		OSObject *object = OSMetaClass::allocClassWithName(abstract_names[i]);
+++		if (!object) {
+++			native_mobile_graphics_abstract_null_mask |= 1U << i;
+++		} else {
+++			object->release();
+++		}
+++	}
+++	OSObject *object = OSMetaClass::allocClassWithName("IOMobileFramebufferUserClient");
+++	IOUserClient *client = OSDynamicCast(IOUserClient, object);
+++	if (client) {
+++		native_mobile_graphics_client_object = (uintptr_t)client;
+++		native_mobile_graphics_client_vptr = *(const uintptr_t *)client;
+++		native_mobile_graphics_client_meta = (uintptr_t)client->getMetaClass();
+++		native_mobile_graphics_client_size = client->getMetaClass()->getClassSize();
+++		native_mobile_graphics_client_init = client->init();
+++		if (native_mobile_graphics_client_init) {
+++			IOExternalMethodArguments arguments = {};
+++			const uint32_t selectors[] = {90, 0x80000000U, ~0U};
+++			for (unsigned i = 0; i < 3; i++) {
+++				arguments.selector = selectors[i];
+++				native_mobile_graphics_client_results[i] = client->externalMethod(selectors[i], &arguments, NULL, NULL, NULL);
+++			}
+++		}
+++	}
+++	if (object) {
+++		object->release();
+++		native_mobile_graphics_client_released = 1;
+++	}
+++	native_mobile_graphics_client_checkpoint();
+++#if defined(XNU_NATIVE_MOBILE_DISPLAY) && XNU_NATIVE_MOBILE_DISPLAY
+++	extern void native_mobile_display_provider_probe(void);
+++	native_mobile_display_provider_probe();
+++#endif
+++#if defined(XNU_NATIVE_LEGACY_DISPLAY) && XNU_NATIVE_LEGACY_DISPLAY
+++	extern void native_legacy_display_probe(void);
+++	native_legacy_display_probe();
+++#endif
+++}
+++}
+++#endif
+diff --git a/ports/UniXNU-sweet/patches/xnu/offline-legacy-start.patch b/ports/UniXNU-sweet/patches/xnu/offline-legacy-start.patch
+new file mode 100644
+index 0000000..55d0d98
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/offline-legacy-start.patch
+@@ -0,0 +1,19 @@
++--- a/bsd/kern/bsd_init.c
+++++ b/bsd/kern/bsd_init.c
++@@ -1282,7 +1282,15 @@ bsd_autoconf(void)
++ 		}
++ 	}
++ 
++-	return IOKitBSDInit();
+++	kern_return_t result = IOKitBSDInit();
+++#if (DEVELOPMENT || DEBUG) && defined(XNU_NATIVE_LEGACY_DISPLAY) && XNU_NATIVE_LEGACY_DISPLAY
+++	/* The original IOSurface personality requires the genuine IOBSD resource.
+++	 * The default-off framebuffer instrument may start only after publication.
+++	 */
+++	extern void native_legacy_display_late_probe(void);
+++	native_legacy_display_late_probe();
+++#endif
+++	return result;
++ }
++ 
++ 
+diff --git a/ports/UniXNU-sweet/patches/xnu/offline-native-gpu-broker.patch b/ports/UniXNU-sweet/patches/xnu/offline-native-gpu-broker.patch
+new file mode 100644
+index 0000000..1c991eb
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/offline-native-gpu-broker.patch
+@@ -0,0 +1,13 @@
++--- a/bsd/kern/bsd_init.c
+++++ b/bsd/kern/bsd_init.c
++@@ -912,6 +912,10 @@
++ #if CONFIG_DTRACE
++ 	dtrace_postinit();
++ #endif
+++#if (DEVELOPMENT || DEBUG) && defined(XNU_NATIVE_OFFLINE_GPU) && XNU_NATIVE_OFFLINE_GPU
+++	extern void native_offline_gpu_publish(void);
+++	native_offline_gpu_publish();
+++#endif
++ 
++ 	/*
++ 	 * We attach the loopback interface *way* down here to ensure
+diff --git a/ports/UniXNU-sweet/patches/xnu/offline-owner-boot-manifest.patch b/ports/UniXNU-sweet/patches/xnu/offline-owner-boot-manifest.patch
+new file mode 100644
+index 0000000..589054d
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/offline-owner-boot-manifest.patch
+@@ -0,0 +1,72 @@
++--- a/iokit/bsddev/IOKitBSDInit.cpp
+++++ b/iokit/bsddev/IOKitBSDInit.cpp
++@@ -566,6 +566,69 @@
++ 	return result;
++ }
++ 
+++#if defined(XNU_OWNER_BOOT_MANIFEST) && XNU_OWNER_BOOT_MANIFEST
+++#if !DEVELOPMENT && !DEBUG
+++#error Owner image-set metadata is an offline development instrument
+++#endif
+++#include <libkern/crypto/sha2.h>
+++extern "C" int native_verified_block_manifest_sha384(dev_t, const char *, uint8_t[48]);
+++extern "C" int native_owner_publish_boot_manifest(dev_t, const char *, dev_t, const char *);
+++extern "C" {
+++volatile int native_owner_boot_manifest_status = -1;
+++uint8_t native_owner_boot_manifest_hash[48];
+++}
+++
+++extern "C" int
+++native_owner_publish_boot_manifest(dev_t rootDevice, const char *rootUUID,
+++    dev_t cacheDevice, const char *cacheUUID)
+++{
+++	static const char domain[] = "VerifiedRoot.OwnerBootSet.v1";
+++	uint8_t rootDigest[48], cacheDigest[48], digest[48];
+++	uint8_t rootRole = 1, cacheRole = 2;
+++	if (rootDevice == cacheDevice ||
+++	    !native_verified_block_manifest_sha384(rootDevice, rootUUID, rootDigest) ||
+++	    !native_verified_block_manifest_sha384(cacheDevice, cacheUUID, cacheDigest)) {
+++		native_owner_boot_manifest_status = 1;
+++		return 0;
+++	}
+++	SHA384_CTX context;
+++	SHA384_Init(&context);
+++	SHA384_Update(&context, domain, sizeof(domain));
+++	SHA384_Update(&context, &rootRole, sizeof(rootRole));
+++	SHA384_Update(&context, rootDigest, sizeof(rootDigest));
+++	SHA384_Update(&context, &cacheRole, sizeof(cacheRole));
+++	SHA384_Update(&context, cacheDigest, sizeof(cacheDigest));
+++	SHA384_Final(digest, &context);
+++	IORegistryEntry *chosen = IORegistryEntry::fromPath("/chosen", gIODTPlane);
+++	if (!chosen) { native_owner_boot_manifest_status = 2; return 0; }
+++	// Never replace an existing firmware/Apple identity with an owner identity.
+++	if (chosen->getProperty("boot-manifest-hash") || chosen->getProperty("owner-boot-manifest-domain")) {
+++		chosen->release();
+++		native_owner_boot_manifest_status = 3;
+++		return 0;
+++	}
+++	OSData *value = OSData::withBytes(digest, sizeof(digest));
+++	OSData *tag = OSData::withBytes(domain, sizeof(domain));
+++	bool tagged = tag && chosen->setProperty("owner-boot-manifest-domain", tag);
+++	bool published = tagged && value && chosen->setProperty("boot-manifest-hash", value);
+++	uint8_t actual[48];
+++	size_t actualSize = sizeof(actual);
+++	bool result = published && IOGetBootManifestHash(reinterpret_cast<char *>(actual), &actualSize) &&
+++	    actualSize == sizeof(digest) && !memcmp(actual, digest, sizeof(digest));
+++	if (!result) {
+++		if (published) chosen->removeProperty("boot-manifest-hash");
+++		if (tagged) chosen->removeProperty("owner-boot-manifest-domain");
+++	} else {
+++		memcpy(native_owner_boot_manifest_hash, actual, sizeof(actual));
+++	}
+++	OSSafeReleaseNULL(tag);
+++	OSSafeReleaseNULL(value);
+++	chosen->release();
+++	native_owner_boot_manifest_status = result ? 0 : 4;
+++	return result;
+++}
+++#endif
+++
++ /*
++  * Set NVRAM to boot into the right flavor of Recovery,
++  * optionally passing a UUID of a volume that failed to boot.
+diff --git a/ports/UniXNU-sweet/patches/xnu/offline-owner-cache-carrier.patch b/ports/UniXNU-sweet/patches/xnu/offline-owner-cache-carrier.patch
+new file mode 100644
+index 0000000..dacc709
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/offline-owner-cache-carrier.patch
+@@ -0,0 +1,108 @@
++--- a/bsd/vm/vm_unix.c
+++++ b/bsd/vm/vm_unix.c
++@@ -2225,6 +2225,65 @@
++ 	struct _sr_file_mappings *sr_file_mappings,
++ 	struct vm_shared_region  *shared_region);
++ 
+++#if defined(XNU_OWNER_CACHE_CARRIER) && XNU_OWNER_CACHE_CARRIER && !CONFIG_CSR
+++#if !DEVELOPMENT && !DEBUG
+++#error The independent owner cache carrier is a development instrument
+++#endif
+++extern int native_verified_block_root_authorized(dev_t);
+++extern int native_verified_block_volume_device(const char *, dev_t *, char *, size_t);
+++unsigned long native_owner_cache_carrier_accepts = 0;
+++unsigned long native_owner_cache_carrier_rejects = 0;
+++volatile dev_t native_owner_cache_carrier_root_device = NODEV;
+++volatile dev_t native_owner_cache_carrier_file_device = NODEV;
+++
+++static boolean_t
+++native_owner_shared_cache_carrier(vnode_t process_root, vnode_t file)
+++{
+++	const char *root_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2";
+++#if defined(XNU_OWNER_CACHE_CARRIER_WRONG_UUID) && XNU_OWNER_CACHE_CARRIER_WRONG_UUID
+++	const char *cache_uuid = "9846FE78-2910-4297-AF97-D59BB6F8FC16";
+++#else
+++	const char *cache_uuid = "8846FE78-2910-4297-AF97-D59BB6F8FC16";
+++#endif
+++	const char *directory = "/private/preboot/System/Library/Caches/com.apple.dyld";
+++	vnode_t expected_parent = NULLVP, device_vnode;
+++	dev_t root_device = NODEV, cache_device = NODEV, expected = NODEV;
+++	char device_path[64];
+++	boolean_t authorized = FALSE;
+++	if (process_root != rootvnode || !file || vnode_vtype(file) != VREG) goto out;
+++	mount_t root_mount = vnode_mount(process_root), cache_mount = vnode_mount(file);
+++	if (!root_mount || !cache_mount || root_mount == cache_mount ||
+++	    !(vfs_flags(root_mount) & MNT_RDONLY) || !(vfs_flags(cache_mount) & MNT_RDONLY) ||
+++	    strcmp(vfs_statfs(root_mount)->f_fstypename, "apfs") ||
+++	    strcmp(vfs_statfs(cache_mount)->f_fstypename, "apfs")) goto out;
+++	device_vnode = vfs_devvp(root_mount);
+++	if (device_vnode) {
+++		root_device = vnode_specrdev(device_vnode);
+++		vnode_put(device_vnode);
+++	}
+++	device_vnode = vfs_devvp(cache_mount);
+++	if (device_vnode) {
+++		cache_device = vnode_specrdev(device_vnode);
+++		vnode_put(device_vnode);
+++	}
+++	if (root_device == NODEV || cache_device == NODEV ||
+++	    !native_verified_block_volume_device(root_uuid, &expected, device_path, sizeof(device_path)) ||
+++	    expected != root_device ||
+++	    !native_verified_block_volume_device(cache_uuid, &expected, device_path, sizeof(device_path)) ||
+++	    expected != cache_device) goto out;
+++	if (vnode_lookup(directory, 0, &expected_parent, vfs_context_current())) goto out;
+++	authorized = vnode_vtype(expected_parent) == VDIR && vnode_mount(expected_parent) == cache_mount &&
+++	    vnode_parent(file) == expected_parent && native_verified_block_root_authorized(root_device);
+++out:
+++	if (expected_parent) vnode_put(expected_parent);
+++	native_owner_cache_carrier_root_device = root_device;
+++	native_owner_cache_carrier_file_device = cache_device;
+++	if (authorized) os_atomic_inc(&native_owner_cache_carrier_accepts, relaxed);
+++	else os_atomic_inc(&native_owner_cache_carrier_rejects, relaxed);
+++	return authorized;
+++}
+++#endif
+++
++ /*
++  * Setup part of _shared_region_map_and_slide().
++  * It had to be broken out of _shared_region_map_and_slide() to
++@@ -2557,7 +2616,13 @@
++ 		 * is either on the root volume or in the preboot cryptex volume.
++ 		 */
++ 		assert(rdir_vp != NULL);
+++#if defined(XNU_OWNER_CACHE_CARRIER) && XNU_OWNER_CACHE_CARRIER
+++		boolean_t owner_carrier = FALSE;
+++#endif
++ 		if (srfmp->vp->v_mount != rdir_vp->v_mount) {
+++#if defined(XNU_OWNER_CACHE_CARRIER) && XNU_OWNER_CACHE_CARRIER
+++			owner_carrier = native_owner_shared_cache_carrier(rdir_vp, srfmp->vp);
+++#endif
++ 			vnode_t preboot_vp = NULL;
++ #if XNU_TARGET_OS_OSX
++ #define PREBOOT_CRYPTEX_PATH "/System/Volumes/Preboot/Cryptexes"
++@@ -2565,7 +2630,11 @@
++ #define PREBOOT_CRYPTEX_PATH "/private/preboot/Cryptexes"
++ #endif
++ 			error = vnode_lookup(PREBOOT_CRYPTEX_PATH, 0, &preboot_vp, vfs_context_current());
++-			if (error || srfmp->vp->v_mount != preboot_vp->v_mount) {
+++			if ((error || srfmp->vp->v_mount != preboot_vp->v_mount)
+++#if defined(XNU_OWNER_CACHE_CARRIER) && XNU_OWNER_CACHE_CARRIER
+++			    && !owner_carrier
+++#endif
+++			    ) {
++ 				SHARED_REGION_TRACE_ERROR(
++ 					("shared_region: %p [%d(%s)] map(%p:'%s'): "
++ 					"not on process' root volume nor preboot volume\n",
++@@ -2584,7 +2653,11 @@
++ 		}
++ #endif /* CONFIG_CSR */
++ 
++-		if (scdir_enforce) {
+++		if (scdir_enforce
+++#if defined(XNU_OWNER_CACHE_CARRIER) && XNU_OWNER_CACHE_CARRIER && !CONFIG_CSR
+++		    && !owner_carrier
+++#endif
+++		    ) {
++ 			char **expected_scdir_path = is_driverkit ? driverkit_scdir_path : scdir_path;
++ 			struct vnode *scdir_vp = NULL;
++ 			for (expected_scdir_path = is_driverkit ? driverkit_scdir_path : scdir_path;
+diff --git a/ports/UniXNU-sweet/patches/xnu/offline-owner-root-binding-audit.patch b/ports/UniXNU-sweet/patches/xnu/offline-owner-root-binding-audit.patch
+new file mode 100644
+index 0000000..abb99c7
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/offline-owner-root-binding-audit.patch
+@@ -0,0 +1,78 @@
++--- a/bsd/kern/bsd_init.c
+++++ b/bsd/kern/bsd_init.c
++@@ -987,9 +987,41 @@
++ 		if (require_rootauth) {
++ 			/* enforce sealedness */
++ 			int autherr = VNOP_IOCTL(rootvnode, FSIOC_KERNEL_ROOTAUTH, NULL, 0, vfs_context_kernel());
++-			if (autherr) {
+++			int owner_authorized = 0;
+++#if defined(XNU_OWNER_ROOT_AUDIT) && XNU_OWNER_ROOT_AUDIT
+++			{
+++				extern int native_verified_block_root_authorized(dev_t);
+++				extern volatile int native_owner_root_apple_autherr, native_owner_root_decision, native_owner_root_readonly;
+++				extern volatile dev_t native_owner_root_mount_device, native_owner_root_selected_device;
+++				extern void native_owner_root_checkpoint(int, int, dev_t);
+++				mount_t root_mount = vnode_mount(rootvnode);
+++				vnode_t device_vnode = vfs_devvp(root_mount);
+++				dev_t device = device_vnode ? vnode_specrdev(device_vnode) : NODEV;
+++				int readonly = (vfs_flags(root_mount) & MNT_RDONLY) != 0;
+++				int owner = readonly && device_vnode && native_verified_block_root_authorized(device);
+++				if (device_vnode) vnode_put(device_vnode);
+++				native_owner_root_mount_device = device;
+++				native_owner_root_selected_device = rootdev;
+++				native_owner_root_apple_autherr = autherr;
+++				native_owner_root_decision = owner;
+++				native_owner_root_readonly = readonly;
+++#if defined(XNU_OWNER_ROOT_TRUST) && XNU_OWNER_ROOT_TRUST
+++				owner_authorized = owner;
+++#endif
+++				native_owner_root_checkpoint(autherr, owner, device);
+++			}
+++#endif
+++			if (autherr && !owner_authorized) {
++ 				panic("rootvp not authenticated after mounting");
++ 			}
+++#if defined(XNU_OWNER_ROOT_TRUST) && XNU_OWNER_ROOT_TRUST
+++			{
+++				extern volatile int native_owner_root_accepted;
+++				extern void native_owner_root_accepted_checkpoint(int, int);
+++				native_owner_root_accepted = owner_authorized;
+++				native_owner_root_accepted_checkpoint(autherr, owner_authorized);
+++			}
+++#endif
++ 		}
++ 	}
++ 
++@@ -1114,6 +1146,32 @@
++ 
++ 	bsd_init_kprintf("done\n");
++ }
+++
+++#if defined(XNU_OWNER_ROOT_AUDIT) && XNU_OWNER_ROOT_AUDIT
+++#if defined(XNU_OWNER_ROOT_TRUST) && XNU_OWNER_ROOT_TRUST
+++volatile int native_owner_root_trust_enabled = 1;
+++#else
+++volatile int native_owner_root_trust_enabled = 0;
+++#endif
+++volatile int native_owner_root_accepted = 0;
+++volatile int native_owner_root_apple_autherr = -1;
+++volatile int native_owner_root_decision = -1;
+++volatile int native_owner_root_readonly = -1;
+++volatile dev_t native_owner_root_mount_device = NODEV;
+++volatile dev_t native_owner_root_selected_device = NODEV;
+++void native_owner_root_accepted_checkpoint(int, int);
+++__attribute__((noinline)) void
+++native_owner_root_accepted_checkpoint(int apple, int owner)
+++{
+++	__asm__ volatile("" : : "r"(apple), "r"(owner) : "memory");
+++}
+++void native_owner_root_checkpoint(int, int, dev_t);
+++__attribute__((noinline)) void
+++native_owner_root_checkpoint(int apple, int owner, dev_t device)
+++{
+++	__asm__ volatile("" : : "r"(apple), "r"(owner), "r"(device) : "memory");
+++}
+++#endif
++ 
++ void
++ bsdinit_task(void)
+diff --git a/ports/UniXNU-sweet/patches/xnu/offline-owner-root-crypto-probe.patch b/ports/UniXNU-sweet/patches/xnu/offline-owner-root-crypto-probe.patch
+new file mode 100644
+index 0000000..175f169
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/offline-owner-root-crypto-probe.patch
+@@ -0,0 +1,18 @@
++--- a/bsd/kern/bsd_init.c
+++++ b/bsd/kern/bsd_init.c
++@@ -834,6 +834,15 @@
++ 
++ 	bsd_init_kprintf("calling sysctl_mib_init\n");
++ 	sysctl_mib_init();
+++#if defined(XNU_VERIFIED_ROOT_PROBE) && XNU_VERIFIED_ROOT_PROBE
+++	{
+++		extern void native_verified_root_probe(void);
+++		int enabled = 0;
+++		if (PE_parse_boot_argn("offline-owner-root-check", &enabled, sizeof(enabled)) && enabled) {
+++			native_verified_root_probe();
+++		}
+++	}
+++#endif
++ 
++ 	bsd_init_kprintf("calling bsd_autoconf\n");
++ 	bsd_autoconf();
+diff --git a/ports/UniXNU-sweet/patches/xnu/offline-owner-z-air-init.patch b/ports/UniXNU-sweet/patches/xnu/offline-owner-z-air-init.patch
+new file mode 100644
+index 0000000..0c82dbd
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/offline-owner-z-air-init.patch
+@@ -0,0 +1,20 @@
++--- a/bsd/kern/kern_exec.c
+++++ b/bsd/kern/kern_exec.c
++@@ -7400,6 +7400,17 @@
++ 	(void) memorystatus_init_at_boot_snapshot();
++ #endif /* CONFIG_MEMORYSTATUS */
++ 
+++#if (DEBUG || DEVELOPMENT) && defined(XNU_NATIVE_AIR_INIT) && XNU_NATIVE_AIR_INIT
+++	int offline_air = 0;
+++	if (PE_parse_boot_argn("offline-air-init", &offline_air, sizeof(offline_air)) && offline_air) {
+++		if (offline_air != 1) panic("offline AIR init invalid selector");
+++		error = load_init_program_at_path(p, (user_addr_t)scratch_addr,
+++		    "/private/var/tmp/air-native", init_envp);
+++		if (error) panic("offline signed AIR instrument exec failed: %d", error);
+++		return;
+++	}
+++#endif
+++
++ #if DEBUG || DEVELOPMENT
++ 	/* Check for boot-arg suffix first */
++ 	char launchd_suffix[64];
+diff --git a/ports/UniXNU-sweet/patches/xnu/offline-pgz-alignment-probe.patch b/ports/UniXNU-sweet/patches/xnu/offline-pgz-alignment-probe.patch
+new file mode 100644
+index 0000000..0bff398
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/offline-pgz-alignment-probe.patch
+@@ -0,0 +1,94 @@
++--- a/osfmk/kern/zalloc.c
+++++ b/osfmk/kern/zalloc.c
++@@ -5629,6 +5629,91 @@
++ 	}
++ }
++ STARTUP(EARLY_BOOT, STARTUP_RANK_MIDDLE, pgz_init);
+++
+++#if (DEVELOPMENT || DEBUG) && defined(XNU_ZONE_PGZ_ALIGNMENT_PROBE) && XNU_ZONE_PGZ_ALIGNMENT_PROBE
+++volatile uint32_t native_zone_pgz_probe_case;
+++volatile uint32_t native_zone_pgz_probe_stage;
+++volatile uint32_t native_zone_pgz_probe_zone;
+++volatile uint32_t native_zone_pgz_probe_expected_zone;
+++volatile uint32_t native_zone_pgz_probe_metadata;
+++volatile uintptr_t native_zone_pgz_probe_backing;
+++volatile uintptr_t native_zone_pgz_probe_alias;
+++volatile uintptr_t native_zone_pgz_probe_argument;
+++
+++__attribute__((noinline)) void
+++native_zone_pgz_probe_checkpoint(void)
+++{
+++	__asm__ volatile ("" ::: "memory");
+++}
+++
+++__startup_func static void
+++native_zone_pgz_alignment_probe(void)
+++{
+++	uint32_t mode = 0;
+++	void *objects[128] = { 0 };
+++	void *backing = NULL;
+++	zone_t other = ZONE_NULL;
+++	unsigned count = 0;
+++
+++	if (!PE_parse_boot_argn("offline-zone-pgz-case", &mode, sizeof(mode)) || !mode) return;
+++	if (mode > 4 || !zone_info.zi_pgz_meta || pgz_slot_avail <= 0) {
+++		panic("offline PGZ alignment fixture unavailable");
+++	}
+++	zone_t zone = zone_create("native.pgz.alignment", 192, ZC_NOPGZ | ZC_DESTRUCTIBLE);
+++	native_zone_pgz_probe_case = mode;
+++	native_zone_pgz_probe_zone = zone_index(zone);
+++	for (; count < 128;) {
+++		void *obj = zalloc_flags(zone, Z_WAITOK | Z_ZERO);
+++		objects[count++] = obj;
+++		vm_offset_t offset = ((vm_offset_t)obj & PAGE_MASK) - zone_elem_inner_offs(zone);
+++		if (zone_meta_from_addr((vm_offset_t)obj)->zm_chunk_len == ZM_SECONDARY_PAGE &&
+++		    !Z_FAST_ALIGNED(offset, zone->z_align_magic)) {
+++			backing = obj;
+++			break;
+++		}
+++	}
+++	if (!backing || pgz_owned((vm_offset_t)backing)) panic("offline PGZ fixture lacks secondary-page element");
+++	zone_id_require_aligned(zone_index(zone), backing);
+++	native_zone_pgz_probe_stage = 1;
+++	native_zone_pgz_probe_backing = (uintptr_t)backing;
+++	*(volatile uint64_t *)backing = 0x50475a344b50524fULL;
+++	vm_offset_t alias = pgz_protect(zone, (vm_offset_t)backing, __builtin_frame_address(0));
+++	if (alias == (vm_offset_t)backing || *(volatile uint64_t *)alias != *(volatile uint64_t *)backing) {
+++		panic("offline PGZ fixture did not protect actual backing");
+++	}
+++	native_zone_pgz_probe_alias = alias;
+++	native_zone_pgz_probe_metadata = zone_meta_from_addr(alias)->zm_bits;
+++	native_zone_pgz_probe_stage = 2;
+++	zone_id_t expected = zone_index(zone);
+++	vm_offset_t argument = alias;
+++	if (mode == 2) argument++;
+++	if (mode == 3) {
+++		other = zone_create("native.pgz.other", 192, ZC_NOPGZ | ZC_DESTRUCTIBLE);
+++		expected = zone_index(other);
+++	}
+++	if (mode == 4) {
+++		if (pgz_unprotect(alias, __builtin_frame_address(0)) != (vm_offset_t)backing) panic("offline PGZ fixture backing changed");
+++		zfree(zone, objects[count - 1]);
+++		objects[count - 1] = NULL;
+++		native_zone_pgz_probe_stage = 3;
+++	}
+++	native_zone_pgz_probe_expected_zone = expected;
+++	native_zone_pgz_probe_argument = argument;
+++	zone_id_require_aligned(expected, (void *)argument);
+++	if (mode != 1) panic("offline PGZ negative case unexpectedly returned");
+++	*(volatile uint64_t *)alias ^= 1;
+++	if (*(volatile uint64_t *)backing != 0x50475a344b50524eULL ||
+++	    pgz_unprotect(alias, __builtin_frame_address(0)) != (vm_offset_t)backing) {
+++		panic("offline PGZ backing identity or write failed");
+++	}
+++	for (unsigned i = 0; i < count; i++) zfree(zone, objects[i]);
+++	if (other) zdestroy(other);
+++	zdestroy(zone);
+++	native_zone_pgz_probe_stage = 4;
+++	native_zone_pgz_probe_checkpoint();
+++}
+++STARTUP(EARLY_BOOT, STARTUP_RANK_LAST, native_zone_pgz_alignment_probe);
+++#endif
++ 
++ static void
++ panic_display_pgz_bt(bool has_syms, uint32_t slot, bool free)
+diff --git a/ports/UniXNU-sweet/patches/xnu/sheng-platform-power.patch b/ports/UniXNU-sweet/patches/xnu/sheng-platform-power.patch
+new file mode 100644
+index 0000000..99f2694
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/sheng-platform-power.patch
+@@ -0,0 +1,15 @@
++diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
++--- a/bsd/kern/bsd_init.c
+++++ b/bsd/kern/bsd_init.c
++@@ -688,6 +688,11 @@
++ 	bsd_init_kprintf("calling bsd_bufferinit\n");
++ 	bsd_bufferinit();
++ 
+++#if defined(XNU_SHENG_PMGR) && XNU_SHENG_PMGR
+++	extern void sheng_pmgr_run(void);
+++	sheng_pmgr_run();
+++#endif
+++
++ 	/*
++ 	 * Initialize the calendar.
++ 	 */
+diff --git a/ports/UniXNU-sweet/patches/xnu/source-corecrypto14-bootstrap.patch b/ports/UniXNU-sweet/patches/xnu/source-corecrypto14-bootstrap.patch
+new file mode 100644
+index 0000000..df9a6c8
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/source-corecrypto14-bootstrap.patch
+@@ -0,0 +1,40 @@
++diff --git a/osfmk/prng/prng_random.c b/osfmk/prng/prng_random.c
++index c52f0ab..412c167 100644
++--- a/osfmk/prng/prng_random.c
+++++ b/osfmk/prng/prng_random.c
++@@ -420,3 +420,35 @@ random_bool_gen_bits(struct bool_gen * bg, unsigned int * buffer, unsigned int c
++ 	}
++ 	return rbits;
++ }
+++
+++/* Internal source-provider verification; no replacement callbacks or skipped POST. */
+++#if defined(XNU_SOURCE_CORECRYPTO14)
+++#include <kern/startup.h>
+++#include <mach/kmod.h>
+++#include <mach-o/loader.h>
+++
+++extern struct mach_header_64 _mh_execute_header;
+++extern kern_return_t corecrypto_kext_start(kmod_info_t *, void *);
+++SECURITY_READ_ONLY_LATE(kern_return_t) source_corecrypto14_status = KERN_FAILURE;
+++
+++static void
+++source_corecrypto14_bootstrap(void)
+++{
+++	static kmod_info_t info = {
+++		.info_version = KMOD_INFO_VERSION,
+++		.name = "source-corecrypto14-evaluation",
+++		.version = "14.0",
+++	};
+++	uint32_t mode = 0;
+++
+++	if (PE_parse_boot_argn("fips_mode", &mode, sizeof(mode)) && mode != 0) {
+++		panic("source corecrypto verification requires complete default POST");
+++	}
+++	info.address = (vm_address_t)&_mh_execute_header;
+++	source_corecrypto14_status = corecrypto_kext_start(&info, NULL);
+++	if (source_corecrypto14_status != KERN_SUCCESS) {
+++		panic("source corecrypto initialization failed: %d", source_corecrypto14_status);
+++	}
+++}
+++STARTUP(EARLY_BOOT, STARTUP_RANK_FIRST, source_corecrypto14_bootstrap);
+++#endif
+diff --git a/ports/UniXNU-sweet/patches/xnu/source-machine-layer.patch b/ports/UniXNU-sweet/patches/xnu/source-machine-layer.patch
+new file mode 100644
+index 0000000..c95a78f
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/source-machine-layer.patch
+@@ -0,0 +1,38 @@
++diff --git a/config/MASTER b/config/MASTER
++--- a/config/MASTER
+++++ b/config/MASTER
++@@ -320,6 +320,8 @@ options   CONFIG_PMAP_PPL			# <config_pmap_ppl>
++ # Compile XNU with PPL support.
++ options   CONFIG_PMAP_PPL			# <config_pmap_ppl>
++ 
+++options   CONFIG_APPLE_AMCC			# <apple_amcc>
+++
++ options   NOS_ARM_ASM			# <nos_arm_asm>
++ options   NOS_ARM_PMAP			# <nos_arm_pmap>
++ 
++diff --git a/config/MASTER.arm64.bcm2837 b/config/MASTER.arm64.bcm2837
++--- a/config/MASTER.arm64.bcm2837
+++++ b/config/MASTER.arm64.bcm2837
++@@ -16,7 +16,7 @@
++ #  Standard Apple OS Configurations:
++ #  -------- ----- -- ---------------
++ #
++-#  KERNEL_BASE =    [ arm64 config_pmap_ppl xsmall msgb_small config_embedded config_requires_u32_munging ARM_EXTRAS_BASE ]
+++#  KERNEL_BASE =    [ arm64 config_pmap_ppl nos_arm_asm nos_arm_pmap xsmall msgb_small config_embedded config_requires_u32_munging ARM_EXTRAS_BASE ]
++ #  KERNEL_RELEASE = [ KERNEL_BASE ]
++ #  KERNEL_DEV =     [ KERNEL_BASE development mach_assert config_xnupost proc_ref_debug ]
++ #  KERNEL_DEBUG =   [ KERNEL_BASE debug mach_assert config_xnupost config_waitq_stats config_workloop_debug ]
++diff --git a/osfmk/conf/files.arm64 b/osfmk/conf/files.arm64
++--- a/osfmk/conf/files.arm64
+++++ b/osfmk/conf/files.arm64
++@@ -25,8 +25,8 @@ osfmk/arm64/WKdmCompress_4k.s	standard
++ osfmk/arm64/WKdmData.s		standard
++ osfmk/arm64/lz4_decode_arm64.s  standard
++ osfmk/arm64/lz4_encode_arm64.s  standard
++-osfmk/arm64/amcc_rorgn_ppl.c optional nos_arm_asm config_pmap_ppl
++-osfmk/arm64/amcc_rorgn_common.c optional nos_arm_asm
+++osfmk/arm64/amcc_rorgn_ppl.c optional nos_arm_asm config_pmap_ppl apple_amcc
+++osfmk/arm64/amcc_rorgn_common.c optional nos_arm_asm apple_amcc
++ osfmk/arm64/bcopy.s standard
++ osfmk/arm64/bzero.s standard
++ osfmk/arm/caches.c		standard
+diff --git a/ports/UniXNU-sweet/patches/xnu/source-pthread-bootstrap.patch b/ports/UniXNU-sweet/patches/xnu/source-pthread-bootstrap.patch
+new file mode 100644
+index 0000000..4b4429d
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/source-pthread-bootstrap.patch
+@@ -0,0 +1,29 @@
++diff --git a/bsd/kern/source_pthread_bootstrap.c b/bsd/kern/source_pthread_bootstrap.c
++new file mode 100644
++index 0000000..86a48e9
++--- /dev/null
+++++ b/bsd/kern/source_pthread_bootstrap.c
++@@ -0,0 +1,23 @@
+++/* SPDX-License-Identifier: BSD-2-Clause-Patent */
+++#include <kern/startup.h>
+++#include <kern/debug.h>
+++#include <libkern/section_keywords.h>
+++#include <mach/kmod.h>
+++
+++extern kern_return_t pthread_start(kmod_info_t *, void *);
+++SECURITY_READ_ONLY_LATE(kern_return_t) source_pthread_status = KERN_FAILURE;
+++
+++static void
+++source_pthread_bootstrap(void)
+++{
+++	static kmod_info_t info = {
+++		.info_version = KMOD_INFO_VERSION,
+++		.name = "source-libpthread",
+++		.version = "519.120.4",
+++	};
+++	source_pthread_status = pthread_start(&info, NULL);
+++	if (source_pthread_status != KERN_SUCCESS) {
+++		panic("source libpthread registration failed: %d", source_pthread_status);
+++	}
+++}
+++STARTUP(EARLY_BOOT, STARTUP_RANK_SECOND, source_pthread_bootstrap);
+diff --git a/ports/UniXNU-sweet/patches/xnu/zzw-native-adreno-sandbox-grant.patch b/ports/UniXNU-sweet/patches/xnu/zzw-native-adreno-sandbox-grant.patch
+new file mode 100644
+index 0000000..3b157a5
+--- /dev/null
++++ b/ports/UniXNU-sweet/patches/xnu/zzw-native-adreno-sandbox-grant.patch
+@@ -0,0 +1,56 @@
++diff --git a/iokit/Kernel/IOUserClient.cpp b/iokit/Kernel/IOUserClient.cpp
++index e7d6592..5d99754 100644
++--- a/iokit/Kernel/IOUserClient.cpp
+++++ b/iokit/Kernel/IOUserClient.cpp
++@@ -4325,6 +4325,23 @@ is_io_service_set_authorization_id(
++ }
++ 
++ /* Routine io_service_open_ndr */
+++/*
+++ * The native GPU driver names, by the property NativeSandboxGrantProcess on its accelerator service, the one process (the render server) to which it
+++ * grants its own user client in place of the sandbox's verdict: the original profiles name no class of that driver. Nothing else is affected.
+++ */
+++extern "C" void proc_selfname(char * buf, int size);
+++static bool
+++native_sandbox_grant(IOService * service)
+++{
+++	OSString * process = OSDynamicCast(OSString, service->getProperty("NativeSandboxGrantProcess"));
+++	char name[17] = {};
+++	if (!process) {
+++		return false;
+++	}
+++	proc_selfname(name, sizeof(name));
+++	return 0 == strncmp(name, process->getCStringNoCopy(), sizeof(name) - 1);
+++}
+++
++ kern_return_t
++ is_io_service_open_extended(
++ 	io_object_t _service,
++@@ -4353,7 +4370,7 @@ is_io_service_open_extended(
++ 	}
++ 
++ #if CONFIG_MACF
++-	if (mac_iokit_check_open_service(kauth_cred_get(), service, connect_type) != 0) {
+++	if (!native_sandbox_grant(service) && mac_iokit_check_open_service(kauth_cred_get(), service, connect_type) != 0) {
++ 		return kIOReturnNotPermitted;
++ 	}
++ #endif
++@@ -4512,7 +4529,9 @@ is_io_service_open_extended(
++ 				res = kIOReturnNotPrivileged;
++ 			}
++ #if CONFIG_MACF
++-			else if (0 != mac_iokit_check_open(kauth_cred_get(), client, connect_type)) {
+++			/* The service's grant (native_sandbox_grant) stands in for the sandbox's verdict on the render server's open. */
+++			else if (!native_sandbox_grant(service)
+++			    && 0 != mac_iokit_check_open(kauth_cred_get(), client, connect_type)) {
++ 				IOLog("IOUC %s failed MACF in process %s\n",
++ 				    client->getMetaClass()->getClassName(), creatorNameCStr);
++ 				res = kIOReturnNotPermitted;
++@@ -4520,6 +4539,7 @@ is_io_service_open_extended(
++ #endif
++ 
++ 			if ((kIOReturnSuccess == res)
+++			    && !native_sandbox_grant(service)
++ 			    && gIOUCFilterCallbacks
++ 			    && gIOUCFilterCallbacks->io_filter_resolver) {
++ 				io_filter_policy_t filterPolicy;
+diff --git a/ports/UniXNU-sweet/scripts/build-arm-driver.py b/ports/UniXNU-sweet/scripts/build-arm-driver.py
+new file mode 100755
+index 0000000..9e8b903
+--- /dev/null
++++ b/ports/UniXNU-sweet/scripts/build-arm-driver.py
+@@ -0,0 +1,109 @@
++#!/usr/bin/env python3
++"""Compile the generic platform expert against the actual source-kernel ABI."""
++import argparse
++import json
++from pathlib import Path
++import struct
++import subprocess
++
++ROOT = Path(__file__).resolve().parents[1]
++parser = argparse.ArgumentParser(description=__doc__)
++parser.add_argument('component', choices=['ArmVirtPlatform', 'ArmDTPlatform', 'ArmCpu', 'NativeAES', 'NativeVirtioBlock', 'NativeRamBlock', 'NativeMobileDisplay', 'NativeVirtioConsole', 'NativeLegacyDisplay', 'NativeGOPPresenter', 'NativeOfflineGPU', 'NativeOfflineAccelerator', 'NativeIOGPUProviderProbe', 'NativeUfs', 'NativeHidInput', 'NativeKeyStoreEvents', 'NativeAdreno'])
++parser.add_argument('--negative-aes-kat', action='store_true', help='Isolated own-source wrong-answer refusal control; never changes original inputs')
++parser.add_argument('--verified-root', action='store_true', help='Authenticate all actual disk reads against an independently signed immutable policy')
++parser.add_argument('--verified-root-bundle', action='store_true', help='Select exactly one capacity-matching policy per device, then independently authenticate it')
++parser.add_argument('--negative-verified-block', action='store_true', help='Negative own-buffer control: corrupt only the completed DMA snapshot')
++args = parser.parse_args()
++if args.verified_root_bundle and not args.verified_root:
++    parser.error('A policy bundle requires verified block mode')
++if args.verified_root_bundle and args.negative_verified_block:
++    parser.error('Select either bundle policy qualification or the isolated DMA snapshot fault')
++if (args.verified_root or args.negative_verified_block) and args.component != 'NativeVirtioBlock':
++    parser.error('Verified block mode requires the concrete read-only block transport')
++if args.negative_verified_block and not args.verified_root:
++    parser.error('The isolated input fault requires verified block mode')
++component = args.component
++recipe = ROOT / 'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/iokit/DEVELOPMENT/IOPlatformExpert.cpo.json'
++record = json.loads(recipe.read_text().strip().rstrip(','))
++source = ROOT / 'drivers' / ('NativeMobileDisplay' if component in ('NativeLegacyDisplay','NativeGOPPresenter') else 'NativeMetal' if component in ('NativeOfflineGPU','NativeOfflineAccelerator','NativeIOGPUProviderProbe') else component) / {'NativeAdreno':'NativeAdrenoService.cpp'}.get(component, component + '.cpp')
++out = ROOT / 'build' / {'ArmVirtPlatform': 'armvirt-platform', 'ArmDTPlatform': 'armdt-platform', 'ArmCpu': 'armcpu', 'NativeAES': 'native-aes',
++                        'NativeVirtioBlock': 'native-virtio-block', 'NativeRamBlock': 'native-ram-block',
++                        'NativeMobileDisplay': 'native-mobile-display', 'NativeVirtioConsole': 'native-virtio-console',
++                        'NativeLegacyDisplay': 'native-legacy-display', 'NativeGOPPresenter': 'native-gop-presenter', 'NativeOfflineGPU':'native-offline-gpu','NativeOfflineAccelerator':'native-offline-accelerator','NativeIOGPUProviderProbe':'native-original-provider', 'NativeUfs':'native-ufs', 'NativeHidInput':'native-hid-input', 'NativeKeyStoreEvents':'native-keystore-events', 'NativeAdreno':'native-adreno'}[component]
++if args.verified_root:
++    out = ROOT / ('build/native-virtio-block-verified-fault' if args.negative_verified_block else 'build/native-virtio-block-verified')
++    if args.verified_root_bundle:
++        out = ROOT / 'build/native-virtio-block-verified-bundle'
++out.mkdir(parents=True, exist_ok=True)
++if args.negative_aes_kat:
++    if component != 'NativeAES':
++        parser.error('The own-source KAT control requires NativeAES')
++    out = ROOT / 'build/native-aes-kat-negative'
++    out.mkdir(parents=True, exist_ok=True)
++    text = source.read_text()
++    marker = '0x76,0x49,0xab,0xac'
++    if text.count(marker) != 1:
++        raise SystemExit('The exact own-source NIST answer was not uniquely identified')
++    (out / 'OriginalAESABI.h').write_bytes(source.with_name('OriginalAESABI.h').read_bytes())
++    source = out / 'NativeAES.cpp'
++    source.write_text(text.replace(marker, '0x77,0x49,0xab,0xac'))
++destination = out / (component + '.o')
++arguments = record['arguments']
++command = []
++index = 0
++while index < len(arguments):
++    value = arguments[index]
++    if value == record['file']:
++        command.append(str(source))
++    elif value == '-o':
++        command.extend(['-o', str(destination)])
++        index += 1
++    elif value == '-Xclang' and arguments[index + 1].startswith('-W'):
++        index += 1
++    elif not value.startswith('-W'):
++        command.append(value)
++    index += 1
++command.extend(['-Wall', '-Wextra', '-Werror', '-Wno-unused-parameter',
++                '-Wno-c99-designator', '-Wno-reorder-init-list', '-Wno-deprecated-enum-enum-conversion',
++                '-Wno-unnecessary-virtual-specifier', '-I', str(ROOT / '.cache/xnu-work/osfmk')])
++if component in ('NativeVirtioBlock', 'NativeRamBlock', 'NativeUfs'):
++    command += ['-I', str(ROOT / 'build/storage-abi/include')]
++    if args.verified_root:
++        command += ['-I', str(ROOT / 'kits/VerifiedRoot/include'), '-DNATIVE_VERIFIED_BLOCK=1']
++    if args.negative_verified_block:
++        command += ['-DNATIVE_VERIFIED_BLOCK_INJECT_FAULT=1']
++    if args.verified_root_bundle:
++        command += ['-DNATIVE_VERIFIED_BLOCK_MULTI_POLICY=1']
++if component == 'NativeUfs':
++    command += ['-I', str(ROOT / 'kits/VerifiedRoot/include'), '-I', str(ROOT / 'drivers/NativeVirtioBlock'),
++                '-DNATIVE_VERIFIED_BLOCK=1', '-DNATIVE_VERIFIED_BLOCK_MULTI_POLICY=1', '-mgeneral-regs-only']
++if component=='NativeOfflineGPU':
++    command += ['-I',str(ROOT/'drivers/NativeVirtioConsole')]
++if component in ('NativeLegacyDisplay','NativeHidInput'):
++    command += ['-I', str(out)]
++if component == 'NativeAdreno':
++    command += ['-I', str(ROOT / 'kits/ArmSmmu4K'), '-I', str(ROOT / 'kits/AdrenoPM4'),
++                '-I', str(ROOT / 'kits/sheng'), '-I', str(ROOT / 'kits/AdrenoFirmware'),
++                '-I', str(ROOT / 'build/sheng-gmu')]
++(out / 'compile-command.json').write_text(json.dumps(command, indent=2) + '\n')
++result = subprocess.run(command, cwd=record['directory'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
++(out / 'compile.log').write_text(result.stdout)
++if result.returncode:
++    raise SystemExit(result.stdout[-3500:])
++data = destination.read_bytes()
++magic, cpu, subtype, kind, count, size = struct.unpack_from('<6I', data)
++if (magic, cpu, subtype, kind) != (0xfeedfacf, 0x100000c, 0, 1):
++    raise SystemExit('Unexpected platform object architecture')
++offset = 32
++deployment = None
++for _ in range(count):
++    cmd, length = struct.unpack_from('<II', data, offset)
++    if cmd == 0x32:
++        deployment = struct.unpack_from('<II', data, offset + 8)
++    offset += length
++if deployment != (2, 0x100000):
++    raise SystemExit(f'Unexpected platform deployment {deployment}')
++archive = out / ('lib' + component + '.a')
++archive.unlink(missing_ok=True)
++subprocess.run(['xcrun', 'ar', 'rcs', archive, destination], check=True)
++print(f'{component}: -Werror build and actual ARM64/iOS 16 object audit passed')
+diff --git a/ports/UniXNU-sweet/scripts/build-xnu-4k-baseline.sh b/ports/UniXNU-sweet/scripts/build-xnu-4k-baseline.sh
+new file mode 100755
+index 0000000..43021b2
+--- /dev/null
++++ b/ports/UniXNU-sweet/scripts/build-xnu-4k-baseline.sh
+@@ -0,0 +1,778 @@
++#!/usr/bin/env bash
++set -euo pipefail
++# Many checks are bare `test -f`; name the one that stops the build.
++trap 'echo "build-xnu-4k-baseline.sh: line $LINENO: $BASH_COMMAND failed" >&2' ERR
++ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
++cd "$ROOT"
++# Source versions come from feeds.toml through the unixnu driver; the defaults are the qualified ones.
++XNU_TAG=${UNIXNU_XNU_TAG:-xnu-10063.141.1}
++XNU_COMMIT=${UNIXNU_XNU_COMMIT:-d8b80295118ef25ac3a784134bcf95cd8e88109f}
++XNU_DARWIN=${UNIXNU_XNU_DARWIN:-23.6.0}
++XNU_VERSION=${UNIXNU_XNU_VERSION:-10063.141.1}
++LIBPLATFORM_TAG=${UNIXNU_LIBPLATFORM_TAG:-libplatform-316.100.10}
++LIBDISPATCH_TAG=${UNIXNU_LIBDISPATCH_TAG:-libdispatch-1477.100.9}
++AVAILABILITY_TAG=${UNIXNU_AVAILABILITYVERSIONS_TAG:-AvailabilityVersions-141.1}
++if [ ! -d refer/xnu/.git ]; then
++  git clone --depth 1 --branch "$XNU_TAG" https://github.com/apple-oss-distributions/xnu.git refer/xnu
++fi
++if [ "$(git -C refer/xnu rev-parse HEAD)" != "$XNU_COMMIT" ]; then
++  echo 'error: unexpected XNU reference revision' >&2
++  exit 1
++fi
++if [ ! -d .cache/xnu-work/.git ]; then
++  git clone --shared refer/xnu .cache/xnu-work
++fi
++if [ ! -x .cache/fakeroot/usr/local/libexec/availability.pl ]; then
++  if [ ! -d refer/AvailabilityVersions/.git ]; then
++    git clone --depth 1 --branch "$AVAILABILITY_TAG" https://github.com/apple-oss-distributions/AvailabilityVersions.git refer/AvailabilityVersions
++  fi
++  mkdir -p .cache/fakeroot
++  make -C refer/AvailabilityVersions install -j"${JOBS:-4}" \
++    OBJROOT="$ROOT/build/availability" SYMROOT="$ROOT/build/availability" \
++    DSTROOT="$ROOT/.cache/fakeroot" CMAKE="$(command -v cmake)" NINJA="$(command -v ninja)"
++fi
++# The optional observation hooks overlap existing root/exec patch context.
++# Remove them first so earlier independent patches retain their idempotent checks.
++# The same holds for the boot-time GPU addon mount (zzy), which edits the owner Data mount function inside the systemos patch.
++# Reverse newest first; the loop below re-applies them in name order.
++for LATE_PATCH in "$ROOT/patches/xnu/zzz-boot-progress.patch" "$ROOT/patches/xnu/zzy-native-gpu-addon-mount.patch"; do
++  if git -C .cache/xnu-work apply --reverse --check "$LATE_PATCH" >/dev/null 2>&1; then
++    git -C .cache/xnu-work apply --reverse "$LATE_PATCH"
++  fi
++done
++for PATCH in "$ROOT"/patches/xnu/*.patch "$ROOT"/kits/NativePrelink/patches/*.patch; do
++  if ! git -C .cache/xnu-work apply --reverse --check "$PATCH" >/dev/null 2>&1; then
++    git -C .cache/xnu-work apply --check "$PATCH"
++    git -C .cache/xnu-work apply "$PATCH"
++  fi
++done
++export XNU_AVAILABILITY_PL=$ROOT/.cache/fakeroot/usr/local/libexec/availability.pl
++python3 scripts/prepare-xnu-source.py
++# The first pass of a new tree (XNU_BOOTSTRAP=1, set by the unixnu driver) only has to leave the compile records and
++# link.filelist for the archive builders that run after it, so it links without their archives.
++BOOTSTRAP=${XNU_BOOTSTRAP:-0}
++if [ "$BOOTSTRAP" != 0 ] && [ "$BOOTSTRAP" != 1 ]; then
++  echo 'XNU_BOOTSTRAP must be 0 or 1' >&2
++  exit 1
++fi
++BOOT_PROGRESS=${XNU_BOOT_PROGRESS:-0}
++if [ "$BOOT_PROGRESS" != 0 ] && [ "$BOOT_PROGRESS" != 1 ]; then
++  echo 'XNU_BOOT_PROGRESS must be 0 or 1' >&2
++  exit 1
++fi
++if [ "$BOOT_PROGRESS" = 1 ]; then
++  if [ "${XNU_NATIVE_UFS:-0}" != 1 ] || [ "${XNU_OWNER_ROOT_AUDIT:-0}" != 1 ] || \
++     [ "${XNU_NATIVE_VIRTIO_BLOCK:-0}" != 1 ] || [ "${XNU_SOURCE_CORECRYPTO14:-0}" != 1 ]; then
++    echo 'Boot progress requires the audited UFS/owner-root, Virtio and source-corecrypto build' >&2
++    exit 1
++  fi
++  python3 scripts/build-boot-progress.py
++fi
++python3 - "$BOOT_PROGRESS" <<'PY'
++from pathlib import Path
++import hashlib, sys
++mode = sys.argv[1]
++out = Path('build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837')
++stamp = out / '.boot-progress-mode'
++identity = mode + ':' + (hashlib.sha256(Path('build/boot-progress/libBootProgress.a').read_bytes()).hexdigest() if mode == '1' else 'disabled')
++if not stamp.exists() or stamp.read_text() != identity:
++    for directory, names in [('osfmk', ['arm_init','startup','video_console','serial_console','sleh']),
++                             ('bsd', ['bsd_init','kern_exec','kern_exit']), ('pexpert', ['pe_kprintf'])]:
++        for name in names:
++            (out / directory / 'DEVELOPMENT' / (name + '.o')).unlink(missing_ok=True)
++    (out / 'mach.development.bcm2837.unstripped.noctf').unlink(missing_ok=True)
++    out.mkdir(parents=True, exist_ok=True)
++    stamp.write_text(identity)
++PY
++if [ ! -d refer/libplatform/.git ]; then
++  git clone --depth 1 --branch "$LIBPLATFORM_TAG" https://github.com/apple-oss-distributions/libplatform.git refer/libplatform
++fi
++export KERNEL_SDKROOT=$ROOT/.cache/fakeroot
++mkdir -p "$KERNEL_SDKROOT/usr/local/include/kernel" "$ROOT/build/xnu/obj/EXPORT_HDRS/libsa"
++ditto refer/libplatform/include "$KERNEL_SDKROOT/usr/local/include"
++ditto refer/libplatform/private "$KERNEL_SDKROOT/usr/local/include"
++ditto refer/libplatform/private/platform "$KERNEL_SDKROOT/System/Library/Frameworks/Kernel.framework/Versions/A/PrivateHeaders/platform"
++if [ ! -d refer/libdispatch/.git ]; then
++  git clone --depth 1 --branch "$LIBDISPATCH_TAG" https://github.com/apple-oss-distributions/libdispatch.git refer/libdispatch
++fi
++python3 - <<'PY'
++from pathlib import Path
++import subprocess
++output = Path('.cache/fakeroot/usr/local/include/os')
++output.mkdir(parents=True, exist_ok=True)
++for header in Path('refer/libdispatch/os').glob('*.h'):
++    result = subprocess.run(['unifdef', '-DKERNEL=1', '-DOS_FIREHOSE_SPI=1',
++                             '-DOS_VOUCHER_ACTIVITY_SPI_TYPES=1',
++                             '-UOS_VOUCHER_ACTIVITY_SPI', str(header)], capture_output=True)
++    if result.returncode not in (0, 1):
++        raise SystemExit(result.stderr.decode())
++    target = output / header.name
++    if not target.exists() or target.read_bytes() != result.stdout:
++        target.write_bytes(result.stdout)
++PY
++if [ ! -f "$KERNEL_SDKROOT/.xnu-$XNU_VERSION-headers" ]; then
++  make -C .cache/xnu-work installhdrs SDKROOT=macosx ARCH_CONFIGS=ARM64 \
++    MACHINE_CONFIGS=BCM2837 KERNEL_CONFIGS=DEVELOPMENT \
++    RC_DARWIN_KERNEL_VERSION="$XNU_DARWIN" RC_ProjectSourceVersion="$XNU_VERSION" \
++    MAKEJOBS=-j"${JOBS:-4}" OBJROOT="$ROOT/build/xnu/obj" \
++    SYMROOT="$ROOT/build/xnu/sym" DSTROOT="$KERNEL_SDKROOT"
++  touch "$KERNEL_SDKROOT/.xnu-$XNU_VERSION-headers"
++fi
++if [ ! -f "$KERNEL_SDKROOT/usr/local/lib/kernel/libfirehose_kernel.a" ]; then
++  bash scripts/build-firehose.sh
++fi
++# The baseline builds the kernel; `all` also checks the Apple kext export ABI.
++EXTRA_MAKE_ARGS=()
++ARM_DT_PLATFORM=${XNU_ARM_DT_PLATFORM:-0}
++if [ "$ARM_DT_PLATFORM" != 0 ] && [ "$ARM_DT_PLATFORM" != 1 ]; then
++  echo 'XNU_ARM_DT_PLATFORM must be 0 or 1' >&2
++  exit 1
++fi
++if [ "${XNU_ARMCPU:-0}" = 1 ] && { [ "${XNU_SOURCE_CORECRYPTO14:-0}" != 1 ] || \
++     { [ "${XNU_ARMVIRT_PLATFORM:-0}" != 1 ] && [ "$ARM_DT_PLATFORM" != 1 ]; }; }; then
++  echo 'ArmCpu bring-up requires the real source provider and a real platform driver' >&2
++  exit 1
++fi
++if [ "${XNU_SOURCE_PTHREAD:-0}" = 1 ] && [ "${XNU_SOURCE_CORECRYPTO14:-0}" != 1 ]; then
++  echo 'The current pthread source-link recipe requires XNU_SOURCE_CORECRYPTO14=1' >&2
++  exit 1
++fi
++CRYPTO_BOOTSTRAP_MODE=${XNU_CRYPTO_BOOTSTRAP:-source}
++if [ "$CRYPTO_BOOTSTRAP_MODE" != source ] && [ "$CRYPTO_BOOTSTRAP_MODE" != prelinked ]; then
++  echo 'XNU_CRYPTO_BOOTSTRAP must be source or prelinked' >&2
++  exit 1
++fi
++CRYPTO_OBJECT_DIR=$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/osfmk/DEVELOPMENT
++if [ -d "$CRYPTO_OBJECT_DIR" ]; then
++  if [ "$(cat "$CRYPTO_OBJECT_DIR/.crypto-bootstrap-mode" 2>/dev/null || echo source)" != "$CRYPTO_BOOTSTRAP_MODE" ]; then
++    rm -f "$CRYPTO_OBJECT_DIR/prng_random.o"
++  fi
++  printf '%s\n' "$CRYPTO_BOOTSTRAP_MODE" > "$CRYPTO_OBJECT_DIR/.crypto-bootstrap-mode"
++fi
++if [ "$CRYPTO_BOOTSTRAP_MODE" = prelinked ]; then
++  # The original component must initialize through real OSKext startup.
++  # Only this source-provider entry is omitted; no POST or missing-provider
++  # failure is suppressed, and no replacement crypto callbacks are supplied.
++  EXTRA_MAKE_ARGS+=("prng_random.o_CFLAGS_ADD=-UXNU_SOURCE_CORECRYPTO14")
++else
++  EXTRA_MAKE_ARGS+=("prng_random.o_CFLAGS_ADD=")
++fi
++if [ "${XNU_NATIVE_AES:-0}" = 1 ]; then
++  if [ "$CRYPTO_BOOTSTRAP_MODE" != prelinked ] || [ "${XNU_SOURCE_CORECRYPTO14:-0}" != 1 ]; then
++    echo 'NativeAES currently requires the qualified original AES/crypto prelink closure' >&2
++    exit 1
++  fi
++  PERSONALITY_CFLAGS=-DXNU_NATIVE_AES=1
++else
++  PERSONALITY_CFLAGS=
++fi
++if [ "${XNU_NATIVE_VIRTIO_BLOCK:-0}" = 1 ]; then
++  if [ "${XNU_NATIVE_AES:-0}" != 1 ]; then
++    echo 'NativeVirtioBlock currently requires the qualified NativeAES/original-storage prelink baseline' >&2
++    exit 1
++  fi
++  PERSONALITY_CFLAGS="$PERSONALITY_CFLAGS -DXNU_NATIVE_VIRTIO_BLOCK=1"
++fi
++NATIVE_RAM_BLOCK=${XNU_NATIVE_RAM_BLOCK:-0}
++if [ "$NATIVE_RAM_BLOCK" != 0 ] && [ "$NATIVE_RAM_BLOCK" != 1 ]; then
++  echo 'XNU_NATIVE_RAM_BLOCK must be 0 or 1' >&2
++  exit 1
++fi
++if [ "$NATIVE_RAM_BLOCK" = 1 ]; then
++  if [ "${XNU_NATIVE_AES:-0}" != 1 ]; then
++    echo 'NativeRamBlock requires the qualified original storage/AES prelink closure' >&2
++    exit 1
++  fi
++  PERSONALITY_CFLAGS="$PERSONALITY_CFLAGS -DXNU_NATIVE_RAM_BLOCK=1"
++fi
++if [ "${XNU_NATIVE_UFS:-0}" = 1 ]; then
++  PERSONALITY_CFLAGS="$PERSONALITY_CFLAGS -DXNU_NATIVE_UFS=1"
++fi
++NATIVE_VIRTIO_CONSOLE=${XNU_NATIVE_VIRTIO_CONSOLE:-0}
++if [ "$NATIVE_VIRTIO_CONSOLE" != 0 ] && [ "$NATIVE_VIRTIO_CONSOLE" != 1 ]; then
++  echo 'XNU_NATIVE_VIRTIO_CONSOLE must be 0 or 1' >&2
++  exit 1
++fi
++if [ "$NATIVE_VIRTIO_CONSOLE" = 1 ]; then
++  PERSONALITY_CFLAGS="$PERSONALITY_CFLAGS -DXNU_NATIVE_VIRTIO_CONSOLE=1"
++fi
++EXTRA_MAKE_ARGS+=("KernelConfigTables.cpo_CFLAGS_ADD=$PERSONALITY_CFLAGS")
++TRUST_CACHE_MODE=${XNU_TRUST_CACHE_RUNTIME:-0}
++if [ "$TRUST_CACHE_MODE" != 0 ] && [ "$TRUST_CACHE_MODE" != 1 ]; then
++  echo 'XNU_TRUST_CACHE_RUNTIME must be 0 or 1' >&2
++  exit 1
++fi
++if [ -d "$CRYPTO_OBJECT_DIR" ]; then
++  if [ "$(cat "$CRYPTO_OBJECT_DIR/.trust-cache-mode" 2>/dev/null || echo 0)" != "$TRUST_CACHE_MODE" ]; then
++    rm -f "$CRYPTO_OBJECT_DIR/startup.o"
++  fi
++  printf '%s\n' "$TRUST_CACHE_MODE" > "$CRYPTO_OBJECT_DIR/.trust-cache-mode"
++fi
++EXTRA_MAKE_ARGS+=("startup.o_CFLAGS_ADD=-DXNU_NATIVE_TRUST_CACHE=$TRUST_CACHE_MODE")
++MOCKFS_MODE=${XNU_SOURCE_MOCKFS:-0}
++if [ "$MOCKFS_MODE" != 0 ] && [ "$MOCKFS_MODE" != 1 ]; then
++  echo 'XNU_SOURCE_MOCKFS must be 0 or 1' >&2
++  exit 1
++fi
++if [ "$MOCKFS_MODE" = 1 ] && { [ "${XNU_ARMCPU:-0}" != 1 ] || [ "${XNU_SOURCE_PTHREAD:-0}" != 1 ]; }; then
++  echo 'The offline executable-root fixture requires the real CPU/pthread components' >&2
++  exit 1
++fi
++MOCKFS_OBJECT_DIR=$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/bsd/DEVELOPMENT
++if [ -d "$MOCKFS_OBJECT_DIR" ]; then
++  if [ "$(cat "$MOCKFS_OBJECT_DIR/.source-mockfs-mode" 2>/dev/null || echo 0)" != "$MOCKFS_MODE" ]; then
++    rm -f "$MOCKFS_OBJECT_DIR/vfs_conf.o"
++  fi
++  printf '%s\n' "$MOCKFS_MODE" > "$MOCKFS_OBJECT_DIR/.source-mockfs-mode"
++fi
++EXTRA_MAKE_ARGS+=("vfs_conf.o_CFLAGS_ADD=-DMOCKFS=$MOCKFS_MODE")
++CS_HASH_CACHE_MODE=${XNU_NATIVE_CS_HASH_CACHE:-0}
++if [ "$CS_HASH_CACHE_MODE" != 0 ] && [ "$CS_HASH_CACHE_MODE" != 1 ]; then
++  echo 'XNU_NATIVE_CS_HASH_CACHE must be 0 or 1' >&2
++  exit 1
++fi
++if [ -d "$MOCKFS_OBJECT_DIR" ]; then
++  if [ "$(cat "$MOCKFS_OBJECT_DIR/.native-cs-hash-cache-mode" 2>/dev/null || echo 0)" != "$CS_HASH_CACHE_MODE" ]; then
++    rm -f "$MOCKFS_OBJECT_DIR/ubc_subr.o"
++  fi
++  printf '%s\n' "$CS_HASH_CACHE_MODE" > "$MOCKFS_OBJECT_DIR/.native-cs-hash-cache-mode"
++fi
++EXTRA_MAKE_ARGS+=("ubc_subr.o_CFLAGS_ADD=-DXNU_NATIVE_CS_HASH_CACHE=$CS_HASH_CACHE_MODE")
++EXTRA_CFLAGS=${XNU_EXTRA_CFLAGS:--Wno-reserved-identifier -Wno-pre-c11-compat -Wno-missing-designated-field-initializers -Wno-suggest-override -Wno-unnecessary-virtual-specifier -Wno-suggest-destructor-override -Wno-ms-bitfield-padding}
++OWNER_ROOT_PROBE=${XNU_VERIFIED_ROOT_PROBE:-0}
++if [ "$OWNER_ROOT_PROBE" != 0 ] && [ "$OWNER_ROOT_PROBE" != 1 ]; then
++  echo 'XNU_VERIFIED_ROOT_PROBE must be 0 or 1' >&2
++  exit 1
++fi
++if [ "$OWNER_ROOT_PROBE" = 1 ] && { [ "${XNU_SOURCE_CORECRYPTO14:-0}" != 1 ] || [ "${XNU_CRYPTO_BOOTSTRAP:-source}" != prelinked ]; }; then
++  echo 'The owner crypto probe requires the qualified original prelinked crypto provider' >&2
++  exit 1
++fi
++OWNER_ROOT_AUDIT=${XNU_OWNER_ROOT_AUDIT:-0}
++if [ "$OWNER_ROOT_AUDIT" != 0 ] && [ "$OWNER_ROOT_AUDIT" != 1 ]; then
++  echo 'XNU_OWNER_ROOT_AUDIT must be 0 or 1' >&2
++  exit 1
++fi
++if [ "$OWNER_ROOT_AUDIT" = 1 ] && [ "$OWNER_ROOT_PROBE" != 1 ]; then
++  echo 'The root-binding audit requires real owner-verified block crypto' >&2
++  exit 1
++fi
++OWNER_ROOT_TRUST=${XNU_OWNER_ROOT_TRUST:-0}
++if [ "$OWNER_ROOT_TRUST" != 0 ] && [ "$OWNER_ROOT_TRUST" != 1 ]; then
++  echo 'XNU_OWNER_ROOT_TRUST must be 0 or 1' >&2
++  exit 1
++fi
++if [ "$OWNER_ROOT_TRUST" = 1 ] && { [ "$OWNER_ROOT_AUDIT" != 1 ] || [ "${XNU_NATIVE_VIRTIO_BLOCK:-0}" != 1 ]; }; then
++  echo 'Owner root acceptance requires actual mounted-media binding and verified block storage' >&2
++  exit 1
++fi
++ADRENO_FIRMWARE_PROBE=${XNU_ADRENO_FIRMWARE_PROBE:-0}
++if [ "$ADRENO_FIRMWARE_PROBE" != 0 ] && [ "$ADRENO_FIRMWARE_PROBE" != 1 ]; then
++  echo 'XNU_ADRENO_FIRMWARE_PROBE must be 0 or 1' >&2
++  exit 1
++fi
++if [ "$ADRENO_FIRMWARE_PROBE" = 1 ] && [ "${XNU_SOURCE_CORECRYPTO14:-0}" != 1 ]; then
++  echo 'The offline Adreno planner probe requires the qualified crypto build' >&2
++  exit 1
++fi
++ADRENO_PM4_PROBE=${XNU_ADRENO_PM4_PROBE:-0}
++if [ "$ADRENO_PM4_PROBE" != 0 ] && [ "$ADRENO_PM4_PROBE" != 1 ]; then
++  echo 'XNU_ADRENO_PM4_PROBE must be 0 or 1' >&2
++  exit 1
++fi
++if [ "$ADRENO_PM4_PROBE" = 1 ] && [ "${XNU_SOURCE_CORECRYPTO14:-0}" != 1 ]; then
++  echo 'The offline PM4 fixture requires the qualified native kernel configuration' >&2
++  exit 1
++fi
++SMMU4K_PROBE=${XNU_SMMU4K_PROBE:-0}
++if [ "$SMMU4K_PROBE" != 0 ] && [ "$SMMU4K_PROBE" != 1 ]; then
++  echo 'XNU_SMMU4K_PROBE must be 0 or 1' >&2
++  exit 1
++fi
++if [ "$SMMU4K_PROBE" = 1 ] && [ "${XNU_SOURCE_CORECRYPTO14:-0}" != 1 ]; then
++  echo 'The offline native-table fixture requires the qualified kernel configuration' >&2
++  exit 1
++fi
++CONSTANT_UPLOADS_PROBE=${XNU_CONSTANT_UPLOADS_PROBE:-0}
++if [ "$CONSTANT_UPLOADS_PROBE" != 0 ] && [ "$CONSTANT_UPLOADS_PROBE" != 1 ]; then
++  echo 'XNU_CONSTANT_UPLOADS_PROBE must be 0 or 1' >&2
++  exit 1
++fi
++if [ "$CONSTANT_UPLOADS_PROBE" = 1 ] && [ "${XNU_SOURCE_CORECRYPTO14:-0}" != 1 ]; then
++  echo 'The offline constant upload fixture requires the qualified kernel configuration' >&2
++  exit 1
++fi
++NATIVE_OFFLINE_GPU=${XNU_NATIVE_OFFLINE_GPU:-0}
++if [ "$NATIVE_OFFLINE_GPU" != 0 ] && [ "$NATIVE_OFFLINE_GPU" != 1 ]; then
++  echo 'XNU_NATIVE_OFFLINE_GPU must be 0 or 1' >&2
++  exit 1
++fi
++if [ "$NATIVE_OFFLINE_GPU" = 1 ] && [ "$NATIVE_VIRTIO_CONSOLE" != 1 ]; then
++  echo 'The private offline GPU broker requires the actual byte transport' >&2
++  exit 1
++fi
++SHENG_PMGR=${XNU_SHENG_PMGR:-0}
++if [ "$SHENG_PMGR" != 0 ] && [ "$SHENG_PMGR" != 1 ]; then
++  echo 'XNU_SHENG_PMGR must be 0 or 1' >&2
++  exit 1
++fi
++if [ "$SHENG_PMGR" = 1 ] && [ "${XNU_SOURCE_CORECRYPTO14:-0}" != 1 ]; then
++  echo 'The sheng PMGR instrument requires the original-component kernel configuration' >&2
++  exit 1
++fi
++SHENG_PMGR_STAMP=$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/.sheng-pmgr-mode
++if [ "$(cat "$SHENG_PMGR_STAMP" 2>/dev/null || echo 0)" != "$SHENG_PMGR" ]; then
++  rm -f "$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/bsd/DEVELOPMENT/bsd_init.o"
++  printf '%s\n' "$SHENG_PMGR" > "$SHENG_PMGR_STAMP"
++fi
++EXTRA_MAKE_ARGS+=("bsd_init.o_CFLAGS_ADD=-DXNU_SHENG_PMGR=$SHENG_PMGR -DXNU_VERIFIED_ROOT_PROBE=$OWNER_ROOT_PROBE -DXNU_OWNER_ROOT_AUDIT=$OWNER_ROOT_AUDIT -DXNU_OWNER_ROOT_TRUST=$OWNER_ROOT_TRUST -DXNU_ADRENO_FIRMWARE_PROBE=$ADRENO_FIRMWARE_PROBE -DXNU_ADRENO_PM4_PROBE=$ADRENO_PM4_PROBE -DXNU_SMMU4K_PROBE=$SMMU4K_PROBE -DXNU_CONSTANT_UPLOADS_PROBE=$CONSTANT_UPLOADS_PROBE -DXNU_NATIVE_LEGACY_DISPLAY=${XNU_NATIVE_LEGACY_DISPLAY:-0} -DXNU_NATIVE_OFFLINE_GPU=$NATIVE_OFFLINE_GPU")
++NATIVE_MOBILE_DISPLAY=${XNU_NATIVE_MOBILE_DISPLAY:-0}
++if [ "$NATIVE_MOBILE_DISPLAY" != 0 ] && [ "$NATIVE_MOBILE_DISPLAY" != 1 ]; then
++  echo 'XNU_NATIVE_MOBILE_DISPLAY must be 0 or 1' >&2
++  exit 1
++fi
++NATIVE_LEGACY_DISPLAY=${XNU_NATIVE_LEGACY_DISPLAY:-0}
++if [ "$NATIVE_LEGACY_DISPLAY" != 0 ] && [ "$NATIVE_LEGACY_DISPLAY" != 1 ]; then
++  echo 'XNU_NATIVE_LEGACY_DISPLAY must be 0 or 1' >&2
++  exit 1
++fi
++EXTRA_MAKE_ARGS+=("IOUserClient.cpo_CFLAGS_ADD=-DXNU_NATIVE_MOBILE_DISPLAY=$NATIVE_MOBILE_DISPLAY -DXNU_NATIVE_LEGACY_DISPLAY=$NATIVE_LEGACY_DISPLAY")
++MOBILE_DISPLAY_STAMP=$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/.native-mobile-display-mode
++if [ "$(cat "$MOBILE_DISPLAY_STAMP" 2>/dev/null || echo 0)" != "$NATIVE_MOBILE_DISPLAY:$NATIVE_LEGACY_DISPLAY" ]; then
++  rm -f "$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/iokit/DEVELOPMENT/IOUserClient.cpo"
++  printf '%s\n' "$NATIVE_MOBILE_DISPLAY:$NATIVE_LEGACY_DISPLAY" > "$MOBILE_DISPLAY_STAMP"
++fi
++OWNER_ROOT_STAMP=$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/.owner-root-probe-mode
++if [ "$(cat "$OWNER_ROOT_STAMP" 2>/dev/null || echo 0:0:0:0:0:0)" != "$OWNER_ROOT_PROBE:$OWNER_ROOT_AUDIT:$OWNER_ROOT_TRUST:$ADRENO_FIRMWARE_PROBE:$ADRENO_PM4_PROBE:$SMMU4K_PROBE:$CONSTANT_UPLOADS_PROBE:$NATIVE_LEGACY_DISPLAY:$NATIVE_OFFLINE_GPU" ]; then
++  rm -f "$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/bsd/DEVELOPMENT/bsd_init.o"
++  printf '%s\n' "$OWNER_ROOT_PROBE:$OWNER_ROOT_AUDIT:$OWNER_ROOT_TRUST:$ADRENO_FIRMWARE_PROBE:$ADRENO_PM4_PROBE:$SMMU4K_PROBE:$CONSTANT_UPLOADS_PROBE:$NATIVE_LEGACY_DISPLAY:$NATIVE_OFFLINE_GPU" > "$OWNER_ROOT_STAMP"
++fi
++OWNER_CACHE_MOUNT=${XNU_OWNER_CACHE_MOUNT:-0}
++if [ "$OWNER_CACHE_MOUNT" != 0 ] && [ "$OWNER_CACHE_MOUNT" != 1 ]; then
++  echo 'XNU_OWNER_CACHE_MOUNT must be 0 or 1' >&2
++  exit 1
++fi
++if [ "$OWNER_CACHE_MOUNT" = 1 ] && [ "$OWNER_ROOT_TRUST" != 1 ]; then
++  echo 'The offline SystemOS mount requires real independent owner root enforcement' >&2
++  exit 1
++fi
++OWNER_CACHE_STARTUP=${XNU_OWNER_CACHE_STARTUP:-0}
++if [ "$OWNER_CACHE_STARTUP" != 0 ] && [ "$OWNER_CACHE_STARTUP" != 1 ]; then
++  echo 'XNU_OWNER_CACHE_STARTUP must be 0 or 1' >&2
++  exit 1
++fi
++if [ "$OWNER_CACHE_STARTUP" = 1 ] && [ "$OWNER_CACHE_MOUNT" != 1 ]; then
++  echo 'Owner dyld startup selection requires authenticated actual cache mounting' >&2
++  exit 1
++fi
++OWNER_BOOT_MANIFEST=${XNU_OWNER_BOOT_MANIFEST:-0}
++if [ "$OWNER_BOOT_MANIFEST" != 0 ] && [ "$OWNER_BOOT_MANIFEST" != 1 ]; then
++  echo 'XNU_OWNER_BOOT_MANIFEST must be 0 or 1' >&2
++  exit 1
++fi
++if [ "$OWNER_BOOT_MANIFEST" = 1 ] && [ "$OWNER_CACHE_STARTUP" != 1 ]; then
++  echo 'Owner boot metadata requires real authenticated owner root/cache startup' >&2
++  exit 1
++fi
++EXTRA_MAKE_ARGS+=("IOKitBSDInit.cpo_CFLAGS_ADD=-DXNU_OWNER_BOOT_MANIFEST=$OWNER_BOOT_MANIFEST")
++OWNER_MANIFEST_STAMP=$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/.owner-boot-manifest-mode
++if [ "$(cat "$OWNER_MANIFEST_STAMP" 2>/dev/null || echo 0)" != "$OWNER_BOOT_MANIFEST" ]; then
++  rm -f "$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/iokit/DEVELOPMENT/IOKitBSDInit.cpo"
++  rm -f "$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/bsd/DEVELOPMENT/kern_exec.o"
++  printf '%s\n' "$OWNER_BOOT_MANIFEST" > "$OWNER_MANIFEST_STAMP"
++fi
++OWNER_DATA_MOUNT=${XNU_OWNER_DATA_MOUNT:-0}
++if [ "$OWNER_DATA_MOUNT" != 0 ] && [ "$OWNER_DATA_MOUNT" != 1 ]; then
++  echo 'XNU_OWNER_DATA_MOUNT must be 0 or 1' >&2
++  exit 1
++fi
++if [ "$OWNER_DATA_MOUNT" = 1 ] && [ "$OWNER_BOOT_MANIFEST" != 1 ]; then
++  echo 'Scratch Data requires authenticated original OS/owner metadata startup' >&2
++  exit 1
++fi
++OWNER_DATA_HEADER=$ROOT/build/xnu/owner-data-volume.h
++python3 - "$OWNER_DATA_HEADER" "$OWNER_DATA_MOUNT" "$NATIVE_RAM_BLOCK" "${XNU_OWNER_DATA_VOLUME_UUID:-}" <<'PY_DATA_UUID'
++from pathlib import Path
++import sys
++import uuid
++path = Path(sys.argv[1])
++text = '/* Scratch Data IOKit selection disabled. */\n'
++if sys.argv[2:4] == ['1', '1']:
++    try:
++        value = str(uuid.UUID(sys.argv[4])).upper()
++    except ValueError:
++        raise SystemExit('Set XNU_OWNER_DATA_VOLUME_UUID to the actual observed scratch APFS volume UUID')
++    text = '#define XNU_OWNER_DATA_VOLUME_UUID "' + value + '"\n'
++path.parent.mkdir(parents=True, exist_ok=True)
++if not path.exists() or path.read_text() != text:
++    path.write_text(text)
++PY_DATA_UUID
++OWNER_DATA_STAMP=$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/.owner-data-mount-mode
++if [ "$(cat "$OWNER_DATA_STAMP" 2>/dev/null || echo 0)" != "$OWNER_DATA_MOUNT:$NATIVE_RAM_BLOCK" ]; then
++  rm -f "$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/bsd/DEVELOPMENT/kern_exec.o"
++  printf '%s\n' "$OWNER_DATA_MOUNT:$NATIVE_RAM_BLOCK" > "$OWNER_DATA_STAMP"
++fi
++OWNER_CRYPTEX_FILES=${XNU_OWNER_CRYPTEX_FILES:-0}
++if [ "$OWNER_CRYPTEX_FILES" != 0 ] && [ "$OWNER_CRYPTEX_FILES" != 1 ]; then
++  echo 'XNU_OWNER_CRYPTEX_FILES must be 0 or 1' >&2
++  exit 1
++fi
++if [ "$OWNER_CRYPTEX_FILES" = 1 ] && [ "$OWNER_CACHE_STARTUP" != 1 ]; then
++  echo 'Owner Cryptex file lookup requires authenticated mounted SystemOS startup' >&2
++  exit 1
++fi
++OWNER_CRYPTEX_STAMP=$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/.owner-cryptex-files-mode
++if [ "$(cat "$OWNER_CRYPTEX_STAMP" 2>/dev/null || echo 0)" != "$OWNER_CRYPTEX_FILES" ]; then
++  rm -f "$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/bsd/DEVELOPMENT/kern_exec.o"
++  printf '%s\n' "$OWNER_CRYPTEX_FILES" > "$OWNER_CRYPTEX_STAMP"
++fi
++OWNER_UNION_SYSTEMOS=${XNU_OWNER_UNION_SYSTEMOS:-0}
++if [ "$OWNER_UNION_SYSTEMOS" != 0 ] && [ "$OWNER_UNION_SYSTEMOS" != 1 ]; then
++  echo 'XNU_OWNER_UNION_SYSTEMOS must be 0 or 1' >&2
++  exit 1
++fi
++if [ "$OWNER_UNION_SYSTEMOS" = 1 ] && { [ "$OWNER_CACHE_STARTUP" != 1 ] || [ "$OWNER_CRYPTEX_FILES" != 0 ]; }; then
++  echo 'Owner union composition requires authenticated startup and no fallback-path experiment' >&2
++  exit 1
++fi
++OWNER_UNION_STAMP=$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/.owner-union-systemos-mode
++if [ "$(cat "$OWNER_UNION_STAMP" 2>/dev/null || echo 0)" != "$OWNER_UNION_SYSTEMOS" ]; then
++  rm -f "$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/bsd/DEVELOPMENT/kern_exec.o"
++  printf '%s\n' "$OWNER_UNION_SYSTEMOS" > "$OWNER_UNION_STAMP"
++fi
++NATIVE_AIR_INIT=${XNU_NATIVE_AIR_INIT:-0}
++if [ "$NATIVE_AIR_INIT" != 0 ] && [ "$NATIVE_AIR_INIT" != 1 ]; then
++  echo 'XNU_NATIVE_AIR_INIT must be 0 or 1' >&2
++  exit 1
++fi
++if [ "$NATIVE_AIR_INIT" = 1 ] && { [ "$OWNER_CACHE_MOUNT" != 1 ] || [ "$OWNER_DATA_MOUNT" != 1 ] || [ "$OWNER_ROOT_TRUST" != 1 ]; }; then
++  echo 'Offline AIR init requires the actual owner root, SystemOS and scratch Data path' >&2
++  exit 1
++fi
++NATIVE_AIR_STAMP=$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/.native-air-init-mode
++if [ "$(cat "$NATIVE_AIR_STAMP" 2>/dev/null || echo 0)" != "$NATIVE_AIR_INIT" ]; then
++  rm -f "$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/bsd/DEVELOPMENT/kern_exec.o"
++  printf '%s\n' "$NATIVE_AIR_INIT" > "$NATIVE_AIR_STAMP"
++fi
++EXTRA_MAKE_ARGS+=("kern_exec.o_CFLAGS_ADD=-DXNU_NATIVE_AIR_INIT=$NATIVE_AIR_INIT -DXNU_OWNER_CACHE_MOUNT=$OWNER_CACHE_MOUNT -DXNU_OWNER_CACHE_STARTUP=$OWNER_CACHE_STARTUP -DXNU_OWNER_BOOT_MANIFEST=$OWNER_BOOT_MANIFEST -DXNU_OWNER_DATA_MOUNT=$OWNER_DATA_MOUNT -DXNU_NATIVE_RAM_BLOCK=$NATIVE_RAM_BLOCK -DXNU_OWNER_CRYPTEX_FILES=$OWNER_CRYPTEX_FILES -DXNU_OWNER_UNION_SYSTEMOS=$OWNER_UNION_SYSTEMOS -include $OWNER_DATA_HEADER")
++OWNER_CACHE_STAMP=$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/.owner-cache-mount-mode
++if [ "$(cat "$OWNER_CACHE_STAMP" 2>/dev/null || echo 0:0)" != "$OWNER_CACHE_MOUNT:$OWNER_CACHE_STARTUP" ]; then
++  rm -f "$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/bsd/DEVELOPMENT/kern_exec.o"
++  printf '%s\n' "$OWNER_CACHE_MOUNT:$OWNER_CACHE_STARTUP" > "$OWNER_CACHE_STAMP"
++fi
++OWNER_CACHE_CARRIER=${XNU_OWNER_CACHE_CARRIER:-0}
++OWNER_CACHE_CARRIER_WRONG_UUID=${XNU_OWNER_CACHE_CARRIER_WRONG_UUID:-0}
++if { [ "$OWNER_CACHE_CARRIER" != 0 ] && [ "$OWNER_CACHE_CARRIER" != 1 ]; } ||
++   { [ "$OWNER_CACHE_CARRIER_WRONG_UUID" != 0 ] && [ "$OWNER_CACHE_CARRIER_WRONG_UUID" != 1 ]; }; then
++  echo 'Owner cache carrier selectors must be 0 or 1' >&2
++  exit 1
++fi
++if { [ "$OWNER_CACHE_CARRIER" = 1 ] && [ "$OWNER_CACHE_STARTUP" != 1 ]; } ||
++   { [ "$OWNER_CACHE_CARRIER_WRONG_UUID" = 1 ] && [ "$OWNER_CACHE_CARRIER" != 1 ]; }; then
++  echo 'Owner carrier policy requires authenticated owner startup; wrong UUID is an isolated negative control' >&2
++  exit 1
++fi
++EXTRA_MAKE_ARGS+=("vm_unix.o_CFLAGS_ADD=-DXNU_OWNER_CACHE_CARRIER=$OWNER_CACHE_CARRIER -DXNU_OWNER_CACHE_CARRIER_WRONG_UUID=$OWNER_CACHE_CARRIER_WRONG_UUID")
++OWNER_CARRIER_STAMP=$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/.owner-cache-carrier-mode
++if [ "$(cat "$OWNER_CARRIER_STAMP" 2>/dev/null || echo 0:0)" != "$OWNER_CACHE_CARRIER:$OWNER_CACHE_CARRIER_WRONG_UUID" ]; then
++  rm -f "$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/bsd/DEVELOPMENT/vm_unix.o"
++  printf '%s\n' "$OWNER_CACHE_CARRIER:$OWNER_CACHE_CARRIER_WRONG_UUID" > "$OWNER_CARRIER_STAMP"
++fi
++DT_PANIC_REGION=${XNU_DT_PANIC_REGION:-0}
++if [ "$DT_PANIC_REGION" != 0 ] && [ "$DT_PANIC_REGION" != 1 ]; then
++  echo 'XNU_DT_PANIC_REGION must be 0 or 1' >&2
++  exit 1
++fi
++EXTRA_MAKE_ARGS+=("pe_init.o_CFLAGS_ADD=-DXNU_DT_PANIC_REGION=$DT_PANIC_REGION")
++DT_PANIC_STAMP=$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/.dt-panic-region-mode
++if [ "$(cat "$DT_PANIC_STAMP" 2>/dev/null || echo 0)" != "$DT_PANIC_REGION" ]; then
++  rm -f "$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/pexpert/DEVELOPMENT/pe_init.o"
++  printf '%s\n' "$DT_PANIC_REGION" > "$DT_PANIC_STAMP"
++fi
++ZONE_PGZ_PROBE=${XNU_ZONE_PGZ_ALIGNMENT_PROBE:-0}
++if [ "$ZONE_PGZ_PROBE" != 0 ] && [ "$ZONE_PGZ_PROBE" != 1 ]; then
++  echo 'XNU_ZONE_PGZ_ALIGNMENT_PROBE must be 0 or 1' >&2
++  exit 1
++fi
++EXTRA_MAKE_ARGS+=("zalloc.o_CFLAGS_ADD=-DXNU_ZONE_PGZ_ALIGNMENT_PROBE=$ZONE_PGZ_PROBE")
++ZONE_PGZ_STAMP=$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/.zone-pgz-probe-mode
++if [ "$(cat "$ZONE_PGZ_STAMP" 2>/dev/null || echo 0)" != "$ZONE_PGZ_PROBE" ]; then
++  rm -f "$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/osfmk/DEVELOPMENT/zalloc.o"
++  printf '%s\n' "$ZONE_PGZ_PROBE" > "$ZONE_PGZ_STAMP"
++fi
++NATIVE_ARCH_TIMER=${XNU_NATIVE_ARCH_TIMER:-${XNU_ARMCPU:-0}}
++if [ "$NATIVE_ARCH_TIMER" != 0 ] && [ "$NATIVE_ARCH_TIMER" != 1 ]; then
++  echo 'XNU_NATIVE_ARCH_TIMER must be 0 or 1' >&2
++  exit 1
++fi
++if [ "$NATIVE_ARCH_TIMER" = 1 ] && [ "${XNU_ARMCPU:-0}" != 1 ]; then
++  echo 'Architectural timer entry requires the actual ArmCpu interrupt provider' >&2
++  exit 1
++fi
++EXTRA_MAKE_ARGS+=("start.o_SFLAGS_ADD=-DXNU_NATIVE_ARCH_TIMER=$NATIVE_ARCH_TIMER")
++NATIVE_TIMER_STAMP=$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/.native-arch-timer-mode
++if [ "$(cat "$NATIVE_TIMER_STAMP" 2>/dev/null || echo 0)" != "$NATIVE_ARCH_TIMER" ]; then
++  rm -f "$ROOT/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/osfmk/DEVELOPMENT/start.o"
++  printf '%s\n' "$NATIVE_ARCH_TIMER" > "$NATIVE_TIMER_STAMP"
++fi
++NATIVE_PAN=${XNU_NATIVE_PAN:-0}
++if [ "$NATIVE_PAN" != 0 ] && [ "$NATIVE_PAN" != 1 ]; then
++  echo 'XNU_NATIVE_PAN must be 0 or 1' >&2
++  exit 1
++fi
++EXTRA_CFLAGS="$EXTRA_CFLAGS -DXNU_NATIVE_PAN=$NATIVE_PAN"
++if [ "$NATIVE_PAN" = 1 ]; then
++  EXTRA_MAKE_ARGS+=("copyio.o_CFLAGS_ADD=-march=armv8.1-a")
++  EXTRA_MAKE_ARGS+=("pcb.o_CFLAGS_ADD=-march=armv8.1-a")
++  EXTRA_MAKE_ARGS+=("platform_tests.o_CFLAGS_ADD=-march=armv8.1-a")
++else
++  EXTRA_MAKE_ARGS+=("copyio.o_CFLAGS_ADD=")
++  EXTRA_MAKE_ARGS+=("pcb.o_CFLAGS_ADD=")
++  EXTRA_MAKE_ARGS+=("platform_tests.o_CFLAGS_ADD=")
++fi
++if [ "${XNU_SOURCE_CORECRYPTO14:-0}" = 1 ]; then
++  EXTRA_CFLAGS="$EXTRA_CFLAGS -DXNU_SOURCE_CORECRYPTO14=1"
++fi
++if [ "${XNU_SOURCE_CORECRYPTO14:-0}" = 1 ] && [ "$BOOTSTRAP" = 0 ]; then
++  CRYPTO_ARCHIVE=$ROOT/build/corecrypto-2023/libcorecrypto_kernel_noasm-namespaced.a
++  test -f "$CRYPTO_ARCHIVE"
++  KERNEL_EXTRA_ARCHIVES="-L$KERNEL_SDKROOT/usr/local/lib/kernel -lfirehose_kernel $CRYPTO_ARCHIVE"
++  KERNEL_ARCHIVE_DEPENDENCIES=$CRYPTO_ARCHIVE
++  if [ "$ADRENO_FIRMWARE_PROBE" = 1 ]; then
++    ADRENO_PROBE_ARCHIVE=$ROOT/build/adreno-firmware-probe/libAdrenoFirmwareProbe.a
++    test -f "$ADRENO_PROBE_ARCHIVE"
++    KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$ADRENO_PROBE_ARCHIVE"
++    KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $ADRENO_PROBE_ARCHIVE"
++  fi
++  if [ "$ADRENO_PM4_PROBE" = 1 ]; then
++    PM4_PROBE_ARCHIVE=$ROOT/build/adreno-pm4-probe/libAdrenoPM4Probe.a
++    test -f "$PM4_PROBE_ARCHIVE"
++    KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$PM4_PROBE_ARCHIVE"
++    KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $PM4_PROBE_ARCHIVE"
++  fi
++  if [ "$SMMU4K_PROBE" = 1 ]; then
++    SMMU4K_PROBE_ARCHIVE=$ROOT/build/smmu4k-probe/libArmSmmu4KProbe.a
++    test -f "$SMMU4K_PROBE_ARCHIVE"
++    KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$SMMU4K_PROBE_ARCHIVE"
++    KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $SMMU4K_PROBE_ARCHIVE"
++  fi
++  if [ "$CONSTANT_UPLOADS_PROBE" = 1 ]; then
++    CONSTANT_UPLOADS_ARCHIVE=$ROOT/build/constant-uploads-probe/libConstantUploadsProbe.a
++    test -f "$CONSTANT_UPLOADS_ARCHIVE"
++    KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$CONSTANT_UPLOADS_ARCHIVE"
++    KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $CONSTANT_UPLOADS_ARCHIVE"
++  fi
++  if [ "${XNU_ARMVIRT_PLATFORM:-0}" = 1 ]; then
++    ARMVIRT_ARCHIVE=$ROOT/build/armvirt-platform/libArmVirtPlatform.a
++    test -f "$ARMVIRT_ARCHIVE"
++    KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$ARMVIRT_ARCHIVE"
++    KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $ARMVIRT_ARCHIVE"
++  fi
++  if [ "$ARM_DT_PLATFORM" = 1 ]; then
++    ARM_DT_ARCHIVE=$ROOT/build/armdt-platform/libArmDTPlatform.a
++    test -f "$ARM_DT_ARCHIVE"
++    KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$ARM_DT_ARCHIVE"
++    KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $ARM_DT_ARCHIVE"
++  fi
++  if [ "${XNU_ARMCPU:-0}" = 1 ]; then
++    ARMCPU_ARCHIVE=$ROOT/build/armcpu/libArmCpu.a
++    test -f "$ARMCPU_ARCHIVE"
++    KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$ARMCPU_ARCHIVE"
++    KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $ARMCPU_ARCHIVE"
++  fi
++  if [ "${XNU_NATIVE_UFS:-0}" = 1 ]; then
++    UFS_ARCHIVE=$ROOT/build/native-ufs/libNativeUfs.a
++    test -f "$UFS_ARCHIVE"
++    KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$UFS_ARCHIVE"
++    KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $UFS_ARCHIVE"
++  fi
++  if [ "${XNU_NATIVE_ADRENO:-0}" = 1 ]; then
++    # NativeAdreno plus its kits (scripts/build-native-adreno-kits.py). No personality is installed: the
++    # board probe calls NativeAdrenoGmuContextBringup directly once it has powered the GPU CX domain.
++    ADRENO_ARCHIVE=$ROOT/build/native-adreno/libNativeAdreno.a
++    test -f "$ADRENO_ARCHIVE"
++    KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$ADRENO_ARCHIVE"
++    KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $ADRENO_ARCHIVE"
++  fi
++  if [ "$NATIVE_MOBILE_DISPLAY" = 1 ]; then
++    MOBILE_DISPLAY_ARCHIVE=$ROOT/build/native-mobile-display/libNativeMobileDisplay.late.a
++    test -f "$MOBILE_DISPLAY_ARCHIVE"
++    python3 - "$MOBILE_DISPLAY_ARCHIVE" <<'PY_MOBILE_DISPLAY'
++import hashlib, json, sys
++from pathlib import Path
++archive = Path(sys.argv[1])
++report = json.loads(archive.with_name('build-report.json').read_text())
++if hashlib.sha256(archive.read_bytes()).hexdigest() != report['archive_sha256']:
++    raise SystemExit('Rebuild and qualify the exact own display archive before linking')
++PY_MOBILE_DISPLAY
++    KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$MOBILE_DISPLAY_ARCHIVE"
++    KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $MOBILE_DISPLAY_ARCHIVE"
++  fi
++  if [ "$NATIVE_LEGACY_DISPLAY" = 1 ]; then
++    LEGACY_DISPLAY_ARCHIVE=$ROOT/build/native-legacy-display/libNativeLegacyDisplay.late.a
++    test -f "$LEGACY_DISPLAY_ARCHIVE"
++    python3 - "$LEGACY_DISPLAY_ARCHIVE" "$ROOT" <<'PY_LEGACY_DISPLAY'
++import hashlib, json, sys
++from pathlib import Path
++archive=Path(sys.argv[1]);root=Path(sys.argv[2]);report=json.loads(archive.with_name('build-report.json').read_text())
++if hashlib.sha256(archive.read_bytes()).hexdigest()!=report['archive_sha256']:
++    raise SystemExit('Rebuild and qualify the exact owned Legacy archive before linking')
++for name,digest in report['source_sha256'].items():
++    if hashlib.sha256((root/name).read_bytes()).hexdigest()!=digest:
++        raise SystemExit('Rebuild the owned Legacy archive after changing '+name)
++PY_LEGACY_DISPLAY
++    KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$LEGACY_DISPLAY_ARCHIVE"
++    KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $LEGACY_DISPLAY_ARCHIVE"
++  fi
++  if [ "${XNU_NATIVE_AES:-0}" = 1 ]; then
++    AES_ARCHIVE=${XNU_NATIVE_AES_ARCHIVE:-$ROOT/build/native-aes/libNativeAES.a}
++    test -f "$AES_ARCHIVE"
++    KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$AES_ARCHIVE"
++    KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $AES_ARCHIVE"
++  fi
++  if [ "${XNU_NATIVE_VIRTIO_BLOCK:-0}" = 1 ]; then
++    VIRTIO_ARCHIVE=${XNU_NATIVE_VIRTIO_BLOCK_ARCHIVE:-$ROOT/build/native-virtio-block/libNativeVirtioBlock.a}
++    test -f "$VIRTIO_ARCHIVE"
++    KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$VIRTIO_ARCHIVE"
++    KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $VIRTIO_ARCHIVE"
++  fi
++  if [ "$NATIVE_OFFLINE_GPU" = 1 ]; then
++    GPU_BROKER_ARCHIVE=$ROOT/build/native-offline-gpu/libNativeOfflineGPU.late.a
++    test -f "$GPU_BROKER_ARCHIVE"
++    python3 - "$GPU_BROKER_ARCHIVE" "$ROOT" <<'PY_GPU_BROKER'
++import hashlib,json,sys
++from pathlib import Path
++archive=Path(sys.argv[1]);root=Path(sys.argv[2]);report=json.loads(archive.with_name('build-report.json').read_text())
++if hashlib.sha256(archive.read_bytes()).hexdigest()!=report['archive_sha256']:
++    raise SystemExit('Rebuild the exact private GPU broker archive')
++for name,digest in report['source_sha256'].items():
++    if hashlib.sha256((root/name).read_bytes()).hexdigest()!=digest:
++        raise SystemExit('Rebuild the GPU broker after changing '+name)
++if hashlib.sha256((root/'build/native-virtio-console/libNativeVirtioConsole.a').read_bytes()).hexdigest()!=report['console_archive_sha256']:
++    raise SystemExit('Rebuild the GPU broker against the actual byte-transport archive')
++PY_GPU_BROKER
++    KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$GPU_BROKER_ARCHIVE"
++    KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $GPU_BROKER_ARCHIVE"
++  fi
++  if [ "$NATIVE_VIRTIO_CONSOLE" = 1 ]; then
++    CONSOLE_ARCHIVE=$ROOT/build/native-virtio-console/libNativeVirtioConsole.a
++    test -f "$CONSOLE_ARCHIVE"
++    KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$CONSOLE_ARCHIVE"
++    KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $CONSOLE_ARCHIVE"
++  fi
++  if [ "$NATIVE_RAM_BLOCK" = 1 ]; then
++    RAM_BLOCK_ARCHIVE=$ROOT/build/native-ram-block/libNativeRamBlock.a
++    test -f "$RAM_BLOCK_ARCHIVE"
++    if [ "${XNU_NATIVE_VIRTIO_BLOCK:-0}" = 1 ]; then
++      # Both transports import the same original class. Keep one exact alias
++      # definition; link the real RAM transport object, not duplicate aliases.
++      python3 - "$VIRTIO_ARCHIVE" "$RAM_BLOCK_ARCHIVE" <<'PY_BINDINGS'
++import json
++from pathlib import Path
++import sys
++import hashlib
++records = [json.loads(Path(p).with_name('bindings.json').read_text()) for p in sys.argv[1:]]
++for archive, record in zip(sys.argv[1:], records):
++    path = Path(archive)
++    obj = path.with_name(path.stem.removeprefix('lib') + '.o')
++    if hashlib.sha256(obj.read_bytes()).hexdigest() != record['compiled_object_sha256']:
++        raise SystemExit('Re-audit the actual compiled storage object before linking')
++first, second = [record['bindings'] for record in records]
++if any(first.get(name) != value for name, value in second.items()):
++    raise SystemExit('RAM transport imports must match the already linked original storage bindings')
++PY_BINDINGS
++      RAM_BLOCK_OBJECT=$ROOT/build/native-ram-block/NativeRamBlock.o
++      test -f "$RAM_BLOCK_OBJECT"
++      KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES $RAM_BLOCK_OBJECT"
++    else
++      KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$RAM_BLOCK_ARCHIVE"
++    fi
++    KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $RAM_BLOCK_ARCHIVE"
++  fi
++  if [ "${XNU_SOURCE_PTHREAD:-0}" = 1 ]; then
++    PTHREAD_ARCHIVE=$ROOT/build/libpthread-kernel/libpthread_kernel.a
++    PTHREAD_BOOTSTRAP=$ROOT/build/libpthread-kernel/source_pthread_bootstrap.o
++    test -f "$PTHREAD_ARCHIVE"
++    test -f "$PTHREAD_BOOTSTRAP"
++    KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$PTHREAD_ARCHIVE"
++    KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $PTHREAD_ARCHIVE"
++  fi
++  if [ "$OWNER_ROOT_PROBE" = 1 ]; then
++    VERIFIED_ROOT_ARCHIVE=${XNU_VERIFIED_ROOT_ARCHIVE:-$ROOT/build/verified-root-xnu/libVerifiedRootProbe.a}
++    test -f "$VERIFIED_ROOT_ARCHIVE"
++    KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$VERIFIED_ROOT_ARCHIVE"
++    KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $VERIFIED_ROOT_ARCHIVE"
++  fi
++  if [ "$MOCKFS_MODE" = 1 ]; then
++    MOCKFS_ARCHIVE=$ROOT/build/mockfs-fixture/libmockfs_fixture.a
++    test -f "$MOCKFS_ARCHIVE"
++    KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$MOCKFS_ARCHIVE"
++    KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $MOCKFS_ARCHIVE"
++  fi
++  if [ "$SHENG_PMGR" = 1 ]; then
++    PMGR_ARCHIVE=$ROOT/build/sheng-platform-power/libShengPlatformPower.a
++    test -f "$PMGR_ARCHIVE"
++    KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$PMGR_ARCHIVE"
++    KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $PMGR_ARCHIVE"
++  fi
++  # Optional extra link inputs (e.g. a stub for an unselected offline probe hook).
++  if [ "$BOOT_PROGRESS" = 1 ]; then
++    KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$ROOT/build/boot-progress/libBootProgress.a"
++    KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $ROOT/build/boot-progress/libBootProgress.a"
++  fi
++  KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES ${XNU_EXTRA_LD_ARCHIVES:-}"
++  EXTRA_MAKE_ARGS+=("LD_KERNEL_ARCHIVES=$KERNEL_EXTRA_ARCHIVES")
++  EXTRA_MAKE_ARGS+=("XNU_EXTERNAL_KERNEL_ARCHIVES=$KERNEL_ARCHIVE_DEPENDENCIES")
++fi
++python3 - "${XNU_NATIVE_AES:-0}" "${XNU_NATIVE_AES_ARCHIVE:-$ROOT/build/native-aes/libNativeAES.a}" \
++  "${XNU_NATIVE_VIRTIO_BLOCK:-0}" "${XNU_NATIVE_VIRTIO_BLOCK_ARCHIVE:-$ROOT/build/native-virtio-block/libNativeVirtioBlock.a}" \
++  "$OWNER_ROOT_PROBE" "${XNU_VERIFIED_ROOT_ARCHIVE:-$ROOT/build/verified-root-xnu/libVerifiedRootProbe.a}" \
++  "$NATIVE_RAM_BLOCK" "$ROOT/build/native-ram-block/libNativeRamBlock.a" \
++  "$ADRENO_FIRMWARE_PROBE" "$ROOT/build/adreno-firmware-probe/libAdrenoFirmwareProbe.a" \
++  "$ADRENO_PM4_PROBE" "$ROOT/build/adreno-pm4-probe/libAdrenoPM4Probe.a" \
++  "$SMMU4K_PROBE" "$ROOT/build/smmu4k-probe/libArmSmmu4KProbe.a" \
++  "$CONSTANT_UPLOADS_PROBE" "$ROOT/build/constant-uploads-probe/libConstantUploadsProbe.a" \
++  "$NATIVE_VIRTIO_CONSOLE" "$ROOT/build/native-virtio-console/libNativeVirtioConsole.a" \
++  "$NATIVE_OFFLINE_GPU" "$ROOT/build/native-offline-gpu/libNativeOfflineGPU.late.a" \
++  "$SHENG_PMGR" "$ROOT/build/sheng-platform-power/libShengPlatformPower.a" \
++  "${XNU_NATIVE_ADRENO:-0}" "$ROOT/build/native-adreno/libNativeAdreno.a" <<'PY'
++import hashlib
++from pathlib import Path
++import sys
++directory = Path('build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837')
++stamp = directory / '.native-aes-link-input'
++
++
++def state(mode, archive):
++    if mode != '1':
++        return 'disabled'
++    # The bootstrap pass of a new tree links before the archive builders have run.
++    path = Path(archive)
++    return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else 'missing'
++
++
++identity = '|'.join(mode + ':' + state(mode, archive) for mode, archive in zip(sys.argv[1::2], sys.argv[2::2]))
++if not stamp.exists() or stamp.read_text() != identity:
++    # Make does not track selection of an older alternative external archive.
++    # Rebuild the conditional personality and relink when this input changes.
++    for relative in ('mach.development.bcm2837.unstripped.noctf',
++                     'iokit/DEVELOPMENT/KernelConfigTables.cpo'):
++        (directory / relative).unlink(missing_ok=True)
++    directory.mkdir(parents=True, exist_ok=True)
++    stamp.write_text(identity)
++PY
++EXTRA_CFLAGS="$EXTRA_CFLAGS -DXNU_BOOT_PROGRESS=$BOOT_PROGRESS"
++make -C .cache/xnu-work "${XNU_BUILD_TARGET:-build}" SDKROOT="${XNU_SDKROOT:-iphoneos}" ARCH_CONFIGS=ARM64 \
++  MACHINE_CONFIGS=BCM2837 KERNEL_CONFIGS=DEVELOPMENT \
++  ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG=arm64 LARGE_MEMORY_DEFINE=-UARM_LARGE_MEMORY \
++  ARM64_LINK_ADDR=0xfffffff007004000 ARM64_PLKSEG_ADDR=0xfffffff004004000 \
++  DEPLOYMENT_TARGET_FLAGS="-miphoneos-version-min=16.0 -DXNU_TARGET_OS_IOS" \
++  DEPLOYMENT_LINKER_FLAGS="-Wl,-ios_version_min,16.0" \
++  RC_DARWIN_KERNEL_VERSION="$XNU_DARWIN" RC_ProjectSourceVersion="$XNU_VERSION" \
++  BUILD_LTO=0 BOUND_CHECKS=0 BUILD_WERROR="${XNU_BUILD_WERROR:-0}" MAKEJOBS=-j"${JOBS:-4}" \
++  CFLAGS_EXTRA="$EXTRA_CFLAGS" "${EXTRA_MAKE_ARGS[@]}" \
++  OBJROOT="$ROOT/build/xnu/ios-obj" SYMROOT="$ROOT/build/xnu/ios-sym" DSTROOT="$ROOT/build/xnu/ios-dst"
++if [ "${XNU_SOURCE_CORECRYPTO14:-0}" = 1 ] && [ "$CRYPTO_BOOTSTRAP_MODE" = source ]; then
++  python3 scripts/seal-source-crypto-kernel.py \
++    build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf
++fi
+diff --git a/tools/build-sweet-kernel.py b/tools/build-sweet-kernel.py
+new file mode 100644
+index 0000000..3fb295d
+--- /dev/null
++++ b/tools/build-sweet-kernel.py
+@@ -0,0 +1,45 @@
++#!/usr/bin/env python3
++"""Compile the sweet Darwin22 kernel without the prelink step.
++
++`unixnu build kernel` always prelinks the result against the original
++kernelcache. The first Darwin22 milestone is only "does the adapted source
++queue compile and link", and the prelink roots/slide for 20H392 are not
++audited yet. This wrapper calls the same UniXNU kernel build (same defconfig
++environment, archive builders and bootstrap pass) and replaces only the
++prelink call with an explicit no-op.
++
++This produces a kernel, not a bootable payload and not a hardware result.
++"""
++
++import argparse
++import sys
++from pathlib import Path
++
++
++def main():
++    parser = argparse.ArgumentParser()
++    parser.add_argument('--out', required=True, type=Path)
++    parser.add_argument('--device', required=True, type=Path)
++    parser.add_argument('--jobs', type=int, default=4)
++    args = parser.parse_args()
++
++    tree = args.out / 'sweet/tree'
++    if not (tree / 'scripts/unixnu/cli.py').is_file():
++        raise SystemExit(f'{tree} is not an assembled UniXNU tree')
++    sys.path.insert(0, str(tree / 'scripts'))
++    from unixnu import cli, kernel
++
++    def no_prelink(ctx):
++        print('kernel: prelink intentionally skipped for the first Darwin22 compile')
++
++    kernel.prelink = no_prelink
++    return cli.main([
++        'build', 'kernel',
++        '-D', str(args.device),
++        '--out', str(args.out),
++        '--jobs', str(args.jobs),
++    ])
++
++
++if __name__ == '__main__':
++    sys.exit(main())
+diff --git a/tools/unixnu-kernel-port.py b/tools/unixnu-kernel-port.py
+new file mode 100644
+index 0000000..15cec15
+--- /dev/null
++++ b/tools/unixnu-kernel-port.py
+@@ -0,0 +1,113 @@
++#!/usr/bin/env python3
++"""Apply the pinned UniXNU XNU patch queue to an Apple XNU source tree.
++
++The queue is the sorted patches/xnu directory of the pinned UniXNU revision.
++Patches whose upstream context does not exist in the selected Apple source are
++replaced by a same-named patch in the device kernel-port directory. Replacements
++are applied instead of the upstream patch, never in addition to it.
++
++This tool only applies or checks text patches. A clean application is not a
++compile, a link or a hardware result.
++
++Usage:
++  tools/unixnu-kernel-port.py --source DIR --patches DIR --replacements DIR
++                              [--check] [--keep-going] [--report PATH]
++"""
++
++import argparse
++import json
++import subprocess
++import sys
++from pathlib import Path
++
++
++def apply_patch(source, patch, check):
++    command = ['git', '-C', str(source), 'apply', '--whitespace=nowarn']
++    if check:
++        command.append('--check')
++    command.append(str(patch.resolve()))
++    result = subprocess.run(command, capture_output=True, text=True)
++    return result.returncode == 0, (result.stderr or result.stdout).strip()
++
++
++def main():
++    parser = argparse.ArgumentParser()
++    parser.add_argument('--source', required=True, type=Path)
++    parser.add_argument('--patches', required=True, type=Path)
++    parser.add_argument('--replacements', required=True, type=Path)
++    parser.add_argument('--check', action='store_true',
++                        help='only test application; do not modify the source')
++    parser.add_argument('--keep-going', action='store_true',
++                        help='continue after a rejection instead of stopping')
++    parser.add_argument('--report', type=Path,
++                        help='write a JSON report of every queue entry')
++    args = parser.parse_args()
++
++    if not (args.source / 'osfmk').is_dir():
++        raise SystemExit(f'{args.source} does not look like an XNU source tree')
++    patches = sorted(args.patches.glob('*.patch'))
++    if not patches:
++        raise SystemExit(f'no patches in {args.patches}')
++
++    skips = {}
++    skip_file = args.replacements / 'skip.json'
++    if skip_file.is_file():
++        skips = json.loads(skip_file.read_text()).get('patches', {})
++
++    results = []
++    applied = 0
++    rejected = 0
++    skipped = 0
++    for patch in patches:
++        if patch.name in skips:
++            skipped += 1
++            results.append({
++                'patch': patch.name,
++                'origin': 'skipped',
++                'applies': None,
++                'diagnostic': skips[patch.name],
++            })
++            print(f'skip {patch.name}')
++            continue
++        replacement = args.replacements / patch.name
++        used = replacement if replacement.is_file() else patch
++        ok, diagnostic = apply_patch(args.source, used, args.check)
++        origin = 'replacement' if replacement.is_file() else 'upstream'
++        results.append({
++            'patch': patch.name,
++            'origin': origin,
++            'applies': ok,
++            'diagnostic': '' if ok else diagnostic,
++        })
++        if ok:
++            applied += 1
++            print(f'ok   {patch.name} ({origin})')
++        else:
++            rejected += 1
++            print(f'FAIL {patch.name} ({origin})')
++            print(diagnostic)
++            if not args.keep_going:
++                break
++
++    report = {
++        'source': str(args.source),
++        'patches': str(args.patches),
++        'replacements': str(args.replacements),
++        'mode': 'check' if args.check else 'apply',
++        'queue_total': len(patches),
++        'checked': len(results),
++        'applied': applied,
++        'rejected': rejected,
++        'skipped': skipped,
++        'complete': len(results) == len(patches) and rejected == 0,
++        'results': results,
++    }
++    if args.report:
++        args.report.write_text(json.dumps(report, indent=2) + '\n')
++    print(f'{applied} applied, {rejected} rejected, {skipped} skipped, '
++          f'{len(results)}/{len(patches)} queue entries checked')
++    return 0 if rejected == 0 else 1
++
++
++if __name__ == '__main__':
++    sys.exit(main())
+-- 
+2.51.0
+

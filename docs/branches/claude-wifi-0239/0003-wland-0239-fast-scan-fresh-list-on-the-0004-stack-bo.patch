@@ -1,0 +1,4779 @@
+From 7fa30a5c6c51daa916d21b4655742810b6fadddb Mon Sep 17 00:00:00 2001
+From: OpenCode <opencode@localhost>
+Date: Mon, 9 Nov 2026 16:13:37 +0530
+Subject: [PATCH 3/3] wland 0239: fast scan + fresh list on the 0004 stack;
+ boot stamp keyed on kern.bootsessionuuid
+
+0232/0233 carried 0005-0018 and the modem went ERR-FATAL 1 s after boot. This drops
+0005-0018 (0004 = last stack with working Wi-Fi), renumbers the scan patches to 0005/0006
+and fixes the once-per-boot guard: boottime seconds repeat across boots on this phone
+(fake 1969 clock), so a boot could refuse to start wland at all.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/.github/workflows/wifi.yml b/.github/workflows/wifi.yml
+index a0690f4..55ee27e 100644
+--- a/.github/workflows/wifi.yml
++++ b/.github/workflows/wifi.yml
+@@ -28,27 +28,6 @@ jobs:
+           git -C donor checkout -q FETCH_HEAD
+           test "$(git -C donor rev-parse HEAD)" = "$DONOR_COMMIT"
+           for p in userspace/wifi/patches/*.patch; do git -C donor apply --verbose "$PWD/$p"; done
+-      - name: Check bounded PCM state machine
+-        run: |
+-          cc -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer \
+-            -o /tmp/test-sweet-pcm userspace/adsp/test_sweet_pcm.c userspace/adsp/sweet_pcm.c userspace/adsp/sweet_apr.c
+-          /tmp/test-sweet-pcm
+-          python3 tools/check-sweet-amp-model.py
+-          python3 tools/check-sweet-pcm-endpoints.py
+-          python3 tools/check-sweet-glink-peek.py donor/phone/wifi/glink.c
+-          cc -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer \
+-            -o /tmp/test-sweet-levels userspace/adsp/test_sweet_pcm_levels.c
+-          /tmp/test-sweet-levels
+-          cc -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer \
+-            -o /tmp/test-sweet-amp userspace/adsp/test_sweet_aw2032.c userspace/adsp/sweet_aw2032.c
+-          /tmp/test-sweet-amp
+-          cc -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer \
+-            -o /tmp/test-sweet-pcm-ring userspace/adsp/test_sweet_pcm_ring.c
+-          /tmp/test-sweet-pcm-ring
+-          cc -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer \
+-            -o /tmp/test-sweet-pcm-fifo userspace/adsp/test_sweet_pcm_fifo.c
+-          /tmp/test-sweet-pcm-fifo
+-          cp userspace/adsp/sweet_pcm.c userspace/adsp/sweet_pcm.h userspace/adsp/sweet_pcm_levels.h userspace/adsp/sweet_pcm_fifo.h userspace/adsp/sweet_aw2032.c userspace/adsp/sweet_aw2032.h userspace/adsp/sweet_amp_ctl.h donor/phone/wifi/
+       - name: Build wland and netsvc for iOS 16 arm64
+         run: |
+           out=userspace/out/sweet-wifi-ios16
+@@ -56,44 +35,24 @@ jobs:
+           cd donor/phone/wifi
+           xcrun --sdk iphoneos clang -target arm64-apple-ios16.0 -O2 -Wall -Wextra -Wno-unused-parameter \
+             -o "$GITHUB_WORKSPACE/$out/wland" wland.c smem.c pmem.c glink.c link.c qmi.c rmtfs.c pdmapper.c \
+-            tftp.c scm.c wlfw.c radio.c ipnet.c bridge.c cell.c adspedge.c adsp_smmu.c fastrpc.c sweet_apr.c sweet_pcm.c sweet_aw2032.c
++            tftp.c scm.c wlfw.c radio.c ipnet.c bridge.c cell.c
+           cd ../tools
+           xcrun --sdk iphoneos clang -target arm64-apple-ios16.0 -O2 -fobjc-arc -framework Foundation \
+             -framework SystemConfiguration -o "$GITHUB_WORKSPACE/$out/netsvc" netsvc.m
+           cd "$GITHUB_WORKSPACE"
+-          xcrun --sdk iphoneos clang -target arm64-apple-ios16.0 -O2 -Wall -Wextra -Werror \
+-            -o "$out/sweet-pcm-probe" userspace/adsp/sweet_pcm_probe.c
+-          xcrun --sdk iphoneos clang -target arm64-apple-ios16.0 -O2 -Wall -Wextra -Werror \
+-            -o "$out/sweet-audio-timing" userspace/adsp/sweet_audio_timing.c
+-          xcrun --sdk iphoneos clang -target arm64-apple-ios16.0 -O2 -Wall -Wextra -Werror \
+-            -o "$out/sweet-audio-schedule" userspace/adsp/sweet_audio_schedule.c
+-          xcrun --sdk iphoneos clang -target arm64-apple-ios16.0 -O2 -Wall -Wextra -Werror \
+-            -o "$out/sweet-timer-coalescing" userspace/adsp/sweet_timer_coalescing.c
+-          xcrun --sdk iphoneos clang -target arm64-apple-ios16.0 -O2 -Wall -Wextra -Werror \
+-            -o "$out/sweet-hfs-grow" userspace/tools/sweet_hfs_grow.c
+-          codesign --force --sign - --pagesize 4096 "$out/sweet-hfs-grow"
+-          codesign --verify --strict "$out/sweet-hfs-grow"
+-          codesign --force --sign - --pagesize 4096 "$out/sweet-timer-coalescing"
+-          codesign --verify --strict "$out/sweet-timer-coalescing"
+-          codesign --force --sign - --pagesize 4096 "$out/sweet-audio-schedule"
+-          codesign --verify --strict "$out/sweet-audio-schedule"
+-          codesign --force --sign - --pagesize 4096 "$out/sweet-audio-timing"
+-          codesign --verify --strict "$out/sweet-audio-timing"
+-          codesign --force --sign - --pagesize 4096 "$out/sweet-pcm-probe"
+-          codesign --verify --strict "$out/sweet-pcm-probe"
+           codesign --force --sign - --pagesize 4096 "$out/wland"
+           codesign --force --sign - --pagesize 4096 --entitlements donor/phone/tools/netsvc-ents.plist "$out/netsvc"
+           codesign --verify --strict "$out/wland"
+           codesign --verify --strict "$out/netsvc"
+-          (cd "$out" && shasum -a 256 wland netsvc sweet-pcm-probe sweet-audio-timing sweet-audio-schedule sweet-timer-coalescing sweet-hfs-grow > SHA256SUMS)
++          (cd "$out" && shasum -a 256 wland netsvc > SHA256SUMS)
+           python3 - "$out" <<'PY'
+           import hashlib, json, pathlib, sys
+           out = pathlib.Path(sys.argv[1])
+           patches = {str(p): hashlib.sha256(p.read_bytes()).hexdigest()
+                      for p in sorted(pathlib.Path('userspace/wifi/patches').glob('*.patch'))}
+-          files = {n: hashlib.sha256((out / n).read_bytes()).hexdigest() for n in ('wland', 'netsvc', 'sweet-pcm-probe', 'sweet-audio-timing', 'sweet-audio-schedule', 'sweet-timer-coalescing', 'sweet-hfs-grow')}
++          files = {n: hashlib.sha256((out / n).read_bytes()).hexdigest() for n in ('wland', 'netsvc')}
+           (out / 'wifi-build.json').write_text(json.dumps(
+-              {'source_commit': '${{ github.sha }}', 'donor': 'Yofuness/ios-flame sunfish', 'donor_commit': '${{ env.DONOR_COMMIT }}',
++              {'donor': 'Yofuness/ios-flame sunfish', 'donor_commit': '${{ env.DONOR_COMMIT }}',
+                'patches': patches, 'files': files}, indent=2) + '\n')
+           PY
+       - uses: actions/upload-artifact@v4
+diff --git a/userspace/wifi/patches/0005-sweet-ipa-data-path.patch b/userspace/wifi/patches/0005-sweet-ipa-data-path.patch
+deleted file mode 100644
+index bdf3893..0000000
+--- a/userspace/wifi/patches/0005-sweet-ipa-data-path.patch
++++ /dev/null
+@@ -1,357 +0,0 @@
+-diff --git a/phone/wifi/cell.c b/phone/wifi/cell.c
+-index 9dc50a8..c770e12 100644
+---- a/phone/wifi/cell.c
+-+++ b/phone/wifi/cell.c
+-@@ -61,7 +61,7 @@ static uint16_t rat_mask = 0x0c;
+-  * Off with /var/local/cell.nobb.
+-  */
+- #define BB_DEV	"/dev/sweet-bb"
+--static int bb_fd = -1, bb_ready;
+-+static int bb_fd = -1, bb_ready, ipa_enabled;
+- static struct { uint32_t service, vi, node, port; } bb_srv[128];
+- static unsigned bb_nsrv;
+- static unsigned long bb_req, bb_data, bb_del, bb_err;
+-@@ -295,7 +295,8 @@ void cell_init(void)
+- 	printf("cell: QMI client for DMS/UIM/NAS/VOICE at ports %#x..%#x\n", CELL_PORT0, CELL_PORT0 + CELL_PORTS - 1);
+- 	unlink(CELL_STATUS);
+- 	if (access("/var/local/cell.nobb", F_OK)) {
+--		bb_fd = open(BB_DEV, O_RDWR | O_NONBLOCK);
+-+		if (bb_fd < 0)
+-+			bb_fd = open(BB_DEV, O_RDWR | O_NONBLOCK);
+- 		if (bb_fd < 0) {
+- 			printf("cell: no %s (kernel without sweetbb=1?)\n", BB_DEV);
+- 		} else {
+-@@ -773,6 +774,13 @@ static void voice_answer(const struct qmi_msg *m)
+- void cell_handle(const struct qrtr_hdr *h, const uint8_t *d, uint32_t n)
+- {
+- 	struct qmi_msg m;
+-+	if (h->dst_port == CELL_IPA_SRV_PORT || h->dst_port == CELL_IPA_CLI_PORT) {
+-+		if (ipa_enabled)
+-+			bb_record(10, h->dst_port == CELL_IPA_CLI_PORT, h->src_node, h->src_port, 0, d, n);
+-+		printf("[%6llu] cell: ipa qmi %u bytes from %u:%x to our %s port\n", (unsigned long long)now_ms(), n, h->src_node, h->src_port,
+-+		       h->dst_port == CELL_IPA_CLI_PORT ? "client" : "server");
+-+		return;
+-+	}
+- 	int c = (int)(h->dst_port - CELL_PORT0);
+- 	if (h->dst_port >= CELL_BB_PORT0 && h->dst_port < CELL_BB_PORT0 + CELL_BB_PORTS) {
+- 		bb_data++;
+-@@ -872,6 +880,12 @@ static void bb_poll(void)
+- 			uint32_t pkt[5] = { QRTR_TYPE_DEL_CLIENT, QRTR_NODE_APPS, w[1], 0, 0 };
+- 			bb_del++;
+- 			qrtr_send(QRTR_TYPE_DEL_CLIENT, w[1], QRTR_NODE_MODEM, QRTR_PORT_CTRL, pkt, sizeof(pkt));
+-+		} else if (w[0] == 11) {
+-+			printf("[%6llu] cell: ipa qmi %u bytes from our %s port -> %u:%x\n", (unsigned long long)now_ms(), w[5],
+-+			       w[1] ? "client" : "server", w[2], w[3]);
+-+			qrtr_send(QRTR_TYPE_DATA, w[1] ? CELL_IPA_CLI_PORT : CELL_IPA_SRV_PORT, w[2], w[3], bb_buf + at + 24, w[5]);
+-+		} else if (w[0] == 12) {
+-+			printf("[%6llu] cell: ipa step %u status %d\n", (unsigned long long)now_ms(), w[1], (int)w[2]);
+- 		} else if (bb_err++ < 5) {
+- 			printf("cell: bb record type %u port %#x ignored\n", w[0], w[1]);
+- 		}
+-@@ -879,6 +893,52 @@ static void bb_poll(void)
+- 	}
+- }
+- 
+-+/* ---------------------------------------------------------------- the IPA data path (0005, xnu 0192) */
+-+int cell_ipa_step(uint32_t type, uint32_t a, int ms)
+-+{
+-+	if (bb_fd < 0 && !access("/var/local/cell.nobb", F_OK))
+-+		return -1;
+-+	if (bb_fd < 0)
+-+		bb_fd = open(BB_DEV, O_RDWR | O_NONBLOCK);
+-+	if (bb_fd < 0) {
+-+		printf("ipa: no %s\n", BB_DEV);
+-+		return -1;
+-+	}
+-+	bb_record(type, a, 0, 0, 0, NULL, 0);
+-+	if (!ms)
+-+		return 0;
+-+	/* Before the modem boots nothing else is queued in the kernel (AppleBaseband waits for READY): only status records. */
+-+	for (int t = 0; t < ms; t += 10) {
+-+		ssize_t n = read(bb_fd, bb_buf, sizeof(bb_buf));
+-+		for (size_t at = 0; n > 0 && at + 24 <= (size_t)n;) {
+-+			uint32_t w[6];
+-+			memcpy(w, bb_buf + at, 24);
+-+			if (w[0] == 12 && w[1] == type) {
+-+				printf("ipa: kernel step %u -> %d\n", type, (int)w[2]);
+-+				return (int)w[2];
+-+			}
+-+			printf("ipa: record %u while waiting for step %u, dropped\n", w[0], type);
+-+			at += 24 + ((w[5] + 3u) & ~3u);
+-+		}
+-+		usleep(10000);
+-+	}
+-+	printf("ipa: no answer from the kernel for step %u\n", type);
+-+	return -1;
+-+}
+-+
+-+void cell_ipa_enable(void)
+-+{
+-+	ipa_enabled = 1;
+-+}
+-+
+-+void cell_ipa_link_up(void)
+-+{
+-+	if (!ipa_enabled)
+-+		return;
+-+	int r = qrtr_new_server(0x31, 1, 1, CELL_IPA_SRV_PORT);
+-+	printf("ipa: IPA QMI server (0x31 v1 instance 1) announced at port %#x -> %d\n", CELL_IPA_SRV_PORT, r);
+-+}
+-+
+- static void cell_poll_once(void);
+- void cell_poll(void)
+- {
+-diff --git a/phone/wifi/cell.h b/phone/wifi/cell.h
+-index e93911e..7b59a9d 100644
+---- a/phone/wifi/cell.h
+-+++ b/phone/wifi/cell.h
+-@@ -14,10 +14,19 @@ void cell_del_server(uint32_t service, uint32_t node, uint32_t port);
+- /* ABM's QMI clients through the kernel's iOS baseband bridge (/dev/sweet-bb, xnu 0184): QRTR ports 0x4100..0x413f */
+- #define CELL_BB_PORT0	0x4100
+- #define CELL_BB_PORTS	64
+-+/* 0005, the IPA data path (xnu 0192): our IPA QMI server (service 0x31 v1 instance 1) and our client of the modem's (instance 2) */
+-+#define CELL_IPA_SRV_PORT	0x4002
+-+#define CELL_IPA_CLI_PORT	0x4003
+- static inline int cell_port(uint32_t port)
+- {
+--	return (port >= CELL_PORT0 && port < CELL_PORT0 + CELL_PORTS) || (port >= CELL_BB_PORT0 && port < CELL_BB_PORT0 + CELL_BB_PORTS);
+-+	return (port >= CELL_PORT0 && port < CELL_PORT0 + CELL_PORTS) || (port >= CELL_BB_PORT0 && port < CELL_BB_PORT0 + CELL_BB_PORTS) ||
+-+	       port == CELL_IPA_SRV_PORT || port == CELL_IPA_CLI_PORT;
+- }
+-+/* An IPA step record (7 configure, 8 firmware loaded {a error}, 9 modem starting) to the kernel; with ms, waits for its status
+-+   record (12) and returns the kernel's errno (-1: no answer). */
+-+int cell_ipa_step(uint32_t type, uint32_t a, int ms);
+-+void cell_ipa_enable(void);	/* the kernel set the IPA up: route IPA QMI */
+-+void cell_ipa_link_up(void);	/* announce our IPA QMI server on the modem link */
+- void cell_handle(const struct qrtr_hdr *h, const uint8_t *d, uint32_t n);
+- void cell_poll(void);	/* every link poll round: periodic queries, /var/local/cell.cmd */
+- 
+-diff --git a/phone/wifi/wland.c b/phone/wifi/wland.c
+-index 957d58c..ba0ea37 100644
+---- a/phone/wifi/wland.c
+-+++ b/phone/wifi/wland.c
+-@@ -274,6 +274,52 @@ static int smp2p_in_value(const char *name, uint32_t *v)
+- 	return 0;
+- }
+- 
+-+/*
+-+ * 0005, the IPA data path (xnu 0192): our outbound "ipa" entry (stock DT qcom,smp2p-ipa-1-out; Linux ipa_smp2p.c bit 0
+-+ * "ipa-clock-enabled-valid", bit 1 "ipa-clock-enabled") and the modem's inbound one (bit 0 "ipa-clock-query", bit 1
+-+ * "ipa-setup-ready"). Mainline answers the first clock query only, enabled before valid; the clock stays voted (the kernel).
+-+ */
+-+static int ipa_on;
+-+static uint64_t ipa_out_va;
+-+static uint32_t ipa_in_last = 0xffffffff;
+-+static int ipa_answered;
+-+
+-+static void smp2p_add_ipa(void)
+-+{
+-+	if (!smp2p_out_pa || ipa_out_va)
+-+		return;
+-+	uint32_t valid = rd32(smp2p_out_pa + 12) >> 16;
+-+	if (valid >= 16)
+-+		return;
+-+	uint64_t e = smp2p_out_pa + 20 + 20ull * valid;
+-+	wr_name(e, "ipa");
+-+	wr32(e + 16, 0);
+-+	__asm__ volatile("dsb sy" ::: "memory");
+-+	wr32(smp2p_out_pa + 12, 16 | ((valid + 1) << 16));
+-+	ipa_out_va = e + 16;
+-+	kick(IPC_MODEM_SMP2P);
+-+	printf("smp2p: outbound entry \"ipa\" added (%u valid)\n", valid + 1);
+-+}
+-+
+-+static void smp2p_ipa_service(void)
+-+{
+-+	uint32_t v;
+-+	if (!ipa_out_va || smp2p_in_value("ipa", &v))
+-+		return;
+-+	if (v != ipa_in_last) {
+-+		printf("[%6llu] smp2p: modem ipa %x%s%s\n", (unsigned long long)link_ms(), v, v & 1 ? " clock-query" : "", v & 2 ? " setup-ready" : "");
+-+		ipa_in_last = v;
+-+	}
+-+	if ((v & 1) && !ipa_answered) {
+-+		wr32(ipa_out_va, 2);			/* enabled */
+-+		kick(IPC_MODEM_SMP2P);
+-+		wr32(ipa_out_va, 3);			/* then valid */
+-+		kick(IPC_MODEM_SMP2P);
+-+		ipa_answered = 1;
+-+		printf("[%6llu] smp2p: IPA clock query answered: enabled\n", (unsigned long long)link_ms());
+-+	}
+-+}
+-+
+- /*
+-  * Keep the SMP2P side going: SSR ack (Linux qcom_smp2p_do_ssr_ack: after a
+-  * restart the modem flips RESTART_DONE, flags bit 0, and waits for the same
+-@@ -300,6 +346,7 @@ static void smp2p_service(void)
+- 		       v & 4 ? " handover" : "", v & 8 ? " stop-ack" : "");
+- 		modem_state = v;
+- 	}
+-+	smp2p_ipa_service();
+- }
+- 
+- static int smp2p_init(void)
+-@@ -413,6 +460,141 @@ static uint8_t *slurp(const char *path, size_t *len)
+- 
+- struct phdr { uint32_t type, offset, vaddr, paddr, filesz, memsz, flags, align; };
+- 
+-+/*
+-+ * 0005: the IPA's GSI firmware (Android /vendor/firmware/ipa_fws.*, copied to /var/local/fw/ipa): TrustZone PAS 15 into the stock
+-+ * ips_fw_region, as Linux's qcom_mdt_load + qcom_scm_pas_auth_and_reset (mainline IPA_LOADER_SELF). Relocatable segments land at
+-+ * the region base plus their offset from the lowest one.
+-+ */
+-+#define PAS_IPA		15
+-+#define IPA_FW_PA	0x97f00000ull
+-+#define IPA_FW_SIZE	0x00010000ull
+-+#define IPA_FW_DIR	"/var/local/fw/ipa"
+-+
+-+static int ipa_fw_load(void)
+-+{
+-+	size_t mlen;
+-+	uint8_t *mdt = slurp(IPA_FW_DIR "/ipa_fws.mdt", &mlen);
+-+	if (!mdt || mlen < 0x34) {
+-+		fprintf(stderr, "ipa: no %s/ipa_fws.mdt\n", IPA_FW_DIR);
+-+		return -1;
+-+	}
+-+	uint32_t phoff, phnum = 0;
+-+	memcpy(&phoff, mdt + 0x1c, 4);
+-+	memcpy(&phnum, mdt + 0x2c, 2);
+-+	if (phoff + 32ull * phnum > mlen) {
+-+		fprintf(stderr, "ipa: bad program headers\n");
+-+		return -1;
+-+	}
+-+	struct phdr *ph = (struct phdr *)(mdt + phoff);
+-+	int hash = -1, reloc = 0;
+-+	uint64_t min_pa = ~0ull;
+-+	for (uint32_t i = 0; i < phnum; i++) {
+-+		if (((ph[i].flags >> 24) & 7) == 2)
+-+			hash = (int)i;
+-+		if (ph[i].type == 1 && ph[i].memsz && ((ph[i].flags >> 24) & 7) != 2) {
+-+			if (ph[i].paddr < min_pa)
+-+				min_pa = ph[i].paddr;
+-+			if (ph[i].flags & (1u << 27))
+-+				reloc = 1;
+-+		}
+-+	}
+-+	if (hash < 0 || min_pa == ~0ull) {
+-+		fprintf(stderr, "ipa: no hash or load segment\n");
+-+		return -1;
+-+	}
+-+	size_t ehsz = phoff + 32ull * phnum, meta_len = ehsz + ph[hash].filesz;
+-+	uint8_t *meta = malloc(meta_len);
+-+	memcpy(meta, mdt, ehsz);
+-+	if (ph[hash].offset + ph[hash].filesz <= mlen) {
+-+		memcpy(meta + ehsz, mdt + ph[hash].offset, ph[hash].filesz);
+-+	} else {
+-+		char path[128];
+-+		size_t hl;
+-+		snprintf(path, sizeof(path), IPA_FW_DIR "/ipa_fws.b%02d", hash);
+-+		uint8_t *h = slurp(path, &hl);
+-+		if (!h || hl < ph[hash].filesz) {
+-+			fprintf(stderr, "ipa: hash segment %s missing\n", path);
+-+			return -1;
+-+		}
+-+		memcpy(meta + ehsz, h, ph[hash].filesz);
+-+		free(h);
+-+	}
+-+	uint64_t meta_pa = pm_alloc(meta_len, 0x1000);
+-+	if (!meta_pa)
+-+		return -1;
+-+	pm_wr(meta_pa, meta, (meta_len + 3) & ~(size_t)3);
+-+	uint64_t r1 = 0;
+-+	int64_t rc = scm(1, 2 | (2u << 6), PAS_IPA, meta_pa, 0, &r1);
+-+	printf("ipa: init image (%zu bytes metadata) -> %lld/%llx\n", meta_len, (long long)rc, (unsigned long long)r1);
+-+	if (rc || r1)
+-+		return -1;
+-+	if (reloc) {
+-+		rc = scm(2, 3, PAS_IPA, IPA_FW_PA, IPA_FW_SIZE, &r1);
+-+		printf("ipa: mem setup %llx+%llx -> %lld/%llx\n", IPA_FW_PA, IPA_FW_SIZE, (long long)rc, (unsigned long long)r1);
+-+		if (rc || r1)
+-+			return -1;
+-+	}
+-+	static uint8_t zeros[0x4000];
+-+	uint64_t total = 0;
+-+	for (uint32_t i = 0; i < phnum; i++) {
+-+		if (ph[i].type != 1 || (int)i == hash || !ph[i].memsz || ((ph[i].flags >> 24) & 7) == 2)
+-+			continue;
+-+		uint64_t pa = reloc ? IPA_FW_PA + (ph[i].paddr - min_pa) : ph[i].paddr;
+-+		if (pa < IPA_FW_PA || pa + ph[i].memsz > IPA_FW_PA + IPA_FW_SIZE) {
+-+			fprintf(stderr, "ipa: segment %u at %llx outside the region\n", i, (unsigned long long)pa);
+-+			return -1;
+-+		}
+-+		if (ph[i].filesz) {
+-+			char path[128];
+-+			size_t sl;
+-+			snprintf(path, sizeof(path), IPA_FW_DIR "/ipa_fws.b%02u", i);
+-+			uint8_t *seg = slurp(path, &sl);
+-+			if (!seg || sl < ph[i].filesz) {
+-+				fprintf(stderr, "ipa: %s missing or short\n", path);
+-+				return -1;
+-+			}
+-+			uint8_t *pad = calloc(1, (ph[i].filesz + 3) & ~3u);
+-+			memcpy(pad, seg, ph[i].filesz);
+-+			pm_wr(pa, pad, (ph[i].filesz + 3) & ~3u);
+-+			free(pad);
+-+			free(seg);
+-+			total += ph[i].filesz;
+-+		}
+-+		for (uint64_t o = (ph[i].filesz + 3) & ~3ull; o < ph[i].memsz; o += sizeof(zeros)) {
+-+			uint64_t n = ph[i].memsz - o < sizeof(zeros) ? ph[i].memsz - o : sizeof(zeros);
+-+			pm_wr(pa + o, zeros, (n + 3) & ~3ull);
+-+		}
+-+	}
+-+	printf("ipa: %llu bytes of segments loaded at %llx\n", (unsigned long long)total, IPA_FW_PA);
+-+	rc = scm(5, 1, PAS_IPA, 0, 0, &r1);
+-+	printf("ipa: auth and reset -> %lld/%llx\n", (long long)rc, (unsigned long long)r1);
+-+	return rc || r1 ? -1 : 0;
+-+}
+-+
+-+/* configure (kernel), firmware (here), setup (kernel); everything stays off on the first failure */
+-+static void ipa_prepare(void)
+-+{
+-+	if (!access("/var/local/ipa.off", F_OK)) {
+-+		printf("ipa: off (/var/local/ipa.off)\n");
+-+		return;
+-+	}
+-+	int r = cell_ipa_step(7, 0, 3000);
+-+	if (r) {
+-+		printf("ipa: kernel configure -> %d: no cellular data path\n", r);
+-+		return;
+-+	}
+-+	const int fw = ipa_fw_load();
+-+	r = cell_ipa_step(8, fw ? 5 /* EIO */ : 0, 3000);
+-+	if (fw || r) {
+-+		printf("ipa: firmware %d, kernel setup %d: no cellular data path\n", fw, r);
+-+		return;
+-+	}
+-+	smp2p_add_ipa();
+-+	ipa_on = 1;
+-+	cell_ipa_enable();
+-+	printf("ipa: ready for the modem\n");
+-+}
+-+
+- static int boot_modem(void)
+- {
+- 	/* 1. proxy votes as downstream (vdd_cx/vdd_mss >= 385): the top levels */
+-@@ -687,6 +869,7 @@ static int net(unsigned secs)
+- 	signal(SIGCHLD, SIG_IGN);	/* netsvc children (ipnet.c) reap themselves */
+- 	if (link_up(net_cb, 5000))
+- 		return -1;
+-+	cell_ipa_link_up();
+- 	if (rmtfs_init())
+- 		printf("net: no rmtfs\n");
+- 	if (pdmapper_init() || tftp_init())
+-@@ -722,7 +905,12 @@ static int up(unsigned secs)
+- {
+- 	if (smmu_wlan_identity())
+- 		printf("up: no WLAN SMMU stream: the radio will not start\n");
+--	if (wlan_power() || smp2p_create() || boot_modem())
+-+	if (wlan_power() || smp2p_create())
+-+		return 1;
+-+	ipa_prepare();
+-+	if (ipa_on)
+-+		cell_ipa_step(9, 0, 0);	/* modem starting (no answer) */
+-+	if (boot_modem())
+- 		return 1;
+- 	return net(secs) ? 1 : 0;
+- }
+diff --git a/userspace/wifi/patches/0019-sweet-wifi-fast-scan.patch b/userspace/wifi/patches/0005-sweet-wifi-fast-scan.patch
+similarity index 100%
+rename from userspace/wifi/patches/0019-sweet-wifi-fast-scan.patch
+rename to userspace/wifi/patches/0005-sweet-wifi-fast-scan.patch
+diff --git a/userspace/wifi/patches/0006-sweet-adsp-boot.patch b/userspace/wifi/patches/0006-sweet-adsp-boot.patch
+deleted file mode 100644
+index edddc35..0000000
+--- a/userspace/wifi/patches/0006-sweet-adsp-boot.patch
++++ /dev/null
+@@ -1,225 +0,0 @@
+-diff --git a/phone/wifi/wland.c b/phone/wifi/wland.c
+-index ba0ea37..2a960e5 100644
+---- a/phone/wifi/wland.c
+-+++ b/phone/wifi/wland.c
+-@@ -470,19 +470,23 @@ struct phdr { uint32_t type, offset, vaddr, paddr, filesz, memsz, flags, align;
+- #define IPA_FW_SIZE	0x00010000ull
+- #define IPA_FW_DIR	"/var/local/fw/ipa"
+- 
+--static int ipa_fw_load(void)
+-+/* 0006: one TrustZone PAS loader for the IPA (15) and the ADSP (1): mdt + bNN from DIR, relocatable segments at REGION plus
+-+   their offset from the lowest one; with QMP_NAME, the AOP hears load_state on before auth-and-reset (Linux q6v5_pas). */
+-+static int pas_load(unsigned pas, const char *dir, const char *base, uint64_t region, uint64_t region_size, const char *qmp_name)
+- {
+-+	char mpath[160];
+-+	snprintf(mpath, sizeof(mpath), "%s/%s.mdt", dir, base);
+- 	size_t mlen;
+--	uint8_t *mdt = slurp(IPA_FW_DIR "/ipa_fws.mdt", &mlen);
+-+	uint8_t *mdt = slurp(mpath, &mlen);
+- 	if (!mdt || mlen < 0x34) {
+--		fprintf(stderr, "ipa: no %s/ipa_fws.mdt\n", IPA_FW_DIR);
+-+		fprintf(stderr, "pas %u: no %s\n", pas, mpath);
+- 		return -1;
+- 	}
+- 	uint32_t phoff, phnum = 0;
+- 	memcpy(&phoff, mdt + 0x1c, 4);
+- 	memcpy(&phnum, mdt + 0x2c, 2);
+- 	if (phoff + 32ull * phnum > mlen) {
+--		fprintf(stderr, "ipa: bad program headers\n");
+-+		fprintf(stderr, "pas %u: bad program headers\n", pas);
+- 		return -1;
+- 	}
+- 	struct phdr *ph = (struct phdr *)(mdt + phoff);
+-@@ -499,7 +503,7 @@ static int ipa_fw_load(void)
+- 		}
+- 	}
+- 	if (hash < 0 || min_pa == ~0ull) {
+--		fprintf(stderr, "ipa: no hash or load segment\n");
+-+		fprintf(stderr, "pas %u: no hash or load segment\n", pas);
+- 		return -1;
+- 	}
+- 	size_t ehsz = phoff + 32ull * phnum, meta_len = ehsz + ph[hash].filesz;
+-@@ -510,10 +514,10 @@ static int ipa_fw_load(void)
+- 	} else {
+- 		char path[128];
+- 		size_t hl;
+--		snprintf(path, sizeof(path), IPA_FW_DIR "/ipa_fws.b%02d", hash);
+-+		snprintf(path, sizeof(path), "%s/%s.b%02d", dir, base, hash);
+- 		uint8_t *h = slurp(path, &hl);
+- 		if (!h || hl < ph[hash].filesz) {
+--			fprintf(stderr, "ipa: hash segment %s missing\n", path);
+-+			fprintf(stderr, "pas %u: hash segment %s missing\n", pas, path);
+- 			return -1;
+- 		}
+- 		memcpy(meta + ehsz, h, ph[hash].filesz);
+-@@ -524,13 +528,13 @@ static int ipa_fw_load(void)
+- 		return -1;
+- 	pm_wr(meta_pa, meta, (meta_len + 3) & ~(size_t)3);
+- 	uint64_t r1 = 0;
+--	int64_t rc = scm(1, 2 | (2u << 6), PAS_IPA, meta_pa, 0, &r1);
+--	printf("ipa: init image (%zu bytes metadata) -> %lld/%llx\n", meta_len, (long long)rc, (unsigned long long)r1);
+-+	int64_t rc = scm(1, 2 | (2u << 6), pas, meta_pa, 0, &r1);
+-+	printf("pas %u: init image (%zu bytes metadata) -> %lld/%llx\n", pas, meta_len, (long long)rc, (unsigned long long)r1);
+- 	if (rc || r1)
+- 		return -1;
+- 	if (reloc) {
+--		rc = scm(2, 3, PAS_IPA, IPA_FW_PA, IPA_FW_SIZE, &r1);
+--		printf("ipa: mem setup %llx+%llx -> %lld/%llx\n", IPA_FW_PA, IPA_FW_SIZE, (long long)rc, (unsigned long long)r1);
+-+		rc = scm(2, 3, pas, region, region_size, &r1);
+-+		printf("pas %u: mem setup %llx+%llx -> %lld/%llx\n", pas, (unsigned long long)region, (unsigned long long)region_size, (long long)rc, (unsigned long long)r1);
+- 		if (rc || r1)
+- 			return -1;
+- 	}
+-@@ -539,18 +543,18 @@ static int ipa_fw_load(void)
+- 	for (uint32_t i = 0; i < phnum; i++) {
+- 		if (ph[i].type != 1 || (int)i == hash || !ph[i].memsz || ((ph[i].flags >> 24) & 7) == 2)
+- 			continue;
+--		uint64_t pa = reloc ? IPA_FW_PA + (ph[i].paddr - min_pa) : ph[i].paddr;
+--		if (pa < IPA_FW_PA || pa + ph[i].memsz > IPA_FW_PA + IPA_FW_SIZE) {
+--			fprintf(stderr, "ipa: segment %u at %llx outside the region\n", i, (unsigned long long)pa);
+-+		uint64_t pa = reloc ? region + (ph[i].paddr - min_pa) : ph[i].paddr;
+-+		if (pa < region || pa + ph[i].memsz > region + region_size) {
+-+			fprintf(stderr, "pas %u: segment %u at %llx outside the region\n", pas, i, (unsigned long long)pa);
+- 			return -1;
+- 		}
+- 		if (ph[i].filesz) {
+- 			char path[128];
+- 			size_t sl;
+--			snprintf(path, sizeof(path), IPA_FW_DIR "/ipa_fws.b%02u", i);
+-+			snprintf(path, sizeof(path), "%s/%s.b%02u", dir, base, i);
+- 			uint8_t *seg = slurp(path, &sl);
+- 			if (!seg || sl < ph[i].filesz) {
+--				fprintf(stderr, "ipa: %s missing or short\n", path);
+-+				fprintf(stderr, "pas %u: %s missing or short\n", pas, path);
+- 				return -1;
+- 			}
+- 			uint8_t *pad = calloc(1, (ph[i].filesz + 3) & ~3u);
+-@@ -565,12 +569,111 @@ static int ipa_fw_load(void)
+- 			pm_wr(pa + o, zeros, (n + 3) & ~3ull);
+- 		}
+- 	}
+--	printf("ipa: %llu bytes of segments loaded at %llx\n", (unsigned long long)total, IPA_FW_PA);
+--	rc = scm(5, 1, PAS_IPA, 0, 0, &r1);
+--	printf("ipa: auth and reset -> %lld/%llx\n", (long long)rc, (unsigned long long)r1);
+-+	printf("pas %u: %llu bytes of segments loaded at %llx\n", pas, (unsigned long long)total, (unsigned long long)region);
+-+	if (qmp_name) {
+-+		char msg[96];
+-+		snprintf(msg, sizeof(msg), "{class: image, res: load_state, name: %s, val: on}", qmp_name);
+-+		qmp_send(msg);
+-+	}
+-+	rc = scm(5, 1, pas, 0, 0, &r1);
+-+	printf("pas %u: auth and reset -> %lld/%llx\n", pas, (long long)rc, (unsigned long long)r1);
+- 	return rc || r1 ? -1 : 0;
+- }
+- 
+-+static int ipa_fw_load(void)
+-+{
+-+	return pas_load(PAS_IPA, IPA_FW_DIR, "ipa_fws", IPA_FW_PA, IPA_FW_SIZE, NULL);
+-+}
+-+
+-+/*
+-+ * 0006: the ADSP (LPASS Q6, audio): stock DT qcom,lpass@62400000 (PAS 1, firmware "adsp", pil_adsp_region 0x95700000+0x2600000,
+-+ * proxy votes lcx/lmx, signal-aop) and qcom,smp2p-adsp (SMEM host 2, items 443 out / 429 in, APCS IPC bit 26; inbound
+-+ * slave-kernel bit 0 err-fatal, 1 ready). `wland adsp` boots it once, separately from the modem (milestone 1 of
+-+ * docs/audio-plan.md); the GLINK "lpass" edge and APR come next.
+-+ */
+-+#define PAS_ADSP	1
+-+#define ADSP_PA		0x95700000ull
+-+#define ADSP_SIZE	0x02600000ull
+-+#define ADSP_FW_DIR	"/var/local/fw/adsp"
+-+#define SMEM_HOST_ADSP	2
+-+#define SMP2P_ADSP_OUT	443
+-+#define SMP2P_ADSP_IN	429
+-+#define IPC_ADSP_SMP2P	26
+-+
+-+static int adsp_smp2p_create(void)
+-+{
+-+	uint64_t pa;
+-+	if (smem_alloc(SMEM_HOST_ADSP, SMP2P_ADSP_OUT, 20 + 16 * 20, &pa)) {
+-+		fprintf(stderr, "adsp: cannot allocate SMP2P item %u\n", SMP2P_ADSP_OUT);
+-+		return -1;
+-+	}
+-+	if (rd32(pa) != 0x504d5324) {
+-+		wr32(pa + 8, 0 | (2u << 16));		/* local pid 0, remote pid 2 (ADSP) */
+-+		wr32(pa + 12, 16 | (1u << 16));		/* total 16 entries, 1 valid */
+-+		wr32(pa + 16, 0);
+-+		wr_name(pa + 20, "master-kernel");
+-+		wr32(pa + 36, 0);
+-+		wr32(pa + 0, 0x504d5324);
+-+		__asm__ volatile("dsb sy" ::: "memory");
+-+		wr32(pa + 4, 1 | (1u << 8));
+-+	}
+-+	kick(IPC_ADSP_SMP2P);
+-+	printf("adsp: SMP2P item %u at %llx\n", SMP2P_ADSP_OUT, (unsigned long long)pa);
+-+	return 0;
+-+}
+-+
+-+static int adsp_state(uint32_t *v)
+-+{
+-+	uint64_t pa;
+-+	uint32_t sz;
+-+	if (smem_get(SMEM_HOST_ADSP, SMP2P_ADSP_IN, &pa, &sz))
+-+		return -1;
+-+	uint32_t n = rd32(pa + 12) >> 16;
+-+	for (uint32_t i = 0; i < n && i < 16; i++) {
+-+		uint64_t e = pa + 20 + 20ull * i;
+-+		char nm[17];
+-+		for (int k = 0; k < 16; k++)
+-+			nm[k] = (char)(rd32(e + (k & ~3)) >> (8 * (k & 3)));
+-+		nm[16] = 0;
+-+		if (!strcmp(nm, "slave-kernel")) {
+-+			*v = rd32(e + 16);
+-+			return 0;
+-+		}
+-+	}
+-+	return -1;
+-+}
+-+
+-+static int boot_adsp(void)
+-+{
+-+	uint32_t v = 0;
+-+	if (adsp_state(&v) == 0 && (v & 2) && !(v & 1)) {
+-+		printf("adsp: already up (slave-kernel %x)\n", v);
+-+		return 0;
+-+	}
+-+	/* proxy votes as the stock DT: the top LPI cx/mx levels (the kernel may refuse resources it does not know) */
+-+	int nl = levels("lcx.lvl", 0), nm = levels("lmx.lvl", 0);
+-+	printf("adsp: lcx %d levels, lmx %d levels\n", nl, nm);
+-+	if (nl > 0)
+-+		vote("lcx.lvl", (uint32_t)nl - 1);
+-+	if (nm > 0)
+-+		vote("lmx.lvl", (uint32_t)nm - 1);
+-+	if (adsp_smp2p_create())
+-+		return -1;
+-+	if (pas_load(PAS_ADSP, ADSP_FW_DIR, "adsp", ADSP_PA, ADSP_SIZE, "adsp"))
+-+		return -1;
+-+	for (int t = 0; t < 300; t++) {
+-+		if (adsp_state(&v) == 0 && (v & 2) && !(v & 1)) {
+-+			printf("adsp: READY after %d00 ms (slave-kernel %x)\n", t, v);
+-+			return 0;
+-+		}
+-+		if (t % 20 == 0)
+-+			printf("adsp: waiting, slave-kernel %s %x\n", adsp_state(&v) ? "absent" : "", v);
+-+		usleep(100000);
+-+	}
+-+	printf("adsp: no ready bit in 30 s\n");
+-+	return -1;
+-+}
+-+
+- /* configure (kernel), firmware (here), setup (kernel); everything stays off on the first failure */
+- static void ipa_prepare(void)
+- {
+-@@ -984,6 +1087,13 @@ int main(int argc, char **argv)
+- 		levels(argv[2], 1);
+- 	} else if (!strcmp(c, "qmp") && argc > 2) {
+- 		return qmp_send(argv[2]) ? 1 : 0;
+-+	} else if (!strcmp(c, "adsp")) {
+-+		return boot_adsp() ? 1 : 0;
+-+	} else if (!strcmp(c, "adsp-shutdown")) {
+-+		uint64_t r1 = 0;
+-+		int64_t rc = scm(6, 1, PAS_ADSP, 0, 0, &r1);	/* PAS_SHUTDOWN */
+-+		printf("adsp shutdown -> %lld/%llx\n", (long long)rc, (unsigned long long)r1);
+-+		return rc ? 1 : 0;
+- 	} else if (!strcmp(c, "smp2p-init")) {
+- 		return smp2p_init() ? 1 : 0;
+- 	} else if (!strcmp(c, "shutdown")) {
+diff --git a/userspace/wifi/patches/0020-sweet-wifi-fresh-scan-list.patch b/userspace/wifi/patches/0006-sweet-wifi-fresh-scan-list.patch
+similarity index 100%
+rename from userspace/wifi/patches/0020-sweet-wifi-fresh-scan-list.patch
+rename to userspace/wifi/patches/0006-sweet-wifi-fresh-scan-list.patch
+diff --git a/userspace/wifi/patches/0007-sweet-adsp-lpass-edge.patch b/userspace/wifi/patches/0007-sweet-adsp-lpass-edge.patch
+deleted file mode 100644
+index b150129..0000000
+--- a/userspace/wifi/patches/0007-sweet-adsp-lpass-edge.patch
++++ /dev/null
+@@ -1,223 +0,0 @@
+-diff --git a/phone/wifi/glink.c b/phone/wifi/glink.c
+-index f2e49ab..7c28e1e 100644
+---- a/phone/wifi/glink.c
+-+++ b/phone/wifi/glink.c
+-@@ -8,7 +8,13 @@
+- #define FIFO_TX_ITEM	479	/* ours: apps -> modem */
+- #define FIFO_RX_ITEM	480	/* the modem's */
+- #define APCS_IPC	0x17c0000cull
+--#define IPC_GLINK	12
+-+/* 0007: the edge: the modem (SMEM host 1, IPC bit 12) by default, the ADSP (host 2, bit 24) for `wland adsp` */
+-+static unsigned g_host = SMEM_HOST_MODEM, g_ipc = 12;
+-+void glink_edge(unsigned smem_host, unsigned ipc_bit)
+-+{
+-+	g_host = smem_host;
+-+	g_ipc = ipc_bit;
+-+}
+- 
+- static uint64_t desc, tx_fifo, rx_fifo;
+- static uint32_t tx_len, rx_len;
+-@@ -22,14 +28,14 @@ static uint32_t tx_len, rx_len;
+- int glink_init(void)
+- {
+- 	uint32_t sz;
+--	if (smem_alloc(SMEM_HOST_MODEM, DESC_ITEM, 32, &desc) ||
+--	    smem_alloc(SMEM_HOST_MODEM, FIFO_TX_ITEM, 16384, &tx_fifo) ||
+--	    smem_get(SMEM_HOST_MODEM, FIFO_TX_ITEM, &tx_fifo, &tx_len)) {
+-+	if (smem_alloc(g_host, DESC_ITEM, 32, &desc) ||
+-+	    smem_alloc(g_host, FIFO_TX_ITEM, 16384, &tx_fifo) ||
+-+	    smem_get(g_host, FIFO_TX_ITEM, &tx_fifo, &tx_len)) {
+- 		fprintf(stderr, "glink: smem items\n");
+- 		return -1;
+- 	}
+--	if (smem_get(SMEM_HOST_MODEM, FIFO_RX_ITEM, &rx_fifo, &rx_len)) {
+--		fprintf(stderr, "glink: the modem has no rx fifo (item 480)\n");
+-+	if (smem_get(g_host, FIFO_RX_ITEM, &rx_fifo, &rx_len)) {
+-+		fprintf(stderr, "glink: the remote (SMEM host %u) has no rx fifo (item 480)\n", g_host);
+- 		return -1;
+- 	}
+- 	(void)sz;
+-@@ -74,7 +80,7 @@ int glink_send(uint16_t cmd, uint16_t p1, uint32_t p2, const void *data, size_t
+- 	head = tx_write(head, buf, padded);
+- 	__asm__ volatile("dsb sy" ::: "memory");
+- 	wr32(TX_HEAD, head);
+--	wr32(APCS_IPC, 1u << IPC_GLINK);
+-+	wr32(APCS_IPC, 1u << g_ipc);
+- 	return 0;
+- }
+- 
+-diff --git a/phone/wifi/glink.h b/phone/wifi/glink.h
+-index 86e9dba..4609cf3 100644
+---- a/phone/wifi/glink.h
+-+++ b/phone/wifi/glink.h
+-@@ -1,6 +1,7 @@
+- /* GLINK over SMEM with the modem, polled (Linux qcom_glink_native.c + qcom_glink_smem.c). */
+- #ifndef GLINK_H
+- #define GLINK_H
+-+void glink_edge(unsigned smem_host, unsigned ipc_bit);	/* before glink_init; default the modem */
+- #include <stdint.h>
+- #include <stddef.h>
+- 
+-diff --git a/phone/wifi/link.c b/phone/wifi/link.c
+-index cddf66e..da582e0 100644
+---- a/phone/wifi/link.c
+-+++ b/phone/wifi/link.c
+-@@ -351,10 +351,13 @@ int qrtr_send(uint32_t type, uint32_t src_port, uint32_t dst_node, uint32_t dst_
+- 	return r;
+- }
+- 
+-+/* 0007: the QRTR node across this edge (the modem is node 0; the ADSP announces its own in HELLO) */
+-+uint32_t link_remote_node = QRTR_NODE_MODEM;
+-+
+- int qrtr_new_server(uint32_t service, uint32_t version, uint32_t instance, uint32_t port)
+- {
+- 	uint32_t pkt[5] = { QRTR_TYPE_NEW_SERVER, service, (version & 0xff) | (instance << 8), QRTR_NODE_APPS, port };
+--	return qrtr_send(QRTR_TYPE_NEW_SERVER, QRTR_PORT_CTRL, QRTR_NODE_MODEM, QRTR_PORT_CTRL, pkt, sizeof(pkt));
+-+	return qrtr_send(QRTR_TYPE_NEW_SERVER, QRTR_PORT_CTRL, link_remote_node, QRTR_PORT_CTRL, pkt, sizeof(pkt));
+- }
+- 
+- /* After a packet with confirm_rx: tell the sender it may go on (Linux qrtr_port_post: RESUME_TX). */
+-diff --git a/phone/wifi/link.h b/phone/wifi/link.h
+-index 0eab90a..916c6ab 100644
+---- a/phone/wifi/link.h
+-+++ b/phone/wifi/link.h
+-@@ -28,6 +28,7 @@ int link_poll(unsigned ms);		/* handle what arrived; for ms (0 = just once) */
+- int link_send(const void *data, uint32_t len);
+- int qrtr_send(uint32_t type, uint32_t src_port, uint32_t dst_node, uint32_t dst_port,
+- 	      const void *payload, uint32_t len);
+-+extern uint32_t link_remote_node;	/* 0007: where NEW_SERVER goes; set from the remote HELLO */
+- int qrtr_new_server(uint32_t service, uint32_t version, uint32_t instance, uint32_t port);
+- int qrtr_resume_tx(const struct qrtr_hdr *h);
+- 
+-diff --git a/phone/wifi/pdmapper.c b/phone/wifi/pdmapper.c
+-index e1d6f05..8e30bfd 100644
+---- a/phone/wifi/pdmapper.c
+-+++ b/phone/wifi/pdmapper.c
+-@@ -19,6 +19,11 @@ static const struct { const char *service, *domain; uint32_t instance; } db[] =
+- 	{ "kernel/elf_loader", "msm/modem/wlan_pd", 180 },
+- 	{ "tms/servreg", "msm/modem/wlan_pd", 180 },
+- 	{ "wlan/fw", "msm/modem/wlan_pd", 180 },
+-+	/* 0007: the ADSP's (adspr.jsn, adsps.jsn, adspua.jsn) */
+-+	{ "tms/servreg", "msm/adsp/root_pd", 74 },
+-+	{ "tms/servreg", "msm/adsp/sensor_pd", 74 },
+-+	{ "tms/servreg", "msm/adsp/audio_pd", 74 },
+-+	{ "avs/audio", "msm/adsp/audio_pd", 74 },
+- };
+- 
+- int pdmapper_init(void)
+-diff --git a/phone/wifi/wland.c b/phone/wifi/wland.c
+-index 2a960e5..f2e7196 100644
+---- a/phone/wifi/wland.c
+-+++ b/phone/wifi/wland.c
+-@@ -30,6 +30,7 @@
+- #include "pmem.h"
+- #include "smem.h"
+- #include "link.h"
+-+#include "glink.h"
+- #include "rmtfs.h"
+- #include "pdmapper.h"
+- #include "tftp.h"
+-@@ -643,6 +644,49 @@ static int adsp_state(uint32_t *v)
+- 	return -1;
+- }
+- 
+-+/*
+-+ * 0007: the "lpass" GLINK edge (SMEM host 2, items 478/479/480, APCS IPC bit 24) with QRTR on IPCRTR, the pd-mapper (the ADSP
+-+ * asks it for its servreg domains) and the TFTP server (files the sensor PD reads), in this process: the modem's link state
+-+ * lives in the boot wland. 0195 boot: without them the ADSP's sensor PD stalled ("USER-PD DOG detects stalled initialization"),
+-+ * the ADSP went fatal and took the modem with it (glink_channel_migration.c:667).
+-+ */
+-+static void net_cb(const struct qrtr_hdr *h, const uint8_t *d, uint32_t n);
+-+static uint32_t adsp_last = 0xffffffff;
+-+static void adsp_idle(void)
+-+{
+-+	uint32_t v;
+-+	if (adsp_state(&v) == 0 && v != adsp_last) {
+-+		printf("[%6llu] adsp: slave-kernel %x%s%s\n", (unsigned long long)link_ms(), v, v & 1 ? " ERR-FATAL" : "", v & 2 ? " ready" : "");
+-+		adsp_last = v;
+-+	}
+-+}
+-+
+-+static int adsp_net(void)
+-+{
+-+	glink_edge(SMEM_HOST_ADSP, 24);
+-+	link_idle = adsp_idle;
+-+	if (link_up(net_cb, 10000)) {
+-+		printf("adsp: no GLINK link in 10 s\n");
+-+		return -1;
+-+	}
+-+	printf("adsp: IPCRTR up; remote node %u\n", link_remote_node);
+-+	if (pdmapper_init() || tftp_init())
+-+		printf("adsp: no pd-mapper/tftp\n");
+-+	for (uint64_t t0 = link_ms(), next = t0; ;) {
+-+		link_poll(100);
+-+		if (link_ms() >= next) {
+-+			adsp_idle();
+-+			uint64_t pa;
+-+			uint32_t sz;
+-+			printf("[%6llu] adsp: alive; SMEM 429 %s\n", (unsigned long long)link_ms(),
+-+			       smem_get(SMEM_HOST_ADSP, SMP2P_ADSP_IN, &pa, &sz) ? "absent" : "present");
+-+			next = link_ms() + 10000;
+-+		}
+-+		if (adsp_last != 0xffffffff && (adsp_last & 1))
+-+			return 1;
+-+	}
+-+}
+-+
+- static int boot_adsp(void)
+- {
+- 	uint32_t v = 0;
+-@@ -651,27 +695,26 @@ static int boot_adsp(void)
+- 		return 0;
+- 	}
+- 	/* proxy votes as the stock DT: the top LPI cx/mx levels (the kernel may refuse resources it does not know) */
+--	int nl = levels("lcx.lvl", 0), nm = levels("lmx.lvl", 0);
+--	printf("adsp: lcx %d levels, lmx %d levels\n", nl, nm);
+--	if (nl > 0)
+--		vote("lcx.lvl", (uint32_t)nl - 1);
+--	if (nm > 0)
+--		vote("lmx.lvl", (uint32_t)nm - 1);
+-+	uint64_t aux;
+-+	uint32_t len, top_l = 0, top_m = 0;
+-+	if (!cmddb_aux("lcx.lvl", &aux, &len))
+-+		for (uint32_t i = 0; i < len / 2; i++)
+-+			if (aux16(aux, i))
+-+				top_l = i;
+-+	if (!cmddb_aux("lmx.lvl", &aux, &len))
+-+		for (uint32_t i = 0; i < len / 2; i++)
+-+			if (aux16(aux, i))
+-+				top_m = i;
+-+	printf("adsp: voting lcx[%u] lmx[%u] (the highest nonzero levels)\n", top_l, top_m);
+-+	if (top_l)
+-+		vote("lcx.lvl", top_l);
+-+	if (top_m)
+-+		vote("lmx.lvl", top_m);
+- 	if (adsp_smp2p_create())
+- 		return -1;
+- 	if (pas_load(PAS_ADSP, ADSP_FW_DIR, "adsp", ADSP_PA, ADSP_SIZE, "adsp"))
+- 		return -1;
+--	for (int t = 0; t < 300; t++) {
+--		if (adsp_state(&v) == 0 && (v & 2) && !(v & 1)) {
+--			printf("adsp: READY after %d00 ms (slave-kernel %x)\n", t, v);
+--			return 0;
+--		}
+--		if (t % 20 == 0)
+--			printf("adsp: waiting, slave-kernel %s %x\n", adsp_state(&v) ? "absent" : "", v);
+--		usleep(100000);
+--	}
+--	printf("adsp: no ready bit in 30 s\n");
+--	return -1;
+-+	return adsp_net();
+- }
+- 
+- /* configure (kernel), firmware (here), setup (kernel); everything stays off on the first failure */
+-@@ -859,7 +902,8 @@ static void net_cb(const struct qrtr_hdr *h, const uint8_t *d, uint32_t n)
+- 	printf("[%6llu] qrtr: < ctrl type %u (cmd %u) from %u:%x: %x %x %x %x\n", (unsigned long long)link_ms(), h->type, w[0], h->src_node, h->src_port,
+- 	       w[1], w[2], w[3], w[4]);
+- 	if (w[0] == QRTR_TYPE_HELLO) {
+--		uint32_t hello[5] = { QRTR_TYPE_HELLO };	/* struct qrtr_ctrl_pkt: always 20 bytes */
+-+		uint32_t hello[5] = { QRTR_TYPE_HELLO };
+-+		link_remote_node = h->src_node;	/* 0007: the modem is 0; the ADSP says its own */	/* struct qrtr_ctrl_pkt: always 20 bytes */
+- 		qrtr_send(QRTR_TYPE_HELLO, QRTR_PORT_CTRL, h->src_node, QRTR_PORT_CTRL, hello, sizeof(hello));
+- 	} else if (w[0] == QRTR_TYPE_NEW_SERVER) {
+- 		printf("qrtr:   server service %#x instance %#x at %u:%x\n", w[1], w[2], w[3], w[4]);
+diff --git a/userspace/wifi/patches/0007-sweet-wland-boot-session-stamp.patch b/userspace/wifi/patches/0007-sweet-wland-boot-session-stamp.patch
+new file mode 100644
+index 0000000..6b1e78c
+--- /dev/null
++++ b/userspace/wifi/patches/0007-sweet-wland-boot-session-stamp.patch
+@@ -0,0 +1,33 @@
++diff --git a/phone/wifi/wland.c b/phone/wifi/wland.c
++index 957d58c..e867ee3 100644
++--- a/phone/wifi/wland.c
+++++ b/phone/wifi/wland.c
++@@ -752,8 +752,17 @@ static int auto_up(void)
++ 	struct timeval bt = { 0 };
++ 	n = sizeof(bt);
++ 	sysctlbyname("kern.boottime", &bt, &n, NULL, 0);
++-	char stamp[32] = "", now[32];
++-	snprintf(now, sizeof(now), "%ld\n", (long)bt.tv_sec);
+++	/*
+++	 * Sweet: the clock restarts at the same fake epoch every boot, so boottime seconds repeat across boots (two
+++	 * boots in a row were both "47" and the second refused to start: no Wi-Fi, no baseband). Key the stamp on the
+++	 * per-boot session UUID; boottime with microseconds only if that sysctl is missing.
+++	 */
+++	char uuid[64] = "";
+++	n = sizeof(uuid) - 1;
+++	if (sysctlbyname("kern.bootsessionuuid", uuid, &n, NULL, 0) || !uuid[0])
+++		snprintf(uuid, sizeof(uuid), "t%ld.%06d", (long)bt.tv_sec, (int)bt.tv_usec);
+++	char stamp[80] = "", now[80];
+++	snprintf(now, sizeof(now), "%s\n", uuid);
++ 	FILE *f = fopen(WLAND_STAMP, "r");
++ 	if (f) {
++ 		if (!fgets(stamp, sizeof(stamp), f))
++@@ -772,7 +781,7 @@ static int auto_up(void)
++ 	if (freopen(WLAND_LOG, "a", stdout))
++ 		dup2(fileno(stdout), 2);
++ 	setvbuf(stdout, NULL, _IONBF, 0);
++-	printf("wland auto: boot %ld, memory limit 2048 MB -> %d\n", (long)bt.tv_sec, mrc);
+++	printf("wland auto: boot %ld session %s, memory limit 2048 MB -> %d\n", (long)bt.tv_sec, uuid, mrc);
++ 	return up(0);
++ }
++ 
+diff --git a/userspace/wifi/patches/0008-sweet-adsp-smp2p-items-sleepstate.patch b/userspace/wifi/patches/0008-sweet-adsp-smp2p-items-sleepstate.patch
+deleted file mode 100644
+index 6dff20f..0000000
+--- a/userspace/wifi/patches/0008-sweet-adsp-smp2p-items-sleepstate.patch
++++ /dev/null
+@@ -1,70 +0,0 @@
+-diff --git a/phone/wifi/wland.c b/phone/wifi/wland.c
+-index f2e7196..1d1725c 100644
+---- a/phone/wifi/wland.c
+-+++ b/phone/wifi/wland.c
+-@@ -588,7 +588,7 @@ static int ipa_fw_load(void)
+- 
+- /*
+-  * 0006: the ADSP (LPASS Q6, audio): stock DT qcom,lpass@62400000 (PAS 1, firmware "adsp", pil_adsp_region 0x95700000+0x2600000,
+-- * proxy votes lcx/lmx, signal-aop) and qcom,smp2p-adsp (SMEM host 2, items 443 out / 429 in, APCS IPC bit 26; inbound
+-+ * proxy votes lcx/lmx, signal-aop) and qcom,smp2p-adsp (SMEM host 2, items 443 in / 429 out (0008), APCS IPC bit 26; inbound
+-  * slave-kernel bit 0 err-fatal, 1 ready). `wland adsp` boots it once, separately from the modem (milestone 1 of
+-  * docs/audio-plan.md); the GLINK "lpass" edge and APR come next.
+-  */
+-@@ -597,8 +597,11 @@ static int ipa_fw_load(void)
+- #define ADSP_SIZE	0x02600000ull
+- #define ADSP_FW_DIR	"/var/local/fw/adsp"
+- #define SMEM_HOST_ADSP	2
+--#define SMP2P_ADSP_OUT	443
+--#define SMP2P_ADSP_IN	429
+-+/* 0008: qcom,smem = <443 429> is <inbound outbound> as the modem's <435 428> (wland: in 435, out 428): 0006/0007 had them
+-+ * swapped (wrote "master-kernel" into the ADSP's own item and waited for 429 in vain: 0191d/0195 "no SMP2P item 429").
+-+ * Same bug and fix in ios-flame adspboot (3a275a6, sunfish): READY within ~110 ms afterwards. */
+-+#define SMP2P_ADSP_OUT	429
+-+#define SMP2P_ADSP_IN	443
+- #define IPC_ADSP_SMP2P	26
+- 
+- static int adsp_smp2p_create(void)
+-@@ -608,18 +611,31 @@ static int adsp_smp2p_create(void)
+- 		fprintf(stderr, "adsp: cannot allocate SMP2P item %u\n", SMP2P_ADSP_OUT);
+- 		return -1;
+- 	}
+-+	/*
+-+	 * 0008: entry 1 "sleepstate", bit 0 = AP awake (Android's smp2p-sleepstate). The ADSP's SEE remote_proc_state driver
+-+	 * registers on it; without it the static sensors image dies (ios-flame adspboot au14: the ADSP survived only with it).
+-+	 */
+- 	if (rd32(pa) != 0x504d5324) {
+- 		wr32(pa + 8, 0 | (2u << 16));		/* local pid 0, remote pid 2 (ADSP) */
+--		wr32(pa + 12, 16 | (1u << 16));		/* total 16 entries, 1 valid */
+-+		wr32(pa + 12, 16 | (2u << 16));		/* total 16 entries, 2 valid */
+- 		wr32(pa + 16, 0);
+- 		wr_name(pa + 20, "master-kernel");
+- 		wr32(pa + 36, 0);
+-+		wr_name(pa + 40, "sleepstate");
+-+		wr32(pa + 56, 1);			/* bit 0: awake */
+- 		wr32(pa + 0, 0x504d5324);
+- 		__asm__ volatile("dsb sy" ::: "memory");
+- 		wr32(pa + 4, 1 | (1u << 8));
+-+	} else if ((rd32(pa + 12) >> 16) == 1) {	/* an item from an older run: append the entry */
+-+		wr_name(pa + 40, "sleepstate");
+-+		wr32(pa + 56, 1);
+-+		__asm__ volatile("dsb sy" ::: "memory");
+-+		wr32(pa + 12, 16 | (2u << 16));
+- 	}
+-+	__asm__ volatile("dsb sy" ::: "memory");
+- 	kick(IPC_ADSP_SMP2P);
+--	printf("adsp: SMP2P item %u at %llx\n", SMP2P_ADSP_OUT, (unsigned long long)pa);
+-+	printf("adsp: SMP2P out item %u at %llx: %u entries, \"master-kernel\" %x, \"sleepstate\" %x\n", SMP2P_ADSP_OUT,
+-+	       (unsigned long long)pa, rd32(pa + 12) >> 16, rd32(pa + 36), rd32(pa + 56));
+- 	return 0;
+- }
+- 
+-@@ -678,7 +694,7 @@ static int adsp_net(void)
+- 			adsp_idle();
+- 			uint64_t pa;
+- 			uint32_t sz;
+--			printf("[%6llu] adsp: alive; SMEM 429 %s\n", (unsigned long long)link_ms(),
+-+			printf("[%6llu] adsp: alive; SMEM 443 %s\n", (unsigned long long)link_ms(),
+- 			       smem_get(SMEM_HOST_ADSP, SMP2P_ADSP_IN, &pa, &sz) ? "absent" : "present");
+- 			next = link_ms() + 10000;
+- 		}
+diff --git a/userspace/wifi/patches/0009-sweet-adsp-wait-glink.patch b/userspace/wifi/patches/0009-sweet-adsp-wait-glink.patch
+deleted file mode 100644
+index 1bb0400..0000000
+--- a/userspace/wifi/patches/0009-sweet-adsp-wait-glink.patch
++++ /dev/null
+@@ -1,163 +0,0 @@
+-diff --git a/phone/wifi/glink.c b/phone/wifi/glink.c
+-index 7c28e1e..2816e58 100644
+---- a/phone/wifi/glink.c
+-+++ b/phone/wifi/glink.c
+-@@ -48,6 +48,17 @@ int glink_init(void)
+- 	return 0;
+- }
+- 
+-+/*
+-+ * 0009: the peer allocates the SMEM rx fifo item when its GLINK transport starts, which on the ADSP is after the PAS
+-+ * reset returns (0008 checked once and concluded "no GLINK link" while the ADSP was still booting). Read-only.
+-+ */
+-+int glink_remote_ready(void)
+-+{
+-+	uint64_t pa;
+-+	uint32_t len;
+-+	return smem_get(g_host, FIFO_RX_ITEM, &pa, &len) == 0;
+-+}
+-+
+- static uint32_t tx_write(uint32_t head, const uint8_t *data, size_t n)
+- {
+- 	/* the FIFO is device memory here: whole words only (n is padded by the caller) */
+-diff --git a/phone/wifi/glink.h b/phone/wifi/glink.h
+-index 4609cf3..d1f591e 100644
+---- a/phone/wifi/glink.h
+-+++ b/phone/wifi/glink.h
+-@@ -22,6 +22,8 @@ void glink_edge(unsigned smem_host, unsigned ipc_bit);	/* before glink_init; def
+- #define GLINK_CMD_SIGNALS	15
+- 
+- int glink_init(void);
+-+/* 0009: 1 once the remote has allocated its rx fifo (the peer's GLINK transport is up). Read-only. */
+-+int glink_remote_ready(void);
+- /* Queue one command (8-byte header + data, padded to 8) and ring the modem. */
+- int glink_send(uint16_t cmd, uint16_t p1, uint32_t p2, const void *data, size_t len);
+- /* Bytes available from the modem, and copying/consuming them. */
+-diff --git a/phone/wifi/wland.c b/phone/wifi/wland.c
+-index 1d1725c..6b1f917 100644
+---- a/phone/wifi/wland.c
+-+++ b/phone/wifi/wland.c
+-@@ -677,18 +677,73 @@ static void adsp_idle(void)
+- 	}
+- }
+- 
+--static int adsp_net(void)
+-+/* 0009: the LPASS crash reason (SMEM item 423) as text, so a fatal explains itself in the same log. */
+-+static void adsp_crash_reason(void)
+- {
+-+	uint64_t pa;
+-+	uint32_t sz;
+-+	if (smem_get(SMEM_HOST_ADSP, 423, &pa, &sz)) {
+-+		printf("adsp: SMEM 423 absent\n");
+-+		return;
+-+	}
+-+	char s[161];
+-+	uint32_t n = sz < sizeof(s) - 1 ? sz : (uint32_t)sizeof(s) - 1;
+-+	for (uint32_t i = 0; i < n; i++) {
+-+		char ch = (char)(rd32(pa + (i & ~3u)) >> (8 * (i & 3)));
+-+		s[i] = ch >= 32 && ch < 127 ? ch : ' ';
+-+	}
+-+	s[n] = 0;
+-+	printf("adsp: SMEM 423: %s\n", s);
+-+}
+-+
+-+static int adsp_net(unsigned secs)
+-+{
+-+	adsp_last = 0xffffffff;
+- 	glink_edge(SMEM_HOST_ADSP, 24);
+- 	link_idle = adsp_idle;
+--	if (link_up(net_cb, 10000)) {
+--		printf("adsp: no GLINK link in 10 s\n");
+-+	/*
+-+	 * 0009: the order 0008 showed: PAS reset returns first, the ADSP's GLINK transport (its rx fifo, SMEM 480) comes
+-+	 * up a moment later, then its slave-kernel ready bit. 0008 called link_up once, right after the reset, got "the
+-+	 * remote has no rx fifo" and exited, so IPCRTR, pd-mapper and tftp were never served at all. Wait for the fifo,
+-+	 * then open the edge.
+-+	 */
+-+	uint64_t start = link_ms();
+-+	int ready = 0, fatal_logged = 0;
+-+	while (link_ms() - start < 60000) {
+-+		uint32_t v = 0;
+-+		if (adsp_state(&v) == 0) {
+-+			if ((v & 2) && !(v & 1) && !ready) {
+-+				printf("adsp: READY after %llu ms (slave-kernel %x)\n", (unsigned long long)(link_ms() - start), v);
+-+				ready = 1;
+-+			}
+-+			if ((v & 1) && !fatal_logged) {
+-+				/* right after a PAS load this is usually the previous boot's state: keep waiting for GLINK */
+-+				printf("adsp: slave-kernel %x ERR-FATAL at %llu ms (stale after a re-load; still waiting)\n", v,
+-+				       (unsigned long long)(link_ms() - start));
+-+				adsp_crash_reason();
+-+				fatal_logged = 1;
+-+			}
+-+		}
+-+		if (glink_remote_ready())
+-+			break;
+-+		if ((link_ms() - start) % 5000 < 100)
+-+			printf("adsp: waiting for the GLINK rx fifo (SMEM 480), %llu ms\n", (unsigned long long)(link_ms() - start));
+-+		usleep(100000);
+-+	}
+-+	if (!glink_remote_ready()) {
+-+		printf("adsp: no GLINK rx fifo in 60 s\n");
+-+		return -1;
+-+	}
+-+	printf("adsp: GLINK rx fifo after %llu ms; opening the edge\n", (unsigned long long)(link_ms() - start));
+-+	if (link_up(net_cb, 30000)) {
+-+		printf("adsp: GLINK did not open in 30 s\n");
+- 		return -1;
+- 	}
+- 	printf("adsp: IPCRTR up; remote node %u\n", link_remote_node);
+- 	if (pdmapper_init() || tftp_init())
+- 		printf("adsp: no pd-mapper/tftp\n");
+--	for (uint64_t t0 = link_ms(), next = t0; ;) {
+-+	const uint64_t end = secs ? link_ms() + 1000ull * secs : 0;
+-+	for (uint64_t next = link_ms(); !end || link_ms() < end;) {
+- 		link_poll(100);
+- 		if (link_ms() >= next) {
+- 			adsp_idle();
+-@@ -698,17 +753,22 @@ static int adsp_net(void)
+- 			       smem_get(SMEM_HOST_ADSP, SMP2P_ADSP_IN, &pa, &sz) ? "absent" : "present");
+- 			next = link_ms() + 10000;
+- 		}
+--		if (adsp_last != 0xffffffff && (adsp_last & 1))
+-+		if (adsp_last != 0xffffffff && (adsp_last & 1)) {
+-+			printf("adsp: ERR-FATAL while serving the edge\n");
+-+			adsp_crash_reason();
+- 			return 1;
+-+		}
+- 	}
+-+	printf("adsp: %u s watched, still serving (slave-kernel %x)\n", secs, adsp_last);
+-+	return 0;
+- }
+- 
+--static int boot_adsp(void)
+-+static int boot_adsp(unsigned secs)
+- {
+- 	uint32_t v = 0;
+- 	if (adsp_state(&v) == 0 && (v & 2) && !(v & 1)) {
+--		printf("adsp: already up (slave-kernel %x)\n", v);
+--		return 0;
+-+		printf("adsp: already up (slave-kernel %x); serving the edge\n", v);
+-+		return adsp_net(secs);
+- 	}
+- 	/* proxy votes as the stock DT: the top LPI cx/mx levels (the kernel may refuse resources it does not know) */
+- 	uint64_t aux;
+-@@ -730,7 +790,7 @@ static int boot_adsp(void)
+- 		return -1;
+- 	if (pas_load(PAS_ADSP, ADSP_FW_DIR, "adsp", ADSP_PA, ADSP_SIZE, "adsp"))
+- 		return -1;
+--	return adsp_net();
+-+	return adsp_net(secs);
+- }
+- 
+- /* configure (kernel), firmware (here), setup (kernel); everything stays off on the first failure */
+-@@ -1148,7 +1208,8 @@ int main(int argc, char **argv)
+- 	} else if (!strcmp(c, "qmp") && argc > 2) {
+- 		return qmp_send(argv[2]) ? 1 : 0;
+- 	} else if (!strcmp(c, "adsp")) {
+--		return boot_adsp() ? 1 : 0;
+-+		/* 0009: optional seconds to watch (0 = until it fails or is killed) */
+-+		return boot_adsp(argc > 2 ? (unsigned)strtoul(argv[2], NULL, 0) : 0) ? 1 : 0;
+- 	} else if (!strcmp(c, "adsp-shutdown")) {
+- 		uint64_t r1 = 0;
+- 		int64_t rc = scm(6, 1, PAS_ADSP, 0, 0, &r1);	/* PAS_SHUTDOWN */
+diff --git a/userspace/wifi/patches/0010-sweet-adsp-fastrpc.patch b/userspace/wifi/patches/0010-sweet-adsp-fastrpc.patch
+deleted file mode 100644
+index 67bfa44..0000000
+--- a/userspace/wifi/patches/0010-sweet-adsp-fastrpc.patch
++++ /dev/null
+@@ -1,1913 +0,0 @@
+-diff --git a/phone/wifi/adsp_smmu.c b/phone/wifi/adsp_smmu.c
+-new file mode 100644
+-index 0000000..57e3ceb
+---- /dev/null
+-+++ b/phone/wifi/adsp_smmu.c
+-@@ -0,0 +1,69 @@
+-+#include <errno.h>
+-+#include <stdio.h>
+-+#include <string.h>
+-+#include "adsp_smmu.h"
+-+#include "fastrpc.h"
+-+#include "pmem.h"
+-+
+-+#define RPC_IOVA	0x80000000ull
+-+#define RPC_ALIAS	(3ull << 32)	/* the DSP's stream bits 3 (0x1b23) */
+-+#define RPC_SID		0x1b23
+-+
+-+/* audio-ion, the fastrpc compute cbs (0x1b24-0x1b28) and usb-audio: translation off, as on the reference. */
+-+static const uint16_t id_sids[] = { 0x1b21, 0x1b24, 0x1b25, 0x1b26, 0x1b27, 0x1b28, 0x1b2f };
+-+
+-+int adsp_smmu_setup(uint64_t *pa, uint64_t *dsp)
+-+{
+-+	int bad = 0;
+-+	for (unsigned i = 0; i < sizeof(id_sids) / sizeof(id_sids[0]); i++) {
+-+		struct pmem_smmu q;
+-+		memset(&q, 0, sizeof(q));
+-+		q.op = 1;
+-+		q.nsid = 1;
+-+		q.sid[0] = id_sids[i];
+-+		if (pm_smmu(&q)) {
+-+			printf("smmu: %#x identity: %s\n", id_sids[i], strerror(errno));
+-+			bad = 1;
+-+		} else {
+-+			printf("smmu: %#x identity (SMR %d)\n", id_sids[i], q.slot[0]);
+-+		}
+-+	}
+-+	uint64_t buf = pm_alloc(FASTRPC_DMA_SIZE, 0x1000);
+-+	if (!buf) {
+-+		printf("smmu: no FastRPC DMA buffer\n");
+-+		return -1;
+-+	}
+-+	struct pmem_smmu q;
+-+	memset(&q, 0, sizeof(q));
+-+	q.op = 2;
+-+	q.nsid = 1;
+-+	q.sid[0] = RPC_SID;
+-+	q.iova = RPC_IOVA;
+-+	q.alias = RPC_ALIAS;
+-+	q.pa = buf;
+-+	q.len = FASTRPC_DMA_SIZE;
+-+	if (pm_smmu(&q)) {
+-+		printf("smmu: %#x translate %#llx -> %#llx: %s\n", RPC_SID, (unsigned long long)RPC_IOVA,
+-+		       (unsigned long long)buf, strerror(errno));
+-+		return -1;
+-+	}
+-+	printf("smmu: %#x translate %#llx (alias %#llx) -> %#llx, %#x bytes, CB%d\n", RPC_SID,
+-+	       (unsigned long long)q.iova, (unsigned long long)q.alias, (unsigned long long)buf, FASTRPC_DMA_SIZE, q.cb);
+-+	*pa = buf;
+-+	*dsp = RPC_IOVA | RPC_ALIAS;
+-+	return bad ? -1 : 0;
+-+}
+-+
+-+void adsp_smmu_status(void)
+-+{
+-+	struct pmem_smmu q;
+-+	memset(&q, 0, sizeof(q));
+-+	q.op = 3;
+-+	q.nsid = 1;
+-+	q.sid[0] = RPC_SID;
+-+	if (pm_smmu(&q)) {
+-+		printf("smmu: %#x status: %s\n", RPC_SID, strerror(errno));
+-+		return;
+-+	}
+-+	printf("smmu: %#x CB%d FSR %#x FSYNR0 %#x FAR %#llx\n", RPC_SID, q.cb, q.fsr, q.fsynr0, (unsigned long long)q.far);
+-+}
+-diff --git a/phone/wifi/adsp_smmu.h b/phone/wifi/adsp_smmu.h
+-new file mode 100644
+-index 0000000..a38c77c
+---- /dev/null
+-+++ b/phone/wifi/adsp_smmu.h
+-@@ -0,0 +1,16 @@
+-+/*
+-+ * The ADSP's FastRPC DMA stream through the apps-SMMU, from the kernel (xnu 0206, /dev/pmem PMEM_SMMU): the
+-+ * sensors PD takes 32-bit addresses, so SID 0x1b23 gets a translating bank IOVA 0x80000000 -> a pm_alloc buffer
+-+ * and the DSP sees IOVA | 3 << 32 (the reference's compute-cb stream). The other audio/fastrpc SIDs stay
+-+ * translation-off as ABL left them.
+-+ */
+-+#ifndef ADSP_SMMU_H
+-+#define ADSP_SMMU_H
+-+#include <stdint.h>
+-+
+-+/* Program the streams and allocate the FastRPC buffer; 0 = ok. */
+-+int adsp_smmu_setup(uint64_t *pa, uint64_t *dsp);
+-+/* Print the translating bank's fault state (read-only). */
+-+void adsp_smmu_status(void);
+-+
+-+#endif
+-diff --git a/phone/wifi/adspedge.c b/phone/wifi/adspedge.c
+-new file mode 100644
+-index 0000000..d1788ef
+---- /dev/null
+-+++ b/phone/wifi/adspedge.c
+-@@ -0,0 +1,418 @@
+-+/*
+-+ * The ADSP's GLINK edge (lpass): channels, intents and QRTR/FastRPC dispatch.
+-+ * Ported from the ios-flame sunfish adspboot.c lpass edge (MIT): the ADSP opens IPCRTR and
+-+ * fastrpcglink-apps-dsp from its side; every remote OPEN is acked and opened back the same way, which is how the
+-+ * channel becomes bidirectional. wland's link.c stays the modem's single-channel edge.
+-+ */
+-+#include <stdio.h>
+-+#include <stdlib.h>
+-+#include <string.h>
+-+#include <unistd.h>
+-+#include "adspedge.h"
+-+#include "fastrpc.h"
+-+#include "glink.h"
+-+#include "link.h"
+-+
+-+#define SMEM_HOST_ADSP	2
+-+#define NCHAN		8
+-+#define NRINT		256	/* remote intents per channel */
+-+#define NPEND		32	/* packets waiting for a remote intent */
+-+#define PKT_MAX		1024
+-+#define RX_MAX		16384
+-+#define NLOCAL		8	/* free local rx intents kept queued per channel */
+-+#define FEAT_REUSE	1
+-+
+-+#define QRTR_PORT_CTRL	0xfffffffeu
+-+
+-+struct chan {
+-+	char name[32];
+-+	uint16_t rcid, lcid;
+-+	uint32_t r_iid[NRINT], r_isz[NRINT];
+-+	uint8_t r_use[NRINT];
+-+	int r_n, r_busy;
+-+	int l_n;		/* our rx intents the ADSP still holds unused */
+-+	int up;
+-+	uint32_t nrx, ndone, nreuse;
+-+	uint8_t rx[RX_MAX];
+-+	size_t rx_have;
+-+	uint32_t rx_iid;
+-+	uint8_t pend[NPEND][PKT_MAX];
+-+	uint32_t pend_len[NPEND];
+-+	int npend;
+-+};
+-+
+-+static struct chan ch[NCHAN];
+-+static int nch;
+-+static uint32_t our_iid = 100;
+-+static struct chan *ipcrtr, *rpc_chan;
+-+static adsp_qrtr_cb_t qrtr_cb;
+-+
+-+static struct chan *by_rcid(uint16_t rcid)
+-+{
+-+	for (int i = 0; i < nch; i++)
+-+		if (ch[i].rcid == rcid)
+-+			return &ch[i];
+-+	return NULL;
+-+}
+-+
+-+static struct chan *by_lcid(uint16_t lcid)
+-+{
+-+	for (int i = 0; i < nch; i++)
+-+		if (ch[i].lcid == lcid)
+-+			return &ch[i];
+-+	return NULL;
+-+}
+-+
+-+static int send_cmd(uint16_t cmd, uint16_t p1, uint32_t p2, const void *data, size_t len)
+-+{
+-+	for (int i = 0; i < 1000; i++) {
+-+		if (!glink_send(cmd, p1, p2, data, len))
+-+			return 0;
+-+		usleep(2000);
+-+	}
+-+	printf("adsp: glink tx fifo stuck (cmd %u p1 %u p2 %u)\n", cmd, p1, p2);
+-+	return -1;
+-+}
+-+
+-+static void give_intents(struct chan *c, int n, uint32_t sz)
+-+{
+-+	while (n > 0) {
+-+		int k = n > 4 ? 4 : n;
+-+		uint32_t e[8];
+-+		for (int i = 0; i < k; i++) {
+-+			e[2 * i] = sz;
+-+			e[2 * i + 1] = our_iid++;
+-+		}
+-+		if (send_cmd(GLINK_CMD_INTENT, c->lcid, (uint32_t)k, e, (size_t)8 * k))
+-+			return;
+-+		c->l_n += k;
+-+		n -= k;
+-+	}
+-+}
+-+
+-+/* Send one packet on c in one of the ADSP's intents; without one, queue it and ask (RX_INTENT_REQ). */
+-+static int chan_send(struct chan *c, const void *pkt, size_t n)
+-+{
+-+	if (!c || !c->up || n > PKT_MAX)
+-+		return -1;
+-+	int i;
+-+	for (i = 0; i < c->r_n; i++)
+-+		if (!c->r_use[i] && c->r_isz[i] >= n)
+-+			break;
+-+	if (i >= c->r_n) {
+-+		if (c->npend < NPEND) {
+-+			memcpy(c->pend[c->npend], pkt, n);
+-+			c->pend_len[c->npend++] = (uint32_t)n;
+-+			send_cmd(GLINK_CMD_RX_INTENT_REQ, c->lcid, (uint32_t)n, NULL, 0);
+-+		} else {
+-+			printf("adsp: %s: tx %zu bytes dropped (no intent, queue full)\n", c->name, n);
+-+		}
+-+		return 0;
+-+	}
+-+	uint32_t iid = c->r_iid[i];
+-+	c->r_use[i] = 1;
+-+	c->r_busy++;
+-+	uint8_t b[8 + PKT_MAX];
+-+	uint32_t cl[2] = { (uint32_t)n, 0 };
+-+	memcpy(b, cl, 8);
+-+	memcpy(b + 8, pkt, n);
+-+	if (send_cmd(GLINK_CMD_TX_DATA, c->lcid, iid, b, 8 + n)) {
+-+		c->r_use[i] = 0;
+-+		c->r_busy--;
+-+		return -1;
+-+	}
+-+	return 0;
+-+}
+-+
+-+static void flush_pend(struct chan *c)
+-+{
+-+	int n = c->npend;
+-+	c->npend = 0;
+-+	for (int i = 0; i < n; i++)
+-+		chan_send(c, c->pend[i], c->pend_len[i]);
+-+}
+-+
+-+static void qrtr_rx(struct chan *c, const uint8_t *p, size_t n)
+-+{
+-+	if (n < 32) {
+-+		printf("adsp: qrtr short packet %zu bytes\n", n);
+-+		return;
+-+	}
+-+	struct qrtr_hdr h;
+-+	memcpy(&h, p, sizeof(h));
+-+	if (h.version != 1) {
+-+		printf("adsp: qrtr version %u\n", h.version);
+-+		return;
+-+	}
+-+	uint32_t sz = h.size;
+-+	size_t blen = n - 32 < sz ? n - 32 : sz;
+-+	if (qrtr_cb)
+-+		qrtr_cb(&h, p + 32, (uint32_t)blen);
+-+}
+-+
+-+/* One command; 0 = incomplete (wait for more), -1 = bad length. */
+-+static int pump_one(void)
+-+{
+-+	if (glink_rx_avail() < 8)
+-+		return 0;
+-+	uint8_t h8[8];
+-+	glink_rx_peek(h8, 0, 8);
+-+	uint16_t cmd, p1;
+-+	uint32_t p2;
+-+	memcpy(&cmd, h8, 2);
+-+	memcpy(&p1, h8 + 2, 2);
+-+	memcpy(&p2, h8 + 4, 4);
+-+	size_t n = 8;
+-+	struct chan *c = by_rcid(p1);
+-+
+-+	switch (cmd) {
+-+	case GLINK_CMD_VERSION:
+-+		if (!p1 && !p2)
+-+			break;	/* a zero slot exposed by the peer's early descriptor reset: not a command */
+-+		printf("adsp: glink remote version %u features %#x\n", p1, p2);
+-+		send_cmd(GLINK_CMD_VERSION_ACK, 1, p2 & FEAT_REUSE, NULL, 0);
+-+		break;
+-+	case GLINK_CMD_VERSION_ACK:
+-+		printf("adsp: glink version acked (%u, %#x)\n", p1, p2);
+-+		break;
+-+	case GLINK_CMD_OPEN: {
+-+		if (p2 > 1024)
+-+			return -1;
+-+		n = 8 + ((p2 + 7) & ~7u);
+-+		if (glink_rx_avail() < n)
+-+			return 0;
+-+		char name[64] = { 0 };
+-+		glink_rx_peek(name, 8, p2 < 63 ? p2 : 63);
+-+		printf("adsp: channel \"%s\" opened by the ADSP (rcid %u)\n", name, p1);
+-+		if (!c && nch < NCHAN) {
+-+			c = &ch[nch];
+-+			memset(c, 0, sizeof(*c));
+-+			snprintf(c->name, sizeof(c->name), "%s", name);
+-+			c->rcid = p1;
+-+			c->lcid = (uint16_t)(++nch);
+-+			c->l_n = 0;
+-+			send_cmd(GLINK_CMD_OPEN_ACK, c->rcid, 0, NULL, 0);
+-+			size_t l = strlen(c->name) + 1;
+-+			send_cmd(GLINK_CMD_OPEN, c->lcid, (uint32_t)l, c->name, l);
+-+		}
+-+		break;
+-+	}
+-+	case GLINK_CMD_OPEN_ACK:
+-+		c = by_lcid(p1);
+-+		if (c && !c->up) {
+-+			printf("adsp: %s: open acked (lcid %u, rcid %u)\n", c->name, c->lcid, c->rcid);
+-+			c->up = 1;
+-+			give_intents(c, 4, 4096);
+-+			if (!strcmp(c->name, "IPCRTR"))
+-+				ipcrtr = c;
+-+			else if (!strcmp(c->name, "fastrpcglink-apps-dsp"))
+-+				rpc_chan = c;
+-+		}
+-+		break;
+-+	case GLINK_CMD_CLOSE:
+-+		printf("adsp: %s: remote CLOSE (rcid %u)\n", c ? c->name : "?", p1);
+-+		send_cmd(GLINK_CMD_CLOSE_ACK, p1, 0, NULL, 0);
+-+		if (c)
+-+			c->up = 0;
+-+		break;
+-+	case GLINK_CMD_INTENT:
+-+		if (p2 > 64)
+-+			return -1;
+-+		n = 8 + 8ull * p2;
+-+		if (glink_rx_avail() < n)
+-+			return 0;
+-+		for (uint32_t i = 0; c && i < p2; i++) {
+-+			uint32_t e[2];
+-+			glink_rx_peek(e, 8 + 8 * i, 8);
+-+			if (c->r_n < NRINT) {
+-+				c->r_isz[c->r_n] = e[0];
+-+				c->r_use[c->r_n] = 0;
+-+				c->r_iid[c->r_n++] = e[1];
+-+			} else {
+-+				printf("adsp: %s: remote intents full, %u dropped\n", c->name, e[1]);
+-+			}
+-+		}
+-+		if (c)
+-+			flush_pend(c);
+-+		break;
+-+	case GLINK_CMD_RX_INTENT_REQ:
+-+		if (c) {
+-+			uint32_t sz = p2 > RX_MAX ? RX_MAX : (p2 < 4096 ? 4096 : p2);
+-+			send_cmd(GLINK_CMD_RX_INTENT_REQ_ACK, c->lcid, 1, NULL, 0);
+-+			give_intents(c, 1, sz);
+-+		} else {
+-+			send_cmd(GLINK_CMD_RX_INTENT_REQ_ACK, 0, 0, NULL, 0);
+-+		}
+-+		break;
+-+	case GLINK_CMD_RX_INTENT_REQ_ACK:
+-+		break;
+-+	case GLINK_CMD_TX_DATA:
+-+	case GLINK_CMD_TX_DATA_CONT: {
+-+		if (glink_rx_avail() < 16)
+-+			return 0;
+-+		uint32_t cl[2];
+-+		glink_rx_peek(cl, 8, 8);
+-+		if (cl[0] > RX_MAX)
+-+			return -1;
+-+		n = (16 + cl[0] + 7) & ~(size_t)7;
+-+		if (glink_rx_avail() < n)
+-+			return 0;
+-+		if (cmd == GLINK_CMD_TX_DATA) {
+-+			if (c) {
+-+				c->rx_have = 0;
+-+				c->rx_iid = p2;
+-+				c->l_n--;
+-+			}
+-+		}
+-+		if (c && c->rx_have + cl[0] <= RX_MAX) {
+-+			glink_rx_peek(c->rx + c->rx_have, 16, cl[0]);
+-+			c->rx_have += cl[0];
+-+		}
+-+		if (!cl[1]) {
+-+			if (!c) {
+-+				printf("adsp: data for unknown rcid %u (%u bytes) dropped\n", p1, cl[0]);
+-+				break;
+-+			}
+-+			c->nrx++;
+-+			send_cmd(GLINK_CMD_RX_DONE_W_REUSE, c->lcid, c->rx_iid, NULL, 0);
+-+			c->l_n++;
+-+			while (c->l_n < NLOCAL)
+-+				give_intents(c, NLOCAL - c->l_n > 4 ? 4 : NLOCAL - c->l_n, 4096);
+-+			if (c == ipcrtr)
+-+				qrtr_rx(c, c->rx, c->rx_have);
+-+			else if (c == rpc_chan)
+-+				fastrpc_rx(c->rx, c->rx_have);
+-+			else if (c->nrx <= 2) {
+-+				printf("adsp: %s: %zu bytes:", c->name, c->rx_have);
+-+				for (size_t i = 0; i < c->rx_have && i < 32; i++)
+-+					printf(" %02x", c->rx[i]);
+-+				printf("\n");
+-+			}
+-+			c->rx_have = 0;
+-+		}
+-+		break;
+-+	}
+-+	case GLINK_CMD_RX_DONE:
+-+	case GLINK_CMD_RX_DONE_W_REUSE: {
+-+		int re = cmd == GLINK_CMD_RX_DONE_W_REUSE;
+-+		if (!c)
+-+			break;
+-+		re ? c->nreuse++ : c->ndone++;
+-+		int i;
+-+		for (i = 0; i < c->r_n; i++)
+-+			if (c->r_iid[i] == p2 && c->r_use[i])
+-+				break;
+-+		if (i >= c->r_n)
+-+			break;
+-+		c->r_busy--;
+-+		if (re) {
+-+			c->r_use[i] = 0;
+-+		} else {
+-+			c->r_n--;
+-+			c->r_iid[i] = c->r_iid[c->r_n];
+-+			c->r_isz[i] = c->r_isz[c->r_n];
+-+			c->r_use[i] = c->r_use[c->r_n];
+-+		}
+-+		flush_pend(c);
+-+		break;
+-+	}
+-+	case GLINK_CMD_SIGNALS:
+-+	case GLINK_CMD_READ_NOTIF:
+-+	case GLINK_CMD_CLOSE_ACK:
+-+		break;
+-+	default:
+-+		printf("adsp: glink cmd %u (p1 %u p2 %#x): skipped 8 bytes\n", cmd, p1, p2);
+-+		break;
+-+	}
+-+	glink_rx_advance(n);
+-+	return 1;
+-+}
+-+
+-+int adspedge_open(unsigned timeout_ms)
+-+{
+-+	glink_edge(SMEM_HOST_ADSP, 24);
+-+	uint64_t t0 = link_ms();
+-+	while (!glink_remote_ready()) {
+-+		if (link_ms() - t0 >= timeout_ms) {
+-+			printf("adsp: no GLINK rx fifo in %u ms\n", timeout_ms);
+-+			return -1;
+-+		}
+-+		usleep(100000);
+-+	}
+-+	/*
+-+	 * 0010: the ADSP's GLINK zeroes its shared descriptors once more right after PAS (a head reset 30-40 ms in: the
+-+	 * first VERSION it wrote disappears). Map the items now but keep the peer's ends, let that settle, then send.
+-+	 */
+-+	const char *e = getenv("WLAND_EDGE_DELAY_MS");
+-+	unsigned delay = e ? (unsigned)strtoul(e, NULL, 0) : 1500;
+-+	glink_preserve(1);
+-+	if (glink_init())
+-+		return -1;
+-+	glink_print_state("edge before the delay");
+-+	for (unsigned i = 0; i < delay; i += 250) {
+-+		usleep(250000);
+-+		glink_print_state("edge in the delay");
+-+	}
+-+	if (send_cmd(GLINK_CMD_VERSION, 1, FEAT_REUSE, NULL, 0))
+-+		return -1;
+-+	printf("adsp: glink edge open after %llu ms (%u ms settle), VERSION sent\n",
+-+	       (unsigned long long)(link_ms() - t0), delay);
+-+	return 0;
+-+}
+-+
+-+int adspedge_poll(unsigned ms)
+-+{
+-+	uint64_t end = link_ms() + ms;
+-+	do {
+-+		while (pump_one() > 0)
+-+			;
+-+		if (ms)
+-+			usleep(1000);
+-+	} while (link_ms() < end);
+-+	return 0;
+-+}
+-+
+-+int adspedge_ipcrtr_up(void)
+-+{
+-+	return ipcrtr && ipcrtr->up;
+-+}
+-+
+-+int adspedge_rpc_up(void)
+-+{
+-+	return rpc_chan && rpc_chan->up;
+-+}
+-+
+-+void adspedge_set_qrtr_cb(adsp_qrtr_cb_t cb)
+-+{
+-+	qrtr_cb = cb;
+-+}
+-+
+-+int adspedge_qrtr_send(uint32_t type, uint32_t src_port, uint32_t dst_node, uint32_t dst_port,
+-+		       const void *payload, uint32_t len)
+-+{
+-+	if (!ipcrtr || !ipcrtr->up)
+-+		return -1;
+-+	uint8_t b[32 + 1024];
+-+	if (len > sizeof(b) - 32)
+-+		return -1;
+-+	uint32_t h[8] = { 1, type, QRTR_NODE_APPS, src_port, 0, len, dst_node, dst_port };
+-+	memcpy(b, h, 32);
+-+	memcpy(b + 32, payload, len);
+-+	uint32_t padded = (len + 3) & ~3u;
+-+	memset(b + 32 + len, 0, padded - len);
+-+	return chan_send(ipcrtr, b, 32 + padded);
+-+}
+-+
+-+void adspedge_rpc_send(const void *pkt, size_t n)
+-+{
+-+	chan_send(rpc_chan, pkt, n);
+-+}
+-+
+-+void adspedge_status(void)
+-+{
+-+	printf("adsp: edge %d channels:", nch);
+-+	for (int i = 0; i < nch; i++)
+-+		printf(" %s%s(l%u r%u rx%u int%u/%d)", ch[i].name, ch[i].up ? "" : "!", ch[i].lcid, ch[i].rcid,
+-+		       ch[i].nrx, ch[i].r_n - ch[i].r_busy, ch[i].r_n);
+-+	printf("\n");
+-+}
+-diff --git a/phone/wifi/adspedge.h b/phone/wifi/adspedge.h
+-new file mode 100644
+-index 0000000..9873fd2
+---- /dev/null
+-+++ b/phone/wifi/adspedge.h
+-@@ -0,0 +1,32 @@
+-+/*
+-+ * The ADSP's GLINK "lpass" edge: many channels (the modem's link.c is one), QRTR on IPCRTR and the sensors PD's
+-+ * FastRPC channel. Ported from ios-flame sunfish adspboot.c (MIT). Polled.
+-+ */
+-+#ifndef ADSPEDGE_H
+-+#define ADSPEDGE_H
+-+#include <stddef.h>
+-+#include <stdint.h>
+-+#include "link.h"
+-+
+-+/* Wait for the ADSP's rx fifo, init GLINK, send VERSION. 0 = ok. */
+-+int adspedge_open(unsigned timeout_ms);
+-+/* Handle everything in the rx fifo; for ms (0 = once). */
+-+int adspedge_poll(unsigned ms);
+-+
+-+int adspedge_ipcrtr_up(void);		/* IPCRTR open both ways */
+-+int adspedge_rpc_up(void);		/* fastrpcglink-apps-dsp open both ways */
+-+
+-+/* The QRTR handler for packets on IPCRTR (HELLO, NEW_LOOKUP, DATA to our ports). */
+-+typedef void (*adsp_qrtr_cb_t)(const struct qrtr_hdr *h, const uint8_t *d, uint32_t n);
+-+void adspedge_set_qrtr_cb(adsp_qrtr_cb_t cb);
+-+
+-+/* link.c's qrtr_send transport: QRTR from us on IPCRTR. */
+-+int adspedge_qrtr_send(uint32_t type, uint32_t src_port, uint32_t dst_node, uint32_t dst_port,
+-+		       const void *payload, uint32_t len);
+-+/* fastrpc.c's send callback: one smq packet on fastrpcglink-apps-dsp. */
+-+void adspedge_rpc_send(const void *pkt, size_t n);
+-+
+-+/* One line for the log: channels, intents. */
+-+void adspedge_status(void);
+-+
+-+#endif
+-diff --git a/phone/wifi/fastrpc.c b/phone/wifi/fastrpc.c
+-new file mode 100644
+-index 0000000..1dc51e3
+---- /dev/null
+-+++ b/phone/wifi/fastrpc.c
+-@@ -0,0 +1,1017 @@
+-+/*
+-+ * FastRPC over glink "fastrpcglink-apps-dsp": attach to the ADSP's static sensors PD (as `adsprpcd sensorspd`),
+-+ * open adsp_default_listener and serve its reverse calls (apps_remotectl + apps_std file access) from the AP.
+-+ * Wire format: sunfish downstream adsprpc.c (smq_msg, remote_arg64 + page lists in one DMA buffer); the
+-+ * listener / apps_std argument layouts: quic/fastrpc (adsp_listener next2, qaic skel conventions).
+-+ * Files: /vendor/etc/sensors -> /var/local/fw/sensors (read-only), /persist/sensors (and /mnt/vendor/persist/sensors)
+-+ * -> /var/local/sensors-persist (the only writable place: write, mkdir, remove, rename). Everything else is refused.
+-+ */
+-+#include <stdio.h>
+-+#include <stdlib.h>
+-+#include <string.h>
+-+#include <errno.h>
+-+#include <unistd.h>
+-+#include <dirent.h>
+-+#include <sys/stat.h>
+-+#include "pmem.h"
+-+#include "fastrpc.h"
+-+#include "adsp_smmu.h"
+-+
+-+#define SC_MAKE(m, in, out)	((((uint32_t)(m) & 0x1f) << 24) | (((in) & 0xff) << 16) | (((out) & 0xff) << 8))
+-+#define SC_METHOD(sc)		(((sc) >> 24) & 0x1f)
+-+#define SC_IN(sc)		(((sc) >> 16) & 0xff)
+-+#define SC_OUT(sc)		(((sc) >> 8) & 0xff)
+-+#define SC_HANDLES(sc)		((((sc) >> 4) & 0xf) + ((sc) & 0xf))
+-+
+-+#define PD_SENSORS	2	/* downstream FASTRPC_INIT_ATTACH_SENSORS: fl->pd = 2 */
+-+#define H_PROCESS_GROUP	1
+-+#define H_REMOTECTL	0
+-+#define H_LISTENER	3
+-+#define BALIGN		128
+-+#define M_FDLIST	16
+-+#define M_CRCLIST	64
+-+#define MAXARGS		16
+-+#define DMA_SIZE	FASTRPC_DMA_SIZE
+-+/* A pm_alloc buffer (rpc1: 0x1062a0000): the attach reached the sensor PD, which then died with
+-+ * EX:sensor_process:frpck_0_0:0x93. rpc2 with the buffer at 0xe0f80000 (top of radio.c's unmanaged pool) reset the
+-+ * whole SoC right after the attach was sent: never hand the DSP memory outside managed DRAM again. Since rpc3 the
+-+ * buffer is managed DRAM above 4 GB seen by the DSP at a 32-bit IOVA through a translating SMMU bank
+-+ * (adspboot --rpc, smmu_translate): dsp_base is that IOVA, dma_pa what the CPU uses. */
+-+#define BUFS_LEN	0x10000u	/* our next2 in-buffer for the DSP's packed in bufs + out lens */
+-+#define OBUF_MAX	0x20000u	/* our packed out bufs (prevbufs) */
+-+
+-+#define AEE_EFAILED	1
+-+#define AEE_EBADPARM	14
+-+#define AEE_EUNSUPPORTED 20
+-+
+-+#define VENDOR_SNS	"/vendor/etc/sensors"
+-+#define VENDOR_DIR	"/var/local/fw/sensors"
+-+#define PERSIST_DIR	"/var/local/sensors-persist"
+-+/* step 6: the DSP's libraries (ADSP_LIBRARY_PATH dirs) and /sys/devices/soc0 (the reference serves the phone's own
+-+ * soc0 files, nothing synthesized) */
+-+#define DSP_DIR		"/var/local/fw/dsp"
+-+#define SOC0_DIR	"/var/local/fw/soc0"
+-+
+-+/* Reverse handles we hand out from apps_remotectl open. guess: any nonzero value works (quic uses table ids). */
+-+#define RH_APPS_STD	0x11
+-+#define RH_APPS_MEM	0x12
+-+#define RH_MSGD		0x13
+-+
+-+struct smq_msg {
+-+	uint32_t pid, tid;
+-+	uint64_t ctx;
+-+	uint32_t handle, sc;
+-+	uint64_t addr, size;
+-+};
+-+struct rarg {
+-+	void *p;
+-+	uint32_t len;
+-+};
+-+static fastrpc_send_fn tx;
+-+static uint64_t dma_pa, dsp_base;
+-+static uint8_t meta[DMA_SIZE];
+-+static uint32_t tgid, seq;
+-+static int root_mode;	/* audio step 5: attach to the root PD (pd 0); step 6: then serve its listener */
+-+static int sns_too;	/* audio step 6 (--sensors): once the root listener serves, attach the sensors PD as well */
+-+
+-+/* One FastRPC session (one PD). Step 6: the root PD and the sensors PD run side by side as in the SM7150
+-+ * reference (rootpd + sensorspd of hexagonrpcd), each in its own half of the DMA buffer; files are shared. */
+-+struct sess {
+-+	const char *name;
+-+	uint32_t pd, client, size, ctxn, ctxbase;
+-+	uint64_t pa, dsp;
+-+	int state;	/* 0 off, 1 attach, 2 remotectl open, 3 register, 4 init2, 5 next2 loop, 6 dead */
+-+	uint64_t cur_ctx;
+-+	uint32_t cur_sc, out_off[MAXARGS];
+-+	struct rarg cur[MAXARGS];
+-+	uint32_t listener_h;
+-+	/* next2 state */
+-+	uint32_t n2_in[4], n2_out[4];
+-+	uint8_t n2_bufs[BUFS_LEN], obuf[OBUF_MAX];
+-+	uint32_t obuf_len, prev_ctx, calls;
+-+	int prev_result, n2_retry;
+-+};
+-+static struct sess s_root = { .name = "root PD", .pd = 0, .ctxbase = 0, .prev_result = -1 },
+-+		   s_sns = { .name = "sensors PD", .pd = PD_SENSORS, .ctxbase = 127, .prev_result = -1 };
+-+
+-+/* summary */
+-+static unsigned n_std[40], n_ctl, n_other, n_err, n_files;
+-+static char files[32][96], missing[32][96];
+-+static unsigned n_missing, quiet_missing;
+-+
+-+static const char *std_name[] = { "fopen", "freopen", "fflush", "fclose", "fread", "fwrite", "fgetpos", "fsetpos",
+-+	"ftell", "fseek", "flen", "rewind", "feof", "ferror", "clearerr", "print_string", "getenv", "setenv",
+-+	"unsetenv", "fopen_with_env", "fgets", "get_search_paths_with_env", "fileExists", "fsync", "fremove",
+-+	"fdopen_decrypt", "opendir", "closedir", "readdir", "mkdir", "rmdir", "stat", "ftrunc", "frename",
+-+	"fopen_fd", "fclose_fd", "fopen_with_env_fd" };
+-+
+-+static uint32_t align(uint32_t v, uint32_t a)
+-+{
+-+	return (v + a - 1) & ~(a - 1);
+-+}
+-+
+-+/* whole 32-bit words (safe for any pmem memory) */
+-+static void dev_rd(uint64_t pa, void *p, uint32_t len)
+-+{
+-+	static uint8_t tmp[DMA_SIZE];
+-+	if (len > DMA_SIZE)
+-+		return;
+-+	pm_rd(pa, tmp, (len + 3) & ~3u);
+-+	memcpy(p, tmp, len);
+-+}
+-+
+-+/* ---- forward invoke: everything (metadata + copies of all buffers) in one pm_alloc buffer, PA = DSP address ---- */
+-+
+-+static int invoke(struct sess *s, uint32_t handle, uint32_t sc, struct rarg *a)
+-+{
+-+	uint32_t n = SC_IN(sc) + SC_OUT(sc);
+-+	if (n > MAXARGS)
+-+		return -1;
+-+	uint32_t metalen = n * (16 + 8 + 16) + 8 * M_FDLIST + 4 * M_CRCLIST, off = metalen;
+-+	memset(meta, 0, metalen);
+-+	uint8_t *rpra = meta, *list = meta + 16 * n, *pages = list + 8 * n;
+-+	for (uint32_t i = 0; i < n; i++) {
+-+		uint32_t pg[2] = { a[i].len ? 1u : 0u, i };
+-+		memcpy(list + 8 * i, pg, 8);
+-+		uint64_t pv = 0, len = a[i].len, pp[2] = { 0, 0 };
+-+		if (a[i].len) {
+-+			off = align(off, BALIGN);
+-+			if (off + a[i].len > s->size)
+-+				return -1;
+-+			pv = s->dsp + off;	/* guess: downstream puts its kernel VA here; the DSP only needs the page offset */
+-+			pp[0] = pv & ~0xfffull;
+-+			pp[1] = (((pv + len - 1) >> 12) - (pv >> 12) + 1) << 12;
+-+			if (i < SC_IN(sc))
+-+				memcpy(meta + off, a[i].p, a[i].len);
+-+			else
+-+				memset(meta + off, 0, a[i].len);
+-+			s->out_off[i] = off;
+-+			off += a[i].len;
+-+		}
+-+		uint64_t r[2] = { pv, len };
+-+		memcpy(rpra + 16 * i, r, 16);
+-+		memcpy(pages + 16 * i, pp, 16);
+-+	}
+-+	if (pm_wr(s->pa, meta, align(off, 4)))
+-+		return -1;
+-+	seq++;
+-+	/* step 5: n << 4 | pd, as the SM7150 reference; step 6: root n 1..127, sensors 128..254 so the replies of
+-+	 * the two sessions never share a context */
+-+	s->ctxn = s->ctxn % 127 + 1;
+-+	s->cur_ctx = root_mode ? (uint64_t)(s->ctxbase + s->ctxn) << 4 | s->pd :
+-+		     ((uint64_t)seq << 12) | (1u << 4) | PD_SENSORS;	/* downstream: (ctx ptr & ~0xfff) | (index << 4) */
+-+	s->cur_sc = sc;
+-+	if (n)
+-+		memcpy(s->cur, a, n * sizeof(*a));
+-+	/* guess: downstream sends pid 0 for kernel-originated invokes (the attach); we use the client for user ones */
+-+	struct smq_msg m = { s->state == 1 ? 0 : s->client, s->client, s->cur_ctx, handle, sc, s->dsp,
+-+			     align(off, 4096) };
+-+	printf("rpc: %s -> h %u m %u in %u out %u (sc %08x) ctx %llx, %u bytes\n", s->name, handle, SC_METHOD(sc), SC_IN(sc),
+-+	       SC_OUT(sc), sc, (unsigned long long)m.ctx, off);
+-+	tx(&m, sizeof(m));
+-+	return 0;
+-+}
+-+
+-+/* Copy the out buffers back from the DMA buffer. */
+-+static void fetch_outs(struct sess *s)
+-+{
+-+	for (uint32_t i = SC_IN(s->cur_sc); i < SC_IN(s->cur_sc) + SC_OUT(s->cur_sc); i++)
+-+		if (s->cur[i].len)
+-+			dev_rd(s->pa + s->out_off[i], s->cur[i].p, s->cur[i].len);
+-+}
+-+
+-+/* ---- apps_std ---- */
+-+
+-+static FILE *ftab[32];
+-+static DIR *dtab[8];
+-+
+-+static int under(const char *p, const char *pre)
+-+{
+-+	size_t l = strlen(pre);
+-+	return !strncmp(p, pre, l) && (p[l] == 0 || p[l] == '/');
+-+}
+-+
+-+/* sensors step 7: fold "." / ".." / "//" of an absolute DSP path (the registry asks for
+-+ * .../registry/registry/../temp.json); 0, or EACCES when ".." climbs above "/" */
+-+static int norm_path(const char *in, char *out, size_t sz)
+-+{
+-+	char b[256];
+-+	size_t n = 0;
+-+	if (in[0] != '/' || strlen(in) >= sizeof(b) || sz < 2)
+-+		return EACCES;
+-+	snprintf(b, sizeof(b), "%s", in);
+-+	out[0] = 0;
+-+	for (char *sv, *c = strtok_r(b, "/", &sv); c; c = strtok_r(NULL, "/", &sv)) {
+-+		if (!strcmp(c, "."))
+-+			continue;
+-+		if (!strcmp(c, "..")) {
+-+			if (!n)
+-+				return EACCES;
+-+			while (n && out[n] != '/')
+-+				n--;
+-+			out[n] = 0;
+-+			continue;
+-+		}
+-+		if (n + 1 + strlen(c) >= sz)
+-+			return ENAMETOOLONG;
+-+		n += (size_t)snprintf(out + n, sz - n, "/%s", c);
+-+	}
+-+	if (!n)
+-+		snprintf(out, sz, "/");
+-+	return 0;
+-+}
+-+
+-+/* DSP path -> our path; *w = writable. 0 or an errno. */
+-+static int map_path(const char *in0, char *out, size_t sz, int *w)
+-+{
+-+	char in[256];
+-+	*w = 0;
+-+	if (in0[0] == '/') {
+-+		if (norm_path(in0, in, sizeof(in)))
+-+			return EACCES;
+-+	} else if (strstr(in0, ".."))
+-+		return EACCES;
+-+	else
+-+		snprintf(in, sizeof(in), "%s", in0);
+-+	const char *rest;
+-+	if (under(in, VENDOR_SNS)) {
+-+		rest = in + strlen(VENDOR_SNS);
+-+		snprintf(out, sz, VENDOR_DIR "%s", rest);
+-+	} else if (under(in, "/persist/sensors") || under(in, "/mnt/vendor/persist/sensors")) {
+-+		rest = strstr(in, "/persist/sensors") + strlen("/persist/sensors");
+-+		snprintf(out, sz, PERSIST_DIR "%s", rest);
+-+		*w = 1;
+-+	} else {
+-+		/* step 6: DSP library dirs -> DSP_DIR, soc0 -> SOC0_DIR */
+-+		static const char *libs[] = { "/vendor/dsp", "/usr/lib/qcom/adsp", "/vendor/lib/rfsa/adsp", "/dsp" };
+-+		for (unsigned i = 0; i < sizeof(libs) / sizeof(libs[0]); i++)
+-+			if (under(in, libs[i])) {
+-+				snprintf(out, sz, DSP_DIR "%s", in + strlen(libs[i]));
+-+				return 0;
+-+			}
+-+		if (under(in, "/sys/devices/soc0")) {
+-+			snprintf(out, sz, SOC0_DIR "%s", in + strlen("/sys/devices/soc0"));
+-+			return 0;
+-+		}
+-+		if (in[0] && in[0] != '/') {	/* the reference: relative names are under ADSP_LIBRARY_PATH */
+-+			snprintf(out, sz, DSP_DIR "/%s", in);
+-+			return 0;
+-+		}
+-+		static unsigned n_unmapped;
+-+		if (n_unmapped++ < 40)
+-+			printf("rpc: unmapped DSP path \"%s\"\n", in);
+-+		return ENOENT;
+-+	}
+-+	return 0;
+-+}
+-+
+-+/* step 6: remember a path the DSP wanted and did not get (summary) */
+-+static void note_missing(const char *name)
+-+{
+-+	if (quiet_missing)
+-+		return;
+-+	for (unsigned i = 0; i < n_missing && i < 32; i++)
+-+		if (!strcmp(missing[i], name))
+-+			return;
+-+	if (n_missing < 32)
+-+		snprintf(missing[n_missing], sizeof(missing[0]), "%s", name);
+-+	n_missing++;
+-+}
+-+
+-+/* mkdir -p for the parent dirs of path (only below PERSIST_DIR). */
+-+static void mkparents(const char *path)
+-+{
+-+	char b[256];
+-+	snprintf(b, sizeof(b), "%s", path);
+-+	mkdir(PERSIST_DIR, 0755);
+-+	for (char *s = b + strlen(PERSIST_DIR) + 1; (s = strchr(s, '/')); s++) {
+-+		*s = 0;
+-+		mkdir(b, 0755);
+-+		*s = '/';
+-+	}
+-+}
+-+
+-+static uint32_t g32(const struct rarg *a, uint32_t o)
+-+{
+-+	uint32_t v = 0;
+-+	if (a->len >= o + 4)
+-+		memcpy(&v, (uint8_t *)a->p + o, 4);
+-+	return v;
+-+}
+-+
+-+static void p32(struct rarg *a, uint32_t o, uint32_t v)
+-+{
+-+	if (a->len >= o + 4)
+-+		memcpy((uint8_t *)a->p + o, &v, 4);
+-+}
+-+
+-+static const char *str(const struct rarg *a)
+-+{
+-+	if (!a->len || ((char *)a->p)[a->len - 1])
+-+		return NULL;
+-+	return a->p;
+-+}
+-+
+-+static int do_fopen(const char *name, const char *mode, struct rarg *ro)
+-+{
+-+	char path[256];
+-+	int w, wantw = strpbrk(mode, "wa+") != NULL;
+-+	int e = map_path(name, path, sizeof(path), &w);
+-+	if (!e && wantw && !w)
+-+		e = EROFS;
+-+	if (e) {
+-+		note_missing(name);
+-+		return e;
+-+	}
+-+	if (wantw)
+-+		mkparents(path);
+-+	int fd;
+-+	for (fd = 0; fd < 32 && ftab[fd]; fd++)
+-+		;
+-+	if (fd >= 32)
+-+		return EMFILE;
+-+	FILE *f = fopen(path, mode);
+-+	if (!f) {
+-+		note_missing(name);
+-+		return errno ? errno : AEE_EFAILED;
+-+	}
+-+	ftab[fd] = f;
+-+	if (wantw)
+-+		printf("rpc: persist write: fopen %s \"%s\"\n", path, mode);	/* sensors step 7 */
+-+	if (n_files < 32)
+-+		snprintf(files[n_files], sizeof(files[0]), "%s", name);
+-+	n_files++;
+-+	p32(ro, 0, (uint32_t)fd + 1);	/* guess: apps_std_FILE = our index + 1 (0 never handed out) */
+-+	return 0;
+-+}
+-+
+-+static FILE *getf(uint32_t h)
+-+{
+-+	return h >= 1 && h <= 32 ? ftab[h - 1] : NULL;
+-+}
+-+
+-+static int search_env(const char *env, char *val, size_t sz)
+-+{
+-+	/* guess: only ADSP_LIBRARY_PATH is set, to what adsprpcd uses on Android; others unset */
+-+	if (!strcmp(env, "ADSP_LIBRARY_PATH")) {
+-+		snprintf(val, sz, "/vendor/lib/rfsa/adsp;/vendor/dsp/sensorspd;/vendor/dsp;/usr/lib/qcom/adsp;/dsp");
+-+		return 0;
+-+	}
+-+	return -1;
+-+}
+-+
+-+/* One apps_std call; returns the result code, logs one line. */
+-+static int apps_std(uint32_t sc, struct rarg *a)
+-+{
+-+	uint32_t mid = SC_METHOD(sc), nin = SC_IN(sc), nout = SC_OUT(sc);
+-+	struct rarg *p0 = &a[0];
+-+	char what[160] = "";
+-+	int r = 0;
+-+	if (mid == 31) {	/* extended: the method id is primIn word 0 */
+-+		if (nin < 1 || p0->len < 4)
+-+			return AEE_EBADPARM;
+-+		mid = g32(p0, 0);
+-+	}
+-+	if (mid < 40)
+-+		n_std[mid]++;
+-+	switch (mid) {
+-+	case 0: {	/* fopen: in {nameLen, modeLen} name mode, out {fd} */
+-+		const char *n = nin == 3 ? str(&a[1]) : NULL, *m = nin == 3 ? str(&a[2]) : NULL;
+-+		if (!n || !m || nout != 1) {
+-+			r = AEE_EBADPARM;
+-+			break;
+-+		}
+-+		snprintf(what, sizeof(what), "%s \"%s\"", n, m);
+-+		r = do_fopen(n, m, &a[3]);
+-+		break;
+-+	}
+-+	case 19: {	/* fopen_with_env: in {4 lens} env delim name mode, out {fd} */
+-+		const char *e = nin == 5 ? str(&a[1]) : NULL, *d = nin == 5 ? str(&a[2]) : NULL;
+-+		const char *n = nin == 5 ? str(&a[3]) : NULL, *m = nin == 5 ? str(&a[4]) : NULL;
+-+		if (!e || !d || !n || !m || nout != 1) {
+-+			r = AEE_EBADPARM;
+-+			break;
+-+		}
+-+		snprintf(what, sizeof(what), "%s:%s \"%s\"", e, n, m);
+-+		char val[256];
+-+		r = ENOENT;
+-+		if (n[0] == '/' || search_env(e, val, sizeof(val))) {
+-+			r = do_fopen(n, m, &a[5]);
+-+			break;
+-+		}
+-+		quiet_missing = 1;	/* step 6: one missing entry per name, not one per search dir */
+-+		for (char *s = strtok(val, d[0] ? d : ";"); s && r; s = strtok(NULL, d[0] ? d : ";")) {
+-+			char full[256];
+-+			snprintf(full, sizeof(full), "%s/%s", s, n);
+-+			r = do_fopen(full, m, &a[5]);
+-+		}
+-+		quiet_missing = 0;
+-+		if (r)
+-+			note_missing(n);
+-+		break;
+-+	}
+-+	case 2: case 3: case 11: case 23: {	/* fflush / fclose / rewind / fsync: in {fd} */
+-+		uint32_t h = g32(p0, 0);
+-+		FILE *f = getf(h);
+-+		snprintf(what, sizeof(what), "fd %u", h);
+-+		if (!f)
+-+			r = EBADF;
+-+		else if (mid == 3) {
+-+			fclose(f);
+-+			ftab[h - 1] = NULL;
+-+		} else if (mid == 11)
+-+			rewind(f);
+-+		else
+-+			r = fflush(f) ? errno : 0;
+-+		break;
+-+	}
+-+	case 4: case 20: {	/* fread: in {fd, len}, out {read, eof} buf; fgets: in {fd, len}, out {eof} buf */
+-+		uint32_t h = g32(p0, 0);
+-+		FILE *f = getf(h);
+-+		if (nin != 1 || nout != 2) {
+-+			r = AEE_EBADPARM;
+-+			break;
+-+		}
+-+		struct rarg *ro = &a[1], *b = &a[2];
+-+		if (!f) {
+-+			r = EBADF;
+-+			break;
+-+		}
+-+		if (mid == 4) {
+-+			size_t got = b->len ? fread(b->p, 1, b->len, f) : 0;
+-+			if (!got && b->len && ferror(f)) {
+-+				r = AEE_EFAILED;
+-+				break;
+-+			}
+-+			p32(ro, 0, (uint32_t)got);
+-+			p32(ro, 4, got <= b->len ? (uint32_t)!!feof(f) : 0);
+-+			snprintf(what, sizeof(what), "fd %u len %u -> %zu%s", h, b->len, got, feof(f) ? " eof" : "");
+-+		} else {
+-+			if (b->len && !fgets(b->p, (int)b->len, f))
+-+				((char *)b->p)[0] = 0;
+-+			p32(ro, 0, (uint32_t)!!feof(f));
+-+			snprintf(what, sizeof(what), "fd %u len %u", h, b->len);
+-+		}
+-+		break;
+-+	}
+-+	case 5: {	/* fwrite: in {fd, len} buf, out {written, eof}; files are writable only if opened in persist */
+-+		uint32_t h = g32(p0, 0);
+-+		FILE *f = getf(h);
+-+		if (nin != 2 || nout != 1) {
+-+			r = AEE_EBADPARM;
+-+			break;
+-+		}
+-+		if (!f) {
+-+			r = EBADF;
+-+			break;
+-+		}
+-+		size_t put = a[1].len ? fwrite(a[1].p, 1, a[1].len, f) : 0;
+-+		p32(&a[2], 0, (uint32_t)put);
+-+		p32(&a[2], 4, 0);
+-+		if (!put && a[1].len)
+-+			r = AEE_EFAILED;	/* read-only stream (EROFS refused at fopen) */
+-+		snprintf(what, sizeof(what), "fd %u len %u -> %zu", h, a[1].len, put);
+-+		break;
+-+	}
+-+	case 8: case 12: case 13: {	/* ftell / feof / ferror: in {fd}, out {int} */
+-+		uint32_t h = g32(p0, 0);
+-+		FILE *f = getf(h);
+-+		if (!f || nout != 1) {
+-+			r = f ? AEE_EBADPARM : EBADF;
+-+			break;
+-+		}
+-+		long v = mid == 8 ? ftell(f) : mid == 12 ? feof(f) : ferror(f);
+-+		p32(&a[1], 0, (uint32_t)v);
+-+		snprintf(what, sizeof(what), "fd %u -> %ld", h, v);
+-+		break;
+-+	}
+-+	case 9: {	/* fseek: in {fd, off, whence} */
+-+		uint32_t h = g32(p0, 0), wh = g32(p0, 8);
+-+		int o = (int)g32(p0, 4);
+-+		FILE *f = getf(h);
+-+		snprintf(what, sizeof(what), "fd %u off %d whence %u", h, o, wh);
+-+		if (!f)
+-+			r = EBADF;
+-+		else if (wh > 2)
+-+			r = EINVAL;
+-+		else
+-+			r = fseek(f, o, wh == 0 ? SEEK_SET : wh == 1 ? SEEK_CUR : SEEK_END) ? errno : 0;
+-+		break;
+-+	}
+-+	case 10: {	/* flen: in {fd}, out {u64} */
+-+		uint32_t h = g32(p0, 0);
+-+		FILE *f = getf(h);
+-+		struct stat st;
+-+		if (!f || nout != 1 || fstat(fileno(f), &st)) {
+-+			r = f ? AEE_EBADPARM : EBADF;
+-+			break;
+-+		}
+-+		uint64_t l = (uint64_t)st.st_size;
+-+		if (a[1].len >= 8)
+-+			memcpy(a[1].p, &l, 8);
+-+		snprintf(what, sizeof(what), "fd %u -> %llu", h, (unsigned long long)l);
+-+		break;
+-+	}
+-+	case 15: {	/* print_string: in {len} str */
+-+		const char *s = nin == 2 ? str(&a[1]) : NULL;
+-+		snprintf(what, sizeof(what), "\"%.120s\"", s ? s : "?");
+-+		break;
+-+	}
+-+	case 16: {	/* getenv: in {nameLen, valLen} name, out {valLenReq} val */
+-+		const char *n = nin == 2 ? str(&a[1]) : NULL;
+-+		char val[256];
+-+		if (!n || nout != 2) {
+-+			r = AEE_EBADPARM;
+-+			break;
+-+		}
+-+		snprintf(what, sizeof(what), "%s", n);
+-+		if (search_env(n, val, sizeof(val))) {
+-+			r = -1;	/* guess: an unset variable returns an error (quic: ERRNO, -1 when errno is 0) */
+-+			break;
+-+		}
+-+		p32(&a[2], 0, (uint32_t)strlen(val) + 1);
+-+		if (a[3].len > strlen(val))
+-+			memcpy(a[3].p, val, strlen(val) + 1);
+-+		else
+-+			r = AEE_EBADPARM;
+-+		break;
+-+	}
+-+	case 21: {	/* get_search_paths_with_env */
+-+		/* guess: in {envLen, delimLen, pathsLen} env delim [u32 len per path], out {numPaths, maxPathLen u16}
+-+		 * then one buffer per path (qaic out sequence of strings) */
+-+		const char *e = nin >= 3 ? str(&a[1]) : NULL, *d = nin >= 3 ? str(&a[2]) : NULL;
+-+		if (!e || !d || nin != 4 || nout < 1) {
+-+			r = AEE_EUNSUPPORTED;
+-+			snprintf(what, sizeof(what), "layout in %u out %u not understood", nin, nout);
+-+			break;
+-+		}
+-+		char val[256];
+-+		snprintf(what, sizeof(what), "%s", e);
+-+		if (search_env(e, val, sizeof(val))) {
+-+			r = -1;
+-+			break;
+-+		}
+-+		uint32_t np = 0, mx = 0;
+-+		for (char *s = strtok(val, d[0] ? d : ";"); s; s = strtok(NULL, d[0] ? d : ";"), np++) {
+-+			uint32_t l = (uint32_t)strlen(s) + 1;
+-+			mx = l > mx ? l : mx;
+-+			struct rarg *o = &a[nin + 1 + np];
+-+			if (nin + 1 + np < nin + nout && o->len >= l)
+-+				memcpy(o->p, s, l);
+-+		}
+-+		p32(&a[nin], 0, np);
+-+		if (a[nin].len >= 6)
+-+			memcpy((uint8_t *)a[nin].p + 4, &(uint16_t){ (uint16_t)mx }, 2);
+-+		break;
+-+	}
+-+	case 22: case 26: case 29: case 31: {	/* fileExists / opendir / mkdir / stat: a path in a[1] */
+-+		const char *n = nin == 2 ? str(&a[1]) : NULL;
+-+		char path[256];
+-+		int w;
+-+		if (!n) {
+-+			r = AEE_EBADPARM;
+-+			break;
+-+		}
+-+		snprintf(what, sizeof(what), "%s", n);
+-+		r = map_path(n, path, sizeof(path), &w);
+-+		if (r && mid != 22)
+-+			note_missing(n);
+-+		if (mid == 22) {	/* out {bool} */
+-+			struct stat st;
+-+			if (nout == 1 && a[2].len)
+-+				((uint8_t *)a[2].p)[0] = !r && !stat(path, &st);
+-+			r = nout == 1 ? 0 : AEE_EBADPARM;
+-+		} else if (r) {
+-+			break;
+-+		} else if (mid == 26) {	/* out {u64 dir} */
+-+			int i;
+-+			for (i = 0; i < 8 && dtab[i]; i++)
+-+				;
+-+			DIR *dp = i < 8 ? opendir(path) : NULL;
+-+			if (!dp) {
+-+				r = i < 8 ? errno : EMFILE;
+-+				break;
+-+			}
+-+			dtab[i] = dp;
+-+			uint64_t hd = (uint64_t)i + 1;
+-+			if (nout == 1 && a[2].len >= 8)
+-+				memcpy(a[2].p, &hd, 8);
+-+		} else if (mid == 29) {	/* in {nameLen, mode} */
+-+			if (!w)
+-+				r = EROFS;
+-+			else {
+-+				mkparents(path);
+-+				r = mkdir(path, 0755) && errno != EEXIST ? errno : 0;
+-+			}
+-+		} else {	/* stat, out 96 bytes apps_std_STAT */
+-+			struct stat st;
+-+			if (stat(path, &st)) {
+-+				r = errno;
+-+				note_missing(n);
+-+				break;
+-+			}
+-+			uint64_t s[12] = { 96, (uint64_t)st.st_dev, (uint64_t)st.st_ino,
+-+					   (uint64_t)st.st_mode | ((uint64_t)st.st_nlink << 32), (uint64_t)st.st_rdev,
+-+					   (uint64_t)st.st_size, (uint64_t)st.st_atimespec.tv_sec,
+-+					   (uint64_t)st.st_atimespec.tv_nsec, (uint64_t)st.st_mtimespec.tv_sec,
+-+					   (uint64_t)st.st_mtimespec.tv_nsec, (uint64_t)st.st_ctimespec.tv_sec,
+-+					   (uint64_t)st.st_ctimespec.tv_nsec };
+-+			/* guess: tsz = sizeof(apps_std_STAT) */
+-+			if (nout == 1 && a[2].len >= 96)
+-+				memcpy(a[2].p, s, 96);
+-+			else
+-+				r = AEE_EBADPARM;
+-+			snprintf(what, sizeof(what), "%s size %lld mode %o", n, (long long)st.st_size, st.st_mode);
+-+		}
+-+		break;
+-+	}
+-+	case 27: case 28: {	/* closedir: in {u64}; readdir: in {u64}, out {ino, name[255], pad} eof@260 */
+-+		uint64_t hd = 0;
+-+		if (p0->len >= 8)
+-+			memcpy(&hd, p0->p, 8);
+-+		DIR *dp = hd >= 1 && hd <= 8 ? dtab[hd - 1] : NULL;
+-+		snprintf(what, sizeof(what), "dir %llu", (unsigned long long)hd);
+-+		if (!dp) {
+-+			r = EBADF;
+-+			break;
+-+		}
+-+		if (mid == 27) {
+-+			closedir(dp);
+-+			dtab[hd - 1] = NULL;
+-+			break;
+-+		}
+-+		if (nout != 1 || a[1].len < 264) {
+-+			r = AEE_EBADPARM;
+-+			break;
+-+		}
+-+		struct dirent *de = readdir(dp);
+-+		memset(a[1].p, 0, 264);
+-+		if (de) {
+-+			p32(&a[1], 0, (uint32_t)de->d_ino);
+-+			snprintf((char *)a[1].p + 4, 255, "%s", de->d_name);
+-+			snprintf(what, sizeof(what), "dir %llu -> %s", (unsigned long long)hd, de->d_name);
+-+		} else {
+-+			p32(&a[1], 260, 1);
+-+			snprintf(what, sizeof(what), "dir %llu -> eof", (unsigned long long)hd);
+-+		}
+-+		break;
+-+	}
+-+	case 24: case 33: {	/* sensors step 7: fremove in {len} name; frename in {oldLen, newLen} old new;
+-+				 * persist only (the registry writes temp.json, then renames it) */
+-+		const char *n = nin >= 2 ? str(&a[1]) : NULL, *n2 = mid == 33 && nin == 3 ? str(&a[2]) : NULL;
+-+		char path[256], path2[256];
+-+		int w = 0, w2 = 0;
+-+		snprintf(what, sizeof(what), "%s%s%s", n ? n : "?", n2 ? " -> " : "", n2 ? n2 : "");
+-+		if (!n || (mid == 33 && !n2)) {
+-+			r = AEE_EBADPARM;
+-+			break;
+-+		}
+-+		r = map_path(n, path, sizeof(path), &w);
+-+		if (!r && mid == 33)
+-+			r = map_path(n2, path2, sizeof(path2), &w2);
+-+		if (!r && (!w || (mid == 33 && !w2)))
+-+			r = EROFS;
+-+		if (r)
+-+			break;
+-+		if (mid == 24)
+-+			r = remove(path) ? errno : 0;
+-+		else
+-+			r = rename(path, path2) ? errno : 0;
+-+		printf("rpc: persist write: %s %s%s%s -> %d\n", mid == 24 ? "remove" : "rename", path,
+-+		       mid == 33 ? " -> " : "", mid == 33 ? path2 : "", r);
+-+		break;
+-+	}
+-+	case 30: case 32: {	/* rmdir / ftrunc: refused */
+-+		const char *n = nin >= 2 ? str(&a[1]) : NULL;
+-+		snprintf(what, sizeof(what), "%s refused", n ? n : "");
+-+		r = EROFS;
+-+		break;
+-+	}
+-+	default:
+-+		r = AEE_EUNSUPPORTED;
+-+		snprintf(what, sizeof(what), "unsupported (in %u out %u)", nin, nout);
+-+	}
+-+	/* step 6: the first 60 of each method, then the summary's counts only */
+-+	if (mid >= 40 || n_std[mid] <= 60)
+-+		printf("rpc: apps_std %s %s -> %d\n", mid < sizeof(std_name) / sizeof(std_name[0]) ? std_name[mid] : "?",
+-+		       what, r);
+-+	else if (n_std[mid] == 61)
+-+		printf("rpc: apps_std %s: more calls, not logged\n",
+-+		       mid < sizeof(std_name) / sizeof(std_name[0]) ? std_name[mid] : "?");
+-+	return r;
+-+}
+-+
+-+/* apps_remotectl (reverse handle 0): open in {nameLen, dlerrLen} name, out {handle, nErr} dlerr; close m 1. */
+-+static int remotectl(uint32_t sc, struct rarg *a)
+-+{
+-+	n_ctl++;
+-+	if (SC_METHOD(sc) == 1) {
+-+		printf("rpc: <- apps_remotectl.close %u -> 0\n", g32(&a[0], 0));
+-+		if (SC_OUT(sc) >= 1)
+-+			p32(&a[1], 0, 0);
+-+		return 0;
+-+	}
+-+	const char *n = SC_METHOD(sc) == 0 && SC_IN(sc) == 2 && SC_OUT(sc) == 2 ? str(&a[1]) : NULL;
+-+	if (!n) {
+-+		printf("rpc: <- apps_remotectl m %u sc %08x -> unsupported\n", SC_METHOD(sc), sc);
+-+		return AEE_EUNSUPPORTED;
+-+	}
+-+	uint32_t h = !strcmp(n, "apps_std") ? RH_APPS_STD : !strcmp(n, "apps_mem") ? RH_APPS_MEM :
+-+		     !strcmp(n, "adspmsgd_apps") ? RH_MSGD : 0;
+-+	int r = h ? 0 : 6;	/* guess: AEE_EUNABLETOLOAD (6) for modules we don't have, in nErr and the result */
+-+	p32(&a[2], 0, h);
+-+	p32(&a[2], 4, (uint32_t)r);
+-+	if (!h && a[3].len)
+-+		snprintf(a[3].p, a[3].len, "not on this AP");
+-+	printf("rpc: <- apps_remotectl.open \"%s\" -> handle %x err %d\n", n, h, r);
+-+	return r;
+-+}
+-+
+-+static int dispatch(uint32_t h, uint32_t sc, struct rarg *a)
+-+{
+-+	if (h == H_REMOTECTL)
+-+		return remotectl(sc, a);
+-+	if (h == RH_APPS_STD)
+-+		return apps_std(sc, a);
+-+	n_other++;
+-+	printf("rpc: <- handle %x m %u in %u out %u: unsupported\n", h, SC_METHOD(sc), SC_IN(sc), SC_OUT(sc));
+-+	return AEE_EUNSUPPORTED;
+-+}
+-+
+-+/* ---- the listener loop: adsp_listener_next2 (handle 3, method 4, in 2 out 2) ---- */
+-+
+-+static void next2(struct sess *s)
+-+{
+-+	s->n2_in[0] = s->prev_ctx;
+-+	s->n2_in[1] = (uint32_t)s->prev_result;
+-+	s->n2_in[2] = s->prev_result ? 0 : s->obuf_len;	/* quic: no out bufs with an error result */
+-+	s->n2_in[3] = BUFS_LEN;
+-+	struct rarg a[4] = { { s->n2_in, 16 }, { s->obuf, s->n2_in[2] }, { s->n2_out, 16 }, { s->n2_bufs, BUFS_LEN } };
+-+	if (invoke(s, H_LISTENER, SC_MAKE(4, 2, 2), a))
+-+		s->state = 6;
+-+}
+-+
+-+/* Unpack the DSP's packed in bufs + out lens (quic listener_buf.h), run it, pack the out bufs for the reply. */
+-+static void serve(struct sess *s)
+-+{
+-+	uint32_t ctx = s->n2_out[0], h = s->n2_out[1], sc = s->n2_out[2], req = s->n2_out[3];
+-+	uint32_t nin = SC_IN(sc), nout = SC_OUT(sc), o = 0;
+-+	struct rarg a[MAXARGS];
+-+	int r = 0;
+-+	s->prev_ctx = ctx;
+-+	s->obuf_len = 0;
+-+	s->calls++;
+-+	if (req > BUFS_LEN || nin + nout > MAXARGS || SC_HANDLES(sc)) {
+-+		printf("rpc: %s <- ctx %x h %x sc %08x: in bufs %u bytes / handles: refused\n", s->name, ctx, h, sc, req);
+-+		s->prev_result = AEE_EBADPARM;
+-+		n_err++;
+-+		return;
+-+	}
+-+	for (uint32_t i = 0; i < nin && !r; i++) {
+-+		uint32_t l;
+-+		if (o + 4 > req) {
+-+			r = AEE_EBADPARM;
+-+			break;
+-+		}
+-+		memcpy(&l, s->n2_bufs + o, 4);
+-+		o += 4;
+-+		if (l)
+-+			o = align(o, 8);
+-+		if (o + l > req)
+-+			r = AEE_EBADPARM;
+-+		a[i].p = s->n2_bufs + o;
+-+		a[i].len = l;
+-+		o += l;
+-+	}
+-+	uint32_t w = 0;
+-+	for (uint32_t i = 0; i < nout && !r; i++) {
+-+		uint32_t l;
+-+		if (o + 4 > req) {
+-+			r = AEE_EBADPARM;
+-+			break;
+-+		}
+-+		memcpy(&l, s->n2_bufs + o, 4);
+-+		o += 4;
+-+		if (w + 4 > OBUF_MAX) {
+-+			r = AEE_EBADPARM;
+-+			break;
+-+		}
+-+		memcpy(s->obuf + w, &l, 4);
+-+		w += 4;
+-+		if (l)
+-+			w = align(w, 8);
+-+		if (w + l > OBUF_MAX) {
+-+			r = AEE_EBADPARM;
+-+			break;
+-+		}
+-+		memset(s->obuf + w, 0, l);
+-+		a[nin + i].p = s->obuf + w;
+-+		a[nin + i].len = l;
+-+		w += l;
+-+	}
+-+	if (r) {
+-+		printf("rpc: %s <- ctx %x h %x sc %08x: bad packing (%u bytes)\n", s->name, ctx, h, sc, req);
+-+	} else {
+-+		r = dispatch(h, sc, a);
+-+		s->obuf_len = w;
+-+	}
+-+	if (r)
+-+		n_err++;
+-+	s->prev_result = r;
+-+}
+-+
+-+static void sess_attach(struct sess *s)
+-+{
+-+	static uint32_t t[2];
+-+	uint32_t *tp = &t[s == &s_sns];
+-+	*tp = s->client;
+-+	s->state = 1;
+-+	printf("rpc: attaching to the %s (pd %u, client %u, DSP %llx+%x)\n", s->name, s->pd, s->client,
+-+	       (unsigned long long)s->dsp, s->size);
+-+	struct rarg a[1] = { { tp, 4 } };
+-+	if (invoke(s, H_PROCESS_GROUP, SC_MAKE(0, 1, 0), a))
+-+		s->state = 6;
+-+}
+-+
+-+/* One reply for session s: the attach -> remotectl open -> register -> init2 -> next2 loop. */
+-+static void sess_rx(struct sess *s, int32_t ret)
+-+{
+-+	switch (s->state) {
+-+	case 1: {	/* attach done: remotectl_open("adsp_default_listener") */
+-+		if (s == &s_root && root_mode) {
+-+			printf("rpc: root PD attach -> %d\n", ret);
+-+			adsp_smmu_status();
+-+		}
+-+		if (ret) {
+-+			printf("rpc: %s attach failed (%d)\n", s->name, ret);
+-+			s->state = 6;
+-+			return;
+-+		}
+-+		static char name[] = "adsp_default_listener", dlerr[256];
+-+		static uint32_t pin[2], pout[2][2];
+-+		uint32_t *po = pout[s == &s_sns];
+-+		pin[0] = sizeof(name);
+-+		pin[1] = sizeof(dlerr);
+-+		/* name, pin and dlerr are only read at the invoke (copied into the DMA buffer): sharing them is fine */
+-+		struct rarg a[4] = { { pin, 8 }, { name, sizeof(name) }, { po, 8 }, { dlerr, sizeof(dlerr) } };
+-+		s->state = 2;
+-+		invoke(s, H_REMOTECTL, SC_MAKE(0, 2, 2), a);
+-+		return;
+-+	}
+-+	case 2: {
+-+		uint32_t *pout = s->cur[2].p;
+-+		s->listener_h = pout[0];
+-+		printf("rpc: %s remotectl_open adsp_default_listener -> ret %d handle %x nErr %d%s%.64s\n", s->name, ret,
+-+		       pout[0], (int)pout[1], ret ? " dlerror " : "", ret ? (char *)s->cur[3].p : "");
+-+		if (ret || pout[1]) {
+-+			s->state = 6;
+-+			return;
+-+		}
+-+		s->state = 3;
+-+		/* guess: adsp_default_listener_register = method 0 on the opened handle, no args */
+-+		invoke(s, s->listener_h, SC_MAKE(0, 0, 0), NULL);
+-+		return;
+-+	}
+-+	case 3:
+-+		printf("rpc: %s adsp_default_listener_register -> %d\n", s->name, ret);
+-+		if (ret) {
+-+			s->state = 6;
+-+			return;
+-+		}
+-+		s->state = 4;
+-+		invoke(s, H_LISTENER, SC_MAKE(3, 0, 0), NULL);	/* adsp_listener_init2 */
+-+		return;
+-+	case 4:
+-+		printf("rpc: %s adsp_listener_init2 -> %d\n", s->name, ret);
+-+		if (ret) {
+-+			s->state = 6;
+-+			return;
+-+		}
+-+		s->state = 5;
+-+		next2(s);
+-+		/* step 6: the sensors PD only once the root listener serves (reference: else its watchdog kills the DSP) */
+-+		if (s == &s_root && sns_too && !s_sns.state)
+-+			sess_attach(&s_sns);
+-+		return;
+-+	case 5:
+-+		if (ret) {	/* quic: retry once with the error as the result, then give up */
+-+			if (s->n2_retry++) {
+-+				printf("rpc: %s next2 failed twice (%d): listener stops\n", s->name, ret);
+-+				s->state = 6;
+-+				return;
+-+			}
+-+			s->prev_result = ret;
+-+			next2(s);
+-+			return;
+-+		}
+-+		s->n2_retry = 0;
+-+		serve(s);
+-+		next2(s);
+-+		return;
+-+	}
+-+}
+-+
+-+void fastrpc_rx(const void *p, size_t n)
+-+{
+-+	uint64_t ctx;
+-+	int32_t ret;
+-+	if (n < 12) {
+-+		printf("rpc: short rx %zu bytes\n", n);
+-+		return;
+-+	}
+-+	memcpy(&ctx, p, 8);
+-+	memcpy(&ret, (const uint8_t *)p + 8, 4);
+-+	/* downstream compares rsp->ctx & ~3 */
+-+	struct sess *s = s_root.state && (ctx & ~3ull) == (s_root.cur_ctx & ~3ull) ? &s_root :
+-+			 s_sns.state && (ctx & ~3ull) == (s_sns.cur_ctx & ~3ull) ? &s_sns : NULL;
+-+	if (!s) {
+-+		printf("rpc: rx for ctx %llx (waiting for %llx / %llx), dropped\n", (unsigned long long)ctx,
+-+		       (unsigned long long)s_root.cur_ctx, (unsigned long long)s_sns.cur_ctx);
+-+		return;
+-+	}
+-+	if (s->state != 5 || s->calls < 200)	/* cap the per-request lines of a long serve */
+-+		printf("rpc: %s <- rsp ctx %llx ret %d (%zu bytes)\n", s->name, (unsigned long long)ctx, ret, n);
+-+	if (!ret)
+-+		fetch_outs(s);
+-+	sess_rx(s, ret);
+-+}
+-+
+-+void fastrpc_root(int on)
+-+{
+-+	root_mode = on;
+-+}
+-+
+-+void fastrpc_sensors(int on)
+-+{
+-+	sns_too = on;
+-+}
+-+
+-+void fastrpc_buffer(uint64_t pa, uint64_t dsp)
+-+{
+-+	dma_pa = pa;
+-+	dsp_base = dsp;
+-+}
+-+
+-+int fastrpc_start(fastrpc_send_fn send)
+-+{
+-+	tx = send;
+-+	if (!dma_pa && !(dma_pa = pm_alloc(DMA_SIZE, 0x1000))) {
+-+		printf("rpc: no DMA buffer\n");
+-+		return -1;
+-+	}
+-+	if (!dsp_base)
+-+		dsp_base = dma_pa;
+-+	tgid = (uint32_t)getpid();
+-+	printf("rpc: DMA buffer %llx+%x (DSP sees %llx), tgid %u, attaching to the %s PD (pd %u)%s\n",
+-+	       (unsigned long long)dma_pa, DMA_SIZE, (unsigned long long)dsp_base, tgid, root_mode ? "root" : "sensors",
+-+	       root_mode ? 0 : PD_SENSORS, sns_too ? ", then the sensors PD" : "");
+-+	if (root_mode)
+-+		adsp_smmu_status();	/* step 4/5: fault state before the DSP gets the address */
+-+	if (!root_mode) {	/* the sensors PD alone, the whole buffer (as before step 6) */
+-+		s_sns.pa = dma_pa;
+-+		s_sns.dsp = dsp_base;
+-+		s_sns.size = DMA_SIZE;
+-+		s_sns.client = tgid;
+-+		sess_attach(&s_sns);
+-+		return s_sns.state == 6 ? -1 : 0;
+-+	}
+-+	/* step 6: the root PD the first half, the sensors PD the second; guess: its own client number (tgid + 1),
+-+	 * as the reference gives each session its own */
+-+	s_root.pa = dma_pa;
+-+	s_root.dsp = dsp_base;
+-+	s_root.size = DMA_SIZE / 2;
+-+	s_root.client = tgid;
+-+	s_sns.pa = dma_pa + DMA_SIZE / 2;
+-+	s_sns.dsp = dsp_base + DMA_SIZE / 2;
+-+	s_sns.size = DMA_SIZE / 2;
+-+	s_sns.client = tgid + 1;
+-+	sess_attach(&s_root);
+-+	return s_root.state == 6 ? -1 : 0;
+-+}
+-+
+-+static const char *st_name[] = { "off", "attach", "remotectl_open", "register", "init2", "serving", "stopped" };
+-+
+-+void fastrpc_status(char *buf, size_t n)
+-+{
+-+	snprintf(buf, n, "root %s %u calls ctx %llx, sensors %s %u calls ctx %llx, %u invokes", st_name[s_root.state],
+-+		 s_root.calls, (unsigned long long)s_root.cur_ctx, st_name[s_sns.state], s_sns.calls,
+-+		 (unsigned long long)s_sns.cur_ctx, seq);
+-+}
+-+
+-+void fastrpc_summary(void)
+-+{
+-+	static const char *st[] = { "off", "attach", "remotectl_open", "register", "init2", "serving", "stopped" };
+-+	printf("rpc: summary: root PD %s (%u calls served), sensors PD %s (%u calls served), %u invokes, "
+-+	       "%u remotectl calls, %u other-handle calls, %u errors\n", st[s_root.state], s_root.calls, st[s_sns.state],
+-+	       s_sns.calls, seq, n_ctl, n_other, n_err);
+-+	for (unsigned i = 0; i < 40; i++)
+-+		if (n_std[i])
+-+			printf("rpc:   apps_std.%s x%u\n", i < sizeof(std_name) / sizeof(std_name[0]) ? std_name[i] : "?",
+-+			       n_std[i]);
+-+	printf("rpc:   files opened: %u\n", n_files);
+-+	for (unsigned i = 0; i < n_files && i < 32; i++)
+-+		printf("rpc:     %s\n", files[i]);
+-+	printf("rpc:   missing (not found or not mapped): %u\n", n_missing);
+-+	for (unsigned i = 0; i < n_missing && i < 32; i++)
+-+		printf("rpc:     %s\n", missing[i]);
+-+}
+-diff --git a/phone/wifi/fastrpc.h b/phone/wifi/fastrpc.h
+-new file mode 100644
+-index 0000000..816d231
+---- /dev/null
+-+++ b/phone/wifi/fastrpc.h
+-@@ -0,0 +1,32 @@
+-+/*
+-+ * FastRPC client + reverse-RPC file listener for the ADSP sensors PD over glink "fastrpcglink-apps-dsp"
+-+ * (sunfish downstream adsprpc.c wire format, quic/fastrpc adsp_listener + apps_std). Polled: one invoke in
+-+ * flight; the caller feeds every complete packet of that channel to fastrpc_rx.
+-+ */
+-+#ifndef FASTRPC_H
+-+#define FASTRPC_H
+-+#include <stddef.h>
+-+#include <stdint.h>
+-+
+-+#define FASTRPC_DMA_SIZE	0x80000u
+-+
+-+typedef void (*fastrpc_send_fn)(const void *pkt, size_t n);
+-+
+-+/* Use this buffer (PA for the CPU, DSP its address on the DSP side) instead of a pm_alloc one at PA. */
+-+void fastrpc_buffer(uint64_t pa, uint64_t dsp);
+-+/* 1: attach to the root PD (pd 0, first half of the buffer) instead, print the reply + SMMU faults, then open
+-+ * and serve its adsp_default_listener (audio step 6). */
+-+void fastrpc_root(int on);
+-+/* audio step 6, with fastrpc_root: once the root PD's listener serves, also attach the sensors PD (second half of
+-+ * the buffer); without it only the root PD is served. */
+-+void fastrpc_sensors(int on);
+-+/* Allocate the DMA buffer and send the sensors-PD attach; 0 = started. */
+-+int fastrpc_start(fastrpc_send_fn send);
+-+/* One received message (smq_invoke_rsp). */
+-+void fastrpc_rx(const void *p, size_t n);
+-+/* au14: one heartbeat line part: per session state, calls served, the ctx in flight. */
+-+void fastrpc_status(char *buf, size_t n);
+-+/* Calls per method, files opened, errors. */
+-+void fastrpc_summary(void);
+-+
+-+#endif
+-diff --git a/phone/wifi/glink.c b/phone/wifi/glink.c
+-index 2816e58..101f0e8 100644
+---- a/phone/wifi/glink.c
+-+++ b/phone/wifi/glink.c
+-@@ -18,6 +18,7 @@ void glink_edge(unsigned smem_host, unsigned ipc_bit)
+- 
+- static uint64_t desc, tx_fifo, rx_fifo;
+- static uint32_t tx_len, rx_len;
+-+static int g_preserve;
+- 
+- /* descs: [0] tx tail, [1] tx head, [2] rx tail, [3] rx head (ours = tx) */
+- #define TX_TAIL	(desc + 0)
+-@@ -25,6 +26,17 @@ static uint32_t tx_len, rx_len;
+- #define RX_TAIL	(desc + 8)
+- #define RX_HEAD	(desc + 12)
+- 
+-+void glink_preserve(int on)
+-+{
+-+	g_preserve = on;
+-+}
+-+
+-+void glink_print_state(const char *tag)
+-+{
+-+	printf("glink: %s desc %llx: tx tail/head %u/%u, rx tail/head %u/%u\n", tag, (unsigned long long)desc,
+-+	       rd32(TX_TAIL), rd32(TX_HEAD), rd32(RX_TAIL), rd32(RX_HEAD));
+-+}
+-+
+- int glink_init(void)
+- {
+- 	uint32_t sz;
+-@@ -39,9 +51,11 @@ int glink_init(void)
+- 		return -1;
+- 	}
+- 	(void)sz;
+--	/* as Linux qcom_glink_smem_register: our ends of both pipes start over */
+--	wr32(RX_TAIL, 0);
+--	wr32(TX_HEAD, 0);
+-+	/* as Linux qcom_glink_smem_register: our ends of both pipes start over; 0010: not after the ADSP's own init */
+-+	if (!g_preserve) {
+-+		wr32(RX_TAIL, 0);
+-+		wr32(TX_HEAD, 0);
+-+	}
+- 	printf("glink: desc %llx tx fifo %llx (%u) rx fifo %llx (%u); tx %u/%u rx %u/%u\n",
+- 	       (unsigned long long)desc, (unsigned long long)tx_fifo, tx_len, (unsigned long long)rx_fifo, rx_len,
+- 	       rd32(TX_TAIL), rd32(TX_HEAD), rd32(RX_TAIL), rd32(RX_HEAD));
+-@@ -85,6 +99,8 @@ int glink_send(uint16_t cmd, uint16_t p1, uint32_t p2, const void *data, size_t
+- 	if (len)
+- 		memcpy(buf + 8, data, len);
+- 	uint32_t head = rd32(TX_HEAD), tail = rd32(TX_TAIL);
+-+	if (head >= tx_len || tail >= tx_len || (head & 7))
+-+		return -1;
+- 	uint32_t avail = tail <= head ? tx_len - head + tail : tail - head;
+- 	if (avail < padded + 16)
+- 		return -1;	/* full: the caller polls and retries */
+-@@ -98,6 +114,8 @@ int glink_send(uint16_t cmd, uint16_t p1, uint32_t p2, const void *data, size_t
+- size_t glink_rx_avail(void)
+- {
+- 	uint32_t head = rd32(RX_HEAD), tail = rd32(RX_TAIL);
+-+	if (head >= rx_len || tail >= rx_len)
+-+		return 0;
+- 	return head < tail ? rx_len - tail + head : head - tail;
+- }
+- 
+-diff --git a/phone/wifi/glink.h b/phone/wifi/glink.h
+-index d1f591e..c4fac56 100644
+---- a/phone/wifi/glink.h
+-+++ b/phone/wifi/glink.h
+-@@ -22,6 +22,10 @@ void glink_edge(unsigned smem_host, unsigned ipc_bit);	/* before glink_init; def
+- #define GLINK_CMD_SIGNALS	15
+- 
+- int glink_init(void);
+-+/* 0010: keep the peer's fifo ends as they are (the ADSP re-initializes its descriptors right after PAS). */
+-+void glink_preserve(int on);
+-+/* 0010: the four descriptor words, for the ADSP edge's handshake log. */
+-+void glink_print_state(const char *tag);
+- /* 0009: 1 once the remote has allocated its rx fifo (the peer's GLINK transport is up). Read-only. */
+- int glink_remote_ready(void);
+- /* Queue one command (8-byte header + data, padded to 8) and ring the modem. */
+-diff --git a/phone/wifi/link.c b/phone/wifi/link.c
+-index da582e0..352aaed 100644
+---- a/phone/wifi/link.c
+-+++ b/phone/wifi/link.c
+-@@ -326,9 +326,19 @@ static void handle_data(const uint8_t *d, uint32_t n)
+- 		qrtr_cb(&hd, d + sizeof(hd), n - sizeof(hd) < hd.size ? n - sizeof(hd) : hd.size);
+- }
+- 
+-+static qrtr_transport_t qrtr_transport;
+-+
+-+void qrtr_set_transport(qrtr_transport_t fn)
+-+{
+-+	qrtr_transport = fn;
+-+}
+-+
+- int qrtr_send(uint32_t type, uint32_t src_port, uint32_t dst_node, uint32_t dst_port,
+- 	      const void *payload, uint32_t len)
+- {
+-+	/* 0010: the ADSP's edge has its own IPCRTR channel; pd-mapper/tftp use the same calls. */
+-+	if (qrtr_transport)
+-+		return qrtr_transport(type, src_port, dst_node, dst_port, payload, len);
+- 	/* Sweet: one buffer per call. link_send waits for a modem intent in link_poll, whose idle hook may send
+- 	 * again (cell_poll, rx handlers); with one static buffer the nested packet overwrote the waiting one and the
+- 	 * first request never reached the modem (CommCenter ATCS_TIMEOUT resets). */
+-diff --git a/phone/wifi/link.h b/phone/wifi/link.h
+-index 916c6ab..ad3ddee 100644
+---- a/phone/wifi/link.h
+-+++ b/phone/wifi/link.h
+-@@ -28,6 +28,10 @@ int link_poll(unsigned ms);		/* handle what arrived; for ms (0 = just once) */
+- int link_send(const void *data, uint32_t len);
+- int qrtr_send(uint32_t type, uint32_t src_port, uint32_t dst_node, uint32_t dst_port,
+- 	      const void *payload, uint32_t len);
+-+/* 0010: the ADSP edge (adspedge.c) takes QRTR over its own IPCRTR channel; NULL restores the modem's link_send. */
+-+typedef int (*qrtr_transport_t)(uint32_t type, uint32_t src_port, uint32_t dst_node, uint32_t dst_port,
+-+				const void *payload, uint32_t len);
+-+void qrtr_set_transport(qrtr_transport_t fn);
+- extern uint32_t link_remote_node;	/* 0007: where NEW_SERVER goes; set from the remote HELLO */
+- int qrtr_new_server(uint32_t service, uint32_t version, uint32_t instance, uint32_t port);
+- int qrtr_resume_tx(const struct qrtr_hdr *h);
+-diff --git a/phone/wifi/pmem.c b/phone/wifi/pmem.c
+-index cac1500..16b5a2a 100644
+---- a/phone/wifi/pmem.c
+-+++ b/phone/wifi/pmem.c
+-@@ -119,3 +119,8 @@ int pm_rpmh(const char *res, unsigned n, const uint32_t *off, const uint32_t *va
+- 	}
+- 	return ioctl(pm_fd, PMEM_RPMH, &r) < 0 ? errno : 0;
+- }
+-+
+-+int pm_smmu(struct pmem_smmu *q)
+-+{
+-+	return ioctl(pm_fd, PMEM_SMMU, q) < 0 ? -1 : 0;
+-+}
+-diff --git a/phone/wifi/pmem.h b/phone/wifi/pmem.h
+-index dfa92de..26efba3 100644
+---- a/phone/wifi/pmem.h
+-+++ b/phone/wifi/pmem.h
+-@@ -37,6 +37,20 @@ struct pmem_rpmh {
+- 	uint32_t value[4];
+- };
+- #define PMEM_RPMH	_IOW('P', 5, struct pmem_rpmh)
+-+/* 0206: the apps-SMMU streams, from the kernel (a userland read of the SMMU stalls a CPU on sweet). */
+-+struct pmem_smmu {
+-+	uint32_t op;		/* 1 identity, 2 translate, 3 status */
+-+	uint32_t nsid;
+-+	uint16_t sid[8];
+-+	uint32_t mask;		/* op 1: SMR mask */
+-+	int32_t cb;		/* out */
+-+	uint64_t iova, alias, pa, len;	/* op 2 */
+-+	uint32_t fsr, fsynr0;	/* op 3 out */
+-+	uint64_t far;
+-+	int32_t slot[8];	/* out: SMR per SID */
+-+};
+-+#define PMEM_SMMU	_IOWR('P', 7, struct pmem_smmu)
+-+int pm_smmu(struct pmem_smmu *q);	/* 0 = ok */
+- 
+- void pm_init(void);			/* exits if /dev/pmem is missing */
+- uint32_t rd32(uint64_t pa);
+-diff --git a/phone/wifi/wland.c b/phone/wifi/wland.c
+-index 6b1f917..7edddf6 100644
+---- a/phone/wifi/wland.c
+-+++ b/phone/wifi/wland.c
+-@@ -39,6 +39,9 @@
+- #include "ipnet.h"
+- #include "bridge.h"
+- #include "cell.h"
+-+#include "adspedge.h"
+-+#include "adsp_smmu.h"
+-+#include "fastrpc.h"
+- 
+- /* cmd-db aux levels (as in the GPU's arc votes) */
+- /* Every cmd-db entry: name, RPMh slave (3 ARC, 4 VRM, 5 BCM), address. */
+-@@ -696,6 +699,66 @@ static void adsp_crash_reason(void)
+- 	printf("adsp: SMEM 423: %s\n", s);
+- }
+- 
+-+static uint64_t adsp_rpc_pa, adsp_rpc_dsp;	/* 0010: the FastRPC DMA buffer and the DSP's view of it */
+-+static int adsp_smmu_done;
+-+
+-+/* 0010: QRTR on the ADSP's IPCRTR channel: its HELLO, the pd-mapper lookup, and DATA to our ports. */
+-+static int adsp_pdmap_announced;
+-+static void adsp_qrtr(const struct qrtr_hdr *h, const uint8_t *d, uint32_t n)
+-+{
+-+	uint32_t w[5] = { 0 };
+-+	memcpy(w, d, n < sizeof(w) ? n : sizeof(w));
+-+	if (h->type == QRTR_TYPE_DATA) {
+-+		if (h->confirm_rx)
+-+			qrtr_resume_tx(h);
+-+		if (h->dst_port == PDMAPPER_PORT) {
+-+			pdmapper_handle(h, d, n);
+-+			return;
+-+		}
+-+		if (h->dst_port == TFTP_PORT || (h->dst_port >= TFTP_XFER_PORT0 && h->dst_port < TFTP_XFER_PORT0 + TFTP_XFERS)) {
+-+			tftp_handle(h, d, n);
+-+			return;
+-+		}
+-+		printf("adsp: qrtr DATA %u:%x -> %u:%x, %u bytes\n", h->src_node, h->src_port, h->dst_node, h->dst_port, n);
+-+		return;
+-+	}
+-+	printf("adsp: qrtr ctrl type %u (cmd %u) from %u:%x\n", h->type, w[0], h->src_node, h->src_port);
+-+	if (w[0] == QRTR_TYPE_HELLO) {
+-+		uint32_t hello[5] = { QRTR_TYPE_HELLO };
+-+		link_remote_node = h->src_node;
+-+		qrtr_send(QRTR_TYPE_HELLO, QRTR_PORT_CTRL, h->src_node, QRTR_PORT_CTRL, hello, sizeof(hello));
+-+		if (!adsp_pdmap_announced) {
+-+			adsp_pdmap_announced = 1;
+-+			pdmapper_init();
+-+		}
+-+	} else if (w[0] == QRTR_TYPE_NEW_LOOKUP) {
+-+		uint32_t end[5] = { QRTR_TYPE_NEW_SERVER };
+-+		if (w[1] == PDMAPPER_SERVICE) {
+-+			uint32_t k[5] = { QRTR_TYPE_NEW_SERVER, PDMAPPER_SERVICE, 1u | 1u << 8, QRTR_NODE_APPS, PDMAPPER_PORT };
+-+			printf("adsp: pd-mapper lookup for %#x answered\n", w[1]);
+-+			qrtr_send(QRTR_TYPE_NEW_SERVER, QRTR_PORT_CTRL, h->src_node, h->src_port, k, sizeof(k));
+-+		}
+-+		qrtr_send(QRTR_TYPE_NEW_SERVER, QRTR_PORT_CTRL, h->src_node, h->src_port, end, sizeof(end));	/* end of lookup */
+-+	} else if (w[0] == QRTR_TYPE_NEW_SERVER) {
+-+		printf("adsp: qrtr server service %#x instance %#x at %u:%x\n", w[1], w[2], w[3], w[4]);
+-+	}
+-+}
+-+
+-+/* 0010: once fastrpcglink-apps-dsp is open both ways, attach and serve its files (fastrpc.c). */
+-+static int adsp_rpc_started;
+-+static void adsp_rpc_poll(void)
+-+{
+-+	if (adsp_rpc_started || !adsp_rpc_pa || !adspedge_rpc_up() || getenv("WLAND_NO_RPC"))
+-+		return;
+-+	adsp_rpc_started = 1;
+-+	printf("adsp: FastRPC channel up: attaching to the root and sensors PDs\n");
+-+	fastrpc_buffer(adsp_rpc_pa, adsp_rpc_dsp);
+-+	fastrpc_root(1);
+-+	fastrpc_sensors(1);
+-+	if (fastrpc_start(adspedge_rpc_send))
+-+		printf("adsp: FastRPC did not start\n");
+-+}
+-+
+- static int adsp_net(unsigned secs)
+- {
+- 	adsp_last = 0xffffffff;
+-@@ -735,22 +798,35 @@ static int adsp_net(unsigned secs)
+- 		return -1;
+- 	}
+- 	printf("adsp: GLINK rx fifo after %llu ms; opening the edge\n", (unsigned long long)(link_ms() - start));
+--	if (link_up(net_cb, 30000)) {
+--		printf("adsp: GLINK did not open in 30 s\n");
+-+	qrtr_set_transport(adspedge_qrtr_send);
+-+	adspedge_set_qrtr_cb(adsp_qrtr);
+-+	if (adspedge_open(30000))
+- 		return -1;
+-+	uint64_t t0 = link_ms();
+-+	while (link_ms() - t0 < 30000 && (!adspedge_ipcrtr_up() || !adspedge_rpc_up())) {
+-+		uint32_t v = 0;
+-+		adspedge_poll(10);
+-+		adsp_rpc_poll();
+-+		if (adsp_state(&v) == 0 && (v & 1) && !fatal_logged) {
+-+			printf("adsp: ERR-FATAL before the channels were up (slave-kernel %x)\n", v);
+-+			adsp_crash_reason();
+-+			fatal_logged = 1;
+-+		}
+- 	}
+--	printf("adsp: IPCRTR up; remote node %u\n", link_remote_node);
+--	if (pdmapper_init() || tftp_init())
+--		printf("adsp: no pd-mapper/tftp\n");
+-+	printf("adsp: channels after %llu ms: IPCRTR %d, FastRPC %d; remote node %u\n",
+-+	       (unsigned long long)(link_ms() - t0), adspedge_ipcrtr_up(), adspedge_rpc_up(), link_remote_node);
+-+	adspedge_status();
+- 	const uint64_t end = secs ? link_ms() + 1000ull * secs : 0;
+- 	for (uint64_t next = link_ms(); !end || link_ms() < end;) {
+--		link_poll(100);
+-+		adspedge_poll(100);
+-+		adsp_rpc_poll();
+- 		if (link_ms() >= next) {
+- 			adsp_idle();
+- 			uint64_t pa;
+- 			uint32_t sz;
+- 			printf("[%6llu] adsp: alive; SMEM 443 %s\n", (unsigned long long)link_ms(),
+- 			       smem_get(SMEM_HOST_ADSP, SMP2P_ADSP_IN, &pa, &sz) ? "absent" : "present");
+-+			adspedge_status();
+- 			next = link_ms() + 10000;
+- 		}
+- 		if (adsp_last != 0xffffffff && (adsp_last & 1)) {
+-@@ -766,6 +842,14 @@ static int adsp_net(unsigned secs)
+- static int boot_adsp(unsigned secs)
+- {
+- 	uint32_t v = 0;
+-+	/* 0010: the FastRPC DMA stream through the kernel's translating bank, before the ADSP gets any address. */
+-+	if (!adsp_smmu_done) {
+-+		adsp_smmu_done = 1;
+-+		if (adsp_smmu_setup(&adsp_rpc_pa, &adsp_rpc_dsp)) {
+-+			printf("adsp: no SMMU FastRPC stream; audio files cannot be served\n");
+-+			adsp_rpc_pa = 0;
+-+		}
+-+	}
+- 	if (adsp_state(&v) == 0 && (v & 2) && !(v & 1)) {
+- 		printf("adsp: already up (slave-kernel %x); serving the edge\n", v);
+- 		return adsp_net(secs);
+diff --git a/userspace/wifi/patches/0011-sweet-adsp-graceful-stop.patch b/userspace/wifi/patches/0011-sweet-adsp-graceful-stop.patch
+deleted file mode 100644
+index d428b28..0000000
+--- a/userspace/wifi/patches/0011-sweet-adsp-graceful-stop.patch
++++ /dev/null
+@@ -1,141 +0,0 @@
+-diff --git a/phone/wifi/adspedge.c b/phone/wifi/adspedge.c
+-index d1788ef..918f0f0 100644
+---- a/phone/wifi/adspedge.c
+-+++ b/phone/wifi/adspedge.c
+-@@ -408,6 +408,31 @@ void adspedge_rpc_send(const void *pkt, size_t n)
+- 	chan_send(rpc_chan, pkt, n);
+- }
+- 
+-+void adspedge_close(void)
+-+{
+-+	static int closed;
+-+	if (closed)
+-+		return;
+-+	closed = 1;
+-+	int n = 0;
+-+	for (int i = 0; i < nch; i++) {
+-+		if (!ch[i].up)
+-+			continue;
+-+		send_cmd(GLINK_CMD_CLOSE, ch[i].lcid, 0, NULL, 0);
+-+		ch[i].up = 0;
+-+		n++;
+-+	}
+-+	if (n) {
+-+		uint64_t end = link_ms() + 200;
+-+		while (link_ms() < end) {
+-+			while (pump_one() > 0)
+-+				;
+-+			usleep(1000);
+-+		}
+-+		printf("adsp: closed %d channels\n", n);
+-+	}
+-+}
+-+
+- void adspedge_status(void)
+- {
+- 	printf("adsp: edge %d channels:", nch);
+-diff --git a/phone/wifi/adspedge.h b/phone/wifi/adspedge.h
+-index 9873fd2..5aaa6ef 100644
+---- a/phone/wifi/adspedge.h
+-+++ b/phone/wifi/adspedge.h
+-@@ -26,6 +26,9 @@ int adspedge_qrtr_send(uint32_t type, uint32_t src_port, uint32_t dst_node, uint
+- /* fastrpc.c's send callback: one smq packet on fastrpcglink-apps-dsp. */
+- void adspedge_rpc_send(const void *pkt, size_t n);
+- 
+-+/* Close every open channel (0011: on exit, so a later run on the same boot starts clean). */
+-+void adspedge_close(void);
+-+
+- /* One line for the log: channels, intents. */
+- void adspedge_status(void);
+- 
+-diff --git a/phone/wifi/wland.c b/phone/wifi/wland.c
+-index 7edddf6..b6ae40c 100644
+---- a/phone/wifi/wland.c
+-+++ b/phone/wifi/wland.c
+-@@ -607,6 +607,8 @@ static int ipa_fw_load(void)
+- #define SMP2P_ADSP_IN	443
+- #define IPC_ADSP_SMP2P	26
+- 
+-+static uint64_t adsp_out_pa;
+-+
+- static int adsp_smp2p_create(void)
+- {
+- 	uint64_t pa;
+-@@ -635,6 +637,8 @@ static int adsp_smp2p_create(void)
+- 		__asm__ volatile("dsb sy" ::: "memory");
+- 		wr32(pa + 12, 16 | (2u << 16));
+- 	}
+-+	wr32(pa + 36, rd32(pa + 36) & ~1u);	/* 0011: no stale stop request for the new boot */
+-+	adsp_out_pa = pa;
+- 	__asm__ volatile("dsb sy" ::: "memory");
+- 	kick(IPC_ADSP_SMP2P);
+- 	printf("adsp: SMP2P out item %u at %llx: %u entries, \"master-kernel\" %x, \"sleepstate\" %x\n", SMP2P_ADSP_OUT,
+-@@ -680,6 +684,35 @@ static void adsp_idle(void)
+- 	}
+- }
+- 
+-+/* 0011: a graceful ADSP stop: master-kernel bit 0 is the stop request, slave-kernel bit 3 the stop-ack. */
+-+static int adsp_shutdown(void)
+-+{
+-+	uint64_t pa;
+-+	uint32_t sz, v = 0;
+-+	if (!adsp_out_pa && !smem_get(SMEM_HOST_ADSP, SMP2P_ADSP_OUT, &pa, &sz))
+-+		adsp_out_pa = pa;
+-+	if (adsp_out_pa) {
+-+		wr32(adsp_out_pa + 36, rd32(adsp_out_pa + 36) | 1u);
+-+		__asm__ volatile("dsb sy" ::: "memory");
+-+		kick(IPC_ADSP_SMP2P);
+-+		unsigned i;
+-+		for (i = 0; i < 2000; i++) {
+-+			if (adsp_state(&v) == 0 && (v & 8))
+-+				break;
+-+			usleep(1000);
+-+		}
+-+		printf("adsp: stop request -> %s after %u ms (slave-kernel %x)\n", (v & 8) ? "acked" : "no ack", i, v);
+-+	}
+-+	uint64_t r1 = 0;
+-+	int64_t rc = scm(6, 1, PAS_ADSP, 0, 0, &r1);	/* PAS_SHUTDOWN */
+-+	if (adsp_out_pa) {
+-+		wr32(adsp_out_pa + 36, rd32(adsp_out_pa + 36) & ~1u);
+-+		__asm__ volatile("dsb sy" ::: "memory");
+-+	}
+-+	printf("adsp shutdown -> %lld/%llx\n", (long long)rc, (unsigned long long)r1);
+-+	return rc ? 1 : 0;
+-+}
+-+
+- /* 0009: the LPASS crash reason (SMEM item 423) as text, so a fatal explains itself in the same log. */
+- static void adsp_crash_reason(void)
+- {
+-@@ -802,6 +835,7 @@ static int adsp_net(unsigned secs)
+- 	adspedge_set_qrtr_cb(adsp_qrtr);
+- 	if (adspedge_open(30000))
+- 		return -1;
+-+	atexit(adspedge_close);
+- 	uint64_t t0 = link_ms();
+- 	while (link_ms() - t0 < 30000 && (!adspedge_ipcrtr_up() || !adspedge_rpc_up())) {
+- 		uint32_t v = 0;
+-@@ -850,7 +884,11 @@ static int boot_adsp(unsigned secs)
+- 			adsp_rpc_pa = 0;
+- 		}
+- 	}
+--	if (adsp_state(&v) == 0 && (v & 2) && !(v & 1)) {
+-+	if (adsp_state(&v) == 0 && (v & 2) && !(v & 1) && getenv("WLAND_ADSP_FRESH")) {
+-+		printf("adsp: up (slave-kernel %x): stopping it for a fresh edge\n", v);
+-+		adsp_shutdown();
+-+		usleep(200000);
+-+	} else if (adsp_state(&v) == 0 && (v & 2) && !(v & 1)) {
+- 		printf("adsp: already up (slave-kernel %x); serving the edge\n", v);
+- 		return adsp_net(secs);
+- 	}
+-@@ -1295,10 +1333,7 @@ int main(int argc, char **argv)
+- 		/* 0009: optional seconds to watch (0 = until it fails or is killed) */
+- 		return boot_adsp(argc > 2 ? (unsigned)strtoul(argv[2], NULL, 0) : 0) ? 1 : 0;
+- 	} else if (!strcmp(c, "adsp-shutdown")) {
+--		uint64_t r1 = 0;
+--		int64_t rc = scm(6, 1, PAS_ADSP, 0, 0, &r1);	/* PAS_SHUTDOWN */
+--		printf("adsp shutdown -> %lld/%llx\n", (long long)rc, (unsigned long long)r1);
+--		return rc ? 1 : 0;
+-+		return adsp_shutdown();
+- 	} else if (!strcmp(c, "smp2p-init")) {
+- 		return smp2p_init() ? 1 : 0;
+- 	} else if (!strcmp(c, "shutdown")) {
+diff --git a/userspace/wifi/patches/0012-sweet-adsp-apr.patch b/userspace/wifi/patches/0012-sweet-adsp-apr.patch
+deleted file mode 100644
+index 7f89883..0000000
+--- a/userspace/wifi/patches/0012-sweet-adsp-apr.patch
++++ /dev/null
+@@ -1,618 +0,0 @@
+-diff --git a/phone/wifi/adspedge.c b/phone/wifi/adspedge.c
+-index 918f0f0..b2344e6 100644
+---- a/phone/wifi/adspedge.c
+-+++ b/phone/wifi/adspedge.c
+-@@ -44,8 +44,9 @@ struct chan {
+- static struct chan ch[NCHAN];
+- static int nch;
+- static uint32_t our_iid = 100;
+--static struct chan *ipcrtr, *rpc_chan;
+-+static struct chan *ipcrtr, *rpc_chan, *apr_chan;
+- static adsp_qrtr_cb_t qrtr_cb;
+-+static adsp_apr_cb_t apr_cb;
+- 
+- static struct chan *by_rcid(uint16_t rcid)
+- {
+-@@ -207,6 +208,8 @@ static int pump_one(void)
+- 				ipcrtr = c;
+- 			else if (!strcmp(c->name, "fastrpcglink-apps-dsp"))
+- 				rpc_chan = c;
+-+			else if (!strcmp(c->name, "apr_audio_svc"))
+-+				apr_chan = c;	/* 0012 */
+- 		}
+- 		break;
+- 	case GLINK_CMD_CLOSE:
+-@@ -282,6 +285,8 @@ static int pump_one(void)
+- 				qrtr_rx(c, c->rx, c->rx_have);
+- 			else if (c == rpc_chan)
+- 				fastrpc_rx(c->rx, c->rx_have);
+-+			else if (c == apr_chan && apr_cb)
+-+				apr_cb(c->rx, c->rx_have);
+- 			else if (c->nrx <= 2) {
+- 				printf("adsp: %s: %zu bytes:", c->name, c->rx_have);
+- 				for (size_t i = 0; i < c->rx_have && i < 32; i++)
+-@@ -353,6 +358,8 @@ int adspedge_open(unsigned timeout_ms)
+- 		usleep(250000);
+- 		glink_print_state("edge in the delay");
+- 	}
+-+	glink_resync();
+-+	glink_print_state("edge after resync");
+- 	if (send_cmd(GLINK_CMD_VERSION, 1, FEAT_REUSE, NULL, 0))
+- 		return -1;
+- 	printf("adsp: glink edge open after %llu ms (%u ms settle), VERSION sent\n",
+-@@ -408,6 +415,21 @@ void adspedge_rpc_send(const void *pkt, size_t n)
+- 	chan_send(rpc_chan, pkt, n);
+- }
+- 
+-+void adspedge_set_apr_cb(adsp_apr_cb_t cb)
+-+{
+-+	apr_cb = cb;
+-+}
+-+
+-+int adspedge_apr_up(void)
+-+{
+-+	return apr_chan && apr_chan->up;
+-+}
+-+
+-+int adspedge_apr_send(const void *pkt, size_t n)
+-+{
+-+	return chan_send(apr_chan, pkt, n);
+-+}
+-+
+- void adspedge_close(void)
+- {
+- 	static int closed;
+-diff --git a/phone/wifi/adspedge.h b/phone/wifi/adspedge.h
+-index 5aaa6ef..c274d41 100644
+---- a/phone/wifi/adspedge.h
+-+++ b/phone/wifi/adspedge.h
+-@@ -26,6 +26,12 @@ int adspedge_qrtr_send(uint32_t type, uint32_t src_port, uint32_t dst_node, uint
+- /* fastrpc.c's send callback: one smq packet on fastrpcglink-apps-dsp. */
+- void adspedge_rpc_send(const void *pkt, size_t n);
+- 
+-+/* 0012: APR on apr_audio_svc (the audio PD's control channel). */
+-+typedef void (*adsp_apr_cb_t)(const uint8_t *pkt, size_t n);
+-+void adspedge_set_apr_cb(adsp_apr_cb_t cb);
+-+int adspedge_apr_up(void);
+-+int adspedge_apr_send(const void *pkt, size_t n);
+-+
+- /* Close every open channel (0011: on exit, so a later run on the same boot starts clean). */
+- void adspedge_close(void);
+- 
+-diff --git a/phone/wifi/glink.c b/phone/wifi/glink.c
+-index 101f0e8..9cf915b 100644
+---- a/phone/wifi/glink.c
+-+++ b/phone/wifi/glink.c
+-@@ -37,6 +37,20 @@ void glink_print_state(const char *tag)
+- 	       rd32(TX_TAIL), rd32(TX_HEAD), rd32(RX_TAIL), rd32(RX_HEAD));
+- }
+- 
+-+void glink_resync(void)
+-+{
+-+	uint32_t rh = rd32(RX_HEAD), rt = rd32(RX_TAIL);
+-+	uint32_t tt = rd32(TX_TAIL);
+-+	if (rh >= rx_len)
+-+		rh = 0;
+-+	if (rt >= rx_len || rh < rt)
+-+		wr32(RX_TAIL, rh);	/* a backwards head means the pool was re-initialized: drop the stale ring */
+-+	if (tt >= tx_len)
+-+		tt = 0;
+-+	wr32(TX_HEAD, tt);		/* nothing sent in this session yet: start where the peer's tail is */
+-+	__asm__ volatile("dsb sy" ::: "memory");
+-+}
+-+
+- int glink_init(void)
+- {
+- 	uint32_t sz;
+-diff --git a/phone/wifi/glink.h b/phone/wifi/glink.h
+-index c4fac56..62dd32e 100644
+---- a/phone/wifi/glink.h
+-+++ b/phone/wifi/glink.h
+-@@ -26,6 +26,8 @@ int glink_init(void);
+- void glink_preserve(int on);
+- /* 0010: the four descriptor words, for the ADSP edge's handshake log. */
+- void glink_print_state(const char *tag);
+-+/* 0012: after a peer restart, drop stale data: rx tail follows a backwards head; tx restarts at the peer's tail. */
+-+void glink_resync(void);
+- /* 0009: 1 once the remote has allocated its rx fifo (the peer's GLINK transport is up). Read-only. */
+- int glink_remote_ready(void);
+- /* Queue one command (8-byte header + data, padded to 8) and ring the modem. */
+-diff --git a/phone/wifi/sweet_apr.c b/phone/wifi/sweet_apr.c
+-new file mode 100644
+-index 0000000..5985764
+---- /dev/null
+-+++ b/phone/wifi/sweet_apr.c
+-@@ -0,0 +1,265 @@
+-+/* SPDX-License-Identifier: MIT */
+-+/* APR packet building/parsing and the CS voice sequence for the sweet ADSP. See sweet_apr.h. */
+-+#include "sweet_apr.h"
+-+#include <string.h>
+-+
+-+static void put16(uint8_t *p, uint16_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); }
+-+static void put32(uint8_t *p, uint32_t v) { put16(p, (uint16_t)v); put16(p + 2, (uint16_t)(v >> 16)); }
+-+static uint16_t get16(const uint8_t *p) { return (uint16_t)(p[0] | (p[1] << 8)); }
+-+static uint32_t get32(const uint8_t *p) { return (uint32_t)get16(p) | ((uint32_t)get16(p + 2) << 16); }
+-+
+-+size_t sweet_apr_pack(uint8_t *out, size_t cap, uint8_t type, uint8_t dest_svc, uint16_t src_port, uint16_t dest_port,
+-+                      uint32_t token, uint32_t opcode, const uint8_t *payload, uint16_t payload_len)
+-+{
+-+    const size_t n = APR_HDR_SIZE + payload_len;
+-+    if (!out || n > cap || n > 0xffff) return 0;
+-+    put16(out + 0, APR_HDR_FIELD(type));
+-+    put16(out + 2, (uint16_t)n);
+-+    out[4] = dest_svc;           /* src_svc: Linux apr_send_pkt uses the destination service id for both */
+-+    out[5] = APR_DOMAIN_APPS;
+-+    put16(out + 6, src_port);
+-+    out[8] = dest_svc;
+-+    out[9] = APR_DOMAIN_ADSP;
+-+    put16(out + 10, dest_port);
+-+    put32(out + 12, token);
+-+    put32(out + 16, opcode);
+-+    if (payload_len) memcpy(out + APR_HDR_SIZE, payload, payload_len);
+-+    return n;
+-+}
+-+
+-+int sweet_apr_parse(const uint8_t *in, size_t n, struct sweet_apr_msg *m)
+-+{
+-+    if (!in || !m || n < APR_HDR_SIZE) return -1;
+-+    m->hdr_field = get16(in);
+-+    m->pkt_size = get16(in + 2);
+-+    const uint32_t hlen = ((m->hdr_field >> 4) & 0xfu) * 4u;
+-+    if (hlen < APR_HDR_SIZE || m->pkt_size < hlen || m->pkt_size > n) return -1;
+-+    m->src_svc = in[4];
+-+    m->src_domain = in[5];
+-+    m->src_port = get16(in + 6);
+-+    m->dest_svc = in[8];
+-+    m->dest_domain = in[9];
+-+    m->dest_port = get16(in + 10);
+-+    m->token = get32(in + 12);
+-+    m->opcode = get32(in + 16);
+-+    m->payload = in + hlen;
+-+    m->payload_len = m->pkt_size - hlen;
+-+    return 0;
+-+}
+-+
+-+int sweet_apr_basic_result(const struct sweet_apr_msg *m, uint32_t *opcode, uint32_t *status)
+-+{
+-+    if (!m || m->opcode != APR_BASIC_RSP_RESULT || m->payload_len < 8) return -1;
+-+    if (opcode) *opcode = get32(m->payload);
+-+    if (status) *status = get32(m->payload + 4);
+-+    return 0;
+-+}
+-+
+-+size_t sweet_apr_avcs_get_state(uint8_t *out, size_t cap, uint16_t src_port, uint32_t token)
+-+{
+-+    return sweet_apr_pack(out, cap, APR_MSG_TYPE_SEQ_CMD, APR_SVC_ADSP_CORE, src_port, 0, token,
+-+                          AVCS_CMD_ADSP_EVENT_GET_STATE, NULL, 0);
+-+}
+-+
+-+/* struct afe_port_cmd_device_start/stop: u16 port_id, u16 reserved */
+-+size_t sweet_apr_afe_port(uint8_t *out, size_t cap, uint16_t src_port, uint32_t token, int start, uint16_t port_id)
+-+{
+-+    uint8_t p[4] = { 0 };
+-+    put16(p, port_id);
+-+    return sweet_apr_pack(out, cap, APR_MSG_TYPE_SEQ_CMD, APR_SVC_AFE, src_port, 0, token,
+-+                          start ? AFE_PORT_CMD_DEVICE_START : AFE_PORT_CMD_DEVICE_STOP, p, sizeof p);
+-+}
+-+
+-+/*
+-+ * AFE_PORT_CMD_SET_PARAM_V2, in band: u16 port_id, u16 payload_size, mem_mapping_hdr (3 x u32 = 0),
+-+ * then param_hdr_v1 (u32 module, u32 param, u16 size, u16 reserved) + struct afe_param_id_i2s_cfg
+-+ * (u32 minor 1, u16 bit_width, u16 channel_mode, u16 mono_stereo, u16 ws_src 1, u32 rate, u16 format 0, u16 0).
+-+ */
+-+size_t sweet_apr_afe_i2s_config(uint8_t *out, size_t cap, uint16_t src_port, uint32_t token, uint16_t port_id,
+-+                                uint32_t sample_rate, uint16_t bit_width, uint16_t sd_lines, uint16_t stereo)
+-+{
+-+    uint8_t p[4 + 12 + 12 + 20] = { 0 };
+-+    uint8_t *ph = p + 16, *cfg = p + 28;
+-+    put16(p, port_id);
+-+    put16(p + 2, 12 + 20);
+-+    put32(ph, AFE_MODULE_AUDIO_DEV_INTERFACE);
+-+    put32(ph + 4, AFE_PARAM_ID_I2S_CONFIG);
+-+    put16(ph + 8, 20);
+-+    put32(cfg, 1);
+-+    put16(cfg + 4, bit_width);
+-+    put16(cfg + 6, sd_lines);
+-+    put16(cfg + 8, stereo);
+-+    put16(cfg + 10, 1);      /* AFE_PORT_CONFIG_I2S_WS_SRC_INTERNAL: the LPASS is the I2S master */
+-+    put32(cfg + 12, sample_rate);
+-+    return sweet_apr_pack(out, cap, APR_MSG_TYPE_SEQ_CMD, APR_SVC_AFE, src_port, 0, token, AFE_PORT_CMD_SET_PARAM_V2,
+-+                          p, sizeof p);
+-+}
+-+
+-+/*
+-+ * AFE_SVC_CMD_SET_PARAM (v1), in band: u32 payload_size, mem_mapping_hdr (12 bytes of 0), param_hdr_v1,
+-+ * struct afe_clk_set (u32 minor 1, u32 clk_id, u32 freq, u16 attri, u16 root 0, u32 enable).
+-+ */
+-+size_t sweet_apr_afe_clock(uint8_t *out, size_t cap, uint16_t src_port, uint32_t token, uint32_t clk_id,
+-+                           uint32_t freq_hz, int enable)
+-+{
+-+    uint8_t p[4 + 12 + 12 + 20] = { 0 };
+-+    uint8_t *ph = p + 16, *c = p + 28;
+-+    put32(p, 12 + 20);
+-+    put32(ph, AFE_MODULE_CLOCK_SET);
+-+    put32(ph + 4, AFE_PARAM_ID_CLOCK_SET);
+-+    put16(ph + 8, 20);
+-+    put32(c, 1);
+-+    put32(c + 4, clk_id);
+-+    put32(c + 8, freq_hz);
+-+    put16(c + 12, Q6AFE_LPASS_CLK_ATTRIBUTE_COUPLE_NO);
+-+    put32(c + 16, enable ? 1u : 0u);
+-+    return sweet_apr_pack(out, cap, APR_MSG_TYPE_SEQ_CMD, APR_SVC_AFE, src_port, 0, token, AFE_SVC_CMD_SET_PARAM,
+-+                          p, sizeof p);
+-+}
+-+
+-+/* ---- the CS voice sequence ---- */
+-+
+-+void sweet_voice_init(struct sweet_voice *v, uint16_t src_port, uint16_t tx_port, uint16_t rx_port)
+-+{
+-+    memset(v, 0, sizeof *v);
+-+    v->step = SV_IDLE;
+-+    v->src_port = src_port;
+-+    v->tx_port = tx_port;
+-+    v->rx_port = rx_port;
+-+}
+-+
+-+void sweet_voice_start(struct sweet_voice *v)
+-+{
+-+    if (v->step != SV_IDLE && v->step != SV_STOPPED && v->step != SV_FAILED) return;
+-+    /* As voice_create_mvm_cvs_session: passive sessions are created once and reused by later calls. */
+-+    v->step = !v->mvm_handle ? SV_MVM_CREATE : !v->cvs_handle ? SV_CVS_CREATE : SV_DUAL_CONTROL;
+-+}
+-+
+-+void sweet_voice_stop(struct sweet_voice *v)
+-+{
+-+    if (v->step == SV_RUNNING || v->step == SV_START) v->step = SV_STOP;
+-+    else if (v->cvp_handle && v->step > SV_CVP_CREATE && v->step < SV_STOP) v->step = SV_CVP_DISABLE;
+-+    else if (v->step < SV_STOP) v->step = SV_STOPPED;
+-+}
+-+
+-+static size_t name_payload(uint8_t *name)
+-+{
+-+    memset(name, 0, SWEET_APR_SESSION_NAME_LEN);
+-+    memcpy(name, SWEET_APR_MODEM_VOICE_NAME, sizeof SWEET_APR_MODEM_VOICE_NAME);   /* 20 bytes with the NUL */
+-+    return SWEET_APR_SESSION_NAME_LEN;
+-+}
+-+
+-+size_t sweet_voice_next(struct sweet_voice *v, uint8_t *out, size_t cap)
+-+{
+-+    uint8_t p[64] = { 0 };
+-+    size_t n = 0;
+-+    uint8_t svc = APR_SVC_ADSP_MVM;
+-+    uint16_t dest = v->mvm_handle;
+-+    uint32_t op;
+-+    switch (v->step) {
+-+    case SV_MVM_CREATE:
+-+        op = VSS_IMVM_CMD_CREATE_PASSIVE_CONTROL_SESSION; n = name_payload(p); dest = 0; break;
+-+    case SV_CVS_CREATE:
+-+        op = VSS_ISTREAM_CMD_CREATE_PASSIVE_CONTROL_SESSION; n = name_payload(p); svc = APR_SVC_ADSP_CVS; dest = 0; break;
+-+    case SV_DUAL_CONTROL:
+-+        op = VSS_IMVM_CMD_SET_POLICY_DUAL_CONTROL; p[0] = 1; n = 1; break;   /* bool enable_flag */
+-+    case SV_CVP_CREATE: {
+-+        /* struct vss_ivocproc_cmd_create_full_control_session_v2_t: u16 direction, u16 tx_port, u32 tx_topology,
+-+         * u16 rx_port, u32 rx_topology, u32 profile, u32 vocproc_mode, u16 ec_ref_port, char name[20] */
+-+        op = VSS_IVOCPROC_CMD_CREATE_FULL_CONTROL_SESSION_V2; svc = APR_SVC_ADSP_CVP; dest = 0;
+-+        put16(p + 0, VSS_IVOCPROC_DIRECTION_RX_TX);
+-+        put16(p + 2, v->tx_port);
+-+        put32(p + 4, VSS_IVOCPROC_TOPOLOGY_ID_NONE);
+-+        put16(p + 8, v->rx_port);
+-+        put32(p + 10, VSS_IVOCPROC_TOPOLOGY_ID_NONE);
+-+        put32(p + 14, 0);
+-+        put32(p + 18, VSS_IVOCPROC_VOCPROC_MODE_EC_INT_MIXING);
+-+        put16(p + 22, VSS_IVOCPROC_PORT_ID_NONE);
+-+        name_payload(p + 24);
+-+        n = 24 + SWEET_APR_SESSION_NAME_LEN;
+-+        break;
+-+    }
+-+    case SV_TOPOLOGY_COMMIT: op = VSS_IVOCPROC_CMD_TOPOLOGY_COMMIT; svc = APR_SVC_ADSP_CVP; dest = v->cvp_handle; break;
+-+    case SV_CVP_ENABLE: op = VSS_IVOCPROC_CMD_ENABLE; svc = APR_SVC_ADSP_CVP; dest = v->cvp_handle; break;
+-+    case SV_ATTACH: op = VSS_IMVM_CMD_ATTACH_VOCPROC; put16(p, v->cvp_handle); n = 2; break;
+-+    case SV_TX_UNMUTE:
+-+        op = VSS_IVOLUME_CMD_MUTE_V2; svc = APR_SVC_ADSP_CVS; dest = v->cvs_handle;
+-+        put16(p, VSS_IVOLUME_DIRECTION_TX); put16(p + 2, 0); put16(p + 4, 0); n = 6; break;
+-+    case SV_START: op = VSS_IMVM_CMD_START_VOICE; break;
+-+    case SV_STOP: op = VSS_IMVM_CMD_STOP_VOICE; break;
+-+    case SV_DETACH: op = VSS_IMVM_CMD_DETACH_VOCPROC; put16(p, v->cvp_handle); n = 2; break;
+-+    case SV_CVP_DISABLE: op = VSS_IVOCPROC_CMD_DISABLE; svc = APR_SVC_ADSP_CVP; dest = v->cvp_handle; break;
+-+    case SV_CVP_DESTROY: op = APRV2_IBASIC_CMD_DESTROY_SESSION; svc = APR_SVC_ADSP_CVP; dest = v->cvp_handle; break;
+-+    default: return 0;
+-+    }
+-+    v->last_opcode = op;
+-+    return sweet_apr_pack(out, cap, APR_MSG_TYPE_SEQ_CMD, svc, v->src_port, dest, ++v->token, op, p, (uint16_t)n);
+-+}
+-+
+-+static enum sweet_voice_step after(enum sweet_voice_step s)
+-+{
+-+    switch (s) {
+-+    case SV_MVM_CREATE: return SV_CVS_CREATE;
+-+    case SV_CVS_CREATE: return SV_DUAL_CONTROL;
+-+    case SV_DUAL_CONTROL: return SV_CVP_CREATE;
+-+    case SV_CVP_CREATE: return SV_TOPOLOGY_COMMIT;
+-+    case SV_TOPOLOGY_COMMIT: return SV_CVP_ENABLE;
+-+    case SV_CVP_ENABLE: return SV_ATTACH;
+-+    case SV_ATTACH: return SV_TX_UNMUTE;
+-+    case SV_TX_UNMUTE: return SV_START;
+-+    case SV_START: return SV_RUNNING;
+-+    case SV_STOP: return SV_DETACH;
+-+    case SV_DETACH: return SV_CVP_DISABLE;
+-+    case SV_CVP_DISABLE: return SV_CVP_DESTROY;
+-+    case SV_CVP_DESTROY: return SV_STOPPED;
+-+    default: return s;
+-+    }
+-+}
+-+
+-+int sweet_voice_receive(struct sweet_voice *v, const uint8_t *in, size_t n)
+-+{
+-+    struct sweet_apr_msg m;
+-+    uint32_t op, status;
+-+    if (sweet_apr_parse(in, n, &m) || m.dest_port != v->src_port || sweet_apr_basic_result(&m, &op, &status)) return 0;
+-+    if (op != v->last_opcode || m.token != v->token) return 0;
+-+    v->last_status = status;
+-+    /* A newer CVD may not know TOPOLOGY_COMMIT for TOPOLOGY_ID_NONE; Linux only sends it for CVD >= 2.3. Skip it. */
+-+    if (status && v->step != SV_TOPOLOGY_COMMIT) {
+-+        v->step = SV_FAILED;
+-+        return -1;
+-+    }
+-+    if (v->step == SV_MVM_CREATE) v->mvm_handle = m.src_port;      /* handles arrive as the response's src_port */
+-+    else if (v->step == SV_CVS_CREATE) v->cvs_handle = m.src_port;
+-+    else if (v->step == SV_CVP_CREATE) v->cvp_handle = m.src_port;
+-+    else if (v->step == SV_CVP_DESTROY) v->cvp_handle = 0;
+-+    v->step = after(v->step);
+-+    return 1;
+-+}
+-+
+-+/* struct vss_ivolume_cmd_set_step_t: u16 direction, u32 value, u16 ramp_ms */
+-+size_t sweet_voice_rx_volume_step(const struct sweet_voice *v, uint8_t *out, size_t cap, uint32_t step)
+-+{
+-+    uint8_t p[8] = { 0 };
+-+    put16(p, VSS_IVOLUME_DIRECTION_RX);
+-+    put32(p + 2, step);
+-+    put16(p + 6, 20);
+-+    return sweet_apr_pack(out, cap, APR_MSG_TYPE_SEQ_CMD, APR_SVC_ADSP_CVS, v->src_port, v->cvs_handle, 0,
+-+                          VSS_IVOLUME_CMD_SET_STEP, p, sizeof p);
+-+}
+-+
+-+size_t sweet_voice_tx_mute(const struct sweet_voice *v, uint8_t *out, size_t cap, int mute)
+-+{
+-+    uint8_t p[6] = { 0 };
+-+    put16(p, VSS_IVOLUME_DIRECTION_TX);
+-+    put16(p + 2, mute ? 1 : 0);
+-+    return sweet_apr_pack(out, cap, APR_MSG_TYPE_SEQ_CMD, APR_SVC_ADSP_CVS, v->src_port, v->cvs_handle, 0,
+-+                          VSS_IVOLUME_CMD_MUTE_V2, p, sizeof p);
+-+}
+-+
+-+const char *sweet_voice_step_name(enum sweet_voice_step s)
+-+{
+-+    static const char *const names[] = { "idle", "mvm-create", "cvs-create", "dual-control", "cvp-create",
+-+        "topology-commit", "cvp-enable", "attach", "tx-unmute", "start", "running", "stop", "detach", "cvp-disable",
+-+        "cvp-destroy", "stopped", "failed" };
+-+    return (unsigned)s < sizeof names / sizeof names[0] ? names[s] : "?";
+-+}
+-diff --git a/phone/wifi/sweet_apr.h b/phone/wifi/sweet_apr.h
+-new file mode 100644
+-index 0000000..58a651f
+---- /dev/null
+-+++ b/phone/wifi/sweet_apr.h
+-@@ -0,0 +1,144 @@
+-+/* SPDX-License-Identifier: MIT */
+-+/*
+-+ * APR (Qualcomm Asynchronous Packet Router) packets for the sweet ADSP (SM7150 LPASS, Elite firmware):
+-+ * AVCS readiness, AFE port start/stop/config and the CVD voice sequence that connects the modem's
+-+ * CS voice ("default modem voice") to AFE ports. Pure byte building and parsing, no I/O: the
+-+ * caller (wland, which owns the ADSP GLINK edge) writes each packet to GLINK channel
+-+ * "apr_audio_svc" and feeds every received packet back.
+-+ *
+-+ * Opcodes and layouts follow the msm-4.14 techpack/audio headers (include/ipc/apr.h,
+-+ * include/dsp/apr_audio-v2.h, include/dsp/q6voice.h, dsp/q6voice.c voc_start_voice_call order).
+-+ * All fields are little-endian; packets are packed (no padding).
+-+ */
+-+#ifndef SWEET_APR_H
+-+#define SWEET_APR_H
+-+
+-+#include <stddef.h>
+-+#include <stdint.h>
+-+
+-+/* header (struct apr_hdr, 20 bytes) */
+-+#define APR_HDR_SIZE            20u
+-+#define APR_MSG_TYPE_EVENT      0u
+-+#define APR_MSG_TYPE_CMD_RSP    1u
+-+#define APR_MSG_TYPE_SEQ_CMD    2u
+-+#define APR_HDR_FIELD(type)     ((uint16_t)((((type) & 3u) << 8) | ((APR_HDR_SIZE / 4u) << 4)))
+-+
+-+#define APR_DOMAIN_MODEM        3u
+-+#define APR_DOMAIN_ADSP         4u
+-+#define APR_DOMAIN_APPS         5u
+-+
+-+#define APR_SVC_ADSP_CORE       0x03u
+-+#define APR_SVC_AFE             0x04u
+-+#define APR_SVC_ADSP_MVM        0x09u
+-+#define APR_SVC_ADSP_CVS        0x0Au
+-+#define APR_SVC_ADSP_CVP        0x0Bu
+-+
+-+#define APR_BASIC_RSP_RESULT    0x000110E8u
+-+
+-+/* core */
+-+#define AVCS_CMD_ADSP_EVENT_GET_STATE     0x0001290Cu
+-+#define AVCS_CMDRSP_ADSP_EVENT_GET_STATE  0x0001290Du
+-+
+-+/* AFE */
+-+#define AFE_PORT_CMD_DEVICE_START         0x000100E5u
+-+#define AFE_PORT_CMD_DEVICE_STOP          0x000100E6u
+-+#define AFE_PORT_CMD_SET_PARAM_V2         0x000100EFu
+-+#define AFE_SVC_CMD_SET_PARAM             0x000100F3u
+-+#define AFE_MODULE_AUDIO_DEV_INTERFACE    0x0001020Cu
+-+#define AFE_PARAM_ID_I2S_CONFIG           0x0001020Du
+-+#define AFE_MODULE_CLOCK_SET              0x0001028Fu
+-+#define AFE_PARAM_ID_CLOCK_SET            0x00010290u
+-+#define AFE_PORT_ID_PRIMARY_MI2S_RX       0x1000u
+-+#define AFE_PORT_ID_PRIMARY_MI2S_TX       0x1001u
+-+#define AFE_PORT_ID_RX_CODEC_DMA_RX_0     0xB030u
+-+#define AFE_PORT_ID_TX_CODEC_DMA_TX_3     0xB037u
+-+#define AFE_PORT_I2S_SD0                  1u
+-+#define AFE_PORT_I2S_SD1                  2u
+-+#define AFE_PORT_I2S_MONO                 0u
+-+#define AFE_PORT_I2S_STEREO               1u
+-+#define Q6AFE_LPASS_CLK_ID_PRI_MI2S_IBIT  0x100u
+-+#define Q6AFE_LPASS_CLK_ATTRIBUTE_COUPLE_NO 1u
+-+
+-+/* CVD (MVM / CVS / CVP) */
+-+#define VSS_IMVM_CMD_CREATE_PASSIVE_CONTROL_SESSION    0x000110FFu
+-+#define VSS_IMVM_CMD_SET_POLICY_DUAL_CONTROL           0x00011327u
+-+#define VSS_IMVM_CMD_ATTACH_VOCPROC                    0x0001123Eu
+-+#define VSS_IMVM_CMD_DETACH_VOCPROC                    0x0001123Fu
+-+#define VSS_IMVM_CMD_START_VOICE                       0x00011190u
+-+#define VSS_IMVM_CMD_STOP_VOICE                        0x00011192u
+-+#define VSS_ISTREAM_CMD_CREATE_PASSIVE_CONTROL_SESSION 0x00011140u
+-+#define VSS_IVOCPROC_CMD_CREATE_FULL_CONTROL_SESSION_V2 0x000112BFu
+-+#define VSS_IVOCPROC_CMD_TOPOLOGY_COMMIT               0x00013198u
+-+#define VSS_IVOCPROC_CMD_ENABLE                        0x000100C6u
+-+#define VSS_IVOCPROC_CMD_DISABLE                       0x000110E1u
+-+#define VSS_IVOLUME_CMD_MUTE_V2                        0x0001138Bu
+-+#define VSS_IVOLUME_CMD_SET_STEP                       0x000112C2u
+-+#define APRV2_IBASIC_CMD_DESTROY_SESSION               0x0001003Cu
+-+#define VSS_IVOCPROC_TOPOLOGY_ID_NONE                  0x00010F70u
+-+#define VSS_IVOCPROC_VOCPROC_MODE_EC_INT_MIXING        0x00010F7Cu
+-+#define VSS_IVOCPROC_PORT_ID_NONE                      0xFFFFu
+-+#define VSS_IVOCPROC_DIRECTION_RX_TX                   2u
+-+#define VSS_IVOLUME_DIRECTION_TX                       0u
+-+#define VSS_IVOLUME_DIRECTION_RX                       1u
+-+#define SWEET_APR_SESSION_NAME_LEN                     20u
+-+#define SWEET_APR_MODEM_VOICE_NAME                     "default modem voice"
+-+
+-+struct sweet_apr_msg {
+-+    uint16_t hdr_field, pkt_size;
+-+    uint8_t src_svc, src_domain, dest_svc, dest_domain;
+-+    uint16_t src_port, dest_port;
+-+    uint32_t token, opcode;
+-+    const uint8_t *payload;
+-+    uint32_t payload_len;
+-+};
+-+
+-+/* Generic packet: returns the packet length, or 0 if it does not fit in cap. */
+-+size_t sweet_apr_pack(uint8_t *out, size_t cap, uint8_t type, uint8_t dest_svc, uint16_t src_port, uint16_t dest_port,
+-+                      uint32_t token, uint32_t opcode, const uint8_t *payload, uint16_t payload_len);
+-+/* Parse a received packet; 0 on success, -1 if malformed (bad header length or size). */
+-+int sweet_apr_parse(const uint8_t *in, size_t n, struct sweet_apr_msg *m);
+-+/* For APR_BASIC_RSP_RESULT: the command opcode it answers and its status (0 = success). Returns -1 otherwise. */
+-+int sweet_apr_basic_result(const struct sweet_apr_msg *m, uint32_t *opcode, uint32_t *status);
+-+
+-+/* Individual commands (src_port = our client port, token echoed back by the DSP). */
+-+size_t sweet_apr_avcs_get_state(uint8_t *out, size_t cap, uint16_t src_port, uint32_t token);
+-+size_t sweet_apr_afe_port(uint8_t *out, size_t cap, uint16_t src_port, uint32_t token, int start, uint16_t port_id);
+-+size_t sweet_apr_afe_i2s_config(uint8_t *out, size_t cap, uint16_t src_port, uint32_t token, uint16_t port_id,
+-+                                uint32_t sample_rate, uint16_t bit_width, uint16_t sd_lines, uint16_t stereo);
+-+size_t sweet_apr_afe_clock(uint8_t *out, size_t cap, uint16_t src_port, uint32_t token, uint32_t clk_id,
+-+                           uint32_t freq_hz, int enable);
+-+
+-+/*
+-+ * CS voice: voc_start_voice_call for a modem session (passive MVM/CVS named "default modem voice",
+-+ * dual control, full CVP with both topologies NONE, enable, attach, unmute, start voice). The modem
+-+ * owns the vocoder; the ADSP mixes it into AFE rx_port and takes uplink from tx_port.
+-+ */
+-+enum sweet_voice_step {
+-+    SV_IDLE, SV_MVM_CREATE, SV_CVS_CREATE, SV_DUAL_CONTROL, SV_CVP_CREATE, SV_TOPOLOGY_COMMIT, SV_CVP_ENABLE,
+-+    SV_ATTACH, SV_TX_UNMUTE, SV_START, SV_RUNNING,
+-+    SV_STOP, SV_DETACH, SV_CVP_DISABLE, SV_CVP_DESTROY, SV_STOPPED,
+-+    SV_FAILED
+-+};
+-+struct sweet_voice {
+-+    enum sweet_voice_step step;
+-+    uint16_t src_port;              /* our APR client port for the voice session */
+-+    uint16_t tx_port, rx_port;      /* AFE ports, e.g. TX_CODEC_DMA_TX_3 and PRIMARY_MI2S_RX */
+-+    uint16_t mvm_handle, cvs_handle, cvp_handle;
+-+    uint32_t token;                 /* incremented per command */
+-+    uint32_t last_opcode, last_status;
+-+};
+-+void sweet_voice_init(struct sweet_voice *v, uint16_t src_port, uint16_t tx_port, uint16_t rx_port);
+-+/* Begin a call (from idle/stopped/failed); existing passive MVM/CVS handles are reused as in Linux. */
+-+void sweet_voice_start(struct sweet_voice *v);
+-+/* Next command to send for the current step (0 when nothing is to be sent: idle, running, done, failed). */
+-+size_t sweet_voice_next(struct sweet_voice *v, uint8_t *out, size_t cap);
+-+/* Feed a received packet. Returns 1 if it advanced the sequence, 0 if unrelated, -1 if the step failed. */
+-+int sweet_voice_receive(struct sweet_voice *v, const uint8_t *in, size_t n);
+-+/* Begin teardown from RUNNING (or any created state). */
+-+void sweet_voice_stop(struct sweet_voice *v);
+-+/* Volume step and mute while running (one-shot commands, not part of the sequence). */
+-+size_t sweet_voice_rx_volume_step(const struct sweet_voice *v, uint8_t *out, size_t cap, uint32_t step);
+-+size_t sweet_voice_tx_mute(const struct sweet_voice *v, uint8_t *out, size_t cap, int mute);
+-+const char *sweet_voice_step_name(enum sweet_voice_step s);
+-+
+-+#endif
+-diff --git a/phone/wifi/wland.c b/phone/wifi/wland.c
+-index b6ae40c..b9e98f6 100644
+---- a/phone/wifi/wland.c
+-+++ b/phone/wifi/wland.c
+-@@ -42,6 +42,7 @@
+- #include "adspedge.h"
+- #include "adsp_smmu.h"
+- #include "fastrpc.h"
+-+#include "sweet_apr.h"
+- 
+- /* cmd-db aux levels (as in the GPU's arc votes) */
+- /* Every cmd-db entry: name, RPMh slave (3 ARC, 4 VRM, 5 BCM), address. */
+-@@ -792,6 +793,41 @@ static void adsp_rpc_poll(void)
+- 		printf("adsp: FastRPC did not start\n");
+- }
+- 
+-+/* 0012: APR on apr_audio_svc: first checkpoint is AVCS_CMD_ADSP_EVENT_GET_STATE. */
+-+static int apr_sent;
+-+static void adsp_apr_rx(const uint8_t *p, size_t n)
+-+{
+-+	struct sweet_apr_msg m;
+-+	if (sweet_apr_parse(p, n, &m)) {
+-+		printf("apr: malformed packet, %zu bytes\n", n);
+-+		return;
+-+	}
+-+	printf("apr: opcode %#x token %u %u:%u -> %u:%u, %u bytes\n", m.opcode, m.token, m.src_domain, m.src_port,
+-+	       m.dest_domain, m.dest_port, m.payload_len);
+-+	if (m.opcode == AVCS_CMDRSP_ADSP_EVENT_GET_STATE) {
+-+		uint32_t st = 0;
+-+		if (m.payload_len >= 4)
+-+			memcpy(&st, m.payload, 4);
+-+		printf("apr: ADSP state %u (%s)\n", st, st == 1 ? "running" : "unexpected");
+-+	} else if (m.opcode == APR_BASIC_RSP_RESULT) {
+-+		uint32_t op, st;
+-+		if (!sweet_apr_basic_result(&m, &op, &st))
+-+			printf("apr: command %#x -> status %u\n", op, st);
+-+	}
+-+}
+-+
+-+static void adsp_apr_poll(void)
+-+{
+-+	if (apr_sent || !adspedge_apr_up())
+-+		return;
+-+	uint8_t b[64];
+-+	size_t n = sweet_apr_avcs_get_state(b, sizeof(b), 0x20, 1);
+-+	if (n && !adspedge_apr_send(b, n)) {
+-+		apr_sent = 1;
+-+		printf("apr: GET_STATE sent (%zu bytes)\n", n);
+-+	}
+-+}
+-+
+- static int adsp_net(unsigned secs)
+- {
+- 	adsp_last = 0xffffffff;
+-@@ -833,6 +869,7 @@ static int adsp_net(unsigned secs)
+- 	printf("adsp: GLINK rx fifo after %llu ms; opening the edge\n", (unsigned long long)(link_ms() - start));
+- 	qrtr_set_transport(adspedge_qrtr_send);
+- 	adspedge_set_qrtr_cb(adsp_qrtr);
+-+	adspedge_set_apr_cb(adsp_apr_rx);
+- 	if (adspedge_open(30000))
+- 		return -1;
+- 	atexit(adspedge_close);
+-@@ -841,6 +878,7 @@ static int adsp_net(unsigned secs)
+- 		uint32_t v = 0;
+- 		adspedge_poll(10);
+- 		adsp_rpc_poll();
+-+		adsp_apr_poll();
+- 		if (adsp_state(&v) == 0 && (v & 1) && !fatal_logged) {
+- 			printf("adsp: ERR-FATAL before the channels were up (slave-kernel %x)\n", v);
+- 			adsp_crash_reason();
+-@@ -854,6 +892,7 @@ static int adsp_net(unsigned secs)
+- 	for (uint64_t next = link_ms(); !end || link_ms() < end;) {
+- 		adspedge_poll(100);
+- 		adsp_rpc_poll();
+-+		adsp_apr_poll();
+- 		if (link_ms() >= next) {
+- 			adsp_idle();
+- 			uint64_t pa;
+diff --git a/userspace/wifi/patches/0013-sweet-adsp-afe.patch b/userspace/wifi/patches/0013-sweet-adsp-afe.patch
+deleted file mode 100644
+index ff8b26d..0000000
+--- a/userspace/wifi/patches/0013-sweet-adsp-afe.patch
++++ /dev/null
+@@ -1,251 +0,0 @@
+-diff --git a/phone/wifi/sweet_apr.c b/phone/wifi/sweet_apr.c
+-index 5985764..b59464a 100644
+---- a/phone/wifi/sweet_apr.c
+-+++ b/phone/wifi/sweet_apr.c
+-@@ -5,6 +5,14 @@
+- 
+- static void put16(uint8_t *p, uint16_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); }
+- static void put32(uint8_t *p, uint32_t v) { put16(p, (uint16_t)v); put16(p + 2, (uint16_t)(v >> 16)); }
+-+static void put_param_hdr_v3(uint8_t *p, uint32_t module, uint32_t param, uint32_t size)
+-+{
+-+    put32(p, module);
+-+    put16(p + 4, 0);         /* instance_id */
+-+    put16(p + 6, 0);         /* reserved */
+-+    put32(p + 8, param);
+-+    put32(p + 12, size);
+-+}
+- static uint16_t get16(const uint8_t *p) { return (uint16_t)(p[0] | (p[1] << 8)); }
+- static uint32_t get32(const uint8_t *p) { return (uint32_t)get16(p) | ((uint32_t)get16(p + 2) << 16); }
+- 
+-@@ -117,6 +125,45 @@ size_t sweet_apr_afe_clock(uint8_t *out, size_t cap, uint16_t src_port, uint32_t
+-                           p, sizeof p);
+- }
+- 
+-+/*
+-+ * The same two parameters with a param_hdr_v3 (module, instance_id 0, param, u32 size). Linux sends these
+-+ * (AFE_PORT_CMD_SET_PARAM_V3 / AFE_SVC_CMD_SET_PARAM_V2) when the ADSP supports instance IDs; the header
+-+ * is 4 bytes longer and the in-band payload_size counts only the packed header+data.
+-+ */
+-+size_t sweet_apr_afe_i2s_config_v3(uint8_t *out, size_t cap, uint16_t src_port, uint32_t token, uint16_t port_id,
+-+                                   uint32_t sample_rate, uint16_t bit_width, uint16_t sd_lines, uint16_t stereo)
+-+{
+-+    uint8_t p[4 + 12 + 16 + 20] = { 0 };
+-+    uint8_t *ph = p + 16, *cfg = p + 32;
+-+    put16(p, port_id);
+-+    put16(p + 2, 16 + 20);
+-+    put_param_hdr_v3(ph, AFE_MODULE_AUDIO_DEV_INTERFACE, AFE_PARAM_ID_I2S_CONFIG, 20);
+-+    put32(cfg, 1);
+-+    put16(cfg + 4, bit_width);
+-+    put16(cfg + 6, sd_lines);
+-+    put16(cfg + 8, stereo);
+-+    put16(cfg + 10, 1);
+-+    put32(cfg + 12, sample_rate);
+-+    return sweet_apr_pack(out, cap, APR_MSG_TYPE_SEQ_CMD, APR_SVC_AFE, src_port, 0, token, AFE_PORT_CMD_SET_PARAM_V3,
+-+                          p, sizeof p);
+-+}
+-+
+-+size_t sweet_apr_afe_clock_v2(uint8_t *out, size_t cap, uint16_t src_port, uint32_t token, uint32_t clk_id,
+-+                              uint32_t freq_hz, int enable)
+-+{
+-+    uint8_t p[4 + 12 + 16 + 20] = { 0 };
+-+    uint8_t *ph = p + 16, *c = p + 32;
+-+    put32(p, 16 + 20);
+-+    put_param_hdr_v3(ph, AFE_MODULE_CLOCK_SET, AFE_PARAM_ID_CLOCK_SET, 20);
+-+    put32(c, 1);
+-+    put32(c + 4, clk_id);
+-+    put32(c + 8, freq_hz);
+-+    put16(c + 12, Q6AFE_LPASS_CLK_ATTRIBUTE_COUPLE_NO);
+-+    put32(c + 16, enable ? 1u : 0u);
+-+    return sweet_apr_pack(out, cap, APR_MSG_TYPE_SEQ_CMD, APR_SVC_AFE, src_port, 0, token, AFE_SVC_CMD_SET_PARAM_V2,
+-+                          p, sizeof p);
+-+}
+-+
+- /* ---- the CS voice sequence ---- */
+- 
+- void sweet_voice_init(struct sweet_voice *v, uint16_t src_port, uint16_t tx_port, uint16_t rx_port)
+-diff --git a/phone/wifi/sweet_apr.h b/phone/wifi/sweet_apr.h
+-index 58a651f..6c78efd 100644
+---- a/phone/wifi/sweet_apr.h
+-+++ b/phone/wifi/sweet_apr.h
+-@@ -43,13 +43,17 @@
+- #define AFE_PORT_CMD_DEVICE_START         0x000100E5u
+- #define AFE_PORT_CMD_DEVICE_STOP          0x000100E6u
+- #define AFE_PORT_CMD_SET_PARAM_V2         0x000100EFu
+-+#define AFE_PORT_CMD_SET_PARAM_V3         0x000100FAu
+- #define AFE_SVC_CMD_SET_PARAM             0x000100F3u
+-+#define AFE_SVC_CMD_SET_PARAM_V2          0x000100FCu
+- #define AFE_MODULE_AUDIO_DEV_INTERFACE    0x0001020Cu
+- #define AFE_PARAM_ID_I2S_CONFIG           0x0001020Du
+- #define AFE_MODULE_CLOCK_SET              0x0001028Fu
+- #define AFE_PARAM_ID_CLOCK_SET            0x00010290u
+- #define AFE_PORT_ID_PRIMARY_MI2S_RX       0x1000u
+- #define AFE_PORT_ID_PRIMARY_MI2S_TX       0x1001u
+-+/* q6audio_get_port_index(AFE_PORT_ID_PRIMARY_MI2S_RX): the AFE service commands carry this as their APR token. */
+-+#define AFE_PORT_INDEX_PRIMARY_MI2S_RX    40u
+- #define AFE_PORT_ID_RX_CODEC_DMA_RX_0     0xB030u
+- #define AFE_PORT_ID_TX_CODEC_DMA_TX_3     0xB037u
+- #define AFE_PORT_I2S_SD0                  1u
+-@@ -107,6 +111,12 @@ size_t sweet_apr_afe_i2s_config(uint8_t *out, size_t cap, uint16_t src_port, uin
+-                                 uint32_t sample_rate, uint16_t bit_width, uint16_t sd_lines, uint16_t stereo);
+- size_t sweet_apr_afe_clock(uint8_t *out, size_t cap, uint16_t src_port, uint32_t token, uint32_t clk_id,
+-                            uint32_t freq_hz, int enable);
+-+/* The param_hdr_v3 forms, used when the ADSP reports instance-ID support (AFE_PORT_CMD_SET_PARAM_V3 /
+-+ * AFE_SVC_CMD_SET_PARAM_V2). Same fields, 4-byte larger header. */
+-+size_t sweet_apr_afe_i2s_config_v3(uint8_t *out, size_t cap, uint16_t src_port, uint32_t token, uint16_t port_id,
+-+                                   uint32_t sample_rate, uint16_t bit_width, uint16_t sd_lines, uint16_t stereo);
+-+size_t sweet_apr_afe_clock_v2(uint8_t *out, size_t cap, uint16_t src_port, uint32_t token, uint32_t clk_id,
+-+                              uint32_t freq_hz, int enable);
+- 
+- /*
+-  * CS voice: voc_start_voice_call for a modem session (passive MVM/CVS named "default modem voice",
+-diff --git a/phone/wifi/wland.c b/phone/wifi/wland.c
+-index b9e98f6..1b55f84 100644
+---- a/phone/wifi/wland.c
+-+++ b/phone/wifi/wland.c
+-@@ -793,6 +793,120 @@ static void adsp_rpc_poll(void)
+- 		printf("adsp: FastRPC did not start\n");
+- }
+- 
+-+/*
+-+ * 0013: AFE bring-up test (WLAND_AFE=1): PRI_MI2S_RX clock, I2S config and port start, the checkpoint of
+-+ * docs/audio-plan.md milestone 3 on the DSP side. The AFE service's APR token is the port *index* (40 for
+-+ * AFE_PORT_ID_PRIMARY_MI2S_RX), and Linux sends a param_hdr_v1 or v3 depending on the ADSP's instance-ID
+-+ * support; try v1 first (the harmless direction if the DSP expects v1) and fall back to v3.
+-+ */
+-+static int afe_on, afe_step = -1;
+-+static uint32_t afe_token = AFE_PORT_INDEX_PRIMARY_MI2S_RX;
+-+
+-+static void afe_send(void)
+-+{
+-+	uint8_t b[128];
+-+	size_t n = 0;
+-+	if (!afe_on || afe_step < 0 || !adspedge_apr_up())
+-+		return;
+-+	switch (afe_step) {
+-+	case 0:
+-+		n = sweet_apr_afe_clock(b, sizeof b, 0, afe_token, Q6AFE_LPASS_CLK_ID_PRI_MI2S_IBIT, 1536000, 1);
+-+		break;
+-+	case 1:
+-+		n = sweet_apr_afe_clock_v2(b, sizeof b, 0, afe_token, Q6AFE_LPASS_CLK_ID_PRI_MI2S_IBIT, 1536000, 1);
+-+		break;
+-+	case 2:
+-+		n = sweet_apr_afe_i2s_config(b, sizeof b, 0, afe_token, AFE_PORT_ID_PRIMARY_MI2S_RX, 48000, 16,
+-+					     AFE_PORT_I2S_SD0, AFE_PORT_I2S_STEREO);
+-+		break;
+-+	case 3:
+-+		n = sweet_apr_afe_i2s_config_v3(b, sizeof b, 0, afe_token, AFE_PORT_ID_PRIMARY_MI2S_RX, 48000, 16,
+-+						AFE_PORT_I2S_SD0, AFE_PORT_I2S_STEREO);
+-+		break;
+-+	case 4:
+-+		n = sweet_apr_afe_port(b, sizeof b, 0, afe_token, 1, AFE_PORT_ID_PRIMARY_MI2S_RX);
+-+		break;
+-+	default:
+-+		return;
+-+	}
+-+	if (!n) {
+-+		printf("afe: step %d: could not build the packet\n", afe_step);
+-+		return;
+-+	}
+-+	if (adspedge_apr_send(b, n)) {
+-+		printf("afe: step %d: send failed\n", afe_step);
+-+		return;
+-+	}
+-+	printf("afe: step %d: sent %zu bytes (token %u)\n", afe_step, n, afe_token);
+-+}
+-+
+-+static void afe_start(void)
+-+{
+-+	if (!afe_on || afe_step >= 0)
+-+		return;
+-+	printf("afe: starting PRI_MI2S bring-up (clock -> i2s config -> port start)\n");
+-+	afe_step = 0;
+-+	afe_send();
+-+}
+-+
+-+static void afe_result(uint32_t op, uint32_t st)
+-+{
+-+	if (!afe_on || afe_step < 0)
+-+		return;
+-+	switch (op) {
+-+	case AFE_SVC_CMD_SET_PARAM:		/* clock, param_hdr_v1 */
+-+		if (afe_step != 0)
+-+			break;
+-+		printf("afe: clock v1 -> status %u\n", st);
+-+		afe_step = st == 0 ? 2 : 1;
+-+		if (st)
+-+			printf("afe: v1 clock rejected; trying the v3 header\n");
+-+		afe_send();
+-+		break;
+-+	case AFE_SVC_CMD_SET_PARAM_V2:		/* clock, param_hdr_v3 */
+-+		if (afe_step != 1)
+-+			break;
+-+		printf("afe: clock v3 -> status %u\n", st);
+-+		afe_step = st == 0 ? 2 : -2;
+-+		if (st)
+-+			printf("afe: clock failed; stopping\n");
+-+		else
+-+			afe_send();
+-+		break;
+-+	case AFE_PORT_CMD_SET_PARAM_V2:		/* I2S config, param_hdr_v1 */
+-+		if (afe_step != 2)
+-+			break;
+-+		printf("afe: i2s config v1 -> status %u\n", st);
+-+		afe_step = st == 0 ? 4 : 3;
+-+		if (st)
+-+			printf("afe: v1 i2s config rejected; trying the v3 header\n");
+-+		afe_send();
+-+		break;
+-+	case AFE_PORT_CMD_SET_PARAM_V3:		/* I2S config, param_hdr_v3 */
+-+		if (afe_step != 3)
+-+			break;
+-+		printf("afe: i2s config v3 -> status %u\n", st);
+-+		afe_step = st == 0 ? 4 : -2;
+-+		if (st)
+-+			printf("afe: i2s config failed; stopping\n");
+-+		else
+-+			afe_send();
+-+		break;
+-+	case AFE_PORT_CMD_DEVICE_START:
+-+		if (afe_step != 4)
+-+			break;
+-+		printf("afe: PRI_MI2S_RX start -> status %u\n", st);
+-+		afe_step = st == 0 ? 5 : -2;
+-+		if (st == 0)
+-+			printf("afe: PRI_MI2S_RX is running (clock + port enabled)\n");
+-+		else
+-+			printf("afe: PRI_MI2S_RX start failed\n");
+-+		break;
+-+	default:
+-+		break;
+-+	}
+-+}
+-+
+- /* 0012: APR on apr_audio_svc: first checkpoint is AVCS_CMD_ADSP_EVENT_GET_STATE. */
+- static int apr_sent;
+- static void adsp_apr_rx(const uint8_t *p, size_t n)
+-@@ -809,10 +923,14 @@ static void adsp_apr_rx(const uint8_t *p, size_t n)
+- 		if (m.payload_len >= 4)
+- 			memcpy(&st, m.payload, 4);
+- 		printf("apr: ADSP state %u (%s)\n", st, st == 1 ? "running" : "unexpected");
+-+		if (st == 1)
+-+			afe_start();
+- 	} else if (m.opcode == APR_BASIC_RSP_RESULT) {
+- 		uint32_t op, st;
+--		if (!sweet_apr_basic_result(&m, &op, &st))
+-+		if (!sweet_apr_basic_result(&m, &op, &st)) {
+- 			printf("apr: command %#x -> status %u\n", op, st);
+-+			afe_result(op, st);
+-+		}
+- 	}
+- }
+- 
+-@@ -831,6 +949,9 @@ static void adsp_apr_poll(void)
+- static int adsp_net(unsigned secs)
+- {
+- 	adsp_last = 0xffffffff;
+-+	afe_on = getenv("WLAND_AFE") != NULL;
+-+	if (afe_on)
+-+		printf("adsp: AFE bring-up test enabled (WLAND_AFE)\n");
+- 	glink_edge(SMEM_HOST_ADSP, 24);
+- 	link_idle = adsp_idle;
+- 	/*
+diff --git a/userspace/wifi/patches/0014-sweet-adsp-pcm-test.patch b/userspace/wifi/patches/0014-sweet-adsp-pcm-test.patch
+deleted file mode 100644
+index 1914f54..0000000
+--- a/userspace/wifi/patches/0014-sweet-adsp-pcm-test.patch
++++ /dev/null
+@@ -1,267 +0,0 @@
+---- a/phone/wifi/wland.c
+-+++ b/phone/wifi/wland.c
+-@@ -43,6 +43,12 @@
+- #include "adsp_smmu.h"
+- #include "fastrpc.h"
+- #include "sweet_apr.h"
+-+#include "sweet_pcm.h"
+-+#include "sweet_pcm_levels.h"
+-+#include "sweet_aw2032.h"
+-+#include "sweet_amp_ctl.h"
+-+#include <fcntl.h>
+-+#include <sys/ioctl.h>
+- 
+- /* cmd-db aux levels (as in the GPU's arc votes) */
+- /* Every cmd-db entry: name, RPMh slave (3 ARC, 4 VRM, 5 BCM), address. */
+-@@ -907,10 +912,216 @@
+- 	}
+- }
+- 
+-+/* 0014: optional bounded silent ASM/ADM playback test; never touches amplifiers.
+-+ * DMA stays allocated until reboot: PMEM_SMMU has no mapping teardown.
+-+ * Both DSP handles and SMMU page tables must stop referencing a page before reuse. */
+-+/* 0214: bounded speaker tone. Only enabled explicitly and only with the kernel
+-+ * controller, which independently resets both PAs on missing heartbeat/close. */
+-+static int speaker_fd=-1,speaker_on,speaker_wanted,speaker_media,speaker_service,speaker_prepared,media_fd=-1;
+-+static uint64_t speaker_t0,speaker_last_signal;
+-+static unsigned speaker_tone_periods=100,speaker_tone_peak=1640;
+-+static void speaker_stop(void)
+-+{
+-+    if(media_fd>=0){close(media_fd);media_fd=-1;}
+-+    if(speaker_fd<0)return;
+-+    struct sweet_amp_status st;
+-+    if(ioctl(speaker_fd,SWEET_AMP_STATUS,&st)==0)
+-+        printf("speaker: status prepared=%u active=%u expired=%u bus=%u SYSST=%#x/%#x\n",st.prepared,st.active,st.expired,st.bus_dead,st.sysst[0],st.sysst[1]);
+-+    (void)ioctl(speaker_fd,SWEET_AMP_STOP,0);close(speaker_fd);speaker_fd=-1;speaker_on=speaker_prepared=0;
+-+    printf("speaker: controller closed; amps reset\n");
+-+}
+-+static int speaker_prepare(void)
+-+{
+-+    if(!speaker_wanted)return 0;
+-+    uint8_t blob[65536];
+-+    FILE *f=fopen("/var/local/fw/awinic/aw882xx_pid_2032_acf.bin","rb");
+-+    if(!f){printf("speaker: missing private vendor profile\n");return -1;}
+-+    size_t bytes=fread(blob,1,sizeof blob,f);int ok=!ferror(f) && feof(f);fclose(f);
+-+    struct sweet_aw_profile profiles[2];
+-+    if(!ok || sweet_aw_profile_select(blob,bytes,0,&profiles[0]) || sweet_aw_profile_select(blob,bytes,1,&profiles[1])){
+-+        printf("speaker: profile validation failed; amps untouched\n");return -1;
+-+    }
+-+    if(speaker_media){
+-+        media_fd=open("/dev/sweet-pcm",O_RDONLY|O_NONBLOCK|O_CLOEXEC);
+-+        if(media_fd<0){printf("speaker: PCM reader unavailable (%d)\n",errno);return -1;}
+-+    }
+-+    speaker_fd=open(SWEET_AMP_DEVICE,O_RDWR|O_CLOEXEC);
+-+    if(speaker_fd<0){printf("speaker: no kernel amp controller (%d)\n",errno);speaker_stop();return -1;}
+-+    atexit(speaker_stop);
+-+    for(unsigned c=0;c<2;c++){
+-+        struct sweet_amp_profile p;memset(&p,0,sizeof p);p.channel=c;p.count=(uint32_t)profiles[c].count;
+-+        memcpy(p.records,profiles[c].records,profiles[c].count*4);
+-+        /* Current kernel0214 preserves profile BCLK ratio. Normalize this copy
+-+         * to 32FS for our 48kHz/16-bit/stereo AFE (1.536MHz), retaining RX/map. */
+-+        for(unsigned k=0;k<p.count;k++){
+-+            uint8_t *v=p.records+4*k;
+-+            if(v[0]==6 && v[1]==0)v[2]&=(uint8_t)~0x30u;
+-+        }
+-+        if(ioctl(speaker_fd,SWEET_AMP_LOAD,&p)){printf("speaker: profile load refused (%d)\n",errno);speaker_stop();return -1;}
+-+    }
+-+    if(speaker_service){printf("speaker: service profiles loaded; amps remain off until app PCM\n");return 0;}
+-+    uint32_t mask=3;
+-+    if(ioctl(speaker_fd,SWEET_AMP_PREPARE,&mask)){printf("speaker: muted amp preparation failed (%d)\n",errno);speaker_stop();return -1;}
+-+    speaker_prepared=1;printf("speaker: both profiles prepared muted; waiting for PCM completions\n");return 0;
+-+}
+-+static int speaker_poll(const struct sweet_pcm *s)
+-+{
+-+    if(!speaker_wanted || speaker_fd<0)return 0;
+-+    if(ioctl(speaker_fd,SWEET_AMP_HEARTBEAT,0)){printf("speaker: heartbeat refused (%d)\n",errno);speaker_stop();return -1;}
+-+    if(s->failed || s->done || (s->sent==s->limit && !s->inflight)){
+-+        speaker_stop();return 0;
+-+    }
+-+    if(speaker_service)return 0;
+-+    if(!speaker_on && s->completed && s->sent<s->limit){
+-+        struct sweet_amp_start start={3,24*8};
+-+        if(ioctl(speaker_fd,SWEET_AMP_START,&start)){printf("speaker: clock/fault gate refused output (%d)\n",errno);speaker_stop();return -1;}
+-+        speaker_on=1;speaker_t0=link_ms();printf("speaker: bounded %s on both amps, digital attenuation24dB\n",speaker_media?"app PCM":"1kHz tone");
+-+    }
+-+    if(speaker_on && link_ms()-speaker_t0>=(speaker_media?30000u:(speaker_tone_periods*10u+1000u))){printf("speaker: independent playback test limit reached\n");speaker_stop();return -1;}
+-+    return 0;
+-+}
+-+
+-+/* Service mode keeps the existing DSP/DMA session. Idle stops/resets the PAs
+-+ * through the same kernel operation used by the validated tone teardown;
+-+ * profiles/reader remain owned, so new data can prepare them without remapping. */
+-+static int speaker_activity(const uint8_t *samples,size_t bytes)
+-+{
+-+    if(!speaker_service)return 0;
+-+    unsigned nonzero=0;for(size_t i=0;i<bytes;i++)nonzero|=samples[i];
+-+    if(nonzero){
+-+        speaker_last_signal=link_ms();
+-+        if(!speaker_prepared){
+-+            uint32_t mask=3;
+-+            if(ioctl(speaker_fd,SWEET_AMP_PREPARE,&mask))return -1;
+-+            speaker_prepared=1;
+-+        }
+-+        if(!speaker_on){
+-+            struct sweet_amp_start start={3,24*8};
+-+            if(ioctl(speaker_fd,SWEET_AMP_START,&start))return -1;
+-+            speaker_on=1;printf("speaker: app PCM active\n");
+-+        }
+-+    }else if(speaker_prepared && link_ms()-speaker_last_signal>=1000){
+-+        if(ioctl(speaker_fd,SWEET_AMP_STOP,0))return -1;
+-+        speaker_prepared=speaker_on=0;printf("speaker: idle; amps reset, DSP session retained\n");
+-+    }
+-+    return 0;
+-+}
+-+
+-+static struct sweet_pcm pcm_test;
+-+static int pcm_enabled, pcm_started, pcm_reported;
+-+static uint64_t pcm_pa,pcm_ready_at,pcm_last_poll,pcm_max_gap,pcm_gaps10,pcm_gaps40,pcm_underflows;
+-+static unsigned pcm_delay_ms;
+-+static uint64_t media_bytes,media_empty,media_nonzero;
+-+static uint64_t pcm_stats_at;
+-+static struct sweet_pcm_levels media_levels;
+-+static void adsp_pcm_poll(void)
+-+{
+-+    if(!pcm_enabled || !adspedge_apr_up() || afe_step!=5)return;
+-+    if(pcm_started && !pcm_test.done && pcm_test.sent){
+-+        uint64_t now=link_ms();
+-+        if(pcm_last_poll){uint64_t gap=now-pcm_last_poll;if(gap>pcm_max_gap)pcm_max_gap=gap;if(gap>10)++pcm_gaps10;if(gap>40)++pcm_gaps40;}
+-+        pcm_last_poll=now;
+-+    }
+-+    if(!pcm_started) {
+-+        if(!pcm_ready_at){pcm_ready_at=link_ms()+pcm_delay_ms;printf("pcm: AFE ready; setup delay %u ms\n",pcm_delay_ms);}
+-+        if(link_ms()<pcm_ready_at)return;
+-+        pcm_started=1;
+-+        pcm_pa=pm_alloc(SWEET_PCM_MAP_BYTES,4096);
+-+        if(!pcm_pa) {
+-+            printf("pcm: no coherent DMA allocation; not started\n");
+-+            pcm_enabled=0;return;
+-+        }
+-+        uint8_t zero[SWEET_PCM_STRIDE]={0};
+-+        if(speaker_prepare()){pm_free(pcm_pa);pcm_pa=0;pcm_enabled=0;return;}
+-+        if(speaker_wanted && !speaker_media){
+-+            static const int16_t sine[48]={0,214,424,628,820,998,1160,1301,1420,1515,1584,1626,1640,1626,1584,1515,1420,1301,1160,998,820,628,424,214,0,-214,-424,-628,-820,-998,-1160,-1301,-1420,-1515,-1584,-1626,-1640,-1626,-1584,-1515,-1420,-1301,-1160,-998,-820,-628,-424,-214};
+-+            for(unsigned f=0;f<SWEET_PCM_PERIOD/4;f++){uint16_t v=(uint16_t)(int16_t)((int32_t)sine[f%48]*(int32_t)speaker_tone_peak/1640);zero[f*4]=zero[f*4+2]=v;zero[f*4+1]=zero[f*4+3]=v>>8;}
+-+        }
+-+        for(unsigned i=0;i<SWEET_PCM_MAP_BYTES/SWEET_PCM_STRIDE;i++)if(pm_wr(pcm_pa+i*SWEET_PCM_STRIDE,zero,sizeof zero)) {
+-+            printf("pcm: initializing DMA failed; not started\n");speaker_stop();pm_free(pcm_pa);pcm_enabled=0;return;
+-+        }
+-+        struct pmem_smmu q;
+-+        memset(&q,0,sizeof q);q.op=2;q.nsid=1;q.sid[0]=0x1b21;
+-+        q.iova=0xa0000000ull;q.alias=1ull<<32;q.pa=pcm_pa;
+-+        q.len=SWEET_PCM_MAP_BYTES;
+-+        if(pm_smmu(&q)) {
+-+            printf("pcm: audio-ion SMMU mapping failed; buffer retained, no ASM commands\n");
+-+            speaker_stop();pcm_enabled=0;return;
+-+        }
+-+        sweet_pcm_init(&pcm_test,q.iova|q.alias);
+-+        if(sweet_pcm_set_limit(&pcm_test,speaker_service?SWEET_PCM_STREAM_LIMIT:speaker_media?3000:speaker_tone_periods)){speaker_stop();pcm_enabled=0;return;}
+-+        printf("pcm: bounded test starts: %u periods, 48 kHz stereo s16, PRI_MI2S; speaker=%d media=%d\n",pcm_test.limit,speaker_wanted,speaker_media);
+-+    }
+-+    sweet_pcm_poll(&pcm_test,link_ms());
+-+    if(speaker_poll(&pcm_test))sweet_pcm_abort(&pcm_test,0xfffffffcu);
+-+    for(unsigned i=0;i<SWEET_PCM_SLOTS;i++) {
+-+        uint8_t b[128];size_t n=sweet_pcm_next(&pcm_test,b,sizeof b,link_ms());
+-+        if(!n)break;
+-+        uint32_t op=(uint32_t)b[16]|(uint32_t)b[17]<<8|(uint32_t)b[18]<<16|(uint32_t)b[19]<<24;
+-+        if(op!=0x10dab)printf("pcm: command op=%#x step=%u\n",op,pcm_test.step); if(op==0x10326)printf("pcm: COPP topology=%#x\n",(uint32_t)b[28]|(uint32_t)b[29]<<8|(uint32_t)b[30]<<16|(uint32_t)b[31]<<24);
+-+        if(op==0x10dab && speaker_media){
+-+            uint32_t slot=(uint32_t)b[36]|(uint32_t)b[37]<<8|(uint32_t)b[38]<<16|(uint32_t)b[39]<<24;
+-+            uint8_t audio[SWEET_PCM_PERIOD]={0};
+-+            ssize_t got=(speaker_service && !pcm_test.completed)?0:read(media_fd,audio,sizeof audio);
+-+            if(got<0 && (errno==EAGAIN || errno==EWOULDBLOCK))got=0;
+-+            if(got<0 || (got&3) || slot>=SWEET_PCM_SLOTS || pm_wr(pcm_pa+(uint64_t)slot*SWEET_PCM_STRIDE,audio,sizeof audio)){
+-+                printf("pcm: media read/DMA refill failed; stopping\n");speaker_stop();sweet_pcm_abort(&pcm_test,0xfffffffbu);break;
+-+            }
+-+            if(speaker_activity(audio,sizeof audio)){
+-+                printf("speaker: service clock/profile gate failed; stopping\n");speaker_stop();sweet_pcm_abort(&pcm_test,0xfffffffau);break;
+-+            }
+-+            sweet_pcm_levels_add(&media_levels,audio,(size_t)got);
+-+            media_bytes+=(uint64_t)got;if(!got)++media_empty;
+-+            unsigned nz=0;for(ssize_t k=0;k<got;k++)nz|=audio[k];if(nz)++media_nonzero;
+-+        }
+-+        if(adspedge_apr_send(b,n)){sweet_pcm_abort(&pcm_test,0xfffffffdu);break;}
+-+    }
+-+    if(speaker_service && pcm_started && !pcm_test.done){
+-+        uint64_t now=link_ms();
+-+        if(!pcm_stats_at)pcm_stats_at=now;
+-+        if(now-pcm_stats_at>=5000){
+-+            printf("pcm: live elapsed_ms=%llu sent=%u completed=%u bytes=%llu empty=%llu nonzero=%llu peak=%u max_gap_ms=%llu over10ms=%llu over40ms=%llu underflows=%llu\n",
+-+                (unsigned long long)now,pcm_test.sent,pcm_test.completed,(unsigned long long)media_bytes,
+-+                (unsigned long long)media_empty,(unsigned long long)media_nonzero,media_levels.peak,
+-+                (unsigned long long)pcm_max_gap,(unsigned long long)pcm_gaps10,(unsigned long long)pcm_gaps40,(unsigned long long)pcm_underflows);
+-+            media_levels=(struct sweet_pcm_levels){0};pcm_stats_at=now;
+-+        }
+-+    }
+-+    if(pcm_test.done && !pcm_reported) {
+-+        pcm_reported=1;
+-+        printf("pcm: refill timing max_gap_ms=%llu over10ms=%llu over40ms=%llu underflows=%llu\n",(unsigned long long)pcm_max_gap,(unsigned long long)pcm_gaps10,(unsigned long long)pcm_gaps40,(unsigned long long)pcm_underflows);
+-+        if(speaker_media)printf("pcm: media bytes=%llu empty_periods=%llu nonzero_periods=%llu\n",(unsigned long long)media_bytes,(unsigned long long)media_empty,(unsigned long long)media_nonzero);
+-+        printf("pcm: done failed=%u status=%#x sent=%u completed=%u mapped=%u stream=%u copp=%u\n",
+-+            pcm_test.failed,pcm_test.status,pcm_test.sent,pcm_test.completed,
+-+            pcm_test.mapped,pcm_test.stream_open,pcm_test.copp_open);
+-+        struct pmem_smmu q;
+-+        memset(&q,0,sizeof q);q.op=3;q.nsid=1;q.sid[0]=0x1b21;
+-+        if(pm_smmu(&q))printf("pcm: audio-ion fault status unavailable\n");
+-+        else printf("pcm: audio-ion FSR=%#x faultbits=%#x FSYNR=%#x\n",q.fsr,q.fsr&0xc00001feu,q.fsynr0);
+-+        /* PMEM_SMMU has no mapping teardown. Retain its 32 KiB backing even
+-+         * after DSP unmap, so a live page table never points at freed memory. */
+-+        printf("pcm: coherent DMA allocation retained for SMMU mapping until reboot\n");
+-+    }
+-+}
+-+
+- /* 0012: APR on apr_audio_svc: first checkpoint is AVCS_CMD_ADSP_EVENT_GET_STATE. */
+- static int apr_sent;
+- static void adsp_apr_rx(const uint8_t *p, size_t n)
+- {
+-+	if(pcm_enabled && pcm_started){
+-+        struct sweet_apr_msg m;
+-+        if(!sweet_apr_parse(p,n,&m) && m.opcode==0x10c17 && m.src_svc==7 &&
+-+           m.dest_svc==7 && m.src_domain==APR_DOMAIN_ADSP && m.dest_domain==APR_DOMAIN_APPS && m.dest_port==0x101){++pcm_underflows;return;}
+-+        if(!sweet_apr_parse(p,n,&m) && m.src_svc==8 && m.dest_svc==8 &&
+-+           m.src_domain==APR_DOMAIN_ADSP && m.dest_domain==APR_DOMAIN_APPS &&
+-+           m.token==pcm_test.token && (m.opcode==0x10329 || m.opcode==APR_BASIC_RSP_RESULT)){
+-+            uint32_t a=0,b=0;
+-+            if(m.payload_len>=4)a=(uint32_t)m.payload[0]|(uint32_t)m.payload[1]<<8|(uint32_t)m.payload[2]<<16|(uint32_t)m.payload[3]<<24;
+-+            if(m.payload_len>=8)b=(uint32_t)m.payload[4]|(uint32_t)m.payload[5]<<8|(uint32_t)m.payload[6]<<16|(uint32_t)m.payload[7]<<24;
+-+            printf("pcm: ADM response op=%#x ports=%#x/%#x token=%#x bytes=%u words=%#x/%#x\n",m.opcode,m.src_port,m.dest_port,m.token,m.payload_len,a,b);
+-+        }
+-+        if(sweet_pcm_receive(&pcm_test,p,n))return;
+-+    }
+- 	struct sweet_apr_msg m;
+- 	if (sweet_apr_parse(p, n, &m)) {
+- 		printf("apr: malformed packet, %zu bytes\n", n);
+-@@ -936,6 +1133,7 @@
+- 
+- static void adsp_apr_poll(void)
+- {
+-+	adsp_pcm_poll();
+- 	if (apr_sent || !adspedge_apr_up())
+- 		return;
+- 	uint8_t b[64];
+-@@ -949,7 +1147,16 @@
+- static int adsp_net(unsigned secs)
+- {
+- 	adsp_last = 0xffffffff;
+--	afe_on = getenv("WLAND_AFE") != NULL;
+-+	speaker_service = getenv("WLAND_SPEAKER_SERVICE") != NULL;
+-+    speaker_media = getenv("WLAND_SPEAKER_MEDIA") != NULL || speaker_service;
+-+    speaker_wanted = getenv("WLAND_SPEAKER_TONE") != NULL || speaker_media;
+-+    const char *periods=getenv("WLAND_SPEAKER_TONE_PERIODS"),*peak=getenv("WLAND_SPEAKER_TONE_PEAK");
+-+    if(periods){char *end=NULL;unsigned long v=strtoul(periods,&end,10);if(!*periods || *end || v<100 || v>300){printf("speaker: invalid tone duration\n");return -1;}speaker_tone_periods=(unsigned)v;}
+-+    if(peak){char *end=NULL;unsigned long v=strtoul(peak,&end,10);if(!*peak || *end || v<256 || v>8192){printf("speaker: invalid tone peak\n");return -1;}speaker_tone_peak=(unsigned)v;}
+-+    const char *delay=getenv("WLAND_PCM_DELAY_MS");
+-+    if(delay){char *end=NULL;unsigned long v=strtoul(delay,&end,10);if(!*delay || *end || v>30000){printf("pcm: invalid setup delay\n");return -1;}pcm_delay_ms=(unsigned)v;}
+-+	pcm_enabled = getenv("WLAND_PCM_TEST") != NULL || speaker_wanted;
+-+	afe_on = getenv("WLAND_AFE") != NULL || pcm_enabled;
+- 	if (afe_on)
+- 		printf("adsp: AFE bring-up test enabled (WLAND_AFE)\n");
+- 	glink_edge(SMEM_HOST_ADSP, 24);
+-@@ -1011,7 +1218,7 @@
+- 	adspedge_status();
+- 	const uint64_t end = secs ? link_ms() + 1000ull * secs : 0;
+- 	for (uint64_t next = link_ms(); !end || link_ms() < end;) {
+--		adspedge_poll(100);
+-+		adspedge_poll(pcm_enabled ? 2 : 100);
+- 		adsp_rpc_poll();
+- 		adsp_apr_poll();
+- 		if (link_ms() >= next) {
+diff --git a/userspace/wifi/patches/0015-sweet-adsp-poll-fairness.patch b/userspace/wifi/patches/0015-sweet-adsp-poll-fairness.patch
+deleted file mode 100644
+index 725df92..0000000
+--- a/userspace/wifi/patches/0015-sweet-adsp-poll-fairness.patch
++++ /dev/null
+@@ -1,17 +0,0 @@
+---- a/phone/wifi/adspedge.c
+-+++ b/phone/wifi/adspedge.c
+-@@ -371,8 +371,12 @@
+- {
+- 	uint64_t end = link_ms() + ms;
+- 	do {
+--		while (pump_one() > 0)
+--			;
+-+		unsigned batch = 0;
+-+		while (pump_one() > 0) {
+-+			/* Hand control back for PCM refills even under continuous sensor RPC. */
+-+			if (++batch >= 32 || (ms && link_ms() >= end))
+-+				break;
+-+		}
+- 		if (ms)
+- 			usleep(1000);
+- 	} while (link_ms() < end);
+diff --git a/userspace/wifi/patches/0016-sweet-glink-word-peek.patch b/userspace/wifi/patches/0016-sweet-glink-word-peek.patch
+deleted file mode 100644
+index 9ca9a1f..0000000
+--- a/userspace/wifi/patches/0016-sweet-glink-word-peek.patch
++++ /dev/null
+@@ -1,29 +0,0 @@
+---- a/phone/wifi/glink.c
+-+++ b/phone/wifi/glink.c
+-@@ -139,10 +139,23 @@
+- 	if (t >= rx_len)
+- 		t -= rx_len;
+- 	uint8_t *b = buf;
+--	for (size_t i = 0; i < len; i++) {
+-+	/* The FIFO is device memory: retain aligned 32-bit reads, but reuse each
+-+	 * word instead of issuing four /dev/pmem syscalls for its four bytes.
+-+	 * Bound every copy by the word and ring ends, including unaligned peeks. */
+-+	while (len) {
+-+		uint32_t shift = t & 3u;
+- 		uint32_t w = rd32(rx_fifo + (t & ~3u));
+--		b[i] = (uint8_t)(w >> (8 * (t & 3)));
+--		if (++t >= rx_len)
+-+		size_t take = 4u - shift;
+-+		if (take > len)
+-+			take = len;
+-+		if (take > rx_len - t)
+-+			take = rx_len - t;
+-+		for (size_t i = 0; i < take; ++i)
+-+			b[i] = (uint8_t)(w >> (8u * (shift + i)));
+-+		b += take;
+-+		len -= take;
+-+		t += (uint32_t)take;
+-+		if (t == rx_len)
+- 			t = 0;
+- 	}
+- }
+diff --git a/userspace/wifi/patches/0017-sweet-glink-batched-fifo.patch b/userspace/wifi/patches/0017-sweet-glink-batched-fifo.patch
+deleted file mode 100644
+index 49048cf..0000000
+--- a/userspace/wifi/patches/0017-sweet-glink-batched-fifo.patch
++++ /dev/null
+@@ -1,120 +0,0 @@
+---- a/phone/wifi/glink.c
+-+++ b/phone/wifi/glink.c
+-@@ -19,6 +19,7 @@
+- static uint64_t desc, tx_fifo, rx_fifo;
+- static uint32_t tx_len, rx_len;
+- static int g_preserve;
+-+static int g_io_error;
+- 
+- /* descs: [0] tx tail, [1] tx head, [2] rx tail, [3] rx head (ours = tx) */
+- #define TX_TAIL	(desc + 0)
+-@@ -53,6 +54,7 @@
+- 
+- int glink_init(void)
+- {
+-+	g_io_error = 0;
+- 	uint32_t sz;
+- 	if (smem_alloc(g_host, DESC_ITEM, 32, &desc) ||
+- 	    smem_alloc(g_host, FIFO_TX_ITEM, 16384, &tx_fifo) ||
+-@@ -89,20 +91,25 @@
+- 
+- static uint32_t tx_write(uint32_t head, const uint8_t *data, size_t n)
+- {
+--	/* the FIFO is device memory here: whole words only (n is padded by the caller) */
+--	for (size_t i = 0; i < n; i += 4) {
+--		uint32_t w;
+--		memcpy(&w, data + i, 4);
+--		wr32(tx_fifo + head, w);
+--		head += 4;
+--		if (head >= tx_len)
+--			head -= tx_len;
+-+	/* pm_wr itself performs aligned 32-bit device writes and the required
+-+	 * barriers. Batch contiguous words, publishing TX_HEAD only after all
+-+	 * segments succeed; wrap is the only split within a FIFO packet. */
+-+	while (n) {
+-+		size_t take = tx_len - head;
+-+		if (take > n) take = n;
+-+		if (pm_wr(tx_fifo + head, data, take)) {
+-+			g_io_error = 1;
+-+			return head;
+-+		}
+-+		data += take; n -= take; head += (uint32_t)take;
+-+		if (head == tx_len) head = 0;
+- 	}
+- 	return head;
+- }
+- 
+- int glink_send(uint16_t cmd, uint16_t p1, uint32_t p2, const void *data, size_t len)
+- {
+-+	if (g_io_error) return -1;
+- 	uint8_t buf[8 + 8 + 8192 + 8] = { 0 };
+- 	size_t n = 8 + len, padded = (n + 7) & ~(size_t)7;
+- 	if (padded > sizeof(buf))
+-@@ -119,6 +126,7 @@
+- 	if (avail < padded + 16)
+- 		return -1;	/* full: the caller polls and retries */
+- 	head = tx_write(head, buf, padded);
+-+	if (g_io_error) return -1;
+- 	__asm__ volatile("dsb sy" ::: "memory");
+- 	wr32(TX_HEAD, head);
+- 	wr32(APCS_IPC, 1u << g_ipc);
+-@@ -127,6 +135,7 @@
+- 
+- size_t glink_rx_avail(void)
+- {
+-+	if (g_io_error) return 0;
+- 	uint32_t head = rd32(RX_HEAD), tail = rd32(RX_TAIL);
+- 	if (head >= rx_len || tail >= rx_len)
+- 		return 0;
+-@@ -135,33 +144,31 @@
+- 
+- void glink_rx_peek(void *buf, size_t off, size_t len)
+- {
+-+	uint8_t *out = buf;
+-+	if (g_io_error) { memset(out, 0, len); return; }
+- 	uint32_t t = rd32(RX_TAIL) + (uint32_t)off;
+--	if (t >= rx_len)
+--		t -= rx_len;
+--	uint8_t *b = buf;
+--	/* The FIFO is device memory: retain aligned 32-bit reads, but reuse each
+--	 * word instead of issuing four /dev/pmem syscalls for its four bytes.
+--	 * Bound every copy by the word and ring ends, including unaligned peeks. */
+-+	if (t >= rx_len) t -= rx_len;
+-+	/* pm_rd preserves aligned device-word accesses inside the kernel. Read
+-+	 * one contiguous range per chunk instead of one syscall per word. */
+- 	while (len) {
+--		uint32_t shift = t & 3u;
+--		uint32_t w = rd32(rx_fifo + (t & ~3u));
+--		size_t take = 4u - shift;
+--		if (take > len)
+--			take = len;
+--		if (take > rx_len - t)
+--			take = rx_len - t;
+--		for (size_t i = 0; i < take; ++i)
+--			b[i] = (uint8_t)(w >> (8u * (shift + i)));
+--		b += take;
+--		len -= take;
+--		t += (uint32_t)take;
+--		if (t == rx_len)
+--			t = 0;
+-+		uint8_t bounce[4096];
+-+		unsigned shift = t & 3u;
+-+		size_t take = sizeof bounce - shift;
+-+		if (take > len) take = len;
+-+		if (take > rx_len - t) take = rx_len - t;
+-+		size_t words = (shift + take + 3u) & ~(size_t)3u;
+-+		if (pm_rd(rx_fifo + (t & ~3u), bounce, words)) {
+-+			g_io_error = 1; memset(out, 0, len); return;
+-+		}
+-+		memcpy(out, bounce + shift, take);
+-+		out += take; len -= take; t += (uint32_t)take;
+-+		if (t == rx_len) t = 0;
+- 	}
+- }
+- 
+- void glink_rx_advance(size_t len)
+- {
+-+	if (g_io_error) return;
+- 	uint32_t t = rd32(RX_TAIL) + (uint32_t)len;
+- 	if (t >= rx_len)
+- 		t -= rx_len;
+diff --git a/userspace/wifi/patches/0018-sweet-speaker-latency-fifo.patch b/userspace/wifi/patches/0018-sweet-speaker-latency-fifo.patch
+deleted file mode 100644
+index 2402e26..0000000
+--- a/userspace/wifi/patches/0018-sweet-speaker-latency-fifo.patch
++++ /dev/null
+@@ -1,157 +0,0 @@
+---- a/phone/wifi/wland.c
+-+++ b/phone/wifi/wland.c
+-@@ -45,10 +45,13 @@
+- #include "sweet_apr.h"
+- #include "sweet_pcm.h"
+- #include "sweet_pcm_levels.h"
+-+#include "sweet_pcm_fifo.h"
+- #include "sweet_aw2032.h"
+- #include "sweet_amp_ctl.h"
+- #include <fcntl.h>
+- #include <sys/ioctl.h>
+-+#include <sys/sysctl.h>
+-+#include <signal.h>
+- 
+- /* cmd-db aux levels (as in the GPU's arc votes) */
+- /* Every cmd-db entry: name, RPMh slave (3 ARC, 4 VRM, 5 BCM), address. */
+-@@ -920,9 +923,60 @@ static void afe_result(uint32_t op, uint32_t st)
+-  * controller, which independently resets both PAs on missing heartbeat/close. */
+- static int speaker_fd=-1,speaker_on,speaker_wanted,speaker_media,speaker_service,speaker_prepared,media_fd=-1;
+- static uint64_t speaker_t0,speaker_last_signal;
+--static unsigned speaker_tone_periods=100,speaker_tone_peak=1640;
+-+static unsigned speaker_tone_periods=100,speaker_tone_peak=1640,speaker_atten=0,speaker_idle_ms=10000;
+-+/* 0018: while app audio plays, 1 ms poll sleeps took 17..33 ms with timer
+-+ * coalescing on (0221 measurement), so refills missed their 10 ms deadlines,
+-+ * the DSP consumed ~6% slow and the 1.36 s kernel ring sat full (= the 1-2 s
+-+ * start/stop lag, and drop-oldest overruns = stutter). Hold coalescing off only
+-+ * while the amps play; restore the saved value on idle, exit and SIGTERM/INT/HUP. */
+-+static int coalesce_saved=-1;
+-+static void coalesce_hold(int off)
+-+{
+-+    int v;size_t n=sizeof v;
+-+    if(off && coalesce_saved<0){
+-+        if(sysctlbyname("kern.timer.coalescing_enabled",&v,&n,NULL,0)){printf("pcm: timer coalescing state unavailable (%d)\n",errno);return;}
+-+        int zero=0;if(sysctlbyname("kern.timer.coalescing_enabled",NULL,NULL,&zero,sizeof zero)){printf("pcm: timer coalescing hold refused (%d)\n",errno);return;}
+-+        coalesce_saved=v;printf("pcm: timer coalescing off while playing (was %d)\n",v);
+-+    }else if(!off && coalesce_saved>=0){
+-+        v=coalesce_saved;coalesce_saved=-1;
+-+        if(sysctlbyname("kern.timer.coalescing_enabled",NULL,NULL,&v,sizeof v))printf("pcm: timer coalescing restore failed (%d)\n",errno);
+-+        else printf("pcm: timer coalescing restored to %d\n",v);
+-+    }
+-+}
+-+static void coalesce_signal(int sig)
+-+{
+-+    if(coalesce_saved>=0){int v=coalesce_saved;(void)sysctlbyname("kern.timer.coalescing_enabled",NULL,NULL,&v,sizeof v);}
+-+    signal(sig,SIG_DFL);raise(sig);
+-+}
+-+
+-+/* 0018: jitter FIFO (sweet_pcm_fifo.h): drain the kernel ring every refill,
+-+ * play only real samples after a short prebuffer, trim unused backlog. */
+-+_Static_assert(SWEET_PCM_FIFO_PERIOD*4==SWEET_PCM_PERIOD,"FIFO period = DSP period");
+-+static struct sweet_pcm_fifo pcm_fifo;
+-+static unsigned pcm_prebuf_frames=1440;
+-+static int pcm_fifo_drain(int fd)
+-+{
+-+    for(unsigned i=0;i<128;i++){
+-+        uint8_t b[SWEET_PCM_PERIOD];
+-+        ssize_t got=read(fd,b,sizeof b);
+-+        if(got<0 && (errno==EAGAIN || errno==EWOULDBLOCK))return 0;
+-+        if(got<0 || (got&3))return -1;
+-+        if(!got)return 0;
+-+        sweet_pcm_fifo_push(&pcm_fifo,b,(uint32_t)got/4);
+-+        if((size_t)got<sizeof b)return 0;
+-+    }
+-+    return 0;
+-+}
+-+/* One DSP period from the FIFO (silence-padded). Bytes of real samples, or -1. */
+-+static ssize_t pcm_fifo_period(int fd,uint8_t *out,uint64_t now)
+-+{
+-+    if(pcm_fifo_drain(fd))return -1;
+-+    return (ssize_t)sweet_pcm_fifo_period(&pcm_fifo,out,now)*4;
+-+}
+-+
+- static void speaker_stop(void)
+- {
+-+    coalesce_hold(0);
+-     if(media_fd>=0){close(media_fd);media_fd=-1;}
+-     if(speaker_fd<0)return;
+-     struct sweet_amp_status st;
+-@@ -974,7 +1028,7 @@ static int speaker_poll(const struct sweet_pcm *s)
+-     }
+-     if(speaker_service)return 0;
+-     if(!speaker_on && s->completed && s->sent<s->limit){
+--        struct sweet_amp_start start={3,24*8};
+-+        struct sweet_amp_start start={3,speaker_atten};
+-         if(ioctl(speaker_fd,SWEET_AMP_START,&start)){printf("speaker: clock/fault gate refused output (%d)\n",errno);speaker_stop();return -1;}
+-         speaker_on=1;speaker_t0=link_ms();printf("speaker: bounded %s on both amps, digital attenuation24dB\n",speaker_media?"app PCM":"1kHz tone");
+-     }
+-@@ -997,11 +1051,13 @@ static int speaker_activity(const uint8_t *samples,size_t bytes)
+-             speaker_prepared=1;
+-         }
+-         if(!speaker_on){
+--            struct sweet_amp_start start={3,24*8};
+-+            struct sweet_amp_start start={3,speaker_atten};
+-             if(ioctl(speaker_fd,SWEET_AMP_START,&start))return -1;
+--            speaker_on=1;printf("speaker: app PCM active\n");
+-+            speaker_on=1;coalesce_hold(1);printf("speaker: app PCM active, attenuation %u/8 dB (kernel floor: stock profile)\n",speaker_atten);
+-         }
+--    }else if(speaker_prepared && link_ms()-speaker_last_signal>=1000){
+-+    }else if(speaker_prepared && link_ms()-speaker_last_signal>=speaker_idle_ms){
+-+        /* 0018: 10 s (was 1 s): a pause/seek must not cost a full amp reset+prepare. */
+-+        coalesce_hold(0);
+-         if(ioctl(speaker_fd,SWEET_AMP_STOP,0))return -1;
+-         speaker_prepared=speaker_on=0;printf("speaker: idle; amps reset, DSP session retained\n");
+-     }
+-@@ -1050,6 +1106,7 @@ static void adsp_pcm_poll(void)
+-             speaker_stop();pcm_enabled=0;return;
+-         }
+-         sweet_pcm_init(&pcm_test,q.iova|q.alias);
+-+        sweet_pcm_fifo_init(&pcm_fifo,pcm_prebuf_frames,1000);
+-         if(sweet_pcm_set_limit(&pcm_test,speaker_service?SWEET_PCM_STREAM_LIMIT:speaker_media?3000:speaker_tone_periods)){speaker_stop();pcm_enabled=0;return;}
+-         printf("pcm: bounded test starts: %u periods, 48 kHz stereo s16, PRI_MI2S; speaker=%d media=%d\n",pcm_test.limit,speaker_wanted,speaker_media);
+-     }
+-@@ -1063,8 +1120,7 @@ static void adsp_pcm_poll(void)
+-         if(op==0x10dab && speaker_media){
+-             uint32_t slot=(uint32_t)b[36]|(uint32_t)b[37]<<8|(uint32_t)b[38]<<16|(uint32_t)b[39]<<24;
+-             uint8_t audio[SWEET_PCM_PERIOD]={0};
+--            ssize_t got=(speaker_service && !pcm_test.completed)?0:read(media_fd,audio,sizeof audio);
+--            if(got<0 && (errno==EAGAIN || errno==EWOULDBLOCK))got=0;
+-+            ssize_t got=(speaker_service && !pcm_test.completed)?0:pcm_fifo_period(media_fd,audio,link_ms());
+-             if(got<0 || (got&3) || slot>=SWEET_PCM_SLOTS || pm_wr(pcm_pa+(uint64_t)slot*SWEET_PCM_STRIDE,audio,sizeof audio)){
+-                 printf("pcm: media read/DMA refill failed; stopping\n");speaker_stop();sweet_pcm_abort(&pcm_test,0xfffffffbu);break;
+-             }
+-@@ -1081,11 +1137,12 @@ static void adsp_pcm_poll(void)
+-         uint64_t now=link_ms();
+-         if(!pcm_stats_at)pcm_stats_at=now;
+-         if(now-pcm_stats_at>=5000){
+--            printf("pcm: live elapsed_ms=%llu sent=%u completed=%u bytes=%llu empty=%llu nonzero=%llu peak=%u max_gap_ms=%llu over10ms=%llu over40ms=%llu underflows=%llu\n",
+-+            printf("pcm: live elapsed_ms=%llu sent=%u completed=%u bytes=%llu empty=%llu nonzero=%llu peak=%u max_gap_ms=%llu over10ms=%llu over40ms=%llu underflows=%llu fifo=%u max=%u starts=%llu padded=%llu trimmed=%llu dropped=%llu cuts=%llu\n",
+-                 (unsigned long long)now,pcm_test.sent,pcm_test.completed,(unsigned long long)media_bytes,
+-                 (unsigned long long)media_empty,(unsigned long long)media_nonzero,media_levels.peak,
+--                (unsigned long long)pcm_max_gap,(unsigned long long)pcm_gaps10,(unsigned long long)pcm_gaps40,(unsigned long long)pcm_underflows);
+--            media_levels=(struct sweet_pcm_levels){0};pcm_stats_at=now;
+-+                (unsigned long long)pcm_max_gap,(unsigned long long)pcm_gaps10,(unsigned long long)pcm_gaps40,(unsigned long long)pcm_underflows,
+-+                pcm_fifo.count,pcm_fifo.max,(unsigned long long)pcm_fifo.starts,(unsigned long long)pcm_fifo.padded,(unsigned long long)pcm_fifo.trimmed,(unsigned long long)pcm_fifo.dropped,(unsigned long long)pcm_fifo.cuts);
+-+            media_levels=(struct sweet_pcm_levels){0};pcm_stats_at=now;pcm_fifo.max=pcm_fifo.count;
+-         }
+-     }
+-     if(pcm_test.done && !pcm_reported) {
+-@@ -1168,6 +1225,18 @@ static int adsp_net(unsigned secs)
+-     const char *periods=getenv("WLAND_SPEAKER_TONE_PERIODS"),*peak=getenv("WLAND_SPEAKER_TONE_PEAK");
+-     if(periods){char *end=NULL;unsigned long v=strtoul(periods,&end,10);if(!*periods || *end || v<100 || v>300){printf("speaker: invalid tone duration\n");return -1;}speaker_tone_periods=(unsigned)v;}
+-     if(peak){char *end=NULL;unsigned long v=strtoul(peak,&end,10);if(!*peak || *end || v<256 || v>8192){printf("speaker: invalid tone peak\n");return -1;}speaker_tone_peak=(unsigned)v;}
+-+    /* 0018 tuning: attenuation below the stock profile (kernel never goes louder),
+-+     * FIFO prebuffer and amp idle timeout. Defaults: stock level, 30 ms, 10 s. */
+-+    static const struct {const char *name;unsigned *v,min,max,scale;} knobs[]={
+-+        {"WLAND_SPEAKER_ATTEN_DB",&speaker_atten,0,48,8},{"WLAND_PCM_PREBUF_MS",&pcm_prebuf_frames,10,200,48},
+-+        {"WLAND_SPEAKER_IDLE_MS",&speaker_idle_ms,1000,60000,1}};
+-+    for(unsigned k=0;k<sizeof knobs/sizeof knobs[0];k++){
+-+        const char *e=getenv(knobs[k].name);if(!e)continue;char *end=NULL;unsigned long v=strtoul(e,&end,10);
+-+        if(!*e || *end || v<knobs[k].min || v>knobs[k].max){printf("pcm: invalid %s\n",knobs[k].name);return -1;}
+-+        *knobs[k].v=(unsigned)v*knobs[k].scale;
+-+    }
+-+    if(speaker_service){signal(SIGTERM,coalesce_signal);signal(SIGINT,coalesce_signal);signal(SIGHUP,coalesce_signal);
+-+        printf("pcm: service tuning attenuation=%u/8dB prebuffer=%u frames idle=%ums slots=%u\n",speaker_atten,pcm_prebuf_frames,speaker_idle_ms,SWEET_PCM_SLOTS);}
+-     const char *delay=getenv("WLAND_PCM_DELAY_MS");
+-     if(delay){char *end=NULL;unsigned long v=strtoul(delay,&end,10);if(!*delay || *end || v>30000){printf("pcm: invalid setup delay\n");return -1;}pcm_delay_ms=(unsigned)v;}
+- 	pcm_enabled = getenv("WLAND_PCM_TEST") != NULL || speaker_wanted;
+-- 
+2.51.0
+

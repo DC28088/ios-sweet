@@ -1,0 +1,136 @@
+From b9c1a64c9526410af437da0b7809623a1ea8b59b Mon Sep 17 00:00:00 2001
+From: OpenCode <opencode@localhost>
+Date: Thu, 5 Nov 2026 20:57:06 +0530
+Subject: [PATCH 07/11] xnu: add bounded native iServices syscall diagnostics
+
+
+diff --git a/NOTES.md b/NOTES.md
+index 6eb4637..5c16c02 100644
+--- a/NOTES.md
++++ b/NOTES.md
+@@ -1,3 +1,16 @@
++## 2026-11-05: native account/Store failure isolated; 0209 syscall diagnostics prepared
++- USER stopped sideload and prioritized native Apple ID/App Store. 0207-iserv temporary boot accepted.
++- Corrected wall clock (reset to 1970 on boot). Native TLS and SecRandom API tested successfully.
++- USER reproduced "Verification failed MD is invalid" and Store stuck loading after time correction.
++- Native logs: provisioning start/end HTTP 200; ADIProvisioningStart success;
++  ADIProvisioningEnd -42410 -> AKAnisetteError -8004 / AKUnderlyingADIErrors -42410.
++  Meaning of -42410 unresolved; no login fix claimed. Separate activation-copy errors also present.
++- appstored: bag waits, ASDErrorDomain 515; fairplayd.H2 repeatedly starts. Exit cause unresolved here.
++- 0209 is opt-in bounded diagnostics only: adid/fairplayd.H2 syscall number+errno, exit code.
++  No paths, payloads, IDs, auth bypass or entitlement changes. Enable sweetservtrace=1.
++- Patch apply check and whitespace check passed. Full compile, CI dispatch and boot NOT performed.
++- Raw logs and firmware remain local outside Git. No credentials or machine data included here.
++
+ ## 2026-11-04 21:10 IST: Wi-Fi broken since wland 0005 boots (suspected); boot wland reverted to 0004 for a test
+ - USER: "wifi doesn't toggle on". Kernel logs: Wi-Fi scans in boot-0190b/0190c/0191 (wland 0004), none from 0191b on (first
+   boot with wland 0005; also the first boot after the battery ran flat). On 0195b the modem never announces WLFW (0x45) in
+diff --git a/docs/ISERV_DIAGNOSTICS.md b/docs/ISERV_DIAGNOSTICS.md
+new file mode 100644
+index 0000000..fdf6a31
+--- /dev/null
++++ b/docs/ISERV_DIAGNOSTICS.md
+@@ -0,0 +1,29 @@
++# Native account and Store diagnostics
++
++Patch 0209 is diagnostic only. It changes no authentication, signing,
++keychain, activation, cryptographic validation, or Store result.
++
++With `sweetservtrace=1`, it records BSD syscall number and errno for `adid`
++and `fairplayd.H2`. It omits transient EINTR/EAGAIN and internal restart codes.
++Each daemon has a boot-wide cap of 256 errors and 32 exit-status records,
++including respawns. No file paths, buffers, account data, return pointers,
++device identifiers or cryptographic data are printed. Default is disabled.
++The exit event is logged before dispatch because exit does not return.
++Nonlocal syscall return paths and Mach traps are outside this first probe.
++
++The native reproduction reached HTTP 200 at both anisette provisioning
++endpoints, ADIProvisioningStart succeeded, and ADIProvisioningEnd returned
++-42410 (AKAnisetteError -8004 / AKUnderlyingADIErrors -42410). The meaning of
++-42410 has not been established. In the same test, appstored's bag did not
++finish loading (ASDErrorDomain 515) and fairplayd.H2 repeatedly started.
++These observations justify checking local OS failures; they do not establish
++an OS failure rather than cryptographic or activation requirements.
++
++Next test: use the same 0207 hardware configuration, add sweetservtrace=1,
++retain selective daemon logs, correct wall clock and connect Wi-Fi before
++one account reproduction. Keep raw captures local and publish aggregates only.
++Do not infer that a lack of syscall failures proves Apple's credentials or
++attestation requirements are satisfied.
++
++Local validation: patch apply check against the prepared 0207 source passed;
++whitespace check passed. A full kernel compile and hardware test remain pending.
+diff --git a/xnu/patches/0209-sweet-iserv-syscall-diagnostics.patch b/xnu/patches/0209-sweet-iserv-syscall-diagnostics.patch
+new file mode 100644
+index 0000000..bfff523
+--- /dev/null
++++ b/xnu/patches/0209-sweet-iserv-syscall-diagnostics.patch
+@@ -0,0 +1,65 @@
++--- a/bsd/dev/arm/systemcalls.c
+++++ b/bsd/dev/arm/systemcalls.c
++@@ -86,6 +86,48 @@
++  *
++  * Outputs:	none
++  */
+++#if defined(SWEET)
+++/* 0209: opt-in iServices diagnostics. No paths, payloads, registers or IDs.
+++ * Only the two failing native daemons are selected. Errors and exits are
+++ * independently capped per daemon for the whole boot, including respawns.
+++ */
+++static bool
+++sweet_iserv_trace_selected(struct proc *p)
+++{
+++	unsigned int enabled = 0;
+++	if (strcmp(p->p_comm, "adid") != 0 &&
+++	    strcmp(p->p_comm, "fairplayd.H2") != 0) {
+++		return false;
+++	}
+++	return PE_parse_boot_argn("sweetservtrace", &enabled, sizeof(enabled)) && enabled == 1;
+++}
+++
+++static void
+++sweet_iserv_trace(struct proc *p, unsigned int code, int error,
+++    bool entering, uint64_t exit_status)
+++{
+++	static unsigned int errors[2], exits[2];
+++	if (!sweet_iserv_trace_selected(p)) {
+++		return;
+++	}
+++	unsigned int role = strcmp(p->p_comm, "adid") == 0 ? 0 : 1;
+++	if (entering) {
+++		if (code == SYS_exit &&
+++		    __atomic_fetch_add(&exits[role], 1, __ATOMIC_RELAXED) < 32) {
+++			printf("SWEET ISERV: %s exit status %d\n", p->p_comm, (int)exit_status);
+++		}
+++		return;
+++	}
+++	if (error <= 0 || error == EINTR || error == EAGAIN ||
+++	    error == ERESTART || error == EJUSTRETURN) {
+++		return;
+++	}
+++	if (__atomic_fetch_add(&errors[role], 1, __ATOMIC_RELAXED) < 256) {
+++		printf("SWEET ISERV: %s syscall %u errno %d\n", p->p_comm, code, error);
+++	}
+++}
+++#endif
+++
++ void
++ unix_syscall(
++ 	struct arm_saved_state * state,
++@@ -178,7 +220,13 @@
++ #endif /* CONFIG_DEBUG_SYSCALL_REJECTION */
++ 
++ 	AUDIT_SYSCALL_ENTER(code, proc, uthread);
+++#if defined(SWEET)
+++	sweet_iserv_trace(proc, code, 0, true, uthread->uu_arg[0]);
+++#endif
++ 	error = (*(callp->sy_call))(proc, &uthread->uu_arg[0], &(uthread->uu_rval[0]));
+++#if defined(SWEET)
+++	sweet_iserv_trace(proc, code, error, false, 0);
+++#endif
++ 	AUDIT_SYSCALL_EXIT(code, proc, uthread, error);
++ 
++ #if CONFIG_MACF
+-- 
+2.51.0
+

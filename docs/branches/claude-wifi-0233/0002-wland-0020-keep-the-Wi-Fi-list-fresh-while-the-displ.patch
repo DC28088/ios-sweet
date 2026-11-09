@@ -1,0 +1,75 @@
+From 6b1bb0dd82cea2d7066573aaf0277078ccf8d11a Mon Sep 17 00:00:00 2001
+From: OpenCode <twinexotica@gmail.com>
+Date: Mon, 9 Nov 2026 08:42:49 +0530
+Subject: [PATCH 2/2] wland 0020: keep the Wi-Fi list fresh while the display
+ is on; IPA retest image
+
+Second Wi-Fi/cellular build. wland 0019 answers a scan request with the
+list heard in the last 30 s; the donor only rescanned for the first three
+scans. Now, while not joined and the display is on (kern.sweet_display_dark
+0, read once a second), a scan runs every 20 s, so the instant answer is
+never older than ~25 s. Nothing while the display is off.
+
+Packaged with sweetipa=1 (cellular data path, 0192-0194: the 0194 trace of
+every new IPA/GSI interrupt set and each modem-start step was never booted;
+0193 panicked right after INIT_DRIVER) and the 0232 WMS/NAS trace.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/userspace/wifi/patches/0020-sweet-wifi-fresh-scan-list.patch b/userspace/wifi/patches/0020-sweet-wifi-fresh-scan-list.patch
+new file mode 100644
+index 0000000..67d50f2
+--- /dev/null
++++ b/userspace/wifi/patches/0020-sweet-wifi-fresh-scan-list.patch
+@@ -0,0 +1,48 @@
++diff --git a/phone/wifi/radio.c b/phone/wifi/radio.c
++index 20952d6..5a5dd6b 100644
++--- a/phone/wifi/radio.c
+++++ b/phone/wifi/radio.c
++@@ -765,6 +765,21 @@ struct bss {
++ };
++ static struct bss bss[NBSS];
++ static uint32_t nbss, scans, scan_frames;
+++static uint64_t last_scan_end_ms;		/* sweet 0020 */
+++
+++/* sweet 0020: kern.sweet_display_dark (xnu 0200): 1 while the display is off. Read at most once a second. */
+++static int display_lit(uint64_t now)
+++{
+++	static uint64_t at;
+++	static int lit = 1;
+++	if (!at || now - at >= 1000) {
+++		int v = 0;
+++		size_t len = sizeof(v);
+++		at = now;
+++		lit = sysctlbyname("kern.sweet_display_dark", &v, &len, NULL, 0) != 0 || v == 0;
+++	}
+++	return lit;
+++}
++ static int scan_started, scanning;
++ static uint64_t next_scan_ms;
++ static int scan_asked;
++@@ -986,6 +1001,7 @@ static void scan_event(const uint8_t *t, uint32_t len)
++ 		    scan_frames);
++ 		radio_summary();
++ 		next_scan_ms = scans < 3 ? link_ms() + 10000 : 0;
+++		last_scan_end_ms = link_ms();
++ 	}
++ }
++ 
++@@ -2229,6 +2245,13 @@ void radio_poll(void)
++ 		LOG("ce: no HTC READY in 5 s; rri ce1 %08x ce2 %08x, ce2 DRRI %u DR_WR %u, rx %u/%u",
++ 		    rri[1], rri[2], ce_rd(2, CUR_DRRI), ce_rd(2, DR_WR_IDX), ce[1].rx, ce[2].rx);
++ 	}
+++	/*
+++	 * sweet 0020: not joined and the display on: scan every 20 s, so the list a scan request gets at once
+++	 * (bridge.c 0019) is never older than ~25 s. Nothing while the display is off (battery).
+++	 */
+++	if (scan_started && !scanning && !next_scan_ms && s_state == S_IDLE && !s_join_asked && last_scan_end_ms &&
+++	    now - last_scan_end_ms > 20000 && display_lit(now))
+++		next_scan_ms = now;
++ 	if (scan_started && !scanning && next_scan_ms && now >= next_scan_ms) {
++ 		next_scan_ms = 0;
++ 		if (s_state == S_IDLE && !s_join_asked)	/* scans leave the channel: never while joining or joined */
+-- 
+2.51.0
+

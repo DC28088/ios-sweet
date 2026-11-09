@@ -1,0 +1,67 @@
+From f42856cfc895b53aca3f398bc88652a8689aedef Mon Sep 17 00:00:00 2001
+From: OpenCode <opencode@localhost>
+Date: Wed, 21 Oct 2026 22:47:46 +0530
+Subject: [PATCH 08/13] Run the kernel CI step from the pinned UniXNU checkout
+
+
+diff --git a/.github/workflows/unixnu-kernel.yml b/.github/workflows/unixnu-kernel.yml
+index 1ca8939..1ef335c 100644
+--- a/.github/workflows/unixnu-kernel.yml
++++ b/.github/workflows/unixnu-kernel.yml
+@@ -88,7 +88,8 @@ jobs:
+           ./unixnu/unixnu defconfig sweet_ios16_defconfig \
+             -D "$UNIXNU_DEVICE" --out "$UNIXNU_OUT"
+           ./unixnu/unixnu tree -D "$UNIXNU_DEVICE" --out "$UNIXNU_OUT"
+-          readlink -f "$UNIXNU_OUT/sweet/tree/patches/xnu"
++          python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' \
++            "$UNIXNU_OUT/sweet/tree/patches/xnu"
+           test -f "$UNIXNU_OUT/sweet/tree/patches/xnu/source-machine-layer.patch"
+           test ! -e "$UNIXNU_OUT/sweet/tree/patches/xnu/zzz-boot-progress.patch"
+           grep -q 'miphoneos-version-min=16.0' \
+@@ -96,7 +97,7 @@ jobs:
+       - name: Compile the Darwin22 kernel
+         run: |
+           python3 tools/build-sweet-kernel.py \
+-            --out "$UNIXNU_OUT" --device "$UNIXNU_DEVICE" \
++            --unixnu unixnu --out "$UNIXNU_OUT" --device "$UNIXNU_DEVICE" \
+             --jobs "${{ inputs.jobs || '4' }}"
+       - name: Record the built kernel
+         if: always()
+@@ -106,7 +107,7 @@ jobs:
+           mkdir -p kernel-out
+           cp "$UNIXNU_OUT/sweet/tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf" kernel-out/ 2>/dev/null || true
+           cp "$UNIXNU_OUT/sweet/tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837" kernel-out/ 2>/dev/null || true
+-          (cd kernel-out && sha256sum * > SHA256SUMS 2>/dev/null || true)
++          (cd kernel-out && shasum -a 256 * > SHA256SUMS 2>/dev/null || true)
+       - uses: actions/upload-artifact@v4
+         if: always()
+         with:
+diff --git a/tools/build-sweet-kernel.py b/tools/build-sweet-kernel.py
+index 3fb295d..c58a510 100644
+--- a/tools/build-sweet-kernel.py
++++ b/tools/build-sweet-kernel.py
+@@ -18,15 +18,17 @@ from pathlib import Path
+ 
+ def main():
+     parser = argparse.ArgumentParser()
++    parser.add_argument('--unixnu', required=True, type=Path,
++                        help='pinned UniXNU checkout (provides scripts/unixnu)')
+     parser.add_argument('--out', required=True, type=Path)
+     parser.add_argument('--device', required=True, type=Path)
+     parser.add_argument('--jobs', type=int, default=4)
+     args = parser.parse_args()
+ 
+-    tree = args.out / 'sweet/tree'
+-    if not (tree / 'scripts/unixnu/cli.py').is_file():
+-        raise SystemExit(f'{tree} is not an assembled UniXNU tree')
+-    sys.path.insert(0, str(tree / 'scripts'))
++    package = args.unixnu / 'scripts'
++    if not (package / 'unixnu/cli.py').is_file():
++        raise SystemExit(f'{package} does not contain the unixnu package')
++    sys.path.insert(0, str(package))
+     from unixnu import cli, kernel
+ 
+     def no_prelink(ctx):
+-- 
+2.51.0
+

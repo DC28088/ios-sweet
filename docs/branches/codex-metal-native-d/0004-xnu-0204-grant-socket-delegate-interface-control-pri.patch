@@ -1,0 +1,56 @@
+From eb719d745c5f10392a05d3af6bce0d320b2a7709 Mon Sep 17 00:00:00 2001
+From: OpenCode <opencode@localhost>
+Date: Thu, 5 Nov 2026 18:12:03 +0530
+Subject: [PATCH 04/13] xnu 0204: grant socket-delegate / interface-control
+ privileges by entitlement
+
+0202 and 0203 logged 'mediaserverd privilege 10001 denied' right before a
+mediaserverd abort loop (10 and 7+ crashes), once VirtualAudio gave it audio
+devices. mediaserverd carries com.apple.private.network.socket-delegate and
+.interface-control (read from the phone's binary); the sandbox shim now
+grants PRIV_NET_PRIVILEGED_SOCKET_DELEGATE (10001) and PRIV_NET_INTERFACE_
+CONTROL (10002) to holders, as the skywalk privileges.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/xnu/patches/0204-sweet-network-privs-by-entitlement.patch b/xnu/patches/0204-sweet-network-privs-by-entitlement.patch
+new file mode 100644
+index 0000000..8512978
+--- /dev/null
++++ b/xnu/patches/0204-sweet-network-privs-by-entitlement.patch
+@@ -0,0 +1,32 @@
++diff --git a/bsd/kern/sweet_amfi.c b/bsd/kern/sweet_amfi.c
++index 4691162..8a3ec57 100644
++--- a/bsd/kern/sweet_amfi.c
+++++ b/bsd/kern/sweet_amfi.c
++@@ -390,6 +390,11 @@ static const struct {
++ 	{ PRIV_SKYWALK_LOW_LATENCY_CHANNEL, "com.apple.private.skywalk.low-latency-channel" },
++ 	{ PRIV_SKYWALK_OBSERVE_ALL, "com.apple.private.skywalk.observe-all" },
++ 	{ PRIV_SKYWALK_OBSERVE_STATS, "com.apple.private.skywalk.observe-stats" },
+++	/* 0204: mediaserverd sets socket delegates for the app it streams for (SO_DELEGATED); 0202/0203
+++	 * logged "mediaserverd privilege 10001 denied" right before a mediaserverd abort loop once
+++	 * VirtualAudio (0196) gave it audio devices. Granted to holders of the iOS entitlement. */
+++	{ PRIV_NET_PRIVILEGED_SOCKET_DELEGATE, "com.apple.private.network.socket-delegate" },
+++	{ PRIV_NET_INTERFACE_CONTROL, "com.apple.private.network.interface-control" },   /* 0204: also mediaserverd's */
++ };
++ 
++ static int
++@@ -403,6 +408,15 @@ sweet_sandbox_priv_grant(kauth_cred_t cred __unused, int priv)
++ 			if (IOCurrentTaskHasEntitlement(sweet_skywalk_privs[i].entitlement)) {
++ 				return 0;
++ 			}
+++			if (priv == PRIV_NET_PRIVILEGED_SOCKET_DELEGATE) {
+++				static int logged;
+++				char who[20];
+++				proc_selfname(who, sizeof(who));
+++				if (logged++ < 8) {
+++					printf("SWEET Sandbox: %s privilege %d (socket delegate) denied: no %s\n", who, priv,
+++					    sweet_skywalk_privs[i].entitlement);
+++				}
+++			}
++ 			break;
++ 		}
++ 	}
+-- 
+2.51.0
+

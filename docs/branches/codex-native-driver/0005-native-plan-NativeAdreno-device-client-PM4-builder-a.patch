@@ -1,0 +1,1351 @@
+From b545caff1c25f5d2c901663806fa863c5112e676 Mon Sep 17 00:00:00 2001
+From: OpenCode <opencode@localhost>
+Date: Fri, 30 Oct 2026 09:46:39 +0530
+Subject: [PATCH 05/13] native: plan, NativeAdreno device client, PM4 builder
+ and N0 probe
+
+Adds docs/native-adreno-driver.md and userspace/native/: a Vulkan-free
+client for the kernel's NativeAdreno ABI 1 (IOAcceleratorES + NTNL
+tunnel), a checked PM4 builder, a host test, and a one-shot probe that
+runs inside backboardd and has the GPU write two words through
+CP_MEM_WRITE before reading them back after the real CP fence.
+
+The probe is gated by /var/local/mtl2-native-probe or SWEET_NATIVE_PROBE=1
+and closes the user client before Turnip opens it, so an installed bundle
+behaves exactly as before unless asked. metal2.yml runs the host test.
+
+diff --git a/.github/workflows/metal2.yml b/.github/workflows/metal2.yml
+index fe0c151..2ca2f73 100644
+--- a/.github/workflows/metal2.yml
++++ b/.github/workflows/metal2.yml
+@@ -15,6 +15,11 @@ jobs:
+           rustup toolchain install 1.98.0 --profile minimal
+           rustup target add aarch64-apple-ios --toolchain 1.98.0
+           python3 --version
++      - name: Host test: PM4 builder
++        run: |
++          clang++ -std=c++17 -Wall -Wextra -I userspace/native/src \
++            userspace/native/test/pm4_test.cpp -o "$RUNNER_TEMP/sweet-pm4-test"
++          "$RUNNER_TEMP/sweet-pm4-test"
+       - name: Build iOS 16 SweetMetal2 bundle
+         run: python3 tools/build-sweet-metal2.py
+       - uses: actions/upload-artifact@v4
+diff --git a/NOTES.md b/NOTES.md
+index c925e9d..622b3d4 100644
+--- a/NOTES.md
++++ b/NOTES.md
+@@ -1,3 +1,35 @@
++## 2026-10-30 (later): native driver - plan and N0 device/PM4 foundation
++
++The user asked for a native Metal driver (no metal2vulkan, no Turnip) while another agent was
++working on the power audit; this entry is on branch codex/native-driver (worktree
++/tmp/opencode/native-driver), based on 8661f61. That other work continues on
++codex/adreno-power-audit; nothing here changes it.
++- docs/native-adreno-driver.md: architecture and stages N0-N5. Recommended path B: Metal
++  implementation over Mesa's fd6 Gallium driver (state/PM4/GMEM) with the HackiOS AIR -> NIR ->
++  ir3 compiler, instead of writing a PM4 emitter from scratch (path A). The Metal core keeps
++  the fd6 seam narrow so a direct-PM4 backend can replace it later.
++- Compiler evidence (host, Linux gcc, no clang): Mesa 25.0.7 + hackios-sweet AIR patches build
++  and run here. Against the phone's own QuartzCore default.metallib (sha256
++  11c74cc42ce5137b73d44d427f75764f886656d4ddb374422d56b609ed2762d9, pulled read-only over
++  SSH): 141 modules, 135 translate to NIR; 6 fail (fixed_frag_lph_cph/cpf pointer store under a
++  function constant; tile_downsample_1/2/4/8 air.imageblock).
++- userspace/native/: sweet_gpu.h/.cpp (NativeAdreno ABI1 over IOAcceleratorES type 0x4147 and
++  the NTNL tunnel: BO alloc/import/map/free, CPU map, PM4 submit, CP fence, timestamp),
++  sweet_pm4.h (checked type 4/7, CP_MEM_WRITE/EVENT_WRITE/NOP), pm4_test.cpp (host, passes
++  with g++ -Werror), README, and sweet_native_probe.cpp.
++- The probe is compiled into SweetMetal2.bundle and runs from a constructor inside backboardd
++  when /var/local/mtl2-native-probe starts with '1' or /var/local/mtl2-env has
++  SWEET_NATIVE_PROBE=1: opens the user client, allocates a 4 KiB BO, maps it at va_start, has
++  the GPU CP_MEM_WRITE 0x600df00d/0x12345678, waits on the real CP fence, reads back, then
++  closes the connection before Turnip opens it. Log: stderr and /var/local/mtl2-native-probe.log.
++- metal2.yml runs the host PM4 test before the bundle build; build-sweet-metal2.py compiles the
++  three native sources into the bundle.
++OBSERVED: host PM4 test and the compiler coverage above. NOT RUN YET: bundle CI and the hardware
++probe; the phone was left alone because another agent was active on it. Next: dispatch
++sweet-metal2 on codex/native-driver, install the bundle with tools/sweet-install-metal2.sh,
++create /var/local/mtl2-native-probe, restart backboardd, confirm "probe: PASS", then N1
++(libsweetair) or N2 (libdrm shim over ABI 1).
++
+ ## 2026-10-30 (night): render-pass audit (bridge 0202) - what Metal asks of the GPU
+ 
+ Bridge patch userspace/metal2/bridge-patches/0202-sweet-render-pass-audit.patch (metal2vulkan
+diff --git a/docs/native-adreno-driver.md b/docs/native-adreno-driver.md
+new file mode 100644
+index 0000000..3864ca6
+--- /dev/null
++++ b/docs/native-adreno-driver.md
+@@ -0,0 +1,213 @@
++# A native Metal driver for sweet (plan and first code)
++
++Status: design, plus the device/PM4 foundation (`userspace/native/`). Written
++2026-10-30 on branch `codex/native-driver`. This document is the map; NOTES.md
++records what has actually run on the phone.
++
++## 1. What "native" means in this repository
++
++Today's stack is four layers:
++
++    Metal SPI (backboardd, apps)
++      -> SweetMetal2.bundle            Objective-C Metal objects (Sunfish)
++      -> NativeMetalBridge             Rust, the nmb_* C ABI
++      -> metal2vulkan                  Metal -> Vulkan translation
++      -> Turnip                        Vulkan -> Adreno (ir3, PM4, GMEM)
++      -> NativeAdreno user client      kernel: ring, VM, fences, GMEM, SMMU
++
++A native driver keeps the top (a Metal implementation) and the bottom (the
++kernel's GPU services) and replaces the two translation layers in between with
++one device layer that speaks Adreno directly:
++
++    Metal SPI
++      -> Metal device (our object graph: device, queue, resources, passes)
++      -> shader compiler (AIR -> NIR -> ir3 -> Adreno ISA)
++      -> Adreno device (state, PM4, descriptors, GMEM, fences)
++      -> NativeAdreno user client
++
++The kernel side already exists and is unrelated to Vulkan: ABI 1 has BO
++allocation, host-page import (IOSurfaces), mapping with client-chosen IOVAs,
++PM4 submission (up to 16 indirect buffers), CP fences, timestamps and device
++info. Every submission is wrapped by the kernel with the CP prologue and a
++`CACHE_FLUSH_TS` + `WHERE_AM_I` fence, so a native client emits plain PM4.
++
++## 2. Why this is worth doing, measured rather than assumed
++
++* The GPU, not the CPU, caps the UI: 10 s windows of the 0171 profile show the
++  GPU never idle with a fence out (CP 100%, VBIF 75-84%) and ~6.6 ms for one
++  1125x2436 pass even with `TU_DEBUG=sysmem`.
++* The render-pass audit (bridge 0202) found 87% of drawn pixels in
++  1125x2436 Load/Store passes: ~46 full-screen passes per second, ~3 per frame.
++* Cost is ~3.2 ms/Mpx, about ten times what an A618 should need. Shading is
++  the dominant term (`draw_ib_gmem` 6.69 s of 6.94 s in the 0157 trace), and
++  Metal's own half/fast-math semantics were being re-rounded per operation
++  until bridge 0201.
++* Two translation layers stand between Metal and the hardware. Metal ->
++  Vulkan alone has to emulate Metal semantics with Vulkan objects; the audit
++  shows it also cannot avoid full-surface Load/Store because the render area is
++  the full extent.
++
++So the lever is fewer, cheaper GPU operations per frame, and the shortest path
++to changing them is to own the Metal-to-hardware layer.
++
++## 3. Compiler: already proven on this phone's own shaders
++
++HackiOS's AIR frontend (`hackios-sweet/tools/mesa/air`, MIT, built on Mesa
++25.0.7) reads Apple's shader bitcode and produces NIR, the same IR ir3
++compiles for the A618. It was built here on Linux with gcc and run against the
++**phone's own** `QuartzCore.framework/default.metallib`
++(sha256 `11c74cc42ce5137b73d44d427f75764f886656d4ddb374422d56b609ed2762d9`,
++pulled read-only over SSH):
++
++| | of 141 modules |
++| --- | --- |
++| container read, AIR parsed | 141 |
++| translated to NIR (`nir_validate`) | 135 |
++| failed | 6 |
++
++The six failures are:
++
++* `fixed_frag_lph_cph` and `fixed_frag_lph_cpf`: function-constant gated code
++  containing a store of a pointer into memory. The frontend has no address for
++  it. These are the "fixed function" colour pipelines.
++* `tile_downsample_1/2/4/8`: kernels taking an `air.imageblock` argument,
++  which the frontend does not model.
++
++Everything else CoreAnimation needs is covered, including `std_vert0_lpf`,
++`upsample_frag_lpf`, `downsample_4_frag_lpf`, `downsample_8_frag_lpf`,
++`variable_blur_*`, the path shaders and the blend/copy shaders. Compiling those
++135 through ir3 is the next compiler step (they already compile in HackiOS's
++tree; see `docs/air.md` there for the 321/456 system-wide result).
++
++Reusing this compiler is the difference between a multi-month LLVM backend and
++a build-integration job. The AIR frontend is a Mesa subdirectory and ir3 is
++already in Mesa; both are produced by the same build that would produce the
++Adreno Gallium driver.
++
++## 4. Two ways to reach the hardware, and the recommendation
++
++**Path A - own PM4 emitter.** Metal state objects write A6xx registers and PM4
++packets ourselves: `CP_SET_DRAW_STATE`, `CP_DRAW_INDX_OFFSET`, descriptor
++loads, GMEM binning, UBWC, blits. Maximum control, no Mesa in the picture, but
++it re-derives years of freedreno work (tiling, UBWC, LRZ, GMEM resolve,
++predication) and every correctness bug is ours. Realistically several months
++before a correct home screen.
++
++**Path B - Metal on Mesa's freedreno (recommended).** Keep Mesa's fd6 Gallium
++driver as the Adreno device layer (state + PM4 + GMEM + UBWC, the same code the
++GLES port already uses) and put a native Metal implementation above it. The
++only new code is the Metal object graph and the seam to fd6; no Vulkan and no
++Turnip. Shaders go AIR -> NIR -> Gallium -> ir3, inside one process.
++
++Path B is still "native" in the sense that matters here: our own Metal
++implementation, our own memory/synchronisation/IOSurface handoff, our own
++shaders, talking to the Adreno. It is the architecture HackiOS's RedwoodMetal
++already uses (`userland/src/redwoodmetal.m`, 6.3k lines, plus
++`libredwoodair` - the same `rwa_*` AIR/Gallium API), which means the Metal side
++is not speculative either; it is a port with a known shape. Path A remains
++available later for hot paths (a specialized blur or composite pass) without
++changing the layer above.
++
++The plan below is Path B, with the Metal core written so the fd6 layer can be
++swapped for direct PM4 later.
++
++## 5. Stages and exit criteria
++
++**N0 - device and PM4 foundation (this change).**
++`userspace/native/`: a small C++ client for the NativeAdreno user client
++(open, query, BO alloc/import/map/free, CPU map, submit, fence wait, timestamp)
++and a checked PM4 builder. A probe compiled into the Metal bundle runs once in
++backboardd, allocates a BO, has the GPU write a pattern into it with
++`CP_MEM_WRITE`, waits on the real CP fence, reads the values back and logs them.
++Exit: the probe's two words appear, fence completes, no GPU fault, the normal
++stack still renders afterwards.
++
++**N1 - AIR compiler as a library.**
++Vendor the pinned AIR frontend and Mesa patches under `third_party/air`, add a
++`libsweetair` target that exposes `sweet_air_compile(metallib, entry, stage,
++chip_id) -> NIR/ISA + interface metadata`, and a host CLI. Exit: the 135/141
++QuartzCore shaders translate and compile to ir3 disassembly on the build host;
++the result matches HackiOS's own numbers on the same file.
++
++**N2 - KMD shim and fd6 on sweet.**
++A libdrm-msm-shaped shim over the NativeAdreno ABI (BO new/import/map/info,
++CPU prepare/fini, submit, wait, timestamps, submitqueue), so Mesa's unmodified
++`freedreno_drm.c` + fd6 run on this kernel; plus the Darwin build glue. Exit:
++an offscreen 256x256 triangle rendered by fd6, read back and compared on the
++phone, launched from backboardd (the only process the user client admits).
++
++**N3 - Metal core for the compositor subset.**
++`nmb_*` implementation or a new MTLDevice: buffers, IOSurface-backed textures
++with the formats CA uses, render passes (load/store/clear, 1-2 attachments, no
++depth first), pipeline state with the blend modes CA actually sets (the 55-entry
++table HackiOS read out of QuartzCore), draws, fences, presentation. Exit:
++backboardd renders the home screen through the native path with the same
++correctness as today's stack.
++
++**N4 - A/B and presentation.**
++Run native and metal2vulkan bundles on the same scroll script
++(`tools/` measurement used since 0159), compare presents/10 s, gate, passes and
++Mpx. Exit: native is no worse in correctness and measurably cheaper, or the
++reason is understood.
++
++**N5 - The actual lever.**
++Cheaper blur (fewer taps / lower resolution / a single-pass approximation),
++fewer full-screen passes, UBWC or GMEM render targets where CA's linear
++IOSurfaces allow it. This is where the 87% is.
++
++## 6. Facts the design depends on
++
++* **One connection, one process.** `AGXAccelerator::newUserClient` admits only
++  a process named `backboardd`, open type `0x4147`, and holds a single
++  connection slot (`xnu/patches/0110`). A native driver therefore lives inside
++  backboardd, exactly like the bundle. The probe in N0 opens the slot, runs and
++  closes it before Turnip opens it, which is why it cannot disturb the running
++  stack.
++* **The tunnel.** A sandboxed process reaches the ABI through selector `N`
++  with a `{ 'NTNL', method }` header; an unrestricted one would open
++  `NativeAdrenoGpuPublished`, which this kernel does not publish yet. The
++  shim probes selectors 0..255 exactly as Turnip's Darwin KMD does.
++* **ABI 1 is enough** for a driver: 1024 objects, 16 buffers per submit, 256 MiB
++  per BO, client-chosen IOVAs inside `va_start..va_start+va_size`, imported host
++  pages, write-back or non-coherent mappings, CP fences.
++* **Only userland changes are live.** A bundle swap needs a backboardd restart,
++  not a reboot (`tools/sweet-install-metal2.sh`). Kernel changes need a
++  fastboot boot image.
++* **No local clang.** Host work here can build C/C++ with gcc and Mesa's
++  compiler with gcc; iOS binaries are built by the macOS CI (`sweet-metal2`,
++  `macos-15`), which already has clang, bison, flex and ninja.
++
++## 7. Risks and open questions
++
++* **iOS 16 Metal SPI surface.** SweetMetal2 already satisfies what this
++  userland asks of a device; the native core can reuse that object model or,
++  like RedwoodMetal, inherit `_MTLDevice` directly. Measured on the device, not
++  assumed.
++* **AIR coverage gaps** (section 3). The two `fixed_frag` shaders matter for
++  CoreAnimation's fixed-function colour path; the `imageblock` kernels are
++  tile-downsample, which is exactly the blur we want to make cheaper. Both need
++  frontend work, not a new backend.
++* **Correctness of a new state layer.** Blend, half precision and IOSurface
++  row layout have each cost this port a visible bug before. The A/B in N4 and
++  the existing pass audit are the guard rails.
++* **fd6 assumptions.** fd6 expects a DRM-like device with tiled resources,
++  `FD_BO` flags, submitqueue semantics and per-fence tracking. The shim must
++  reproduce them over ABI 1 without the kernel changes Turnip needed
++  (`SubmitResources` is already in this ABI).
++* **Concurrency.** One connection, one ring: the native driver must own the
++  GPU while it is active. Coexistence with Turnip is not a design goal; the
++  bundle chooses one path per process.
++
++## 8. File map
++
++    userspace/native/include/sweet_gpu.h     device client API (no Vulkan)
++    userspace/native/src/sweet_gpu.cpp       IOKit <-> NativeAdreno ABI 1
++    userspace/native/src/sweet_pm4.h         checked PM4 packet builder
++    userspace/native/src/sweet_native_probe.cpp   N0 in-backboardd probe
++    userspace/native/test/pm4_test.cpp       host test for the builder
++    userspace/native/README.md               how to build and run each piece
++    tools/build-sweet-metal2.py              compiles the probe into the bundle
++
++Later stages add `third_party/air/` (pinned frontend + patches),
++`userspace/native/kmd/` (the libdrm shim), `userspace/native/metal/` (the
++device object graph) and `userspace/native/shaders/` (the AIR-to-pipe glue).
+diff --git a/tools/build-sweet-metal2.py b/tools/build-sweet-metal2.py
+index 5a1a3b9..217343e 100644
+--- a/tools/build-sweet-metal2.py
++++ b/tools/build-sweet-metal2.py
+@@ -266,7 +266,7 @@ debug = 1
+     return lib, applied
+ 
+ 
+-def assemble(turnip, bridge_lib, env):
++def assemble(turnip, bridge_lib, env, abi_dir):
+     sunfish = WORK / 'donor/sunfish'
+     out = ROOT / 'userspace/out'
+     bundle = out / 'SweetMetal2.bundle'
+@@ -281,8 +281,11 @@ def assemble(turnip, bridge_lib, env):
+         '-std=c++17', '-fobjc-arc', '-bundle',
+         '-Wno-deprecated-declarations', '-Wno-unused-function',
+         '-I' + str(sunfish / 'phone/metal2'), '-I' + str(sunfish / 'phone/metal2/bridge'),
++        '-I' + str(ROOT / 'userspace/native/include'), '-I' + str(abi_dir),
+         sunfish / 'phone/metal2/SweetMetal2.mm',
+         sunfish / 'phone/metal2/NativeBridgeMetalFrontend.mm',
++        ROOT / 'userspace/native/src/sweet_gpu.cpp',
++        ROOT / 'userspace/native/src/sweet_native_probe.cpp',
+         bridge_lib, '-Wl,-dead_strip', '-lc++',
+         '-framework', 'Foundation', '-framework', 'Metal', '-framework', 'IOSurface',
+         '-framework', 'IOKit', '-framework', 'CoreFoundation', '-o', exe, env=env)
+@@ -352,7 +355,7 @@ def main():
+     shutil.copy2(abi, out / 'NativeAdrenoABI.h')
+     turnip, mesa_patches = build_turnip(donor / 'unixnu', donor / 'sunfish', WORK / 'mesa', abi.parent, env)
+     bridge_lib, bridge_patches = build_bridge(WORK / 'metal2vulkan', env)
+-    bundle = assemble(turnip, bridge_lib, env)
++    bundle = assemble(turnip, bridge_lib, env, abi.parent)
+ 
+     report = {
+         'sources': {'sunfish': SUNFISH_PIN, 'unixnu': UNIXNU_PIN,
+diff --git a/userspace/native/README.md b/userspace/native/README.md
+new file mode 100644
+index 0000000..defecf2
+--- /dev/null
++++ b/userspace/native/README.md
+@@ -0,0 +1,72 @@
++# userspace/native - the native Adreno driver
++
++This directory is the beginning of a Metal driver that talks to the Adreno
++without Vulkan and without Turnip. The plan, the evidence and the stage list
++are in [`docs/native-adreno-driver.md`](../../docs/native-adreno-driver.md).
++This file is the practical part: what is here today and how to run it.
++
++## What is here (N0)
++
++| file | what it is |
++| --- | --- |
++| `include/sweet_gpu.h` | the device API: open, query, BO alloc/import/map/free, CPU map, PM4 submit, fence wait, timestamp |
++| `src/sweet_gpu.cpp` | that API over the kernel's NativeAdreno ABI 1, through `IOAcceleratorES` and the `NTNL` tunnel |
++| `src/sweet_pm4.h` | checked PM4 type 4 / type 7 emission (CP_NOP, CP_MEM_WRITE, CP_EVENT_WRITE, CP_WAIT_FOR_IDLE) |
++| `src/sweet_native_probe.cpp` | the N0 probe: runs inside backboardd, has the GPU write two words, waits on the CP fence, reads them back |
++| `test/pm4_test.cpp` | host test for the packet builder; no device needed |
++
++The probe is compiled into `SweetMetal2.bundle` (see
++`tools/build-sweet-metal2.py`). It runs from a constructor when asked, before
++the Metal device opens Turnip, and closes the user client before returning, so
++the normal stack is unaffected.
++
++## Host test
++
++    g++ -std=c++17 -Wall -Wextra -I userspace/native/src \
++        userspace/native/test/pm4_test.cpp -o /tmp/sweet-pm4-test
++    /tmp/sweet-pm4-test
++
++The macOS CI runs the same command before building the bundle.
++
++## Running the probe on the phone
++
++The kernel admits only a process named `backboardd` to the user client, so
++the probe runs inside the Metal bundle, not as a standalone binary.
++
++1. Build the bundle (CI `sweet-metal2`, or a local macOS build):
++
++       python3 tools/build-sweet-metal2.py
++
++2. On the phone, prepare the one-shot flag and the log (root shell; these are
++   the only writes, both under `/var/local`):
++
++       echo 1 > /var/local/mtl2-native-probe      # or SWEET_NATIVE_PROBE=1 in /var/local/mtl2-env
++       : > /var/local/mtl2-native-probe.log
++       chmod 0666 /var/local/mtl2-native-probe.log
++
++3. Install the bundle and restart backboardd with the usual tools:
++
++       tools/sweet-install-metal2.sh <bundle> <backup-dir>
++
++4. Read the result:
++
++       grep 'SWEET NATIVE PROBE' /var/local/mtl2-native-probe.log
++
++   and remove `/var/local/mtl2-native-probe` (or the env line) so the probe
++   does not run again.
++
++A passing probe looks like:
++
++    probe: abi=1 input_bits=32 output_bits=36 flags=0x1 max_bo=268435456
++    probe: chip=0x... va=0x... bank=... ubwc=...
++    probe: submitted 4 words, fence=0x...
++    probe: waited, timestamp ... -> ..., got 0x600df00d 0x12345678
++    probe: PASS gpu wrote and fence completed
++
++## What this proves, and what it does not
++
++It proves the control plane a native driver stands on: the user client opens
++inside backboardd, buffers are allocated and mapped at client IOVAs, plain PM4
++is submitted, the kernel's CP fence completes, and the GPU's writes are
++visible to the CPU. It does **not** touch render state, shaders or
++presentation; those are N1-N4 in the plan.
+diff --git a/userspace/native/include/sweet_gpu.h b/userspace/native/include/sweet_gpu.h
+new file mode 100644
+index 0000000..fa9fda2
+--- /dev/null
++++ b/userspace/native/include/sweet_gpu.h
+@@ -0,0 +1,114 @@
++/* SPDX-License-Identifier: MIT */
++/*
++ * A native client for sweet's Adreno GPU services.
++ *
++ * This is the bottom of the native Metal driver: no Vulkan, no libdrm, no
++ * Turnip. It speaks the kernel's NativeAdreno ABI 1 (NativeAdrenoABI.h) to the
++ * IOAcceleratorES user client: buffers, host-page import (an IOSurface's
++ * pages), client-chosen IOVAs, PM4 submission, CP fences and timestamps.
++ *
++ * The kernel wraps every submission with the CP prologue and the
++ * CACHE_FLUSH_TS + WHERE_AM_I fence, so callers submit plain PM4 and get a
++ * fence value back. All entry points are thread-safe only in the sense that
++ * the underlying IOKit connection is; a driver should serialise submissions
++ * (the GPU has one ring).
++ */
++#ifndef SWEET_GPU_H
++#define SWEET_GPU_H
++
++#include <stddef.h>
++#include <stdint.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++typedef struct SweetGpu SweetGpu;
++
++/* Facts the kernel publishes from the board code (NativeAdrenoAbiDeviceInfo). */
++struct SweetGpuInfo {
++    uint32_t chip_id;
++    uint32_t gmem_bytes;
++    uint64_t gmem_base;
++    uint64_t uche_trap_base;
++    uint64_t va_start;
++    uint64_t va_size;
++    uint32_t highest_bank_bit;
++    uint32_t ubwc_swizzle;
++    uint32_t macrotile_mode;
++    uint32_t ubwc_version;
++    uint32_t flags;
++};
++
++struct SweetGpuParams {
++    uint32_t abi_version;
++    uint32_t input_bits;
++    uint32_t output_bits;
++    uint32_t flags;
++    uint64_t max_bo_bytes;
++};
++
++/* One PM4 command buffer to submit (the kernel's NativeAdrenoAbiSubmitBuffer). */
++struct SweetGpuSubmitBuffer {
++    uint64_t handle;
++    uint64_t iova;
++    uint64_t bytes;
++};
++
++enum {
++    SweetGpuSuccess = 0,
++    SweetGpuError = -1,          /* see `why` */
++    SweetGpuBusy = -2,           /* the kernel had no free job slot */
++};
++
++/*
++ * Opens IOAcceleratorES with type 0x4147 and finds an admitted external-method
++ * selector (the AGX accelerator tunnel, 'NTNL'). Only a process named
++ * backboardd is admitted by the current kernel; anything else fails with
++ * SweetGpuError and a sentence in `why`.
++ *
++ * Returns a device or NULL. `why` may be NULL if `why_size` is 0.
++ */
++SweetGpu *sweet_gpu_open(char *why, size_t why_size);
++void sweet_gpu_close(SweetGpu *gpu);
++
++int sweet_gpu_params(SweetGpu *gpu, struct SweetGpuParams *out, char *why, size_t why_size);
++int sweet_gpu_info(SweetGpu *gpu, struct SweetGpuInfo *out, char *why, size_t why_size);
++
++/* Allocates a GPU buffer. Returns 0 on failure (handles are never zero). */
++uint64_t sweet_gpu_bo_alloc(SweetGpu *gpu, uint64_t bytes, uint32_t align_log2,
++                            char *why, size_t why_size);
++/* Maps an allocated buffer at `iova` (4 KiB aligned, inside the published window). */
++int sweet_gpu_bo_map(SweetGpu *gpu, uint64_t handle, uint64_t iova,
++                     uint32_t permissions, char *why, size_t why_size);
++/*
++ * Pins [address, address+bytes) of the calling task as a buffer (the caller's
++ * own pages, typically an IOSurface's base) and maps it at `iova`. The caller
++ * keeps its own CPU mapping; there is no CPU-map token for an import.
++ */
++uint64_t sweet_gpu_bo_import(SweetGpu *gpu, void *address, uint64_t bytes,
++                             uint64_t iova, char *why, size_t why_size);
++int sweet_gpu_bo_free(SweetGpu *gpu, uint64_t handle, char *why, size_t why_size);
++
++/* CPU view of an allocated buffer (write-combined). NULL on failure. */
++void *sweet_gpu_bo_cpu_map(SweetGpu *gpu, uint64_t handle, uint64_t *bytes,
++                           char *why, size_t why_size);
++int sweet_gpu_bo_cpu_unmap(SweetGpu *gpu, uint64_t handle, void *mapping,
++                           char *why, size_t why_size);
++
++/* Submits 1..16 PM4 command buffers; *fence receives the completion fence.
++ * wait_fence is zero or an earlier fence of this client. */
++int sweet_gpu_submit(SweetGpu *gpu, const struct SweetGpuSubmitBuffer *buffers,
++                     unsigned count, uint64_t wait_fence, uint64_t wait_timeout_ns,
++                     uint64_t *fence, char *why, size_t why_size);
++/* Waits for a fence of this client. timeout_ns 0 polls once. */
++int sweet_gpu_wait(SweetGpu *gpu, uint64_t fence, uint64_t timeout_ns,
++                   char *why, size_t why_size);
++/* GPU always-on counter, in ticks (not nanoseconds). 0 on failure. */
++uint64_t sweet_gpu_timestamp(SweetGpu *gpu);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* SWEET_GPU_H */
+diff --git a/userspace/native/src/sweet_gpu.cpp b/userspace/native/src/sweet_gpu.cpp
+new file mode 100644
+index 0000000..8dd2c16
+--- /dev/null
++++ b/userspace/native/src/sweet_gpu.cpp
+@@ -0,0 +1,376 @@
++/* SPDX-License-Identifier: MIT */
++/*
++ * NativeAdreno ABI 1 over IOKit, without Vulkan, libdrm or Turnip.
++ *
++ * The user client is reached through the AGX accelerator service
++ * (IOAcceleratorES, open type 0x4147) and, because that client admits a
++ * sandboxed caller, through the 'NTNL' tunnel: one admitted external-method
++ * selector carries {magic, method, payload}. This is the same transport
++ * Turnip's Darwin KMD uses; the methods and records are NativeAdrenoABI.h.
++ */
++#include "sweet_gpu.h"
++
++#include <IOKit/IOKitLib.h>
++#include <mach/mach.h>
++
++#include <map>
++#include <new>
++#include <stdarg.h>
++#include <stdio.h>
++#include <string.h>
++
++#include "NativeAdrenoABI.h"
++
++namespace {
++
++constexpr uint32_t kTunnelMagic = 0x4e544e4cu;   /* 'NTNL' */
++constexpr uint32_t kOpenType = 0x4147;           /* the AGX accelerator's */
++constexpr const char *kService = "IOAcceleratorES";
++
++struct Mapping {
++    uint32_t token;
++    void *address;
++};
++
++struct SweetGpuImpl {
++    io_connect_t conn = 0;
++    uint32_t selector = 0;
++    std::map<uint64_t, Mapping> mappings;
++};
++
++void whyf(char *why, size_t size, const char *fmt, ...)
++{
++    if (!why || !size)
++        return;
++    va_list ap;
++    va_start(ap, fmt);
++    vsnprintf(why, size, fmt, ap);
++    va_end(ap);
++    why[size - 1] = '\0';
++}
++
++kern_return_t call(SweetGpuImpl *gpu, uint32_t method, const void *in, size_t in_size,
++                   void *out, size_t out_size)
++{
++    uint8_t buffer[8 + sizeof(NativeAdrenoAbiSubmit)];
++    if (in_size > sizeof(NativeAdrenoAbiSubmit))
++        return kIOReturnBadArgument;
++    const uint32_t header[2] = {kTunnelMagic, method};
++    memcpy(buffer, header, sizeof(header));
++    if (in_size)
++        memcpy(buffer + sizeof(header), in, in_size);
++    size_t out_bytes = out_size;
++    return IOConnectCallStructMethod(gpu->conn, gpu->selector, buffer,
++                                     sizeof(header) + in_size,
++                                     out_size ? out : nullptr,
++                                     out_size ? &out_bytes : nullptr);
++}
++
++}  // namespace
++
++extern "C" {
++
++SweetGpu *sweet_gpu_open(char *why, size_t why_size)
++{
++    io_service_t service = IOServiceGetMatchingService(kIOMainPortDefault,
++                                                       IOServiceMatching(kService));
++    if (!service) {
++        whyf(why, why_size, "no %s service", kService);
++        return nullptr;
++    }
++    io_connect_t conn = 0;
++    kern_return_t kr = IOServiceOpen(service, mach_task_self(), kOpenType, &conn);
++    IOObjectRelease(service);
++    if (kr != KERN_SUCCESS) {
++        whyf(why, why_size, "IOServiceOpen(%s, 0x%x) failed: 0x%x", kService, kOpenType, kr);
++        return nullptr;
++    }
++
++    SweetGpuImpl *gpu = new (std::nothrow) SweetGpuImpl;
++    if (!gpu) {
++        IOServiceClose(conn);
++        whyf(why, why_size, "out of memory");
++        return nullptr;
++    }
++    gpu->conn = conn;
++
++    /* Ask each selector whether the sandbox admits it: the driver answers a
++     * probe (method 0xffffffff) with success for the ones it lets through. */
++    for (uint32_t s = 0; s < 256; s++) {
++        const uint32_t probe[2] = {kTunnelMagic, 0xffffffffu};
++        if (IOConnectCallStructMethod(conn, s, probe, sizeof(probe), nullptr, nullptr) ==
++            KERN_SUCCESS) {
++            gpu->selector = s;
++            break;
++        }
++    }
++    if (!gpu->selector) {
++        IOServiceClose(conn);
++        delete gpu;
++        whyf(why, why_size, "no admitted external-method selector");
++        return nullptr;
++    }
++
++    NativeAdrenoAbiParams params{};
++    kr = call(gpu, NativeAdrenoMethodQuery, nullptr, 0, &params, sizeof(params));
++    if (kr != KERN_SUCCESS || params.abi_version != NativeAdrenoAbiVersion) {
++        sweet_gpu_close(reinterpret_cast<SweetGpu *>(gpu));
++        whyf(why, why_size, "ABI query failed: 0x%x version %u", kr, params.abi_version);
++        return nullptr;
++    }
++    return reinterpret_cast<SweetGpu *>(gpu);
++}
++
++void sweet_gpu_close(SweetGpu *handle)
++{
++    SweetGpuImpl *gpu = reinterpret_cast<SweetGpuImpl *>(handle);
++    if (!gpu)
++        return;
++    IOServiceClose(gpu->conn);
++    delete gpu;
++}
++
++int sweet_gpu_params(SweetGpu *handle, struct SweetGpuParams *out, char *why, size_t why_size)
++{
++    SweetGpuImpl *gpu = reinterpret_cast<SweetGpuImpl *>(handle);
++    if (!gpu || !out)
++        return SweetGpuError;
++    NativeAdrenoAbiParams params{};
++    kern_return_t kr = call(gpu, NativeAdrenoMethodQuery, nullptr, 0, &params, sizeof(params));
++    if (kr != KERN_SUCCESS) {
++        whyf(why, why_size, "query failed: 0x%x", kr);
++        return SweetGpuError;
++    }
++    out->abi_version = params.abi_version;
++    out->input_bits = params.input_bits;
++    out->output_bits = params.output_bits;
++    out->flags = params.flags;
++    out->max_bo_bytes = params.max_bo_bytes;
++    return SweetGpuSuccess;
++}
++
++int sweet_gpu_info(SweetGpu *handle, struct SweetGpuInfo *out, char *why, size_t why_size)
++{
++    SweetGpuImpl *gpu = reinterpret_cast<SweetGpuImpl *>(handle);
++    if (!gpu || !out)
++        return SweetGpuError;
++    NativeAdrenoAbiDeviceInfo info{};
++    kern_return_t kr = call(gpu, NativeAdrenoMethodGetDeviceInfo, nullptr, 0, &info, sizeof(info));
++    if (kr != KERN_SUCCESS) {
++        whyf(why, why_size, "device info failed: 0x%x", kr);
++        return SweetGpuError;
++    }
++    out->chip_id = info.chip_id;
++    out->gmem_bytes = info.gmem_bytes;
++    out->gmem_base = info.gmem_base;
++    out->uche_trap_base = info.uche_trap_base;
++    out->va_start = info.va_start;
++    out->va_size = info.va_size;
++    out->highest_bank_bit = info.highest_bank_bit;
++    out->ubwc_swizzle = info.ubwc_swizzle;
++    out->macrotile_mode = info.macrotile_mode;
++    out->ubwc_version = info.ubwc_version;
++    out->flags = info.flags;
++    return SweetGpuSuccess;
++}
++
++uint64_t sweet_gpu_bo_alloc(SweetGpu *handle, uint64_t bytes, uint32_t align_log2,
++                            char *why, size_t why_size)
++{
++    SweetGpuImpl *gpu = reinterpret_cast<SweetGpuImpl *>(handle);
++    if (!gpu || !bytes)
++        return 0;
++    NativeAdrenoAbiBoAlloc request{};
++    request.bytes = bytes;
++    request.align_log2 = align_log2;
++    request.contiguous = 0;
++    NativeAdrenoAbiBoAllocReply reply{};
++    kern_return_t kr = call(gpu, NativeAdrenoMethodBoAlloc, &request, sizeof(request),
++                            &reply, sizeof(reply));
++    if (kr != KERN_SUCCESS) {
++        whyf(why, why_size, "BoAlloc(%llu) failed: 0x%x", (unsigned long long)bytes, kr);
++        return 0;
++    }
++    return reply.handle;
++}
++
++int sweet_gpu_bo_map(SweetGpu *handle, uint64_t bo, uint64_t iova, uint32_t permissions,
++                     char *why, size_t why_size)
++{
++    SweetGpuImpl *gpu = reinterpret_cast<SweetGpuImpl *>(handle);
++    if (!gpu || !bo)
++        return SweetGpuError;
++    NativeAdrenoAbiBoMap request{};
++    request.handle = bo;
++    request.iova = iova;
++    request.permissions = permissions;
++    request.writeback = 0;
++    request.shareability = 2;
++    NativeAdrenoAbiBoMapReply reply{};
++    kern_return_t kr = call(gpu, NativeAdrenoMethodBoMap, &request, sizeof(request),
++                            &reply, sizeof(reply));
++    if (kr != KERN_SUCCESS) {
++        whyf(why, why_size, "BoMap(0x%llx) failed: 0x%x", (unsigned long long)iova, kr);
++        return SweetGpuError;
++    }
++    return SweetGpuSuccess;
++}
++
++uint64_t sweet_gpu_bo_import(SweetGpu *handle, void *address, uint64_t bytes, uint64_t iova,
++                             char *why, size_t why_size)
++{
++    SweetGpuImpl *gpu = reinterpret_cast<SweetGpuImpl *>(handle);
++    if (!gpu || !address || !bytes)
++        return 0;
++    NativeAdrenoAbiBoImport request{};
++    request.address = (uint64_t)(uintptr_t)address;
++    request.bytes = bytes;
++    NativeAdrenoAbiBoAllocReply reply{};
++    kern_return_t kr = call(gpu, NativeAdrenoMethodBoImport, &request, sizeof(request),
++                            &reply, sizeof(reply));
++    if (kr != KERN_SUCCESS) {
++        whyf(why, why_size, "BoImport(%llu) failed: 0x%x", (unsigned long long)bytes, kr);
++        return 0;
++    }
++    if (sweet_gpu_bo_map(handle, reply.handle, iova, 3, why, why_size) != SweetGpuSuccess) {
++        NativeAdrenoAbiBoFree undo{reply.handle};
++        call(gpu, NativeAdrenoMethodBoFree, &undo, sizeof(undo), nullptr, 0);
++        return 0;
++    }
++    return reply.handle;
++}
++
++int sweet_gpu_bo_free(SweetGpu *handle, uint64_t bo, char *why, size_t why_size)
++{
++    SweetGpuImpl *gpu = reinterpret_cast<SweetGpuImpl *>(handle);
++    if (!gpu || !bo)
++        return SweetGpuError;
++    NativeAdrenoAbiBoFree request{bo};
++    kern_return_t kr = call(gpu, NativeAdrenoMethodBoFree, &request, sizeof(request), nullptr, 0);
++    if (kr != KERN_SUCCESS) {
++        whyf(why, why_size, "BoFree(0x%llx) failed: 0x%x", (unsigned long long)bo, kr);
++        return SweetGpuError;
++    }
++    return SweetGpuSuccess;
++}
++
++void *sweet_gpu_bo_cpu_map(SweetGpu *handle, uint64_t bo, uint64_t *bytes,
++                           char *why, size_t why_size)
++{
++    SweetGpuImpl *gpu = reinterpret_cast<SweetGpuImpl *>(handle);
++    if (!gpu || !bo)
++        return nullptr;
++    NativeAdrenoAbiBoCpuMap request{bo};
++    NativeAdrenoAbiBoCpuMapReply reply{};
++    kern_return_t kr = call(gpu, NativeAdrenoMethodBoCpuMap, &request, sizeof(request),
++                            &reply, sizeof(reply));
++    if (kr != KERN_SUCCESS) {
++        whyf(why, why_size, "BoCpuMap(0x%llx) failed: 0x%x", (unsigned long long)bo, kr);
++        return nullptr;
++    }
++    mach_vm_address_t address = 0;
++    mach_vm_size_t length = 0;
++    kr = IOConnectMapMemory64(gpu->conn, reply.token, mach_task_self(), &address, &length,
++                              kIOMapAnywhere | kIOMapWriteCombineCache);
++    if (kr != KERN_SUCCESS || !address || length < reply.bytes) {
++        NativeAdrenoAbiBoCpuUnmap undo{bo, reply.token};
++        call(gpu, NativeAdrenoMethodBoCpuUnmap, &undo, sizeof(undo), nullptr, 0);
++        whyf(why, why_size, "IOConnectMapMemory64(0x%llx) failed: 0x%x",
++             (unsigned long long)bo, kr);
++        return nullptr;
++    }
++    Mapping mapping{reply.token, (void *)(uintptr_t)address};
++    gpu->mappings[bo] = mapping;
++    if (bytes)
++        *bytes = length;
++    return mapping.address;
++}
++
++int sweet_gpu_bo_cpu_unmap(SweetGpu *handle, uint64_t bo, void *mapping,
++                           char *why, size_t why_size)
++{
++    SweetGpuImpl *gpu = reinterpret_cast<SweetGpuImpl *>(handle);
++    if (!gpu || !bo || !mapping)
++        return SweetGpuError;
++    auto it = gpu->mappings.find(bo);
++    if (it == gpu->mappings.end() || it->second.address != mapping) {
++        whyf(why, why_size, "unmap of a buffer that is not mapped: 0x%llx",
++             (unsigned long long)bo);
++        return SweetGpuError;
++    }
++    kern_return_t kr = IOConnectUnmapMemory64(gpu->conn, it->second.token, mach_task_self(),
++                                              (mach_vm_address_t)(uintptr_t)mapping);
++    if (kr != KERN_SUCCESS) {
++        whyf(why, why_size, "IOConnectUnmapMemory64(0x%llx) failed: 0x%x",
++             (unsigned long long)bo, kr);
++        return SweetGpuError;
++    }
++    NativeAdrenoAbiBoCpuUnmap undo{bo, it->second.token};
++    call(gpu, NativeAdrenoMethodBoCpuUnmap, &undo, sizeof(undo), nullptr, 0);
++    gpu->mappings.erase(it);
++    return SweetGpuSuccess;
++}
++
++int sweet_gpu_submit(SweetGpu *handle, const struct SweetGpuSubmitBuffer *buffers,
++                     unsigned count, uint64_t wait_fence, uint64_t wait_timeout_ns,
++                     uint64_t *fence, char *why, size_t why_size)
++{
++    SweetGpuImpl *gpu = reinterpret_cast<SweetGpuImpl *>(handle);
++    if (!gpu || !buffers || !count || count > NativeAdrenoAbiMaxBuffers || !fence)
++        return SweetGpuError;
++    NativeAdrenoAbiSubmit request{};
++    request.buffer_count = count;
++    request.queue = 0;
++    request.wait_fence = wait_fence;
++    request.wait_timeout_ns = wait_timeout_ns;
++    for (unsigned i = 0; i < count; i++) {
++        request.buffers[i].handle = buffers[i].handle;
++        request.buffers[i].iova = buffers[i].iova;
++        request.buffers[i].bytes = buffers[i].bytes;
++    }
++    NativeAdrenoAbiSubmitReply reply{};
++    kern_return_t kr = call(gpu, NativeAdrenoMethodSubmit, &request, sizeof(request),
++                            &reply, sizeof(reply));
++    if (kr == kIOReturnBusy)
++        return SweetGpuBusy;
++    if (kr != KERN_SUCCESS) {
++        whyf(why, why_size, "submit failed: 0x%x", kr);
++        return SweetGpuError;
++    }
++    *fence = reply.fence;
++    return SweetGpuSuccess;
++}
++
++int sweet_gpu_wait(SweetGpu *handle, uint64_t fence, uint64_t timeout_ns,
++                   char *why, size_t why_size)
++{
++    SweetGpuImpl *gpu = reinterpret_cast<SweetGpuImpl *>(handle);
++    if (!gpu || !fence)
++        return SweetGpuError;
++    NativeAdrenoAbiWaitFence request{fence, timeout_ns};
++    kern_return_t kr = call(gpu, NativeAdrenoMethodWaitFence, &request, sizeof(request),
++                            nullptr, 0);
++    if (kr == kIOReturnTimeout) {
++        whyf(why, why_size, "fence 0x%llx timed out", (unsigned long long)fence);
++        return SweetGpuBusy;
++    }
++    if (kr != KERN_SUCCESS) {
++        whyf(why, why_size, "wait fence 0x%llx failed: 0x%x", (unsigned long long)fence, kr);
++        return SweetGpuError;
++    }
++    return SweetGpuSuccess;
++}
++
++uint64_t sweet_gpu_timestamp(SweetGpu *handle)
++{
++    SweetGpuImpl *gpu = reinterpret_cast<SweetGpuImpl *>(handle);
++    if (!gpu)
++        return 0;
++    NativeAdrenoAbiTimestamp reply{};
++    if (call(gpu, NativeAdrenoMethodGetTimestamp, nullptr, 0, &reply, sizeof(reply)) !=
++        KERN_SUCCESS)
++        return 0;
++    return reply.ticks;
++}
++
++}  // extern "C"
+diff --git a/userspace/native/src/sweet_native_probe.cpp b/userspace/native/src/sweet_native_probe.cpp
+new file mode 100644
+index 0000000..99a717b
+--- /dev/null
++++ b/userspace/native/src/sweet_native_probe.cpp
+@@ -0,0 +1,199 @@
++/* SPDX-License-Identifier: MIT */
++/*
++ * The N0 hardware probe for the native driver.
++ *
++ * Runs inside backboardd when asked (SWEET_NATIVE_PROBE=1 in
++ * /var/local/mtl2-env, or a /var/local/mtl2-native-probe file whose first
++ * byte is '1'), before the Metal device opens Turnip. It proves the parts a
++ * native driver needs and nothing else:
++ *
++ *   open the NativeAdreno user client (the only process the kernel admits is
++ *   backboardd, which is where this code runs)
++ *   allocate a buffer, map it at a client IOVA, map it on the CPU
++ *   submit CP_MEM_WRITE into that buffer plus a NOP
++ *   wait on the real CP fence
++ *   read the two words back
++ *
++ * It does not touch the GPU's render state, and it closes the connection
++ * before returning, so the normal SweetMetal2/Turnip path that follows opens
++ * the single connection slot as usual.
++ *
++ * A failed probe logs a sentence and returns; it never aborts backboardd.
++ */
++#include <stdarg.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#include "sweet_gpu.h"
++#include "sweet_pm4.h"
++
++namespace {
++
++constexpr const char *kLogPath = "/var/local/mtl2-native-probe.log";
++constexpr const char *kEnvPath = "/var/local/mtl2-env";
++constexpr const char *kFlagPath = "/var/local/mtl2-native-probe";
++
++FILE *log_file;
++
++void logf(const char *fmt, ...)
++{
++    char text[512];
++    va_list ap;
++    va_start(ap, fmt);
++    vsnprintf(text, sizeof(text), fmt, ap);
++    va_end(ap);
++    fprintf(stderr, "SWEET NATIVE PROBE: %s\n", text);
++    if (!log_file)
++        log_file = fopen(kLogPath, "a");
++    if (log_file) {
++        fprintf(log_file, "%s\n", text);
++        fflush(log_file);
++    }
++}
++
++bool requested()
++{
++    if (const char *env = getenv("SWEET_NATIVE_PROBE"))
++        if (!strcmp(env, "1"))
++            return true;
++    if (FILE *f = fopen(kFlagPath, "r")) {
++        const int c = fgetc(f);
++        fclose(f);
++        if (c == '1')
++            return true;
++    }
++    if (FILE *f = fopen(kEnvPath, "r")) {
++        char line[256];
++        bool on = false;
++        while (fgets(line, sizeof(line), f)) {
++            line[strcspn(line, "\r\n")] = 0;
++            if (!strncmp(line, "SWEET_NATIVE_PROBE=", 19))
++                on = !strcmp(line + 19, "1");
++        }
++        fclose(f);
++        if (on)
++            return true;
++    }
++    return false;
++}
++
++uint64_t align_up(uint64_t value, uint64_t alignment)
++{
++    return (value + alignment - 1) & ~(alignment - 1);
++}
++
++void run()
++{
++    char why[256] = {0};
++    logf("probe: start (pid %d)", (int)getpid());
++
++    SweetGpu *gpu = sweet_gpu_open(why, sizeof(why));
++    if (!gpu) {
++        logf("probe: FAIL open: %s", why);
++        return;
++    }
++
++    SweetGpuParams params{};
++    SweetGpuInfo info{};
++    if (sweet_gpu_params(gpu, &params, why, sizeof(why)) != SweetGpuSuccess ||
++        sweet_gpu_info(gpu, &info, why, sizeof(why)) != SweetGpuSuccess) {
++        logf("probe: FAIL query: %s", why);
++        sweet_gpu_close(gpu);
++        return;
++    }
++    logf("probe: abi=%u input_bits=%u output_bits=%u flags=0x%x max_bo=%llu",
++         params.abi_version, params.input_bits, params.output_bits, params.flags,
++         (unsigned long long)params.max_bo_bytes);
++    logf("probe: chip=0x%08x gmem=%u@0x%llx va=0x%llx+0x%llx bank=%u ubwc=%u/%u macro=%u",
++         info.chip_id, info.gmem_bytes, (unsigned long long)info.gmem_base,
++         (unsigned long long)info.va_start, (unsigned long long)info.va_size,
++         info.highest_bank_bit, info.ubwc_version, info.ubwc_swizzle,
++         info.macrotile_mode);
++
++    const uint64_t iova = align_up(info.va_start, 4096);
++    const uint64_t bo = sweet_gpu_bo_alloc(gpu, 4096, 12, why, sizeof(why));
++    if (!bo) {
++        logf("probe: FAIL %s", why);
++        sweet_gpu_close(gpu);
++        return;
++    }
++    if (sweet_gpu_bo_map(gpu, bo, iova, 3, why, sizeof(why)) != SweetGpuSuccess) {
++        logf("probe: FAIL %s", why);
++        sweet_gpu_bo_free(gpu, bo, nullptr, 0);
++        sweet_gpu_close(gpu);
++        return;
++    }
++    uint64_t mapped_bytes = 0;
++    volatile uint32_t *cpu = (volatile uint32_t *)sweet_gpu_bo_cpu_map(
++        gpu, bo, &mapped_bytes, why, sizeof(why));
++    if (!cpu) {
++        logf("probe: FAIL %s", why);
++        sweet_gpu_bo_free(gpu, bo, nullptr, 0);
++        sweet_gpu_close(gpu);
++        return;
++    }
++    cpu[0] = 0;
++    cpu[1] = 0;
++    __atomic_thread_fence(__ATOMIC_SEQ_CST);
++
++    const uint32_t want0 = 0x600df00du;
++    const uint32_t want1 = 0x12345678u;
++    sweet::Pm4 pm4;
++    const bool built = pm4.mem_write(iova, {want0, want1}) && pm4.nop(2);
++    if (!built) {
++        logf("probe: FAIL pm4 build");
++        sweet_gpu_bo_cpu_unmap(gpu, bo, (void *)cpu, nullptr, 0);
++        sweet_gpu_bo_free(gpu, bo, nullptr, 0);
++        sweet_gpu_close(gpu);
++        return;
++    }
++
++    const uint64_t before = sweet_gpu_timestamp(gpu);
++    SweetGpuSubmitBuffer buffer{bo, iova, (uint64_t)pm4.size() * 4};
++    uint64_t fence = 0;
++    const int submitted = sweet_gpu_submit(gpu, &buffer, 1, 0, 0, &fence, why, sizeof(why));
++    if (submitted != SweetGpuSuccess) {
++        logf("probe: FAIL submit: %s (%d)", why, submitted);
++        sweet_gpu_bo_cpu_unmap(gpu, bo, (void *)cpu, nullptr, 0);
++        sweet_gpu_bo_free(gpu, bo, nullptr, 0);
++        sweet_gpu_close(gpu);
++        return;
++    }
++    logf("probe: submitted %zu words, fence=0x%llx", pm4.size(), (unsigned long long)fence);
++
++    const int waited = sweet_gpu_wait(gpu, fence, 2000000000ull, why, sizeof(why));
++    if (waited != SweetGpuSuccess) {
++        logf("probe: FAIL wait: %s (%d)", why, waited);
++    } else {
++        __atomic_thread_fence(__ATOMIC_SEQ_CST);
++        const uint64_t after = sweet_gpu_timestamp(gpu);
++        const uint32_t got0 = cpu[0];
++        const uint32_t got1 = cpu[1];
++        logf("probe: waited, timestamp %llu -> %llu, got 0x%08x 0x%08x",
++             (unsigned long long)before, (unsigned long long)after, got0, got1);
++        if (got0 == want0 && got1 == want1)
++            logf("probe: PASS gpu wrote and fence completed");
++        else
++            logf("probe: FAIL values (wanted 0x%08x 0x%08x)", want0, want1);
++    }
++
++    if (sweet_gpu_bo_cpu_unmap(gpu, bo, (void *)cpu, why, sizeof(why)) != SweetGpuSuccess)
++        logf("probe: cpu unmap: %s", why);
++    if (sweet_gpu_bo_free(gpu, bo, why, sizeof(why)) != SweetGpuSuccess)
++        logf("probe: free: %s", why);
++    sweet_gpu_close(gpu);
++    logf("probe: end");
++}
++
++}  // namespace
++
++extern "C" __attribute__((constructor)) static void sweet_native_probe_entry(void)
++{
++    try {
++        if (requested())
++            run();
++    } catch (...) {
++        logf("probe: FAIL exception");
++    }
++}
+diff --git a/userspace/native/src/sweet_pm4.h b/userspace/native/src/sweet_pm4.h
+new file mode 100644
+index 0000000..ae245c9
+--- /dev/null
++++ b/userspace/native/src/sweet_pm4.h
+@@ -0,0 +1,127 @@
++/* SPDX-License-Identifier: MIT */
++/*
++ * Checked PM4 emission for the A6xx command processor.
++ *
++ * A packet is a 32-bit header followed by its payload. Type 4 addresses
++ * registers (18-bit register space, payload 1..127 dwords); type 7 is an
++ * opcode (1..16383 dwords). This builder owns no memory except its vector and
++ * refuses malformed counts instead of masking them, because a masked count is
++ * a command that does something other than what its caller wrote.
++ *
++ * The kernel appends the completion fence to every submission, so there is no
++ * fence packet here; CP_MEM_WRITE and friends are for the caller's own data.
++ */
++#ifndef SWEET_PM4_H
++#define SWEET_PM4_H
++
++#include <stddef.h>
++#include <stdint.h>
++
++#include <initializer_list>
++#include <vector>
++
++namespace sweet {
++
++enum {
++    /* adreno_pm4.xml */
++    CP_NOP = 0x10,
++    CP_MEM_WRITE = 0x3d,
++    CP_EVENT_WRITE = 0x46,
++    CP_WHERE_AM_I = 0x62,
++    CP_WAIT_FOR_IDLE = 0x26,
++    CP_WAIT_MEM_WRITES = 0x33,
++    CP_SET_MARKER = 0x0d,
++};
++
++/* Event codes for CP_EVENT_WRITE. */
++enum {
++    CACHE_FLUSH_TS = 4,
++    END_OF_PIPE_SYNC = 0x2a,
++};
++
++class Pm4 {
++public:
++    Pm4() = default;
++    explicit Pm4(size_t reserve_words) { words_.reserve(reserve_words); }
++
++    void clear() { words_.clear(); }
++    size_t size() const { return words_.size(); }
++    const std::vector<uint32_t> &words() const { return words_; }
++    std::vector<uint32_t> &words() { return words_; }
++
++    /* Type 4: register write(s). `reg` must be 4-byte aligned and inside the
++     * 18-bit register space (the A6xx packet header carries reg >> 2 in 16
++     * bits after the type). Returns false without emitting anything if the
++     * count or the register cannot be encoded. */
++    bool type4(uint32_t reg, std::initializer_list<uint32_t> values)
++    {
++        const size_t count = values.size();
++        if (count < 1 || count > 127 || (reg & 3) || reg > 0x3ffff)
++            return false;
++        words_.push_back((4u << 28) | (uint32_t)((count - 1) << 16) | (reg >> 2));
++        words_.insert(words_.end(), values.begin(), values.end());
++        return true;
++    }
++
++    /* Type 7: opcode with 0..16383 payload dwords. */
++    bool type7(uint32_t opcode, std::initializer_list<uint32_t> values)
++    {
++        const size_t count = values.size();
++        if (count > 0x3fff || opcode > 0x7f)
++            return false;
++        words_.push_back((7u << 28) | (uint32_t)((count ? count - 1 : 0) << 16) |
++                         (opcode & 0x7f));
++        words_.insert(words_.end(), values.begin(), values.end());
++        return true;
++    }
++
++    bool nop(unsigned payload_words)
++    {
++        if (payload_words > 0x3fff)
++            return false;
++        /* CP_NOP's payload is ignored; a one-word packet is the common form. */
++        words_.push_back((7u << 28) |
++                         (uint32_t)((payload_words ? payload_words - 1 : 0) << 16) |
++                         CP_NOP);
++        words_.insert(words_.end(), payload_words, 0u);
++        return true;
++    }
++
++    /* CP_MEM_WRITE: 64-bit GPU address followed by one or more dwords. */
++    bool mem_write(uint64_t address, std::initializer_list<uint32_t> values)
++    {
++        const size_t count = values.size();
++        if (count < 1 || count > 0x3ffd)
++            return false;
++        words_.push_back((7u << 28) | (uint32_t)((count + 2 - 1) << 16) | CP_MEM_WRITE);
++        words_.push_back((uint32_t)address);
++        words_.push_back((uint32_t)(address >> 32));
++        words_.insert(words_.end(), values.begin(), values.end());
++        return true;
++    }
++
++    /* CP_EVENT_WRITE with a destination: {event, address lo, address hi, value}.
++     * `event` is ORed with the caller's flags (e.g. bit 31 for an interrupt). */
++    bool event_write(uint32_t event, uint64_t address, uint32_t value)
++    {
++        words_.push_back((7u << 28) | (3u << 16) | CP_EVENT_WRITE);
++        words_.push_back(event);
++        words_.push_back((uint32_t)address);
++        words_.push_back((uint32_t)(address >> 32));
++        words_.push_back(value);
++        return true;
++    }
++
++    bool wait_for_idle()
++    {
++        words_.push_back((7u << 28) | CP_WAIT_FOR_IDLE);
++        return true;
++    }
++
++private:
++    std::vector<uint32_t> words_;
++};
++
++}  // namespace sweet
++
++#endif /* SWEET_PM4_H */
+diff --git a/userspace/native/test/pm4_test.cpp b/userspace/native/test/pm4_test.cpp
+new file mode 100644
+index 0000000..32f172c
+--- /dev/null
++++ b/userspace/native/test/pm4_test.cpp
+@@ -0,0 +1,99 @@
++/* SPDX-License-Identifier: MIT */
++/*
++ * Host test for the PM4 builder. No device, no Metal, no Mesa: compile with
++ * any C++17 compiler and run.
++ *
++ *     g++ -std=c++17 -I userspace/native/src \
++ *         userspace/native/test/pm4_test.cpp -o /tmp/sweet-pm4-test
++ *     /tmp/sweet-pm4-test
++ */
++#include <stdio.h>
++#include <stdint.h>
++
++#include "sweet_pm4.h"
++
++static int failures;
++
++static void expect(bool condition, const char *what)
++{
++    if (!condition) {
++        fprintf(stderr, "FAIL: %s\n", what);
++        failures++;
++    }
++}
++
++static void expect_word(const sweet::Pm4 &pm4, size_t index, uint32_t want, const char *what)
++{
++    if (index >= pm4.size()) {
++        fprintf(stderr, "FAIL: %s (missing word %zu)\n", what, index);
++        failures++;
++        return;
++    }
++    const uint32_t got = pm4.words()[index];
++    if (got != want) {
++        fprintf(stderr, "FAIL: %s: word %zu = 0x%08x, want 0x%08x\n", what, index, got, want);
++        failures++;
++    }
++}
++
++int main()
++{
++    sweet::Pm4 pm4;
++    expect(pm4.type4(0xa000, {1, 2, 3}), "type4 accepted");
++    expect(pm4.size() == 4, "type4 length");
++    expect_word(pm4, 0, 0x40022800u, "type4 header");
++    expect_word(pm4, 1, 1, "type4 payload 0");
++    expect_word(pm4, 3, 3, "type4 payload 2");
++
++    pm4.clear();
++    expect(pm4.type7(sweet::CP_MEM_WRITE, {0x23456789u, 1u, 0xdeadbeefu}),
++           "mem_write accepted");
++    expect(pm4.size() == 4, "mem_write length");
++    expect_word(pm4, 0, 0x7002003du, "mem_write header");
++
++    pm4.clear();
++    expect(pm4.mem_write(0x123456789ull, {0xdeadbeefu}), "mem_write helper accepted");
++    expect(pm4.size() == 4, "mem_write helper length");
++    expect_word(pm4, 0, 0x7002003du, "mem_write helper header");
++    expect_word(pm4, 1, 0x23456789u, "mem_write address lo");
++    expect_word(pm4, 2, 0x1u, "mem_write address hi");
++    expect_word(pm4, 3, 0xdeadbeefu, "mem_write value");
++
++    pm4.clear();
++    expect(pm4.event_write(sweet::CACHE_FLUSH_TS | (1u << 31), 0x1000, 7),
++           "event_write accepted");
++    expect(pm4.size() == 5, "event_write length");
++    expect_word(pm4, 0, 0x70030046u, "event_write header");
++    expect_word(pm4, 1, 0x80000004u, "event_write event");
++    expect_word(pm4, 2, 0x1000u, "event_write address lo");
++    expect_word(pm4, 4, 7u, "event_write value");
++
++    pm4.clear();
++    expect(pm4.nop(0), "nop accepted");
++    expect(pm4.size() == 1, "nop length");
++    expect_word(pm4, 0, 0x70000010u, "nop header");
++
++    pm4.clear();
++    expect(pm4.wait_for_idle(), "wait_for_idle accepted");
++    expect(pm4.size() == 1, "wait_for_idle length");
++    expect_word(pm4, 0, 0x70000026u, "wait_for_idle header");
++
++    /* Refusals must not emit anything. */
++    pm4.clear();
++    expect(!pm4.type4(0x40000, {1}), "type4 refuses register 0x40000");
++    expect(!pm4.type4(0xa002, {1}), "type4 refuses a misaligned register");
++    expect(!pm4.type4(0xa000, {}), "type4 refuses an empty payload");
++    expect(!pm4.type7(0x80, {1}), "type7 refuses opcode 0x80");
++    expect(pm4.size() == 0, "refusals emit nothing");
++
++    pm4.clear();
++    expect(pm4.type4(0x3ffff & ~3u, {0}), "type4 accepts the top register");
++    expect(pm4.size() == 2, "top register length");
++
++    if (failures) {
++        fprintf(stderr, "%d failure(s)\n", failures);
++        return 1;
++    }
++    printf("pm4: all checks passed\n");
++    return 0;
++}
+-- 
+2.51.0
+

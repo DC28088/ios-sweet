@@ -1,0 +1,95 @@
+From 81762fb29cb04ef3b82ccb27884953d42f7e95c7 Mon Sep 17 00:00:00 2001
+From: OpenCode <opencode@localhost>
+Date: Thu, 5 Nov 2026 20:00:42 +0530
+Subject: [PATCH 7/7] xnu 0208: trace media surface mappings and memory-fault
+ arguments
+
+
+diff --git a/NOTES.md b/NOTES.md
+index 6eb4637..5942ba2 100644
+--- a/NOTES.md
++++ b/NOTES.md
+@@ -1,3 +1,21 @@
++## 2026-11-05 20:00 IST: 0207 Safari playback crashes media + compositor; 0208 diagnostic prepared
++- USER tested YouTube in Safari with Bluetooth headphones and reports a SpringBoard crash.
++- logs/boot-0207-dtlog.txt (private, extracted from the existing receiver after offset 14082211) contains repeated
++  mediaserverd SIGBUS at unslid PC 0x1f0f4c914 (H264SW.videocodec + 0x13914), instruction str q0,[x10,x3]. FARs
++  vary, all in read/execute shared-region mappings (prot 5/5 tag 35). Cause of the bad destination is not known.
++- backboardd SIGSEGV: unslid PC 0x1d1b01e70 is a vector memory-copy load; caller IOSurface +0x4ffc, then
++  CA::Render::iosurface_get_edr_factor. IOSurface reads its state pointer at client+0x70 and copies 0x70 bytes
++  from state+0x30. Its source is unmapped. Could be a stale surface/state mapping; NOT established yet.
++- 0207's old NSNumber/objectForKey exception absent from this capture. Neither this observation nor the
++  initial successful boot proves playback works. Do not label 0207 a complete media fix.
++- Isolated codex/media-0208 branch from claude/pm-merged 79f8745. 0208 adds bounded media IOSurface mapping/plane
++  metadata and argument registers only for mediaserverd/backboardd memory faults. No memory access behavior changed.
++  Local libclang syntax checks: SweetSurface.cpp + exception.c, 0/2 failed; original research build-tree files restored.
++- Sensor pull completed earlier: research/sensors-0207/vendor, 154 files (119 configs + 35 ADSP libraries),
++  every SHA256 verified against read-only OrangeFox vendor; mount removed. 0207-dtlog temporary boot OKAY, live SSH.
++- Next: build/package 0208, retain 0207 diagnostic flags, boot temporarily and reproduce once to correlate
++  decoder destination/stride and compositor state pointer with actual surface mappings. Speaker FastRPC pending.
++
+ ## 2026-11-04 21:10 IST: Wi-Fi broken since wland 0005 boots (suspected); boot wland reverted to 0004 for a test
+ - USER: "wifi doesn't toggle on". Kernel logs: Wi-Fi scans in boot-0190b/0190c/0191 (wland 0004), none from 0191b on (first
+   boot with wland 0005; also the first boot after the battery ran flat). On 0195b the modem never announces WLFW (0x45) in
+diff --git a/xnu/patches/0208-sweet-media-surface-crash-diagnostics.patch b/xnu/patches/0208-sweet-media-surface-crash-diagnostics.patch
+new file mode 100644
+index 0000000..a04a0a8
+--- /dev/null
++++ b/xnu/patches/0208-sweet-media-surface-crash-diagnostics.patch
+@@ -0,0 +1,53 @@
++--- a/iokit/Kernel/arm/SweetSurface.cpp
+++++ b/iokit/Kernel/arm/SweetSurface.cpp
++@@ -704,6 +704,28 @@
++ 		ret = kIOReturnNoMemory;
++ 	} else {
++ 		sweet_surface_fill_result(s, ref, out);
+++		/* Media-only, bounded metadata trace for the iOS16 software decoder.
+++		 * Addresses stay in private device logs; no pixel contents are read. */
+++		char media_name[32] = {0};
+++		proc_selfname(media_name, sizeof(media_name));
+++		static unsigned media_maps_logged;
+++		if ((!strcmp(media_name, "mediaserverd") || s->planeCount != 0) &&
+++		    media_maps_logged++ < 96) {
+++			IOLog("SWEET MEDIA MAP v1: %s id %u existing %u data %#llx state %#llx size %u offset %u ro %u %ux%u row %u fmt %#x planes %u\n",
+++			    media_name, s->id, existing ? 1u : 0u,
+++			    (unsigned long long)ref->data->getAddress(),
+++			    (unsigned long long)ref->state->getAddress(), s->allocSize,
+++			    s->offset, s->readOnly ? 1u : 0u, s->width, s->height,
+++			    s->bytesPerRow, s->pixelFormat, s->planeCount);
+++			for (uint32_t pi = 0; pi < s->planeCount; pi++) {
+++				const struct sweet_surface_plane *pl = &s->planes[pi];
+++				IOLog("SWEET MEDIA PLANE: id %u plane %u %ux%u row %u offset %u size %u bpe %u elem %ux%u\n",
+++				    s->id, pi, pl->width, pl->height, pl->bytesPerRow,
+++				    pl->offset, pl->size, pl->bytesPerElement,
+++				    pl->elementWidth, pl->elementHeight);
+++			}
+++		}
+++
++ 		if (existing) {
++ 			put64(out, 0x00, ~0ULL);        /* "already yours": use the cached client */
++ 		}
++--- a/osfmk/kern/exception.c
+++++ b/osfmk/kern/exception.c
++@@ -858,6 +858,19 @@
++ 	    get_saved_state_pc(ss), get_saved_state_lr(ss), get_saved_state_sp(ss), fp,
++ 	    (uint64_t)saved_state64(ss)->far);
++ 
+++	/* Pointer/stride arguments for media SIGBUS and compositor SIGSEGV.
+++	 * Only the two relevant processes; never dump pointed-to user data. */
+++	if ((sig == 10 || sig == 11) &&
+++	    (!strcmp(name, "mediaserverd") || !strcmp(name, "backboardd"))) {
+++		for (unsigned int r = 0; r < 28; r += 4) {
+++			printf("CRASH %s regs x%u=%#llx x%u=%#llx x%u=%#llx x%u=%#llx\n",
+++			    name, r, (uint64_t)saved_state64(ss)->x[r],
+++			    r + 1, (uint64_t)saved_state64(ss)->x[r + 1],
+++			    r + 2, (uint64_t)saved_state64(ss)->x[r + 2],
+++			    r + 3, (uint64_t)saved_state64(ss)->x[r + 3]);
+++		}
+++	}
+++
++ 	char line[200];
++ 	int n = snprintf(line, sizeof(line), "CRASH %s bt", name);
++ 	for (int i = 0; i < 10 && fp != 0 && (fp & 7) == 0 && n < (int)sizeof(line) - 20; i++) {
+-- 
+2.51.0
+

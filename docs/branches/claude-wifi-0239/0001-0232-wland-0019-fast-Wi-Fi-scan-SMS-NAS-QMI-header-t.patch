@@ -1,0 +1,161 @@
+From 58e6ba9e0b6926261b286d3497203707deb6d167 Mon Sep 17 00:00:00 2001
+From: OpenCode <twinexotica@gmail.com>
+Date: Mon, 9 Nov 2026 08:42:01 +0530
+Subject: [PATCH 1/3] 0232 + wland 0019: fast Wi-Fi scan; SMS/NAS QMI header
+ trace
+
+USER: "wifi scanning and result should be instant (right now it takes a
+while)". The donor scan was passive on all 38 channels (150 ms dwell) and
+every iOS scan request waited for a whole new sweep (6-7 s+).
+
+wland 0019 (radio.c/bridge.c):
+- active scan: broadcast probe with a wildcard SSID (num_ssids 1, one
+  zero-length wmi_ssid), CCK+OFDM rates, 40 ms active / 110 ms passive
+  dwell, 2 probes. The channel list still marks every channel except
+  2.4 GHz 1-11 and 5 GHz 36-48 WMI_CHAN_FLAG_PASSIVE, so DFS/unknown
+  channels are never probed. WLAND_SCAN_PASSIVE=1 = the donor scan.
+- a scan request is answered at once with the list heard in the last
+  30 s, and a fresh scan follows (its list as a second FW_SCAN_DONE).
+
+xnu 0232: the baseband QMI trace (header fields only, never TLVs) logs
+every WMS (0x05, SMS) and NAS (0x03) message, for the SMS work.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/userspace/wifi/patches/0019-sweet-wifi-fast-scan.patch b/userspace/wifi/patches/0019-sweet-wifi-fast-scan.patch
+new file mode 100644
+index 0000000..b746405
+--- /dev/null
++++ b/userspace/wifi/patches/0019-sweet-wifi-fast-scan.patch
+@@ -0,0 +1,106 @@
++diff --git a/phone/wifi/bridge.c b/phone/wifi/bridge.c
++index 630c071..9607cd7 100644
++--- a/phone/wifi/bridge.c
+++++ b/phone/wifi/bridge.c
++@@ -19,6 +19,8 @@ static int hello_sent;
++ static int scan_pending, join_pending;
++ static unsigned scans_at;
++ static uint64_t scan_deadline, join_deadline, last_bg_scan;
+++static uint64_t last_scan_done;			/* sweet 0019 */
+++static unsigned cached_answers, scans_seen;
++ int bridge_joins;	/* wifid has asked for a network (or to leave): wland's own wlan.conf join stands down */
++ 
++ static void bridge_send(uint16_t type, const void *data, size_t len)
++@@ -159,6 +161,18 @@ void bridge_poll(void)
++ 				bridge_list(0);		/* joined: a background scan at most every 15 s; what is known */
++ 				break;
++ 			}
+++			/*
+++			 * sweet 0019: answer at once with what was heard in the last 30 s (Settings shows the list
+++			 * immediately), then refresh: the new scan's list follows as a second FW_SCAN_DONE.
+++			 */
+++			if (radio_scans() > 0 && link_ms() - last_scan_done < 30000) {
+++				bridge_list(0);
+++				cached_answers++;
+++				if (cached_answers <= 20 || cached_answers % 50 == 0)
+++					printf("[%6llu] bridge: scan answered from the %llu ms old list (%u), refreshing\n",
+++					    (unsigned long long)link_ms(), (unsigned long long)(link_ms() - last_scan_done),
+++					    cached_answers);
+++			}
++ 			scan_pending = 1;
++ 			scans_at = radio_scans();
++ 			scan_deadline = link_ms() + (radio_joined() ? 25000 : 12000);
++@@ -189,6 +203,10 @@ void bridge_poll(void)
++ 		}
++ 	}
++ 	uint64_t now = link_ms();
+++	if (radio_scans() != scans_seen) {
+++		scans_seen = radio_scans();
+++		last_scan_done = now;
+++	}
++ 	if (scan_pending && (radio_scans() > scans_at || now > scan_deadline)) {
++ 		scan_pending = 0;
++ 		bridge_list(0);			/* (after the deadline: what is known so far) */
++diff --git a/phone/wifi/radio.c b/phone/wifi/radio.c
++index bd17773..20952d6 100644
++--- a/phone/wifi/radio.c
+++++ b/phone/wifi/radio.c
++@@ -789,6 +789,19 @@ static int scan_send_start(void)
++ 				sf[nsf] = scan_freqs[nsf];
++ 		LOG("scan: %u frequencies%s", nsf, nsf == NFREQ ? "" : " (wlan-scan.conf)");
++ 	}
+++	/*
+++	 * sweet 0019: active scan (USER: "wifi scanning and result should be instant"). The donor scanned every
+++	 * channel passively (150 ms each, ~38 channels: 6-7 s before the first list). Now broadcast probe requests
+++	 * with a wildcard SSID where the channel list lets us transmit (2.4 GHz 1-11, 5 GHz 36-48; the rest stay
+++	 * passive through WMI_CHAN_FLAG_PASSIVE), 40 ms active / 110 ms passive dwell, 2 probes.
+++	 * WLAND_SCAN_PASSIVE=1 restores the donor scan.
+++	 */
+++	static int passive = -1;
+++	if (passive < 0) {
+++		const char *e = getenv("WLAND_SCAN_PASSIVE");
+++		passive = e && *e == '1';
+++		LOG("scan: %s", passive ? "passive (WLAND_SCAN_PASSIVE)" : "active: wildcard probe, 40/110 ms dwell");
+++	}
++ 	memset(m, 0, sizeof(m));
++ 	c = put_tlv(p, TAG_START_SCAN_CMD, 100);
++ 	c = put32(c, 0xa000 | (scans + 1));		/* scan_id */
++@@ -796,8 +809,8 @@ static int scan_send_start(void)
++ 	c = put32(c, 0);				/* vdev */
++ 	c = put32(c, 1);				/* priority low */
++ 	c = put32(c, 0x001 | 0x002 | 0x004 | 0x008 | 0x100 | 0x010);	/* events */
++-	c = put32(c, 50);				/* dwell active */
++-	c = put32(c, 150);				/* dwell passive */
+++	c = put32(c, passive ? 50 : 40);		/* dwell active */
+++	c = put32(c, passive ? 150 : 110);		/* dwell passive */
++ 	c = put32(c, 50);				/* min rest */
++ 	c = put32(c, 500);				/* max rest */
++ 	c = put32(c, 0);
++@@ -805,18 +818,23 @@ static int scan_send_start(void)
++ 	c = put32(c, 0);
++ 	c = put32(c, 20000);				/* max scan time */
++ 	c = put32(c, 5);				/* probe delay */
++-	c = put32(c, (0x01 | 0x10) ^ 0x20);		/* passive, chan stat; probe-req filter inverted on TLV */
+++	c = put32(c, passive ? ((0x01 | 0x10) ^ 0x20)	/* passive, chan stat; probe-req filter inverted on TLV */
+++	    : ((0x02 | 0x04 | 0x08 | 0x10) ^ 0x20));	/* broadcast probe, CCK + OFDM rates, chan stat */
++ 	c = put32(c, 0);
++ 	c = put32(c, nsf);
++ 	c = put32(c, 1);				/* bssids */
++-	c = put32(c, 0);				/* ssids */
+++	c = put32(c, passive ? 0 : 1);			/* ssids: one wildcard (length 0) for an active scan */
++ 	c = put32(c, 0);				/* ie_len */
++-	c = put32(c, 3);				/* num_probes */
+++	c = put32(c, passive ? 3 : 2);			/* num_probes */
++ 	p = c + 16;					/* mac addr + mask: zero */
++ 	c = put_tlv(p, TAG_ARRAY_UINT32, nsf * 4);
++ 	for (uint32_t i = 0; i < nsf; i++)
++ 		c = put32(c, sf[i]);
++-	p = put_tlv(c, TAG_ARRAY_FIXED_STRUCT, 0);
+++	p = put_tlv(c, TAG_ARRAY_FIXED_STRUCT, passive ? 0 : 36);	/* wmi_ssid {le32 len; u8 ssid[32]}: wildcard */
+++	if (!passive) {
+++		memset(p, 0, 36);
+++		p += 36;
+++	}
++ 	c = put_tlv(p, TAG_ARRAY_FIXED_STRUCT, 8);	/* bssid: broadcast */
++ 	memset(c, 0xff, 6);
++ 	p = put_tlv(c + 8, TAG_ARRAY_BYTE, 0);
+diff --git a/xnu/patches/0232-sweet-baseband-trace-sms-nas.patch b/xnu/patches/0232-sweet-baseband-trace-sms-nas.patch
+new file mode 100644
+index 0000000..337a767
+--- /dev/null
++++ b/xnu/patches/0232-sweet-baseband-trace-sms-nas.patch
+@@ -0,0 +1,16 @@
++diff --git a/iokit/Kernel/arm/SweetBaseband.inc b/iokit/Kernel/arm/SweetBaseband.inc
++index a9dc2a2..6d9888a 100644
++--- a/iokit/Kernel/arm/SweetBaseband.inc
+++++ b/iokit/Kernel/arm/SweetBaseband.inc
++@@ -180,7 +180,10 @@ static void bb_trace(const char *dir, uint32_t channel, uint32_t service, uint32
++     count = ++bb_trace_count[at];
++     break;
++   }
++-  const bool always = service == CBE_SVC_UIM || service == CBE_SVC_VINYL || service == CBD_SVC_WDS;
+++  // 0232: + WMS (0x05, SMS) and NAS (0x03, registration) always: SMS send/receive and the network state can be
+++  // followed message by message. Header fields only, as for the others: never the TLVs (no numbers, no text).
+++  const bool always = service == CBE_SVC_UIM || service == CBE_SVC_VINYL || service == CBD_SVC_WDS || service == 0x05u ||
+++                      service == 0x03u;
++   if (!always && count > 6u && (count & (count - 1u))) return;
++   if (bb_trace_lines >= BB_TRACE_BUDGET) { bb_trace_held++; return; }
++   bb_trace_lines++;
+-- 
+2.51.0
+

@@ -1,0 +1,130 @@
+From f470eea59a13f0660b4fe8df05167f38943d2fe7 Mon Sep 17 00:00:00 2001
+From: OpenCode <opencode@localhost>
+Date: Thu, 5 Nov 2026 18:38:51 +0530
+Subject: [PATCH 05/14] xnu 0205: sweetdtlog=NAME,...: a daemon's os_log on the
+ console without plist edits
+
+At exec the kernel adds OS_ACTIVITY_DT_MODE=YES and CFLOG_FORCE_STDERR=YES
+to the named daemons, grants them the libtrace stderr policy bit (as
+sweetoslog) and tees their /dev/null output to the console (as sweetnull).
+For mediaserverd's abort loop when Safari plays media (0202-0204).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/xnu/patches/0205-sweet-dtlog-daemon-oslog.patch b/xnu/patches/0205-sweet-dtlog-daemon-oslog.patch
+new file mode 100644
+index 0000000..8955c73
+--- /dev/null
++++ b/xnu/patches/0205-sweet-dtlog-daemon-oslog.patch
+@@ -0,0 +1,108 @@
++diff --git a/bsd/dev/mem.c b/bsd/dev/mem.c
++index 291a546..6eac272 100644
++--- a/bsd/dev/mem.c
+++++ b/bsd/dev/mem.c
++@@ -162,6 +162,7 @@ mmioctl(dev_t dev, u_long cmd, __unused caddr_t data,
++  * /dev/null goes to the console (and so to the persistent log) as
++  * "|name| text". sweetnull=- turns it off.
++  */
+++extern bool sweet_dtlog_listed(const char *name);
++ static char sweet_null_names[128];
++ static int sweet_null_parsed;
++ 
++@@ -176,6 +177,9 @@ sweet_null_tee(char *name, size_t len)
++ 	}
++ 	proc_selfname(name, (int)len);
++ 	size_t n = strlen(name);
+++	if (sweet_dtlog_listed(name)) {     /* 0205: bsd/kern/sweet_amfi.c */
+++		return true;
+++	}
++ 	for (const char *t = sweet_null_names; *t;) {
++ 		const char *end = strchr(t, ',');
++ 		size_t tl = end ? (size_t)(end - t) : strlen(t);
++diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
++index 21d0738..ed66b74 100644
++--- a/bsd/kern/kern_exec.c
+++++ b/bsd/kern/kern_exec.c
++@@ -465,6 +465,28 @@ sweet_gles_exec_env(struct image_params *imgp, int ptr_size)
++     printf("SWEET GLES: backboardd will load /usr/lib/sweetgl.dylib\n");
++     return 0;
++ }
+++
+++/* 0205: sweetdtlog=NAME,...: OS_ACTIVITY_DT_MODE for those daemons (os_log to stderr; see bsd/kern/sweet_amfi.c) */
+++extern bool sweet_dtlog_listed(const char *name);
+++static int
+++sweet_dtlog_exec_env(struct image_params *imgp, int ptr_size)
+++{
+++    const char *path=imgp->ip_strings+strlen("executable_path="), *base=path;
+++    for (const char *c=path; *c; ++c) if (*c=='/') base=c+1;
+++    if (!sweet_dtlog_listed(base)) return 0;
+++    static const char *const envs[]={"OS_ACTIVITY_DT_MODE=YES","CFLOG_FORCE_STDERR=YES"};
+++    for (unsigned i=0;i<sizeof(envs)/sizeof(envs[0]);i++) {
+++        if (imgp->ip_argspace<ptr_size) return E2BIG;
+++        int error=exec_add_user_string(imgp,CAST_USER_ADDR_T(envs[i]),UIO_SYSSPACE,TRUE);
+++        if (error) return error;
+++        if (imgp->ip_argspace<ptr_size) return E2BIG;
+++        imgp->ip_argspace-=ptr_size;
+++        imgp->ip_envc++;
+++    }
+++    static unsigned logged;
+++    if (logged++<8) printf("SWEET DTLOG: %s gets OS_ACTIVITY_DT_MODE (os_log -> console)\n", base);
+++    return 0;
+++}
++ #endif
++ 
++ /*
++@@ -5765,6 +5787,7 @@ exec_extract_strings(struct image_params *imgp)
++ 
++ #if defined(ARM64_BOARD_CONFIG_SWEET)
++     error=sweet_gles_exec_env(imgp,new_ptr_size);
+++    if (!error) error=sweet_dtlog_exec_env(imgp,new_ptr_size);   /* 0205 */
++     if (error) goto bad;
++ #endif
++ 
++diff --git a/bsd/kern/sweet_amfi.c b/bsd/kern/sweet_amfi.c
++index 8a3ec57..abda82a 100644
++--- a/bsd/kern/sweet_amfi.c
+++++ b/bsd/kern/sweet_amfi.c
++@@ -317,9 +317,40 @@ sweet_sandbox_syscall(struct proc *p, int call, __unused user_addr_t arg)
++  * (comma separated, default none) get 0x7b | 0x100, so a launchd job with
++  * those variables writes its os_log text to stderr (/dev/null -> sweetnull).
++  */
+++/*
+++ * 0205: boot-arg sweetdtlog=NAME[,NAME] = one switch for a daemon's os_log on the console: the kernel adds
+++ * OS_ACTIVITY_DT_MODE=YES to its environment at exec (kern_exec.c), grants the dyld policy bit here, and tees its
+++ * /dev/null output to the console (bsd/dev/mem.c) -- no launchd.plist edit. For mediaserverd's abort loop (0202-0204).
+++ */
+++bool sweet_dtlog_listed(const char *name);
+++bool
+++sweet_dtlog_listed(const char *name)
+++{
+++	char list[96];
+++	size_t n = strlen(name);
+++	if (n == 0 || !PE_parse_boot_argn("sweetdtlog", list, sizeof(list))) {
+++		return false;
+++	}
+++	for (const char *t = list; *t;) {
+++		const char *end = strchr(t, ',');
+++		size_t tl = end ? (size_t)(end - t) : strlen(t);
+++		if (tl == n && strncmp(t, name, n) == 0) {
+++			return true;
+++		}
+++		if (!end) {
+++			break;
+++		}
+++		t = end + 1;
+++	}
+++	return false;
+++}
+++
++ static bool
++ sweet_oslog_listed(const char *name)
++ {
+++	if (sweet_dtlog_listed(name)) {
+++		return true;
+++	}
++ 	char list[128];
++ 	size_t n = strlen(name);
++ 	if (n == 0 || !PE_parse_boot_argn("sweetoslog", list, sizeof(list))) {
+-- 
+2.51.0
+

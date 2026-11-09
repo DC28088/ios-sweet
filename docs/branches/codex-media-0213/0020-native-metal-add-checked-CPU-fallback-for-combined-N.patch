@@ -1,0 +1,280 @@
+From 4cc2fb1a634016a327e5aeb1cc007703a59ab4f3 Mon Sep 17 00:00:00 2001
+From: OpenCode <opencode@localhost>
+Date: Fri, 6 Nov 2026 17:13:00 +0530
+Subject: [PATCH 20/21] native-metal: add checked CPU fallback for combined
+ NV12 textures
+
+
+diff --git a/.github/workflows/native-metal.yml b/.github/workflows/native-metal.yml
+index c630f79..73e8bf6 100644
+--- a/.github/workflows/native-metal.yml
++++ b/.github/workflows/native-metal.yml
+@@ -11,6 +11,8 @@ jobs:
+       - uses: actions/checkout@v4
+       - name: Check planar IOSurface layout and import bounds
+         run: python3 tools/check-sweet-planar-import.py
++      - name: Check combined NV12 conversion and memory bounds
++        run: python3 tools/check-sweet-nv12.py --sanitize
+       - name: Install native compiler build tools
+         run: |
+           brew install bison flex ninja
+diff --git a/NOTES.md b/NOTES.md
+index 925b59e..ec05fcb 100644
+--- a/NOTES.md
++++ b/NOTES.md
+@@ -1,3 +1,11 @@
++## 2026-11-06: 0213 combined NV12 CPU fallback prepared and locally checked
++- Reviewed saved active sunfish frontend CPU fallback (phone/metal2/NativeBridgeMetalFrontend.mm, snapshot 2026-11-05). Chose owned RGBA conversion for combined Metal format500 rather than assuming native multi-plane support in the pinned Mesa. Supports format520 sRGB per primary WebKit enum; deliberately does not mislabel format501 (422) as sRGB.
++- New checked converter: only 8-bit NV12 420v/420f, validates both plane rows/dimensions/allocation bounds, 64 MiB output cap, odd dimensions supported when chroma covers them. Video/full range and BT.601/709/2020 coefficients; honors recognized IOSurface matrix metadata, defaults BT.601 only when absent, rejects unknown string matrices. Source pixels read under IOSurfaceLockReadOnly and never modified.
++- Combined input creates an owned sampled RGBA texture; refreshes on source seed changes at the normal mesaTexture getter before binding. Scratch reused and freed on texture destruction. Actual render-target use returns NULL explicitly; no unsupported NV12 GPU writeback is silently discarded. Shader-write requests refused. Ordinary BGRA path retained.
++- Local actual-converter tests pass against independent floating-point colour equations, neutral video black/white, padding/odd sizes, truncated buffers and overflow. Existing plane-import tests pass. Pinned donor transform verifies constructor, refresh hook, render-target guard, bounded logs and cleanup. Local ASan library unavailable; sanitizer check added to macOS CI instead, not claimed passed locally.
++- Native synthetic helper on current phone confirms read-only IOSurface lock and unlock both return0, rows still64/64; helper removed. First automatic approval review timed out before execution; one permitted retry succeeded. No other device changes since rollback.
++- Official Mesa archive fetch timed out; incomplete bytes renamed .partial, not checksum-verified or used as evidence. Current phone remains kernel0211 + original graphics bundle, Bluetooth audio working per USER. Full 0213 native build/device test still pending.
++
+ ## 2026-11-06: 0212 installed/tested then original bundle restored; combined YUV blocker confirmed
+ - Native Metal CI 42205828792 SUCCESS; source 89b4f2126e983d95b56f0f6b46600ff76d126a3a. All 6 legacy artifact file hashes and ARM64 Mach-O headers verified. Update tar SHA256 c161c79a4b048112b9d9e692cb381924257dce6ae1ee312d5a0494ba87426c77. Staging hashes passed on phone; prior installed bundle matched host backup before activation.
+ - Activated staged bundle with original preserved, restarted compositor; normal UI rendering/async completion observed, no graphics crash. Media/audio/Wi-Fi daemons left running. However USER video still dark with Bluetooth audio; reported blurred app-switcher previews.
+diff --git a/tools/check-sweet-nv12.py b/tools/check-sweet-nv12.py
+new file mode 100644
+index 0000000..d6477b6
+--- /dev/null
++++ b/tools/check-sweet-nv12.py
+@@ -0,0 +1,46 @@
++#!/usr/bin/env python3
++"""Check actual NV12 conversion against independent floating-point colour equations."""
++from pathlib import Path
++import subprocess,tempfile,sys
++root=Path(__file__).resolve().parents[1]
++source=r'''
++#include "SweetNV12.h"
++#include <assert.h>
++#include <math.h>
++#include <string.h>
++#include <stdio.h>
++static int reference(double x){int n=(int)floor(x+0.5);return n<0?0:n>255?255:n;}
++int main(void){
++ uint8_t data[128],out[5*3*4+16];memset(data,0xcc,sizeof data);
++ struct sweet_nv12 s={data+8,data+64,8,8,5,3,3,2,(uintptr_t)data,sizeof data};
++ const double kr[]={.299,.2126,.2627},kb[]={.114,.0722,.0593};
++ for(unsigned matrix=1;matrix<=3;matrix++)for(int video=0;video<=1;video++){
++  for(unsigned y=0;y<3;y++)for(unsigned x=0;x<5;x++)data[8+y*8+x]=(uint8_t)(x*53+y*29);
++  for(unsigned y=0;y<2;y++)for(unsigned x=0;x<3;x++){data[64+y*8+x*2]=(uint8_t)(20+x*73);data[65+y*8+x*2]=(uint8_t)(245-y*90-x*43);}
++  memset(out,0xa5,sizeof out);assert(sweet_nv12_convert(&s,5,3,video,matrix,out,60));
++  for(unsigned y=0;y<3;y++)for(unsigned x=0;x<5;x++){
++   double Y=(data[8+y*8+x]-(video?16.:0.))*(video?255./219.:1.);
++   double U=(data[64+(y/2)*8+(x/2)*2]-128.)*(video?255./224.:1.);
++   double V=(data[65+(y/2)*8+(x/2)*2]-128.)*(video?255./224.:1.);
++   double r=kr[matrix-1],b=kb[matrix-1],g=1-r-b;
++   int want[]={reference(Y+2*(1-r)*V),reference(Y-2*b*(1-b)/g*U-2*r*(1-r)/g*V),reference(Y+2*(1-b)*U)};
++   for(unsigned c=0;c<3;c++)assert(abs((int)out[(y*5+x)*4+c]-want[c])<=1);
++   assert(out[(y*5+x)*4+3]==255);
++  }
++  for(unsigned i=60;i<sizeof out;i++)assert(out[i]==0xa5);
++ }
++ memset(data+8,16,24);memset(data+64,128,16);assert(sweet_nv12_convert(&s,5,3,1,1,out,60));assert(out[0]==0&&out[1]==0&&out[2]==0);
++ memset(data+8,235,24);assert(sweet_nv12_convert(&s,5,3,1,1,out,60));assert(out[0]==255&&out[1]==255&&out[2]==255);
++ memset(out,0xa5,sizeof out);s.uvrow=5;assert(!sweet_nv12_convert(&s,5,3,0,1,out,60));s.uvrow=8;
++ s.bytes=77;assert(!sweet_nv12_convert(&s,5,3,0,1,out,60));s.bytes=128;
++ s.uvh=1;assert(!sweet_nv12_convert(&s,5,3,0,1,out,60));s.uvh=2;
++ assert(!sweet_nv12_convert(&s,5,3,0,0,out,60));assert(!sweet_nv12_convert(&s,SIZE_MAX,3,0,1,out,60));assert(!sweet_nv12_convert(&s,5,3,0,1,out,59));
++ for(unsigned i=0;i<sizeof out;i++)assert(out[i]==0xa5);
++ puts("PASS: NV12 ranges, BT.601/709/2020 colour, odd sizes, padding, bounds and overflow");
++}
++'''
++source=source.replace('#include <math.h>','#include <math.h>\n#include <stdlib.h>')
++with tempfile.TemporaryDirectory() as d:
++ p=Path(d);(p/'test.c').write_text(source)
++ subprocess.run(['cc','-std=c11','-O1','-Wall','-Wextra','-Werror',*(['-fsanitize=address,undefined'] if '--sanitize' in sys.argv else []),'-I'+str(root/'userspace/native-metal/frontend'),str(p/'test.c'),'-lm','-o',str(p/'test')],check=True)
++ subprocess.run([str(p/'test')],check=True)
+diff --git a/tools/prepare-sweet-native-metal.py b/tools/prepare-sweet-native-metal.py
+index 7ba66aa..8a004ee 100644
+--- a/tools/prepare-sweet-native-metal.py
++++ b/tools/prepare-sweet-native-metal.py
+@@ -1142,7 +1142,7 @@ static _Atomic unsigned long long native_wait_until_completed;
+                 '- (id)iosurface                    { return (id)_nativeSurface; }')
+     s=replace(s,'- (NSUInteger)iosurfacePlane       { return 0; }',
+                 '- (NSUInteger)iosurfacePlane       { return _nativePlane; }')
+-    s=replace(s,'\tstruct rwa_texture_shape _shape;','\tstruct rwa_texture_shape _shape;\n    CFTypeRef _nativeSurface;\n    NSUInteger _nativePlane;')
++    s=replace(s,'\tstruct rwa_texture_shape _shape;','\tstruct rwa_texture_shape _shape;\n    CFTypeRef _nativeSurface;\n    NSUInteger _nativePlane;\n    BOOL _nativePlanar, _nativePlanarValid;\n    uint32_t _nativePlanarSeed;\n    uint8_t *_nativePlanarPixels;\n    size_t _nativePlanarBytes;')
+     # keep exact IOSurface object for Metal's iosurface accessor as well as winsys ownership
+     # Locate the creation/wrapping code in the donor and add via object_setIvar is
+     # unnecessary: private ivars are available to a category setter below.
+@@ -1154,11 +1154,36 @@ static _Atomic unsigned long long native_wait_until_completed;
+ }
+ '''+s[end:]
+     s=replace(s,'@property (readonly) struct rwa_texture *mesaTexture;',
+-                '@property (readonly) struct rwa_texture *mesaTexture;\n- (void)nativeAttachSurface:(void *)surface plane:(NSUInteger)plane;')
++                '@property (readonly) struct rwa_texture *mesaTexture;\n- (void)nativeAttachSurface:(void *)surface plane:(NSUInteger)plane;\n- (BOOL)nativeRefreshPlanar;\n- (void)nativeEnablePlanar;\n- (struct rwa_texture *)nativeRenderTexture;')
++    method=s.index('- (id)newTextureWithDescriptor:(MTLTextureDescriptor *)d iosurface:')
++    at=s.index('\n{',method)+2
++    s=s[:at]+'''
++    if(s && d && IOSurfaceGetPlaneCount(s) && ([d pixelFormat]==500 || [d pixelFormat]==520)) {
++        uint32_t format=IOSurfaceGetPixelFormat(s);
++        if(p || (format!='420v' && format!='420f') || IOSurfaceGetPlaneCount(s)!=2 ||
++           [d textureType]!=MTLTextureType2D || [d depth]>1 || [d arrayLength]>1 ||
++           [d sampleCount]>1 || [d mipmapLevelCount]>1 || ([d usage]&2)) {
++            RW_ONCE("combined YUV requires a read-only NV12 texture\n");return nil;
++        }
++        MTLTextureDescriptor *copy=[d copy];
++        copy.pixelFormat=[d pixelFormat]==520?MTLPixelFormatRGBA8Unorm_sRGB:MTLPixelFormatRGBA8Unorm;
++        copy.storageMode=MTLStorageModeShared;copy.usage=MTLTextureUsageShaderRead;
++        RedwoodMetalTexture *result=[self newTextureWithDescriptor:copy];[copy release];
++        if(!result)return nil;
++        [result nativeAttachSurface:s plane:0];[result nativeEnablePlanar];
++        if(![result nativeRefreshPlanar]){[result release];RW_ONCE("combined YUV conversion refused\n");return nil;}
++        static unsigned planar_logs;
++        if(planar_logs++<8)rw_print("combined NV12 converted to RGBA: %ux%u usage %#x\n",(unsigned)[d width],(unsigned)[d height],(unsigned)[d usage]);
++        return result;
++    }
++'''+s[at:]
+     begin=s.index('\treturn [[RedwoodMetalTexture alloc] initWithRedwoodDevice:self',s.index('- (id)newTextureWithDescriptor:(MTLTextureDescriptor *)d iosurface:'))
+     end=s.index('\n}',begin)
+     s=s[:begin]+'''    RedwoodMetalTexture *result=[[RedwoodMetalTexture alloc] initWithRedwoodDevice:self texture:texture shape:&shape];
+     [result nativeAttachSurface:s plane:p];return result;'''+s[end:]
++    s=s.replace('[work->color[i] mesaTexture]','[work->color[i] nativeRenderTexture]').replace('[work->depth mesaTexture]','[work->depth nativeRenderTexture]')
++    s=replace(s,'- (struct rwa_texture *)mesaTexture { return _texture; }',
++                '- (struct rwa_texture *)mesaTexture { return [self nativeRefreshPlanar] ? _texture : NULL; }')
+     at=s.index('+ (void)load',s.index('@implementation RedwoodMetalTexture'))
+     s=s[:at]+'''- (void)nativeAttachSurface:(void *)surface plane:(NSUInteger)plane {
+     if(_nativeSurface)CFRelease(_nativeSurface);
+@@ -1169,6 +1194,9 @@ static _Atomic unsigned long long native_wait_until_completed;
+     begin=s.index('- (void)dealloc',s.index('@implementation RedwoodMetalTexture'))
+     at=s.index('\n\t[super dealloc];',begin)
+     s=s[:at]+'\n    if(_nativeSurface)CFRelease(_nativeSurface);'+s[at:]
++    s=replace(s,'@implementation RedwoodMetalTexture','@implementation RedwoodMetalTexture\n#include \"SweetNativePlanar.inc\"')
++    s=s.replace('    if(_nativeSurface)CFRelease(_nativeSurface);\n\t[super dealloc];', '    if(_nativeSurface)CFRelease(_nativeSurface);\n    free(_nativePlanarPixels);\n\t[super dealloc];')
++    s='#import <IOSurface/IOSurfaceRef.h>\n#include \"SweetNV12.h\"\nextern const CFStringRef kIOSurfaceYCbCrMatrix __attribute__((weak_import));\n'+s
+     # Resources retain their owning device even when the application releases it.
+     for cls in ('RedwoodMetalBuffer','RedwoodMetalTexture','RedwoodMetalComputePipeline','RedwoodMetalRenderPipeline','RedwoodMetalArgumentEncoder','RedwoodMetalCommandQueue'):
+         begin=s.index('@implementation '+cls)
+@@ -1217,6 +1245,7 @@ ensure_function_encoder(void)
+     shutil.copy2(NATIVE/'frontend/SweetNativeLibrary.inc',src/'SweetNativeLibrary.inc')
+     shutil.copy2(NATIVE/'frontend/SweetNativeDrawLog.inc',src/'SweetNativeDrawLog.inc')
+     shutil.copy2(NATIVE/'frontend/SweetNativeDrawable.m',src/'redwooddrawable.m')
++    for name in ('SweetNV12.h','SweetNativePlanar.inc'):shutil.copy2(NATIVE/'frontend'/name,src/name)
+     # The donor includes structs by hand in two files; only the drawable shim's
+     # geometry record remains local. The AIR header itself is shared above.
+     return p
+diff --git a/userspace/native-metal/frontend/SweetNV12.h b/userspace/native-metal/frontend/SweetNV12.h
+new file mode 100644
+index 0000000..5a5acb2
+--- /dev/null
++++ b/userspace/native-metal/frontend/SweetNV12.h
+@@ -0,0 +1,53 @@
++/* SPDX-License-Identifier: MIT
++ * Checked CPU fallback for combined 8-bit NV12 textures. Inspired by the
++ * ios-flame sunfish frontend's CPU fallback; no source pixels are modified.
++ */
++#ifndef SWEET_NV12_H
++#define SWEET_NV12_H
++#include <stdint.h>
++#include <stddef.h>
++struct sweet_nv12 {
++    const uint8_t *y, *uv;
++    size_t yrow, uvrow, yw, yh, uvw, uvh;
++    uintptr_t allocation;
++    size_t bytes;
++};
++static inline int sweet_nv12_range(const struct sweet_nv12 *s, const uint8_t *p,
++    size_t row, size_t width, size_t height) {
++    uintptr_t a=(uintptr_t)p;
++    if(!a || a<s->allocation || !width || !height || row<width)return 0;
++    size_t off=a-s->allocation;
++    return off<s->bytes && width<=s->bytes-off &&
++        height-1<=(s->bytes-off-width)/row;
++}
++static inline uint8_t sweet_nv12_byte(int x) {return (uint8_t)(x<0?0:x>255?255:x);}
++/* matrix: 1 BT.601, 2 BT.709, 3 BT.2020 non-constant luminance.
++ * Coefficients are 16.16, including the video-range scale when requested. */
++static inline int sweet_nv12_convert(const struct sweet_nv12 *s,size_t w,size_t h,
++    int video,unsigned matrix,uint8_t *dst,size_t length) {
++    if(!s || !dst || !w || !h || matrix<1 || matrix>3 || w>SIZE_MAX/4 ||
++       h>length/(w*4) || w>s->yw || h>s->yh ||
++       (w/2+w%2)>s->uvw || (h/2+h%2)>s->uvh ||
++       !sweet_nv12_range(s,s->y,s->yrow,w,h) ||
++       !sweet_nv12_range(s,s->uv,s->uvrow,(w/2+w%2)*2,h/2+h%2))return 0;
++    static const int c[3][2][5]={
++      {{65536,91881,22553,46802,116130},{76309,104597,25675,53279,132201}},
++      {{65536,103206,12276,30679,121609},{76309,117489,13975,34925,138438}},
++      {{65536,96639,10784,37444,123299},{76309,110014,12277,42626,140363}}
++    };
++    const int *k=c[matrix-1][video?1:0];
++    for(size_t y=0;y<h;y++) {
++        const uint8_t *ly=s->y+y*s->yrow,*uv=s->uv+(y/2)*s->uvrow;
++        uint8_t *out=dst+y*w*4;
++        for(size_t x=0;x<w;x++,out+=4) {
++            int Y=((int)ly[x]-(video?16:0))*k[0];
++            int U=(int)uv[(x/2)*2]-128,V=(int)uv[(x/2)*2+1]-128;
++            out[0]=sweet_nv12_byte((Y+k[1]*V+32768)>>16);
++            out[1]=sweet_nv12_byte((Y-k[2]*U-k[3]*V+32768)>>16);
++            out[2]=sweet_nv12_byte((Y+k[4]*U+32768)>>16);
++            out[3]=255;
++        }
++    }
++    return 1;
++}
++#endif
+diff --git a/userspace/native-metal/frontend/SweetNativePlanar.inc b/userspace/native-metal/frontend/SweetNativePlanar.inc
+new file mode 100644
+index 0000000..dc0ae4e
+--- /dev/null
++++ b/userspace/native-metal/frontend/SweetNativePlanar.inc
+@@ -0,0 +1,55 @@
++/* SPDX-License-Identifier: MIT */
++- (BOOL)nativeRefreshPlanar {
++    if(!_nativePlanar)return YES;
++    IOSurfaceRef s=(IOSurfaceRef)_nativeSurface;
++    if(!s || IOSurfaceGetPlaneCount(s)!=2)return NO;
++    uint32_t seed=IOSurfaceGetSeed(s);
++    if(_nativePlanarValid && seed==_nativePlanarSeed)return YES;
++    const size_t w=_shape.width,h=_shape.height;
++    if(!w || !h || w>SIZE_MAX/4 || h>(64u<<20)/(w*4))return NO;
++    size_t bytes=w*h*4;
++    if(bytes!=_nativePlanarBytes) {
++        void *p=realloc(_nativePlanarPixels,bytes);
++        if(!p)return NO;
++        _nativePlanarPixels=p;_nativePlanarBytes=bytes;
++    }
++    if(IOSurfaceLock(s,kIOSurfaceLockReadOnly,NULL)!=0)return NO;
++    struct sweet_nv12 view={
++      IOSurfaceGetBaseAddressOfPlane(s,0),IOSurfaceGetBaseAddressOfPlane(s,1),
++      IOSurfaceGetBytesPerRowOfPlane(s,0),IOSurfaceGetBytesPerRowOfPlane(s,1),
++      IOSurfaceGetWidthOfPlane(s,0),IOSurfaceGetHeightOfPlane(s,0),
++      IOSurfaceGetWidthOfPlane(s,1),IOSurfaceGetHeightOfPlane(s,1),
++      (uintptr_t)IOSurfaceGetBaseAddress(s)&~(uintptr_t)16383,IOSurfaceGetAllocSize(s)
++    };
++    unsigned matrix=1; /* documented BT.601 fallback only when metadata absent */
++    if(&kIOSurfaceYCbCrMatrix && kIOSurfaceYCbCrMatrix) {
++        CFTypeRef value=IOSurfaceCopyValue(s,kIOSurfaceYCbCrMatrix);
++        if(value) {
++            if(CFGetTypeID(value)==CFStringGetTypeID()) {
++                if(CFEqual(value,CFSTR("ITU_R_709_2")))matrix=2;
++                else if(CFEqual(value,CFSTR("ITU_R_2020")))matrix=3;
++                else if(!CFEqual(value,CFSTR("ITU_R_601_4")))matrix=0;
++            }
++            CFRelease(value);
++        }
++    }
++    BOOL converted=IOSurfaceGetBytesPerElementOfPlane(s,0)==1 &&
++      IOSurfaceGetBytesPerElementOfPlane(s,1)==2 &&
++      sweet_nv12_convert(&view,w,h,IOSurfaceGetPixelFormat(s)=='420v',matrix,
++          _nativePlanarPixels,_nativePlanarBytes);
++    seed=IOSurfaceGetSeed(s);
++    IOSurfaceUnlock(s,kIOSurfaceLockReadOnly,NULL);
++    if(!converted)return NO;
++    unsigned origin[3]={0,0,0},size[3]={(unsigned)w,(unsigned)h,1};char why[256]={0};
++    if(mesa.texture_write(_texture,0,0,origin,size,_nativePlanarPixels,w*4,why,sizeof why)) {
++        static unsigned failures;if(failures++<8)rw_print("combined YUV upload failed: %s\n",why);return NO;
++    }
++    _nativePlanarSeed=seed;_nativePlanarValid=YES;
++    return YES;
++}
++- (void)nativeEnablePlanar {_nativePlanar=YES;_nativePlanarValid=NO;}
++
++- (struct rwa_texture *)nativeRenderTexture {
++    if(_nativePlanar){static unsigned refused;if(refused++<8)rw_print("combined YUV GPU writeback is not supported\n");return NULL;}
++    return _texture;
++}
+-- 
+2.51.0
+

@@ -1,0 +1,38 @@
+From 1c5e9e5d270625b28a9fc003f14b3bdc61a76565 Mon Sep 17 00:00:00 2001
+From: OpenCode <twinexotica@gmail.com>
+Date: Mon, 9 Nov 2026 08:38:43 +0530
+Subject: [PATCH 2/2] 0231: panel cold restart, full variant (soft reset +
+ snapshot + CTL flush)
+
+Second sleep build. Same as 0230 but sweetpanelcold defaults to 7: before
+the DSI video engine starts again, Linux's dsi_ctrl_hw_cmn_soft_reset
+sequence (controller off, clocks forced on, SOFT_RESET pulse), then every
+DSI configuration register that differs from the snapshot taken before the
+first stop is restored (count logged); after INTF_1 starts, CTL0
+INTF_FLUSH(INTF_1) + FLUSH(VIG0|LM0|CTL|INTF). Boot-arg sweetpanelcold=1
+gives 0230, 0 gives 0229.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/xnu/patches/0231-sweet-panel-cold-restart-full.patch b/xnu/patches/0231-sweet-panel-cold-restart-full.patch
+new file mode 100644
+index 0000000..96b83ef
+--- /dev/null
++++ b/xnu/patches/0231-sweet-panel-cold-restart-full.patch
+@@ -0,0 +1,13 @@
++diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
++index b67ef02..fa0755c 100644
++--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
+++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
++@@ -754,7 +754,7 @@ AppleARMBacklight::applyCall(thread_call_param_t owner, thread_call_param_t)
++ 				sweet_panel_vci = v != 0;
++ 			}
++ 			if (sweet_panel_cold < 0) {
++-				int c = 1;
+++				int c = 7;    /* 0231: + DSI soft reset with ABL snapshot restore + CTL0 flush */
++ 				PE_parse_boot_argn("sweetpanelcold", &c, sizeof(c));
++ 				sweet_panel_cold = c;
++ 			}
+-- 
+2.51.0
+

@@ -1,0 +1,181 @@
+From 9a40e2317fc3b8a1d70b71a8088d165c715f8e63 Mon Sep 17 00:00:00 2001
+From: OpenCode <opencode@localhost>
+Date: Thu, 5 Nov 2026 16:57:11 +0530
+Subject: [PATCH 03/11] xnu 0202 (stacked) + 0203: panel sleep on by default,
+ sweetpanelblack, full-drive 30 ms taps
+
+0203: sweetpanelsleep defaults to 1 (0202 woke and slept normally on the
+phone), sweetpanelblack=0 skips the black pass to see what DCS 28/10 do alone
+(the USER's cracked line stays lit: the panel may still be powered), haptic
+taps at the DT drive level and >= 30 ms (USER: 'a quick strong buzz would
+make it much better'; sweethapscale=1 = 0198's peak scaling).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/xnu/patches/0202-sweet-panel-off-commands-hs-mode.patch b/xnu/patches/0202-sweet-panel-off-commands-hs-mode.patch
+new file mode 100644
+index 0000000..42392ac
+--- /dev/null
++++ b/xnu/patches/0202-sweet-panel-off-commands-hs-mode.patch
+@@ -0,0 +1,94 @@
++diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
++index ff9a3a0..98a9a43 100644
++--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
+++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
++@@ -197,7 +197,7 @@ class AppleARMBacklight : public IOService {
++ 	unsigned       fLogged;
++ 	static void    applyCall(thread_call_param_t owner, thread_call_param_t);
++ 	int            sendLevel(uint32_t level);
++-	int            sendShort(uint8_t cmd);     /* 0200: DCS short write, no parameter */
+++	int            sendShort(uint8_t cmd, bool hs = false);   /* 0200: DCS short write, no parameter; 0202: hs */
++ 	void           publish(void);
++ 	void           request(uint32_t level, uint32_t value);
++ 	IOLock        *fDsiLock;                   /* 0200: one DSI command at a time */
++@@ -215,6 +215,14 @@ public:
++  * panel lit. A failed command falls back to that fade (sweet_panel_failed).
++  */
++ static AppleARMBacklight *sweet_backlight;
+++/*
+++ * 0202: 0200 on the phone: 28/10 "sent" (DMA done) every time but the panel stayed lit at iOS's minimum
+++ * brightness. The K6 DT says qcom,mdss-dsi-off-command-state "dsi_hs_mode" (on-command and brightness:
+++ * LP). So 28/10 go in high-speed mode (DMA_CTRL power-mode bit 26 clear; sweetpanelhs=0: LP as 0200),
+++ * and the frame is filled black once when the display goes off, so the screen is dark even if the
+++ * panel ignores the commands. ACK_ERR/TIMEOUT are logged for every panel command (first 64).
+++ */
+++static int sweet_panel_hs = -1;
++ static int sweet_panel_sleep = -1;
++ static volatile bool sweet_panel_failed;
++ 
++@@ -626,9 +634,14 @@ AppleARMBacklight::applyCall(thread_call_param_t owner, thread_call_param_t)
++ 		uint64_t t0 = mach_absolute_time(), ns;
++ 		int e1, e2;
++ 		if (want) {
++-			e1 = bl->sendShort(0x28);    /* display off */
+++			if (sweet_panel_hs < 0) {
+++				int hs = 1;
+++				PE_parse_boot_argn("sweetpanelhs", &hs, sizeof(hs));
+++				sweet_panel_hs = hs != 0;
+++			}
+++			e1 = bl->sendShort(0x28, sweet_panel_hs);    /* display off (DT: HS mode) */
++ 			IOSleep(20);
++-			e2 = bl->sendShort(0x10);    /* sleep in */
+++			e2 = bl->sendShort(0x10, sweet_panel_hs);    /* sleep in */
++ 			IOSleep(150);
++ 		} else {
++ 			e1 = bl->sendShort(0x11);    /* sleep out */
++@@ -683,7 +696,7 @@ AppleARMBacklight::panelSleep(bool off)
++ 
++ /* 0200: DCS short write without a parameter (data type 0x05), same FIFO path as sendLevel */
++ int
++-AppleARMBacklight::sendShort(uint8_t cmd)
+++AppleARMBacklight::sendShort(uint8_t cmd, bool hs)
++ {
++ 	volatile uint32_t *dsi = fDsi;
++ 	const uint32_t ctrl = dsi[DSI_REG_CTRL / 4];
++@@ -698,7 +711,7 @@ AppleARMBacklight::sendShort(uint8_t cmd)
++ 	dsi[DSI_REG_INT_CTRL / 4] = dsi[DSI_REG_INT_CTRL / 4] | 1u;    /* W1C stale DMA done */
++ 	dsi[DSI_REG_TPG_CTRL / 4] = (1u << 1) | (1u << 2) | (3u << 16);
++ 	dsi[DSI_REG_TPG_DMA_DATA / 4] = word;
++-	dsi[DSI_REG_DMA_CTRL / 4] = (dma_ctrl & ~((1u << 31) | (1u << 30))) | (1u << 26) | (1u << 28);
+++	dsi[DSI_REG_DMA_CTRL / 4] = (dma_ctrl & ~((1u << 31) | (1u << 30) | (1u << 26))) | (hs ? 0u : (1u << 26)) | (1u << 28);
++ 	dsi[DSI_REG_DMA_LENGTH / 4] = sizeof(word);
++ 	__asm__ volatile("dsb sy" ::: "memory");
++ 	dsi[DSI_REG_DMA_TRIGGER / 4] = 1;
++@@ -707,7 +720,7 @@ AppleARMBacklight::sendShort(uint8_t cmd)
++ 		IODelay(50);
++ 	}
++ 	const bool done = (dsi[DSI_REG_INT_CTRL / 4] & 1u) != 0;
++-	const uint32_t ack = dsi[DSI_REG_ACK_ERR / 4];
+++	const uint32_t ack = dsi[DSI_REG_ACK_ERR / 4], tmo = dsi[DSI_REG_TIMEOUT_STATUS / 4];
++ 	if (done) {
++ 		dsi[DSI_REG_INT_CTRL / 4] = dsi[DSI_REG_INT_CTRL / 4] | 1u;
++ 	}
++@@ -719,8 +732,10 @@ AppleARMBacklight::sendShort(uint8_t cmd)
++ 	if (!(ctrl & (1u << 2))) {
++ 		dsi[DSI_REG_CTRL / 4] = dsi[DSI_REG_CTRL / 4] & ~(1u << 2);
++ 	}
++-	if (!done) {
++-		IOLog("SWEET PANEL: dcs %#x NOT acknowledged after %u us ack_err=%#x\n", cmd, us, ack);
+++	static unsigned cmd_logs;
+++	if (!done || cmd_logs++ < 64) {
+++		IOLog("SWEET PANEL: dcs %#x %s %s after %u us ack_err=%#x timeout=%#x dma_ctrl=%#x ctrl=%#x\n", cmd,
+++		    hs ? "HS" : "LP", done ? "sent" : "NOT acknowledged", us, ack, tmo, dma_ctrl, ctrl);
++ 	}
++ 	return done ? 0 : ETIMEDOUT;
++ }
++@@ -1809,7 +1824,7 @@ IOMobileFramebufferUserClient::externalMethod(uint32_t selector, IOExternalMetho
++ 			bool change = off != fFB->fPowerOff;
++ 			if (change) {
++ 				fFB->fPowerOff = off;
++-				fFB->fFadeStep = (off && panel) ? 7 : 0;    /* 0200: the panel sleeps: no CPU fade */
+++				fFB->fFadeStep = (off && panel) ? 6 : 0;    /* 0200: the panel sleeps: no fade; 0202: one black pass */
++ 				fFB->fDirty = true;     /* on: redraw the latest frame */
++ 				if (off) {
++ 					fFB->fOffAt = mach_absolute_time();
+diff --git a/xnu/patches/0203-sweet-panel-sleep-default-strong-taps.patch b/xnu/patches/0203-sweet-panel-sleep-default-strong-taps.patch
+new file mode 100644
+index 0000000..9bc7876
+--- /dev/null
++++ b/xnu/patches/0203-sweet-panel-sleep-default-strong-taps.patch
+@@ -0,0 +1,58 @@
++diff --git a/bsd/dev/sweet_haptic.c b/bsd/dev/sweet_haptic.c
++index 3371488..f4b3143 100644
++--- a/bsd/dev/sweet_haptic.c
+++++ b/bsd/dev/sweet_haptic.c
++@@ -552,7 +552,8 @@ aw_cont_stop(void)
++ #define HAP_ACTIVE_US    30000u   /* a write that was not silence counts for this long */
++ #define HAP_SILENT_BELOW 256u     /* of 32768 */
++ #define HAP_MIN_US       hap_min_us /* shortest buzz: a tap (0198: 40 ms, boot-arg sweethapmin=MS, 10..200) */
++-static uint64_t hap_min_us = 40000u;
+++static uint64_t hap_min_us = 30000u;   /* 0203: 30 ms (USER: "a quick strong buzz would make it much better") */
+++static int hap_scale;                 /* 0203: sweethapscale=1: drive follows the waveform peak (0198) */
++ #define HAP_MAX_US       1000000u /* longest buzz; then it rests as long */
++ #define HAP_DRIVE        0x6au    /* the DT's cont_drv_lvl: never exceeded */
++ 
++@@ -662,6 +663,7 @@ hap_serve(void)
++ 	uint64_t began = 0, rest_until = 0;
++ 	unsigned buzzes = 0, capped = 0;
++ 	unsigned min_ms = 0;
+++	(void)PE_parse_boot_argn("sweethapscale", &hap_scale, sizeof(hap_scale));
++ 	if (PE_parse_boot_argn("sweethapmin", &min_ms, sizeof(min_ms)) && min_ms >= 10 && min_ms <= 200) {
++ 		hap_min_us = (uint64_t)min_ms * 1000u;
++ 	}
++@@ -673,7 +675,7 @@ hap_serve(void)
++ 		uint64_t now = hap_now_us(), heard = hap_heard_us;
++ 		bool want = heard != 0 && now - heard < HAP_ACTIVE_US && hap_quiet_us <= heard;
++ 		if (want && !on && now >= rest_until) {
++-			uint8_t drive = hap_drive_for(hap_peak);
+++			uint8_t drive = hap_scale ? hap_drive_for(hap_peak) : HAP_DRIVE;   /* 0203: full DT level */
++ 			if (!aw_cont_start(drive)) {
++ 				break;
++ 			}
++diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
++index 98a9a43..6bd6cf1 100644
++--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
+++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
++@@ -1815,7 +1815,7 @@ IOMobileFramebufferUserClient::externalMethod(uint32_t selector, IOExternalMetho
++ 		if (args->scalarInputCount >= 1) {
++ 			bool off = args->scalarInput[0] == 0;
++ 			if (sweet_panel_sleep < 0) {
++-				int ps = 0;
+++				int ps = 1;     /* 0203: on by default (0202 tested on the phone); sweetpanelsleep=0 off */
++ 				PE_parse_boot_argn("sweetpanelsleep", &ps, sizeof(ps));
++ 				sweet_panel_sleep = ps;
++ 			}
++@@ -1824,7 +1824,12 @@ IOMobileFramebufferUserClient::externalMethod(uint32_t selector, IOExternalMetho
++ 			bool change = off != fFB->fPowerOff;
++ 			if (change) {
++ 				fFB->fPowerOff = off;
++-				fFB->fFadeStep = (off && panel) ? 6 : 0;    /* 0200: the panel sleeps: no fade; 0202: one black pass */
+++				static int black = -1;
+++				if (black < 0) {
+++					black = 1;      /* 0203: sweetpanelblack=0: no black pass, to see what DCS 28/10 alone do */
+++					PE_parse_boot_argn("sweetpanelblack", &black, sizeof(black));
+++				}
+++				fFB->fFadeStep = (off && panel) ? (black ? 6 : 7) : 0;    /* 0200: no fade; 0202: one black pass */
++ 				fFB->fDirty = true;     /* on: redraw the latest frame */
++ 				if (off) {
++ 					fFB->fOffAt = mach_absolute_time();
+-- 
+2.51.0
+

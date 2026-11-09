@@ -1,0 +1,45 @@
+From 49754b459b5bf31417d9cf7fdb2ed04499fdd70b Mon Sep 17 00:00:00 2001
+From: OpenCode <opencode@localhost>
+Date: Wed, 21 Oct 2026 22:56:46 +0530
+Subject: [PATCH 10/13] Skip the Darwin23 header restore and start from the
+ DT-only platform
+
+
+diff --git a/ports/UniXNU-sweet/configs/sweet_ios16_defconfig b/ports/UniXNU-sweet/configs/sweet_ios16_defconfig
+index 8214274..80b35cd 100644
+--- a/ports/UniXNU-sweet/configs/sweet_ios16_defconfig
++++ b/ports/UniXNU-sweet/configs/sweet_ios16_defconfig
+@@ -1,7 +1,8 @@
+ # Configuration for the new source-port effort, not the old SWEET machine.
+-# These platform selections need Darwin22 source adaptation before linking.
++# First compile milestone: the generic DT platform only. ArmCpu, corecrypto,
++# UFS and the Adreno stack are added after this kernel builds.
+ CONFIG_XNU_ARM_DT_PLATFORM=y
+-CONFIG_XNU_ARMCPU=y
++# CONFIG_XNU_ARMCPU is not set
+ # CONFIG_XNU_ARMVIRT_PLATFORM is not set
+ # CONFIG_XNU_NATIVE_UFS is not set
+ # CONFIG_XNU_NATIVE_ADRENO is not set
+diff --git a/ports/UniXNU-sweet/scripts/build-xnu-4k-baseline.sh b/ports/UniXNU-sweet/scripts/build-xnu-4k-baseline.sh
+index 2f4ff91..c1f3a74 100755
+--- a/ports/UniXNU-sweet/scripts/build-xnu-4k-baseline.sh
++++ b/ports/UniXNU-sweet/scripts/build-xnu-4k-baseline.sh
+@@ -51,7 +51,14 @@ for PATCH in "$ROOT"/patches/xnu/*.patch "$ROOT"/kits/NativePrelink/patches/*.pa
+   fi
+ done
+ export XNU_AVAILABILITY_PL=$ROOT/.cache/fakeroot/usr/local/libexec/availability.pl
+-python3 scripts/prepare-xnu-source.py
++# xnu-8796 ships the DriverKit and TrustCache headers that the restore pass
++# copies from an earlier Apple source; for Darwin22 it would restore nothing
++# and only needs the rate-limited GitHub contents API. Skip it for 8796.
++if [ "$XNU_VERSION" = "8796.141.3" ]; then
++  echo 'prepare-xnu-source.py: Darwin22 source already carries the restored headers'
++else
++  python3 scripts/prepare-xnu-source.py
++fi
+ # The first pass of a new tree (XNU_BOOTSTRAP=1, set by the unixnu driver) only has to leave the compile records and
+ # link.filelist for the archive builders that run after it, so it links without their archives.
+ BOOTSTRAP=${XNU_BOOTSTRAP:-0}
+-- 
+2.51.0
+

@@ -1,0 +1,38 @@
+From 2f278e80cf007fec41a713a703d60a90af1c1c86 Mon Sep 17 00:00:00 2001
+From: OpenCode <twinexotica@gmail.com>
+Date: Mon, 9 Nov 2026 08:48:40 +0530
+Subject: [PATCH 3/3] 0236: add the four-thread default patch (previous commit
+ had it empty)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/xnu/patches/0236-sweet-fb-copy-four-threads.patch b/xnu/patches/0236-sweet-fb-copy-four-threads.patch
+index e69de29..21dffb6 100644
+--- a/xnu/patches/0236-sweet-fb-copy-four-threads.patch
++++ b/xnu/patches/0236-sweet-fb-copy-four-threads.patch
+@@ -0,0 +1,22 @@
++diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
++index 2d6b02c..7a41208 100644
++--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
+++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
++@@ -1975,7 +1975,7 @@ AppleCLCD::copyRows(uintptr_t src, uint32_t srcBpr, int32_t lx, int32_t ly, int3
++ 
++ /*
++  * 0234 (USER: "0 jitters ... very smooth animation"): under animation the present was gate 8.1 ms (GPU) + copy
++- * 8.4 ms on one A55 (sweetpresentcpu=4), ~36 fps. The copy now runs on sweetcopythreads threads (default 2):
+++ * 8.4 ms on one A55 (sweetpresentcpu=4), ~36 fps. The copy now runs on sweetcopythreads threads (default 2; 4 from 0236):
++  * the present thread plus helpers bound to cpu5, cpu3, cpu2 (A55s; the A76s stay with the UI). Rows are dealt
++  * in 8-row bands, so all threads move down the frame together, like one faster copy: beamWait's tear avoidance
++  * (it measures fCopyRowNs per presented row) stays valid.
++@@ -1986,7 +1986,7 @@ void
++ AppleCLCD::copyHelpersStart(void)
++ {
++ 	fCopyHelpersTried = true;
++-	int n = 2;
+++	int n = 4;    /* 0236: present + cpu5, cpu3, cpu2 */
++ 	PE_parse_boot_argn("sweetcopythreads", &n, sizeof(n));
++ 	n = n < 1 ? 1 : n > 4 ? 4 : n;
++ 	fCopyThreads = 1;
+-- 
+2.51.0
+

@@ -1,0 +1,1768 @@
+From 10d37f876c6942da4c8dffeff4ec6accb9313b60 Mon Sep 17 00:00:00 2001
+From: OpenCode <opencode@localhost>
+Date: Thu, 5 Nov 2026 09:19:06 +0530
+Subject: [PATCH 02/13] xnu 0197-0200 stacked: audio amp probe, haptic,
+ charger, display-dark power
+
+The four feature branches (claude/audio-0197, haptic-0198, charge-0199,
+sleep-0200) each apply on 0196 alone; these are the same changes rebased to
+apply in sequence (0199/0200 differ only in diff context).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/xnu/patches/0197-sweet-speaker-amp-probe.patch b/xnu/patches/0197-sweet-speaker-amp-probe.patch
+new file mode 100644
+index 0000000..d6258ea
+--- /dev/null
++++ b/xnu/patches/0197-sweet-speaker-amp-probe.patch
+@@ -0,0 +1,501 @@
++diff --git a/bsd/conf/files b/bsd/conf/files
++index 770d7c7..2956123 100644
++--- a/bsd/conf/files
+++++ b/bsd/conf/files
++@@ -120,6 +120,7 @@ bsd/dev/flame_wlan.c		standard
++ bsd/dev/sweet_bt.c			standard
++ bsd/dev/sweet_bt_hci.c			standard
++ bsd/dev/sweet_haptic.c			standard
+++bsd/dev/sweet_amp.c			standard
++ bsd/dev/sweet_audiohal.c		standard
++ bsd/dev/sweet_files.c			standard
++ bsd/dev/sweet_gpu.c			standard
++diff --git a/bsd/dev/sweet_amp.c b/bsd/dev/sweet_amp.c
++new file mode 100644
++index 0000000..94ce0ec
++--- /dev/null
+++++ b/bsd/dev/sweet_amp.c
++@@ -0,0 +1,463 @@
+++/*
+++ * 0197: speaker amplifier probe (audio milestone 3 groundwork, docs/audio-plan.md). Read only.
+++ *
+++ * Sweet's two Awinic AW882xx smart PAs (Xiaomi DT aw882xx_smartpa@34 "TOP" and @35 "BOT", channel 0
+++ * and 1) sit on QUP0 SE4 (qupv3_se4_i2c, i2c@0x890000, SDA/SCL GPIO 53/54 = qup04), resets on TLMM
+++ * GPIO 64 and 72 (low = reset), interrupts GPIO 93 and 56. The I2S/MI2S audio comes from the ADSP
+++ * (not booted by this kernel), so nothing can be heard yet: this only checks that the bus and the
+++ * amps answer, as the step before the AFE/MI2S path.
+++ *
+++ *   sweetamp=1  about 50 s after boot: SE4 clocks + pins, each amp out of reset for 20 ms, chip ID
+++ *               (reg 0x00, 16 bit) and status registers 0x01..0x05 read, then back into reset, the
+++ *               pins restored to what the bootloader left. Nothing is written to the amps (after a
+++ *               reset they power up in power-down state: no output stage running).
+++ *
+++ * The GENI I2C engine is a copy of bsd/dev/sweet_haptic.c's (Linux i2c-qcom-geni FIFO mode). The
+++ * probe stops at the first unexpected state (SE4 without I2C firmware, a busy engine, an I2C error).
+++ */
+++#if defined(ARM64_BOARD_CONFIG_SWEET)
+++#include <sys/param.h>
+++#include <sys/systm.h>
+++#include <sys/errno.h>
+++#include <kern/clock.h>
+++#include <kern/thread.h>
+++#include <kern/sched_prim.h>
+++#include <machine/machine_routines.h>
+++#include <pexpert/pexpert.h>
+++#include <sys/conf.h>
+++#include <sys/uio.h>
+++#include <miscfs/devfs/devfs.h>
+++#include <mach/mach_time.h>
+++
+++extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
+++extern kern_return_t thread_terminate(thread_t);
+++void sweet_amp_init(void);
+++
+++#define AMP_SE_PA        0x00890000u   /* QUP0 SE4: qupv3_se4_i2c, i2c@0x890000 */
+++#define AMP_GCC_PA       0x00100000u
+++#define AMP_NORTH_PA     0x03900000u   /* TLMM NORTH tile: GPIO 64, 72 (amp resets), 93 */
+++#define AMP_WEST_PA      0x03500000u   /* TLMM WEST tile: GPIO 53, 54 (SE4 I2C, qup04 = mux 2), 56 */
+++#define AMP_GCC_VOTE     0x5200cu
+++#define AMP_RCG          0x174f4u      /* gcc_qupv3_wrap0_s4_clk_src (gcc-sm7150.c) */
+++#define AMP_CBCR         0x174f0u      /* gcc_qupv3_wrap0_s4_clk, vote bit 14 */
+++#define AMP_GPIO_CFG(n)  ((uint32_t)(n) * 0x1000u)
+++#define AMP_GPIO_IO(n)   (AMP_GPIO_CFG(n) + 4u)
+++
+++#define SE_STATUS       0x040u
+++#define SE_MCLK         0x048u
+++#define SE_FW           0x068u
+++#define SE_CLK_SEL      0x07cu
+++#define SE_DMA          0x258u
+++#define SE_TX_LEN       0x26cu
+++#define SE_RX_LEN       0x270u
+++#define SE_SCL          0x278u
+++#define SE_CMD          0x600u
+++#define SE_CTRL         0x604u
+++#define SE_IRQ          0x610u
+++#define SE_IRQ_EN       0x614u
+++#define SE_IRQ_CLR      0x618u
+++#define SE_TX           0x700u
+++#define SE_RX           0x780u
+++#define SE_TX_COUNT     0x800u
+++#define SE_RX_COUNT     0x804u
+++#define SE_HW_TX        0xe24u
+++#define SE_HW_RX        0xe28u
+++#define SE_TX_WM        0x80cu
+++#define SE_RX_WM_IRQ    (1u << 26)
+++#define SE_RX_LAST      (1u << 27)
+++#define SE_TX_WM_IRQ    (1u << 30)
+++#define SE_DONE         (1u << 0)
+++#define SE_NACK         (1u << 10)
+++#define SE_ERRORS       (0x3eu | (1u << 9) | (1u << 10) | (1u << 12) | \
+++                         (1u << 13) | (3u << 24) | (3u << 28))
+++#define SE_EVENTS       (SE_DONE | SE_ERRORS | SE_RX_WM_IRQ | SE_RX_LAST | SE_TX_WM_IRQ)
+++/* geni_se_config_packing(8, 4, true, true, true): start bits 7/15/23/31,
+++ * MSB-to-LSB, length 8, STOP only on vector 3. FIFO bytes remain LSB first. */
+++#define SE_PACK0        0x0007f8feu
+++#define SE_PACK1        0x000ffefeu
+++
+++
+++static struct {
+++	vm_offset_t se, gcc, gpio;
+++	bool started, dead, probing;
+++	uint32_t irq_status, irq_last;
+++	unsigned sent, got;
+++	int stage;
+++} as;
+++static int amp_sleep_chan;
+++
+++static uint32_t
+++amp_rd(vm_offset_t base, uint32_t off)
+++{
+++	uint32_t v = *(volatile uint32_t *)(base + off);
+++	__asm__ volatile("dmb oshld" ::: "memory");
+++	return v;
+++}
+++
+++static void
+++amp_wr(vm_offset_t base, uint32_t off, uint32_t val)
+++{
+++	__asm__ volatile("dmb oshst" ::: "memory");
+++	*(volatile uint32_t *)(base + off) = val;
+++	__asm__ volatile("dsb osh" ::: "memory");
+++}
+++
+++static void
+++amp_wait(unsigned ms)
+++{
+++	uint64_t deadline;
+++	clock_interval_to_deadline(ms, NSEC_PER_MSEC, &deadline);
+++	(void)assert_wait_deadline(&amp_sleep_chan, THREAD_UNINT, deadline);
+++	thread_block(THREAD_CONTINUE_NULL);
+++}
+++
+++static bool
+++amp_wait_clear(vm_offset_t base, uint32_t off, uint32_t mask)
+++{
+++	for (unsigned i = 0; i < 5000; ++i) {
+++		if (!(amp_rd(base, off) & mask)) {
+++			return true;
+++		}
+++		delay(1);
+++	}
+++	return false;
+++}
+++
+++static void
+++amp_gpio(unsigned pin, unsigned mux, unsigned pull, unsigned drive, bool out, bool high)
+++{
+++	uint32_t off = AMP_GPIO_CFG(pin);
+++	uint32_t cfg = amp_rd(as.gpio, off);
+++	if (out) {
+++		/* Set the desired latch before enabling output (reset is active low). */
+++		amp_wr(as.gpio, AMP_GPIO_IO(pin),
+++		    (amp_rd(as.gpio, AMP_GPIO_IO(pin)) & ~2u) | (high ? 2u : 0u));
+++	}
+++	cfg &= ~0x3ffu;
+++	cfg |= (mux << 2) | pull | (drive << 6) | (out ? 0x200u : 0u);
+++	amp_wr(as.gpio, off, cfg);
+++}
+++
+++/* Called only for a transfer started by this driver, including a stretched TX. */
+++static void
+++amp_abort(void)
+++{
+++	amp_wr(as.se, SE_CTRL, 2); /* abort M command, release held bus */
+++	bool done = false;
+++	for (unsigned i = 0; i < 5000; ++i) {
+++		if (amp_rd(as.se, SE_IRQ) & (1u << 5)) {
+++			done = true;
+++			break;
+++		}
+++		delay(1);
+++	}
+++	if (!done || !amp_wait_clear(as.se, SE_STATUS, 1u)) {
+++		as.dead = true;
+++		printf("SWEET AMP: abort failed status=%#x irq=%#x; stopping\n",
+++		    amp_rd(as.se, SE_STATUS), amp_rd(as.se, SE_IRQ));
+++	}
+++	/* Bound drain even if the hardware reports an impossible FIFO count. */
+++	for (unsigned i = 0; i < 64 && (amp_rd(as.se, SE_RX_COUNT) & 0x1ffffffu); ++i) {
+++		(void)amp_rd(as.se, SE_RX);
+++	}
+++	amp_wr(as.se, SE_IRQ_CLR, 0xffffffffu);
+++	if (amp_rd(as.se, SE_TX_COUNT) & 0xfffffffu) {
+++		as.dead = true;
+++		printf("SWEET AMP: TX FIFO not empty after abort; stopping\n");
+++	}
+++}
+++
+++/* Keep all observed bits for diagnostics, even if a watermark was cleared. */
+++static uint32_t
+++amp_irq(void)
+++{
+++	as.irq_last = amp_rd(as.se, SE_IRQ);
+++	as.irq_status |= as.irq_last;
+++	return as.irq_last;
+++}
+++
+++/* One Linux-style FIFO message. TX is at most 3 bytes; RX at most 90. */
+++static int
+++amp_msg_run(uint8_t addr, const uint8_t *tx, unsigned nt, uint8_t *rx,
+++    unsigned nr, bool stretch)
+++{
+++	if (as.dead || nt > 3 || nr > 90 || (nt && nr) || (!nt && !nr)) {
+++		return EIO;
+++	}
+++	if (!amp_wait_clear(as.se, SE_STATUS, 1u)) {
+++		as.dead = true; /* no other SE4 owner is supported */
+++		return EBUSY;
+++	}
+++	amp_wr(as.se, SE_IRQ_CLR, 0xffffffffu);
+++	amp_wr(as.se, SE_TX_WM, nt ? 1u : 0u);
+++	amp_wr(as.se, nr ? SE_RX_LEN : SE_TX_LEN, nr ? nr : nt);
+++	amp_wr(as.se, SE_CMD, ((nr ? 2u : 1u) << 27) |
+++	    ((uint32_t)addr << 9) | (stretch ? 4u : 0u));
+++	int err = ETIMEDOUT;
+++	for (unsigned i = 0; i < 20000; ++i) {
+++		uint32_t irq = amp_irq();
+++		if (irq & SE_ERRORS) {
+++			err = (irq & SE_NACK) ? ENXIO : EIO;
+++			/* A completed NACK is normal during address probing. Aborting an
+++			 * idle sequencer may never produce ABORT_DONE. Wait for completion
+++			 * and leave a clean idle engine available for the other IC. */
+++			for (unsigned j = 0; j < 5000 && !(irq & SE_DONE); ++j) {
+++				delay(1);
+++				irq = amp_irq();
+++			}
+++			if ((irq & SE_DONE) && !(amp_rd(as.se, SE_STATUS) & 1u) &&
+++			    !(amp_rd(as.se, SE_TX_COUNT) & 0xfffffffu) &&
+++			    !(amp_rd(as.se, SE_RX_COUNT) & 0x1ffffffu)) {
+++				amp_wr(as.se, SE_IRQ_CLR, irq);
+++				return err;
+++			}
+++			break;
+++		}
+++		if (nt && !as.sent && (irq & SE_TX_WM_IRQ)) {
+++			uint32_t word = 0;
+++			for (unsigned j = 0; j < nt; ++j) {
+++				word |= (uint32_t)tx[j] << (8u * j);
+++			}
+++			amp_wr(as.se, SE_TX, word);
+++			as.sent = nt;
+++			amp_wr(as.se, SE_TX_WM, 0);
+++		}
+++		uint32_t count = amp_rd(as.se, SE_RX_COUNT) & 0x1ffffffu;
+++		if (count > 64 || count > (nr - as.got + 3u) / 4u) {
+++			err = EIO;
+++			break;
+++		}
+++		while (count--) {
+++			uint32_t word = amp_rd(as.se, SE_RX);
+++			for (unsigned j = 0; j < 4 && as.got < nr; ++j) {
+++				rx[as.got++] = (uint8_t)(word >> (8u * j));
+++			}
+++		}
+++		/* DONE is checked after draining RX, so final short words aren't lost. */
+++		if (irq & SE_DONE) {
+++			/* Re-sample after the final drain; a late error must beat DONE. */
+++			irq = amp_irq();
+++			if (irq & SE_ERRORS) {
+++				continue;
+++			}
+++			amp_wr(as.se, SE_IRQ_CLR, irq);
+++			if (as.got == nr && as.sent == nt) {
+++				return 0;
+++			}
+++			err = EIO;
+++			break;
+++		}
+++		/* Preserve DONE/errors if they arrive during this iteration. */
+++		amp_wr(as.se, SE_IRQ_CLR, irq & (SE_RX_WM_IRQ | SE_RX_LAST | SE_TX_WM_IRQ));
+++		delay(1);
+++	}
+++	amp_abort();
+++	return err;
+++}
+++
+++static int
+++amp_msg(uint8_t addr, const uint8_t *tx, unsigned nt, uint8_t *rx,
+++    unsigned nr, bool stretch)
+++{
+++	as.irq_status = as.irq_last = 0;
+++	as.sent = as.got = 0;
+++	int err = amp_msg_run(addr, tx, nt, rx, nr, stretch);
+++	if (as.probing) {
+++		printf("SWEET AMP: probe xfer addr=%#x %s len=%u stretch=%u err=%d irq=%#x seen=%#x tx=%u rx=%u status=%#x\n",
+++		    addr, nr ? "read" : "write", nr ? nr : nt, stretch ? 1u : 0u,
+++		    err, as.irq_last, as.irq_status, as.sent, as.got,
+++		    amp_rd(as.se, SE_STATUS));
+++	}
+++	return err;
+++}
+++
+++static int
+++amp_read(uint8_t addr, uint16_t reg, bool wide, uint8_t *buf, unsigned len)
+++{
+++	uint8_t ptr[2] = {(uint8_t)(reg >> 8), (uint8_t)reg};
+++	int err = amp_msg(addr, wide ? ptr : ptr + 1, wide ? 2u : 1u,
+++	    NULL, 0, true);
+++	if (err) {
+++		return err;
+++	}
+++	/* STOP_STRETCH on the pointer write retains the bus for a repeated START. */
+++	return amp_msg(addr, NULL, 0, buf, len, false);
+++}
+++
+++static bool
+++amp_clocks(void)
+++{
+++	/* wrapper0 m_ahb/s_ahb/core/core2x (bits 6-9) and wrap0 s4 (bit 14); BT votes 6, 7 and s3 */
+++	uint32_t mask = (0x0fu << 6) | (1u << 14);
+++	amp_wr(as.gcc, AMP_GCC_VOTE, amp_rd(as.gcc, AMP_GCC_VOTE) | mask);
+++	uint32_t dfs = amp_rd(as.gcc, AMP_RCG + 0x14u);
+++	uint32_t cfg = amp_rd(as.gcc, AMP_RCG + 4u);
+++	printf("SWEET AMP: gcc vote=%#x rcg=%#x cfg=%#x dfs=%#x\n",
+++	    amp_rd(as.gcc, AMP_GCC_VOTE), amp_rd(as.gcc, AMP_RCG), cfg, dfs);
+++	if (dfs & 1u) {
+++		cfg = amp_rd(as.gcc, AMP_RCG + 0x1cu);
+++		if ((cfg & 0x371fu) != 1u) {
+++			printf("SWEET AMP: DFS level0=%#x is not XO/1; stop\n", cfg);
+++			return false;
+++		}
+++	} else {
+++		cfg = (cfg & ~(0x371fu | (1u << 20))) | 1u;   /* XO, divider 1: 19.2 MHz */
+++		amp_wr(as.gcc, AMP_RCG + 4u, cfg);
+++		amp_wr(as.gcc, AMP_RCG, amp_rd(as.gcc, AMP_RCG) | 1u);
+++		if (!amp_wait_clear(as.gcc, AMP_RCG, 1u)) {
+++			printf("SWEET AMP: RCG update timeout\n");
+++			return false;
+++		}
+++	}
+++	const uint32_t branches[] = {0x17004, 0x17008, 0x1700c, 0x17014, AMP_CBCR};
+++	for (unsigned i = 0; i < sizeof(branches) / sizeof(branches[0]); ++i) {
+++		if (!amp_wait_clear(as.gcc, branches[i], 1u << 31)) {
+++			printf("SWEET AMP: GCC branch %#x halted (%#x)\n", branches[i], amp_rd(as.gcc, branches[i]));
+++			return false;
+++		}
+++	}
+++	return true;
+++}
+++
+++static bool
+++amp_se_init(void)
+++{
+++	uint32_t fw = amp_rd(as.se, SE_FW);
+++	uint32_t tx = amp_rd(as.se, SE_HW_TX), rx = amp_rd(as.se, SE_HW_RX);
+++	printf("SWEET AMP: se9 fw=%#x proto=%u status=%#x tx=%#x rx=%#x\n",
+++	    fw, (fw >> 8) & 0xffu, amp_rd(as.se, SE_STATUS), tx, rx);
+++	if (((fw >> 8) & 0xffu) != 3u || (amp_rd(as.se, 0x64) & 1u) ||
+++	    ((tx >> 24) & 0x3fu) != 32u || ((rx >> 24) & 0x3fu) != 32u ||
+++	    ((tx >> 16) & 0x3fu) < 2u || ((rx >> 16) & 0x3fu) < 2u) {
+++		printf("SWEET AMP: SE4 has no ABL-loaded I2C firmware / 32-bit FIFOs; stop\n");
+++		return false;
+++	}
+++	if (amp_rd(as.se, SE_STATUS) & 0x1001u) {
+++		printf("SWEET AMP: SE4 already busy; stop\n");
+++		return false;
+++	}
+++	amp_wr(as.se, 0xe18, 0);
+++	amp_wr(as.se, 0xe1c, 0);
+++	amp_wr(as.se, 0x644, 0);
+++	amp_wr(as.se, SE_IRQ_CLR, 0xffffffffu);
+++	amp_wr(as.se, 0x648, 0xffffffffu);
+++	amp_wr(as.se, SE_DMA, 0);
+++	amp_wr(as.se, 0x28, amp_rd(as.se, 0x28) | 0x7fu);
+++	amp_wr(as.se, 0xe30, amp_rd(as.se, 0xe30) | 0x0fu);
+++	amp_wr(as.se, 0x24, 0x7f);
+++	amp_wr(as.se, 0x20, 1);
+++	amp_wr(as.se, SE_CLK_SEL, 0);
+++	amp_wr(as.se, SE_MCLK, (7u << 4) | 1u);
+++	amp_wr(as.se, SE_SCL, (10u << 20) | (11u << 10) | 26u); /* 100 kHz */
+++	amp_wr(as.se, 0x254, 0);
+++	amp_wr(as.se, 0x260, SE_PACK0);
+++	amp_wr(as.se, 0x264, SE_PACK1);
+++	amp_wr(as.se, 0x284, SE_PACK0);
+++	amp_wr(as.se, 0x288, SE_PACK1);
+++	amp_wr(as.se, SE_TX_WM, 0);
+++	amp_wr(as.se, 0x810, 0);
+++	amp_wr(as.se, 0x814, ((rx >> 16) & 0x3fu) - 1u);
+++	amp_wr(as.se, SE_IRQ_EN, SE_EVENTS);
+++	if (amp_rd(as.se, 0x260) != SE_PACK0 || amp_rd(as.se, 0x264) != SE_PACK1 ||
+++	    (amp_rd(as.se, SE_TX_COUNT) & 0xfffffffu) || (amp_rd(as.se, SE_RX_COUNT) & 0x1ffffffu)) {
+++		printf("SWEET AMP: SE4 setup readback mismatch / inherited FIFO data; stop\n");
+++		return false;
+++	}
+++	return true;
+++}
+++
+++
+++/* ---------------------------------------------------------------- AW882xx */
+++
+++static const struct {
+++	const char *name;
+++	uint8_t addr;
+++	unsigned reset_gpio;
+++} amp_chips[] = {
+++	{"TOP", 0x34, 64},
+++	{"BOT", 0x35, 72},
+++};
+++
+++static void
+++amp_thread(void *arg __unused, wait_result_t wr __unused)
+++{
+++	amp_wait(50000);    /* after the UI is up */
+++	as.gcc = ml_io_map(AMP_GCC_PA, 0x90000);
+++	as.gpio = ml_io_map(AMP_WEST_PA, 0x80000);   /* gpio 53/54 */
+++	vm_offset_t north = ml_io_map(AMP_NORTH_PA, 0x80000);   /* gpio 64/72 */
+++	as.se = ml_io_map(AMP_SE_PA, 0x4000);
+++	if (!as.gcc || !as.gpio || !north || !as.se) {
+++		printf("SWEET AMP: mapping failed\n");
+++		goto out;
+++	}
+++	uint32_t cfg53 = amp_rd(as.gpio, AMP_GPIO_CFG(53)), cfg54 = amp_rd(as.gpio, AMP_GPIO_CFG(54));
+++	uint32_t rcfg[2], rio[2];
+++	for (unsigned i = 0; i < 2; i++) {
+++		rcfg[i] = amp_rd(north, AMP_GPIO_CFG(amp_chips[i].reset_gpio));
+++		rio[i] = amp_rd(north, AMP_GPIO_IO(amp_chips[i].reset_gpio));
+++	}
+++	printf("SWEET AMP: before: gpio53 cfg %#x gpio54 cfg %#x; reset gpio64 cfg %#x io %#x, gpio72 cfg %#x io %#x\n",
+++	    cfg53, cfg54, rcfg[0], rio[0], rcfg[1], rio[1]);
+++	if (!amp_clocks()) {
+++		goto out;
+++	}
+++	/* I2C pins: function qup04 (mux 2), bias disabled (board pull-ups), 2 mA (DT qupv3_se4_i2c_active) */
+++	amp_gpio(53, 2, 0, 0, false, false);
+++	amp_gpio(54, 2, 0, 0, false, false);
+++	if (!amp_se_init()) {
+++		goto pins;
+++	}
+++	for (unsigned c = 0; c < 2 && !as.dead; c++) {
+++		vm_offset_t keep = as.gpio;
+++		as.gpio = north;
+++		amp_gpio(amp_chips[c].reset_gpio, 0, 0, 0, true, false);   /* reset, then release */
+++		amp_wait(2);
+++		amp_gpio(amp_chips[c].reset_gpio, 0, 0, 0, true, true);
+++		as.gpio = keep;
+++		amp_wait(20);
+++		uint8_t v[2] = {0, 0};
+++		int err = amp_read(amp_chips[c].addr, 0x00, false, v, 2);
+++		printf("SWEET AMP: %s @%#x: chip ID read -> %d, id %#06x\n", amp_chips[c].name, amp_chips[c].addr,
+++		    err, (v[0] << 8) | v[1]);
+++		if (!err) {
+++			char line[96];
+++			unsigned n = 0;
+++			for (uint8_t r = 0x01; r <= 0x05 && n + 12 < sizeof(line); r++) {
+++				uint8_t w[2] = {0, 0};
+++				int e = amp_read(amp_chips[c].addr, r, false, w, 2);
+++				n += (unsigned)snprintf(line + n, sizeof(line) - n, " %02x=%s%04x", r, e ? "err" : "",
+++				    e ? 0 : (w[0] << 8) | w[1]);
+++			}
+++			printf("SWEET AMP: %s regs:%s\n", amp_chips[c].name, line);
+++		}
+++		as.dead = false;    /* a NACK on one amp must not hide the other */
+++		as.gpio = north;
+++		/* back to what the bootloader left (cfg, then the level) */
+++		amp_wr(north, AMP_GPIO_IO(amp_chips[c].reset_gpio), rio[c]);
+++		amp_wr(north, AMP_GPIO_CFG(amp_chips[c].reset_gpio), rcfg[c]);
+++		as.gpio = keep;
+++	}
+++pins:
+++	amp_wr(as.gpio, AMP_GPIO_CFG(53), cfg53);
+++	amp_wr(as.gpio, AMP_GPIO_CFG(54), cfg54);
+++	printf("SWEET AMP: probe done; reset and I2C pins restored\n");
+++out:
+++	(void)thread_terminate(current_thread());
+++}
+++
+++void
+++sweet_amp_init(void)
+++{
+++	int mode = 0;
+++	(void)PE_parse_boot_argn("sweetamp", &mode, sizeof(mode));
+++	if (mode <= 0 || as.started) {
+++		return;
+++	}
+++	as.started = true;
+++	thread_t th;
+++	if (kernel_thread_start(amp_thread, NULL, &th) == KERN_SUCCESS) {
+++		thread_deallocate(th);
+++		printf("SWEET AMP: probe armed (50 s)\n");
+++	}
+++}
+++#endif /* ARM64_BOARD_CONFIG_SWEET */
++diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
++index 577611e..1b55904 100644
++--- a/bsd/dev/sweet_ufs.c
+++++ b/bsd/dev/sweet_ufs.c
++@@ -60,6 +60,7 @@ extern void sweet_smmu_probe_start(void);
++ extern void sweet_rpmh_ddr_raise(void);
++ extern void sweet_bt_init(void);
++ extern void sweet_haptic_init(void);
+++extern void sweet_amp_init(void);
++ extern void sweet_audiohal_init(void);
++ extern void sweet_bb_dev_init(void);
++ extern void sweet_usb_probe(void);
++@@ -672,6 +673,7 @@ sweet_ufs_init(void)
++ 	sweet_smmu_probe_start();   /* sweetsmmuprobe=1: BCM votes + apps SMMU ID read (0149) */
++ 	sweet_haptic_init();     /* sweethaptic=1|2|3: AW8624 on QUP1 SE3 (bsd/dev/sweet_haptic.c) */
++ 	sweet_audiohal_init();   /* sweetvaudio=0|1: VirtualAudio HAL plug-in (bsd/dev/sweet_audiohal.c, 0196) */
+++	sweet_amp_init();        /* sweetamp=1: AW882xx speaker amp ID probe on QUP0 SE4 (bsd/dev/sweet_amp.c, 0197) */
++ 	sweet_bt_init();         /* sweetbt=1: WCN3990 Bluetooth over QUP0 SE3, com.apple.uart.bluetooth (bsd/dev/sweet_bt.c) */
++ 	flame_wlan_init();       /* /dev/wlan, en0 + Apple80211 for wifid: bsd/dev/flame_wlan.c, from ios-flame 0123 */
++ 	sweet_bb_dev_init();     /* sweetbb=1: /dev/sweet-bb + AppleBaseband for CommCenter (UniXNU QcomBaseband port) */
+diff --git a/xnu/patches/0198-sweet-haptic-fast-start-and-trace.patch b/xnu/patches/0198-sweet-haptic-fast-start-and-trace.patch
+new file mode 100644
+index 0000000..f329b63
+--- /dev/null
++++ b/xnu/patches/0198-sweet-haptic-fast-start-and-trace.patch
+@@ -0,0 +1,165 @@
++diff --git a/bsd/dev/sweet_haptic.c b/bsd/dev/sweet_haptic.c
++index 1e6e750..3371488 100644
++--- a/bsd/dev/sweet_haptic.c
+++++ b/bsd/dev/sweet_haptic.c
++@@ -16,6 +16,13 @@
++  *
++  * Every write is read back; a NACK, an I2C error, a mismatch or a fault bit stops the driver and
++  * puts the chip back into reset.
+++ *
+++ * 0198: the motor worked (the three test buzzes are felt) but iOS never played on the Actuator (0195:
+++ * "serving /dev/sweet-haptic (0 frames written so far)"): VirtualAudio was disabled (0196 enables it,
+++ * sweetvaudio=1). Here: the continuous-mode configuration is written once (aw_cont_prepare) and each
+++ * buzz only switches mode, clears SYSINT, sets the drive level and GO (about 5 I2C writes instead of
+++ * 25: the tap starts ~20 ms sooner); who opens the device and what it writes is logged
+++ * ("SWEET HAPTIC: open by ...", "first sound ...", a stats line every 60 s while frames arrive).
++  */
++ #if defined(ARM64_BOARD_CONFIG_SWEET)
++ #include <sys/param.h>
++@@ -30,6 +37,7 @@
++ #include <sys/uio.h>
++ #include <miscfs/devfs/devfs.h>
++ #include <mach/mach_time.h>
+++#include <sys/proc.h>
++ 
++ extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
++ extern kern_return_t thread_terminate(thread_t);
++@@ -465,10 +473,46 @@ aw_init(void)
++ 	    aw_wr(0x74, 0x00) && aw_wr(0x75, 0x08) && aw_wr(0x76, 0x03) && aw_wr(0x77, 0xf8);  /* BEMF thresholds */
++ }
++ 
+++/* 0198: the static part of aw8624_haptic_cont(), written once after init (the chip keeps it in standby) */
+++static bool hap_prepared;
+++
+++static bool
+++aw_cont_prepare(void)
+++{
+++	const unsigned f0_reg = 1000000000u / (2080u * 260u);   /* f0_pre 208.0 Hz, f0_coeff 260 */
+++	hap_prepared = aw_wr(0x49, (uint8_t)(f0_reg >> 8)) && aw_wr(0x4a, (uint8_t)f0_reg) &&
+++	    aw_bits(0x2b, (uint8_t)~(1u << 6), (3u << 6)) &&           /* DATCTRL: 1000 Hz LPF (vendor masks) */
+++	    aw_bits(0x2b, (uint8_t)~(1u << 5), (1u << 5)) &&
+++	    aw_wr(0x48, (uint8_t)((1u << 7) | (1u << 3) | (1u << 0))) &&   /* CONT_CTRL: ZC detect, closed loop, auto brake */
+++	    aw_wr(0x4b, 0xf0) && aw_wr(0x4c, 0x6c) &&                  /* TD 0xf06c */
+++	    aw_wr(0x4d, 0x11) &&
+++	    aw_wr(0x72, 0x08) && aw_wr(0x73, 0xf8) &&
+++	    aw_bits(0x78, (uint8_t)~0xfu, 3) &&                        /* BEMF_NUM: 3 brake periods */
+++	    aw_wr(0x7a, 0x23) &&                                       /* TIME_NZC */
+++	    aw_wr(0x7c, 0x9b);                                         /* overdrive level */
+++	printf("SWEET HAPTIC: continuous mode prepared: %s\n", hap_prepared ? "ok" : "FAILED");
+++	return hap_prepared;
+++}
+++
+++/* 0198: per buzz only the dynamic part (mode, active, SYSINT clear, drive, GO) */
+++static bool
+++aw_cont_go(uint8_t drive)
+++{
+++	uint8_t clr = 0;
+++	return aw_bits(0x04, (uint8_t)~((3u << 2) | 1u), (2u << 2)) &&   /* SYSCTRL: CONT, active */
+++	    aw_rd(0x02, &clr) == 0 &&                                  /* clear SYSINT (aw8624_haptic_active) */
+++	    aw_bits(0x03, (uint8_t)~(1u << 5), 0) &&                   /* UVLO interrupt on */
+++	    aw_wr_raw(0x7b, drive) == 0 &&                             /* drive level (DT 0x6a) */
+++	    aw_wr_raw(0x05, 0x01) == 0;                                /* GO */
+++}
+++
++ /* aw8624_haptic_cont(): continuous drive at the preset f0 until GO is cleared */
++ static bool
++ aw_cont_start(uint8_t drive)
++ {
+++	if (hap_prepared) {
+++		return aw_cont_go(drive);
+++	}
++ 	const unsigned f0_reg = 1000000000u / (2080u * 260u);   /* f0_pre 208.0 Hz, f0_coeff 260 */
++ 	uint8_t clr = 0;
++ 	return aw_bits(0x04, (uint8_t)~(3u << 2), (2u << 2)) &&       /* SYSCTRL: play mode CONT */
++@@ -507,13 +551,17 @@ aw_cont_stop(void)
++ 
++ #define HAP_ACTIVE_US    30000u   /* a write that was not silence counts for this long */
++ #define HAP_SILENT_BELOW 256u     /* of 32768 */
++-#define HAP_MIN_US       30000u   /* shortest buzz: a tap */
+++#define HAP_MIN_US       hap_min_us /* shortest buzz: a tap (0198: 40 ms, boot-arg sweethapmin=MS, 10..200) */
+++static uint64_t hap_min_us = 40000u;
++ #define HAP_MAX_US       1000000u /* longest buzz; then it rests as long */
++ #define HAP_DRIVE        0x6au    /* the DT's cont_drv_lvl: never exceeded */
++ 
++ static volatile uint64_t hap_heard_us, hap_quiet_us;
++ static volatile uint32_t hap_peak;
++ static uint64_t hap_frames;
+++static uint64_t hap_writes, hap_loud_writes;     /* 0198 */
+++static unsigned hap_opens;
+++static bool hap_first_loud;
++ 
++ static uint64_t
++ hap_now_us(void)
++@@ -544,6 +592,10 @@ hap_dev_write(__unused dev_t dev, struct uio *uio, __unused int ioflag)
++ 			peak = v > peak ? v : peak;
++ 		}
++ 		hap_frames += (uint64_t)bytes / 2;
+++		hap_writes++;
+++		if (peak > HAP_SILENT_BELOW) {
+++			hap_loud_writes++;
+++		}
++ 		uint64_t now = hap_now_us();
++ 		if (peak > HAP_SILENT_BELOW) {
++ 			if (hap_heard_us == 0 || hap_quiet_us > hap_heard_us || now - hap_heard_us >= HAP_ACTIVE_US) {
++@@ -561,14 +613,23 @@ hap_dev_write(__unused dev_t dev, struct uio *uio, __unused int ioflag)
++ }
++ 
++ static int
++-hap_dev_open(__unused dev_t dev, __unused int flags, __unused int type, __unused struct proc *p)
+++hap_dev_open(__unused dev_t dev, __unused int flags, __unused int type, struct proc *p)
+++{
+++	if (hap_opens++ < 16) {
+++		printf("SWEET HAPTIC: open by %s[%d] flags %#x\n", p ? proc_best_name(p) : "?", p ? proc_pid(p) : -1, flags);
+++	}
+++	return 0;
+++}
+++
+++static int
+++hap_dev_close(__unused dev_t dev, __unused int flags, __unused int type, __unused struct proc *p)
++ {
++ 	return 0;
++ }
++ 
++ static const struct cdevsw hap_cdevsw = {
++ 	.d_open       = hap_dev_open,
++-	.d_close      = hap_dev_open,
+++	.d_close      = hap_dev_close,
++ 	.d_read       = eno_rdwrt,
++ 	.d_write      = hap_dev_write,
++ 	.d_ioctl      = eno_ioctl,
++@@ -600,7 +661,14 @@ hap_serve(void)
++ 	bool on = false;
++ 	uint64_t began = 0, rest_until = 0;
++ 	unsigned buzzes = 0, capped = 0;
++-	printf("SWEET HAPTIC: serving /dev/sweet-haptic (%llu frames written so far)\n", hap_frames);
+++	unsigned min_ms = 0;
+++	if (PE_parse_boot_argn("sweethapmin", &min_ms, sizeof(min_ms)) && min_ms >= 10 && min_ms <= 200) {
+++		hap_min_us = (uint64_t)min_ms * 1000u;
+++	}
+++	printf("SWEET HAPTIC: serving /dev/sweet-haptic (%llu frames written so far), taps %llu ms\n", hap_frames,
+++	    hap_min_us / 1000u);
+++	(void)aw_cont_prepare();     /* 0198: a failed write stops the driver, as every other write */
+++	uint64_t stats_at = hap_now_us() + 60000000ull, stats_frames = 0;
++ 	while (!hs.dead) {
++ 		uint64_t now = hap_now_us(), heard = hap_heard_us;
++ 		bool want = heard != 0 && now - heard < HAP_ACTIVE_US && hap_quiet_us <= heard;
++@@ -630,6 +698,19 @@ hap_serve(void)
++ 				hs.dead = true;
++ 			}
++ 		}
+++		if (!hap_first_loud && hap_loud_writes) {
+++			hap_first_loud = true;
+++			printf("SWEET HAPTIC: first sound from iOS after %llu frames (%llu writes), peak %u\n",
+++			    hap_frames, hap_writes, hap_peak);
+++		}
+++		if (now >= stats_at) {
+++			if (hap_frames != stats_frames) {
+++				printf("SWEET HAPTIC: 60 s: %llu frames total, %llu writes (%llu not silence), %u buzzes, %u capped\n",
+++				    hap_frames, hap_writes, hap_loud_writes, buzzes, capped);
+++			}
+++			stats_frames = hap_frames;
+++			stats_at = now + 60000000ull;
+++		}
++ 		hap_wait(on ? 2 : 4);
++ 	}
++ 	if (on) {
+diff --git a/xnu/patches/0199-sweet-charger-input-limit.patch b/xnu/patches/0199-sweet-charger-input-limit.patch
+new file mode 100644
+index 0000000..26b4aa2
+--- /dev/null
++++ b/xnu/patches/0199-sweet-charger-input-limit.patch
+@@ -0,0 +1,472 @@
++diff --git a/bsd/conf/files b/bsd/conf/files
++index 2956123..57e80fc 100644
++--- a/bsd/conf/files
+++++ b/bsd/conf/files
++@@ -110,6 +110,7 @@ bsd/dev/sweet_keys.c			standard
++ bsd/dev/sweet_touch.c			standard
++ bsd/dev/sweet_rpmh.c			standard
++ bsd/dev/sweet_spmi.c			standard
+++bsd/dev/sweet_charger.c		standard
++ bsd/dev/sweet_usb.c			standard
++ bsd/dev/sweet_pmem.c			standard
++ bsd/dev/redwood_sta.c		standard
++diff --git a/bsd/dev/sweet_charger.c b/bsd/dev/sweet_charger.c
++new file mode 100644
++index 0000000..c943b65
++--- /dev/null
+++++ b/bsd/dev/sweet_charger.c
++@@ -0,0 +1,290 @@
+++/*
+++ * 0199: PM6150 charger (SMB5) input-current setup.
+++ *
+++ * Observed (0195b, logs/boot-0195b.txt): on USB at 14 %, "SWEET BATTERY: ... -122mA external=1
+++ * charging=1": the charger is in fast charge but the battery still drains about 100 mA, so the
+++ * input current limit is below the phone's load (the USER: "battery drained even though
+++ * connected"). Nothing in this kernel ever configured the charger; it runs with what XBL/ABL left.
+++ *
+++ * Register map and the input-current-limit sequence are Xiaomi's own sweet kernel
+++ * (MiCode/Xiaomi_Kernel_OpenSource sweet-r-oss, drivers/power/supply/qcom/smb5-reg.h, smb5-lib.c
+++ * smblib_set_icl_current/smblib_icl_override, qpnp-smb5.c pm6150 charge params): SID 0, CHGR 0x1000,
+++ * DCDC 0x1100, BATIF 0x1200, USBIN 0x1300, TYPEC 0x1500, MISC 0x1600; ICL 0x1370 and FCC 0x1061 in
+++ * 50 mA steps. The sunfish port's read-only dump of the same PMIC (ios-flame
+++ * docs/reference/charger-regs.md) showed XBL leaving FCC 2.0 A / ICL 1.5 A there.
+++ *
+++ *   sweetcharge=1  read only: one register dump (CHGR/DCDC/BATIF/USBIN/TYPEC/MISC) at start and after
+++ *                  each plug-in, a status line on every change and every 60 s
+++ *   sweetcharge=2  ... and the input current limit set from the detected source, as smblib does in
+++ *                  high-current mode (USBIN_MODE_CHG=1, no ICL override, ICL kept after APSD):
+++ *                    Type-C Rp 3.0 A: 2000 mA, Rp 1.5 A: 1500 mA, DCP/QC: 1500 mA, CDP: 1500 mA,
+++ *                    float/other: 1000 mA, SDP (a PC port): sweetchgsdp (default 500 = left alone;
+++ *                    900 or 1500 only if the charger's AICL is enabled, which backs off on a weak port);
+++ *                    capped at sweetchgmax (default 2000, at most 3000). A target of 500 mA or less is
+++ *                    never written. FCC (battery charge current) is raised to 2000 mA only if it is
+++ *                    lower (0.4 C for the 5020 mAh cell). USB input suspend is cleared, charging enable
+++ *                    set when the charger says disabled, the charger watchdog petted when it is enabled.
+++ *                  Float voltage, JEITA, termination and safety timers are never written.
+++ * Every write is to a fixed whitelist (bsd/dev/sweet_spmi.c sweet_spmi_write), read back and logged.
+++ */
+++#if defined(ARM64_BOARD_CONFIG_SWEET)
+++#include <sys/param.h>
+++#include <sys/systm.h>
+++#include <kern/clock.h>
+++#include <kern/thread.h>
+++#include <kern/sched_prim.h>
+++#include <pexpert/pexpert.h>
+++#include "sweet_spmi.h"
+++
+++extern kern_return_t thread_terminate(thread_t);
+++void sweet_charger_init(void);
+++
+++#define CHG_STATUS_1    0x1006u
+++#define CHG_STATUS_2    0x1007u
+++#define CHG_EN_CMD      0x1042u
+++#define CHG_FCC         0x1061u
+++#define CHG_FV          0x1070u
+++#define DCDC_ICL_MAX    0x1106u
+++#define DCDC_ICL_STS    0x1107u
+++#define DCDC_AICL_STS   0x110au
+++#define DCDC_PATH       0x110bu
+++#define USB_APSD_STS    0x1307u
+++#define USB_APSD_RES    0x1308u
+++#define USB_RT_STS      0x1310u
+++#define USB_CMD_IL      0x1340u
+++#define USB_CMD_ICL_OVR 0x1342u
+++#define USB_LOAD_CFG    0x1365u
+++#define USB_ICL_OPTS    0x1366u
+++#define USB_ICL         0x1370u
+++#define USB_AICL_OPTS   0x1380u
+++#define TYPEC_SNK_STS   0x1506u
+++#define MISC_WD_PET     0x1643u
+++#define MISC_WD_CFG     0x1651u
+++#define MISC_WD_BITE    0x1653u
+++
+++static int chg_mode, chg_sdp_ma = 500, chg_max_ma = 2000;
+++static int chg_chan;
+++static unsigned chg_writes, chg_dumps;
+++
+++static void
+++chg_sleep(unsigned ms)
+++{
+++	uint64_t deadline;
+++	clock_interval_to_deadline(ms, NSEC_PER_MSEC, &deadline);
+++	(void)assert_wait_deadline(&chg_chan, THREAD_UNINT, deadline);
+++	thread_block(THREAD_CONTINUE_NULL);
+++}
+++
+++static uint8_t
+++chg_rd(unsigned addr, bool *ok)
+++{
+++	uint8_t v = 0;
+++	if (sweet_spmi_read(0, addr, &v) != 0) {
+++		*ok = false;
+++	}
+++	return v;
+++}
+++
+++/* masked write, read back; false on any failure */
+++static bool
+++chg_wr(unsigned addr, uint8_t mask, uint8_t val, const char *why)
+++{
+++	bool ok = true;
+++	uint8_t old = chg_rd(addr, &ok);
+++	if (!ok) {
+++		printf("SWEET CHARGER: %s: read %#x failed, not written\n", why, addr);
+++		return false;
+++	}
+++	uint8_t want = (uint8_t)((old & ~mask) | (val & mask));
+++	if (want == old) {
+++		return true;
+++	}
+++	int err = sweet_spmi_write(0, addr, want);
+++	uint8_t now = chg_rd(addr, &ok);
+++	chg_writes++;
+++	printf("SWEET CHARGER: %s: %#x %#04x -> %#04x: err %d, reads %#04x%s\n", why, addr, old, want, err,
+++	    now, (!err && ok && (now & mask) == (want & mask)) ? "" : " MISMATCH");
+++	return !err && ok && (now & mask) == (want & mask);
+++}
+++
+++static void
+++chg_dump(const char *why)
+++{
+++	static const unsigned bases[] = {0x1000, 0x1100, 0x1200, 0x1300, 0x1500, 0x1600};
+++	if (chg_dumps++ >= 6) {
+++		return;
+++	}
+++	printf("SWEET CHARGER: register dump (%s)\n", why);
+++	for (unsigned b = 0; b < sizeof(bases) / sizeof(bases[0]); b++) {
+++		for (unsigned row = 0; row < 0x90; row += 16) {
+++			char line[3 * 16 + 1];
+++			unsigned n = 0;
+++			for (unsigned i = 0; i < 16; i++) {
+++				uint8_t v = 0;
+++				if (sweet_spmi_read(0, bases[b] + row + i, &v) == 0) {
+++					snprintf(line + n, sizeof(line) - n, " %02x", v);
+++				} else {
+++					snprintf(line + n, sizeof(line) - n, " ??");
+++				}
+++				n += 3;
+++			}
+++			printf("SWEET CHARGER: %04x:%s\n", bases[b] + row, line);
+++		}
+++	}
+++}
+++
+++static const char *
+++chg_state_name(unsigned s)
+++{
+++	static const char *names[] = {"inhibit", "trickle", "pre", "fast", "taper", "terminate", "pause", "disabled"};
+++	return names[s & 7u];
+++}
+++
+++static const char *
+++chg_apsd_name(uint8_t res)
+++{
+++	res &= 0x7fu;
+++	return (res & 0x40u) ? "QC3" : (res & 0x20u) ? "QC2" : (res & 0x10u) ? "float" : (res & 0x08u) ? "DCP" :
+++	       (res & 0x04u) ? "CDP" : (res & 0x02u) ? "OCP" : (res & 0x01u) ? "SDP" : "none";
+++}
+++
+++/* the source's current from APSD and Type-C, before the cap */
+++static int
+++chg_target_ma(uint8_t apsd_res, uint8_t snk, bool aicl)
+++{
+++	int ma = 0;
+++	apsd_res &= 0x7fu;
+++	if (snk & 0x02u) {
+++		ma = 2000;
+++	} else if (snk & 0x04u) {
+++		ma = 1500;
+++	}
+++	int a = 0;
+++	if (apsd_res & (0x40u | 0x20u | 0x08u | 0x04u)) {
+++		a = 1500;
+++	} else if (apsd_res & (0x10u | 0x02u)) {
+++		a = 1000;
+++	} else if (apsd_res & 0x01u) {
+++		a = (chg_sdp_ma > 500 && aicl) ? chg_sdp_ma : 500;
+++	}
+++	ma = a > ma ? a : ma;
+++	return ma > chg_max_ma ? chg_max_ma : ma;
+++}
+++
+++static void
+++chg_thread(void *arg __unused, wait_result_t wr __unused)
+++{
+++	chg_sleep(30000);     /* SweetBattery maps the SPMI arbiter at its start */
+++	if (sweet_spmi_init() != 0) {
+++		printf("SWEET CHARGER: SPMI not ready; stop\n");
+++		goto out;
+++	}
+++	printf("SWEET CHARGER: mode %d (sweetcharge), SDP %d mA, max %d mA\n", chg_mode, chg_sdp_ma, chg_max_ma);
+++	chg_dump("start");
+++	bool was_present = false, dumped_plug = false;
+++	uint8_t last[12] = {0};
+++	unsigned tick = 0, quiet = 0, applied_for = 0xffffu;
+++	for (;; tick++) {
+++		bool ok = true;
+++		uint8_t st1 = chg_rd(CHG_STATUS_1, &ok), st2 = chg_rd(CHG_STATUS_2, &ok);
+++		uint8_t en = chg_rd(CHG_EN_CMD, &ok), fcc = chg_rd(CHG_FCC, &ok);
+++		uint8_t icl_max = chg_rd(DCDC_ICL_MAX, &ok), icl_sts = chg_rd(DCDC_ICL_STS, &ok);
+++		uint8_t aicl = chg_rd(DCDC_AICL_STS, &ok), path = chg_rd(DCDC_PATH, &ok);
+++		uint8_t apsd = chg_rd(USB_APSD_STS, &ok), res = chg_rd(USB_APSD_RES, &ok);
+++		uint8_t rt = chg_rd(USB_RT_STS, &ok), susp = chg_rd(USB_CMD_IL, &ok);
+++		uint8_t opts = chg_rd(USB_ICL_OPTS, &ok), ovr = chg_rd(USB_CMD_ICL_OVR, &ok);
+++		uint8_t load = chg_rd(USB_LOAD_CFG, &ok), icl = chg_rd(USB_ICL, &ok);
+++		uint8_t aopt = chg_rd(USB_AICL_OPTS, &ok), snk = chg_rd(TYPEC_SNK_STS, &ok);
+++		uint8_t wd = chg_rd(MISC_WD_CFG, &ok), bite = chg_rd(MISC_WD_BITE, &ok);
+++		if (!ok) {
+++			if ((tick % 30u) == 0) {
+++				printf("SWEET CHARGER: register read failed (tick %u)\n", tick);
+++			}
+++			chg_sleep(2000);
+++			continue;
+++		}
+++		bool present = (rt & 0x10u) != 0, apsd_done = (apsd & 0x01u) != 0;
+++		uint8_t now[12] = {st1 & 7u, st2, en, fcc, icl_sts, path, res, rt & 0x10u, opts, icl, snk, susp};
+++		bool changed = memcmp(now, last, sizeof(now)) != 0;
+++		if (changed || ++quiet >= 30) {
+++			quiet = 0;
+++			memcpy(last, now, sizeof(now));
+++			printf("SWEET CHARGER: usb %d apsd %#x/%#x %s typec %#x chg %s err %#x en %#x | icl cfg %u mA "
+++			    "now %u max %u aicl %#x opts %#x ovr %#x load %#x aiclopt %#x susp %#x | fcc %u mA fv %#x "
+++			    "path %#x wd %#x/%#x\n",
+++			    present, apsd, res, chg_apsd_name(res), snk, chg_state_name(st1), st2, en, icl * 50u,
+++			    icl_sts * 50u, icl_max * 50u, aicl, opts, ovr, load, aopt, susp, fcc * 50u,
+++			    chg_rd(CHG_FV, &ok), path, wd, bite);
+++		}
+++		if (present && !was_present) {
+++			dumped_plug = false;
+++			applied_for = 0xffffu;
+++		}
+++		was_present = present;
+++		if (present && apsd_done && !dumped_plug) {
+++			dumped_plug = true;
+++			chg_dump("plugged in, APSD done");
+++		}
+++		/* the charger watchdog, if XBL armed it: pet every pass (bite is 8 s at the shortest) */
+++		if (chg_mode >= 2 && (wd & 0x02u)) {
+++			(void)sweet_spmi_write(0, MISC_WD_PET, 0x01);
+++		}
+++		if (chg_mode >= 2 && present && apsd_done && chg_writes < 200) {
+++			int target = chg_target_ma(res, snk, (aopt & 0x04u) != 0);
+++			unsigned key = ((unsigned)res << 8) | snk;
+++			/* re-check every 10 s: a re-run APSD/replug can put the hardware's own limit back */
+++			if (key != applied_for || (tick % 5u) == 0) {
+++				if (key != applied_for) {
+++					printf("SWEET CHARGER: source %s (apsd %#x, typec %#x, aicl %s): target %d mA\n",
+++					    chg_apsd_name(res), res, snk, (aopt & 0x04u) ? "on" : "off", target);
+++				}
+++				applied_for = key;
+++				if (susp & 0x01u) {
+++					(void)chg_wr(USB_CMD_IL, 0x01, 0x00, "USB input unsuspend");
+++				}
+++				if (target > 500 && icl != (uint8_t)(target / 50)) {
+++					/* smblib_set_icl_current, high-current path: limit, then SW_OVERRIDE_HC_MODE */
+++					(void)(chg_wr(USB_ICL, 0xff, (uint8_t)(target / 50), "input current limit") &&
+++					    chg_wr(USB_ICL_OPTS, 0x01, 0x01, "HC mode (USBIN_MODE_CHG)") &&
+++					    chg_wr(USB_CMD_ICL_OVR, 0x01, 0x00, "no ICL override") &&
+++					    chg_wr(USB_LOAD_CFG, 0x10, 0x10, "keep ICL after APSD"));
+++				}
+++				if (fcc < 2000u / 50u) {
+++					(void)chg_wr(CHG_FCC, 0xff, 2000u / 50u, "fast charge current");
+++				}
+++				if ((st1 & 7u) == 7u && !(en & 0x01u)) {
+++					(void)chg_wr(CHG_EN_CMD, 0x01, 0x01, "charging enable");
+++				}
+++			}
+++		}
+++		chg_sleep(2000);
+++	}
+++out:
+++	(void)thread_terminate(current_thread());
+++	thread_block(THREAD_CONTINUE_NULL);
+++}
+++
+++void
+++sweet_charger_init(void)
+++{
+++	static bool started;
+++	(void)PE_parse_boot_argn("sweetcharge", &chg_mode, sizeof(chg_mode));
+++	(void)PE_parse_boot_argn("sweetchgsdp", &chg_sdp_ma, sizeof(chg_sdp_ma));
+++	(void)PE_parse_boot_argn("sweetchgmax", &chg_max_ma, sizeof(chg_max_ma));
+++	if (chg_sdp_ma != 900 && chg_sdp_ma != 1500) {
+++		chg_sdp_ma = 500;
+++	}
+++	if (chg_max_ma < 500 || chg_max_ma > 3000) {
+++		chg_max_ma = 2000;
+++	}
+++	if (chg_mode <= 0 || started) {
+++		return;
+++	}
+++	started = true;
+++	thread_t th;
+++	if (kernel_thread_start(chg_thread, NULL, &th) == KERN_SUCCESS) {
+++		thread_deallocate(th);
+++		printf("SWEET CHARGER: armed (30 s), sweetcharge=%d\n", chg_mode);
+++	}
+++}
+++#endif /* ARM64_BOARD_CONFIG_SWEET */
++diff --git a/bsd/dev/sweet_spmi.c b/bsd/dev/sweet_spmi.c
++index f297a01..b3930ba 100644
++--- a/bsd/dev/sweet_spmi.c
+++++ b/bsd/dev/sweet_spmi.c
++@@ -1,13 +1,14 @@
++ /*
++  * Battery-only adaptation of input/sweet_keys.c, observer EXT_READL.
++- * PMIC READ ONLY. The only MMIO store issues a one-byte read command.
++- * No interrupt clear, peripheral enable, charger config, or PMIC writes.
+++ * PMIC reads through the observer channel. 0199 adds sweet_spmi_write(): a fixed list of
+++ * charger registers only (sweetcharge=2, bsd/dev/sweet_charger.c).
++  * Init is serialized by the single built-in SweetBattery personality.
++  * Battery APIDs are disjoint from the existing keys' 008/4c1 APIDs.
++  */
++ #if defined(ARM64_BOARD_CONFIG_SWEET)
++ #include <sys/param.h>
++ #include <sys/systm.h>
+++#include <sys/errno.h>
++ #include <machine/machine_routines.h>
++ #include <IOKit/IOLocks.h>
++ #include "sweet_spmi.h"
++@@ -17,9 +18,12 @@ extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
++ #define SP_CORE_PA 0x0c440000u
++ #define SP_OBS_PA  0x0e600000u
++ #define SP_CFG_PA  0x0c40a000u
+++#define SP_CHNL_PA 0x0c600000u /* 0199: RW channels (pmic-arb v5: 0x10000 per APID), from ios-flame 0190 */
++ #define SP_NO_APID 0xffffu
++ 
++ static vm_offset_t sp_core, sp_obs, sp_cfg;
+++static vm_offset_t sp_chnl;            /* 0199: the one RW channel page mapped so far */
+++static uint16_t sp_chnl_apid = 0xffffu;
++ static IOLock *sp_lock;
++ static unsigned sp_count;
++ static bool sp_attempted, sp_ready;
++@@ -92,7 +96,8 @@ sweet_spmi_read(unsigned sid, unsigned addr, uint8_t *out)
++ 	unsigned peripheral = addr >> 8;
++ 	if (!sp_ready || !out || sid != 0 || addr > 0xffffu ||
++ 	    (peripheral != 0x10 && peripheral != 0x11 && peripheral != 0x12 &&
++-	    peripheral != 0x13 && peripheral != 0x48 && peripheral != 0xb6 && peripheral != 0x60)) {
+++	    peripheral != 0x13 && peripheral != 0x48 && peripheral != 0xb6 && peripheral != 0x60 &&
+++	    peripheral != 0x15 && peripheral != 0x16)) {   /* 0199: charger TYPEC + MISC (read) */
++ 		return -1;
++ 	}
++ 	IOLockLock(sp_lock);
++@@ -125,4 +130,86 @@ sweet_spmi_read(unsigned sid, unsigned addr, uint8_t *out)
++ 	IOLockUnlock(sp_lock);
++ 	return -1;
++ }
+++
+++/*
+++ * 0199: the only PMIC write path (bsd/dev/sweet_charger.c, sweetcharge=2). A fixed list of SMB5
+++ * charger registers on SID 0 (Xiaomi sweet smb5-reg.h): charging enable 0x1042, fast-charge current
+++ * 0x1061, USB input suspend 0x1340, ICL override 0x1342, load cfg 0x1365, ICL options 0x1366, input
+++ * current limit 0x1370, watchdog pet 0x1643. The APID must be owned by EE 0 (apps). EXT_WRITEL on
+++ * the APID's RW channel (Linux spmi-pmic-arb v5 offsets: CMD 0, STATUS 8, WDATA0 0x10). A FAILURE or
+++ * DROPPED status (a bus collision with another master) is resent up to 3 times, 150 us apart
+++ * (ios-flame 0280).
+++ */
+++int
+++sweet_spmi_write(unsigned sid, unsigned addr, uint8_t val)
+++{
+++	static const uint16_t allowed[] = {0x1042, 0x1061, 0x1340, 0x1342, 0x1365, 0x1366, 0x1370, 0x1643};
+++	bool listed = false;
+++	for (unsigned i = 0; i < sizeof(allowed) / sizeof(allowed[0]); i++) {
+++		listed |= allowed[i] == addr;
+++	}
+++	if (sid != 0 || !listed) {
+++		printf("SWEET CHARGER: refused PMIC write sid %u %#x <- %#x\n", sid, addr, val);
+++		return EPERM;
+++	}
+++	if (!sp_ready) {
+++		return ENXIO;
+++	}
+++	IOLockLock(sp_lock);
+++	uint16_t apid = sp_find_apid((sid << 8) | (addr >> 8));
+++	if (apid == SP_NO_APID || sp_poisoned[apid]) {
+++		IOLockUnlock(sp_lock);
+++		return ENXIO;
+++	}
+++	unsigned owner = sp_rd(sp_cfg, 0x700u + 4u * apid) & 7u;
+++	if (owner != 0) {
+++		IOLockUnlock(sp_lock);
+++		printf("SWEET CHARGER: APID %u (%#x) owned by EE %u, not 0: no write\n", apid, addr >> 8, owner);
+++		return EPERM;
+++	}
+++	if (sp_chnl_apid != apid) {
+++		vm_offset_t m = ml_io_map(SP_CHNL_PA + 0x10000u * apid, 0x1000);
+++		if (!m) {
+++			IOLockUnlock(sp_lock);
+++			return ENOMEM;
+++		}
+++		sp_chnl = m;
+++		sp_chnl_apid = apid;
+++	}
+++	int result = ETIMEDOUT;
+++	for (unsigned attempt = 0; attempt < 3; attempt++) {
+++		__asm__ volatile("dmb oshst" ::: "memory");
+++		*(volatile uint32_t *)(sp_chnl + 0x10u) = val; /* WDATA0 */
+++		__asm__ volatile("dmb oshst" ::: "memory");
+++		*(volatile uint32_t *)(sp_chnl + 0x00u) = ((addr & 0xffu) << 4); /* EXT_WRITEL (opcode 0), BC=0 */
+++		__asm__ volatile("dsb osh" ::: "memory");
+++		uint32_t status = 0;
+++		unsigned i;
+++		for (i = 0; i < 1000; ++i) {
+++			status = sp_rd(sp_chnl, 0x08u);
+++			if (status & 1u) {
+++				break;
+++			}
+++			delay(1);
+++		}
+++		if (i == 1000) {
+++			sp_poisoned[apid] = true;
+++			printf("SWEET CHARGER: SPMI write timeout %#x APID=%u disabled\n", addr, apid);
+++			result = ETIMEDOUT;
+++			break;
+++		}
+++		if (!(status & 0x0eu)) {
+++			result = 0;
+++			break;
+++		}
+++		result = EIO;
+++		if (!(status & 0x0au) || attempt == 2) {     /* DENIED, or retries used up */
+++			printf("SWEET CHARGER: SPMI write %#x status %#x\n", addr, status);
+++			break;
+++		}
+++		delay(150);
+++	}
+++	IOLockUnlock(sp_lock);
+++	return result;
+++}
++ #endif /* ARM64_BOARD_CONFIG_SWEET */
++diff --git a/bsd/dev/sweet_spmi.h b/bsd/dev/sweet_spmi.h
++index 45565d1..af6f008 100644
++--- a/bsd/dev/sweet_spmi.h
+++++ b/bsd/dev/sweet_spmi.h
++@@ -8,6 +8,8 @@ extern "C" {
++ int sweet_spmi_init(void);
++ /* Thread context only; 0 success, -1 failure; *out unchanged on failure. */
++ int sweet_spmi_read(unsigned sid, unsigned addr, uint8_t *out);
+++/* 0199: charger registers only (sweet_spmi.c has the list); 0 or an errno */
+++int sweet_spmi_write(unsigned sid, unsigned addr, uint8_t val);
++ #ifdef __cplusplus
++ }
++ #endif
++diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
++index 1b55904..770fd3e 100644
++--- a/bsd/dev/sweet_ufs.c
+++++ b/bsd/dev/sweet_ufs.c
++@@ -54,6 +54,7 @@ extern void sweet_keys_init(void);
++ extern void sweet_pmem_init(void);
++ extern void flame_wlan_init(void);
++ extern void sweet_touch_init(void);
+++extern void sweet_charger_init(void);
++ extern void sweet_gpu_probe(void);
++ extern int sweet_native_adreno_reserve_pool(void);
++ extern void sweet_smmu_probe_start(void);
++@@ -678,6 +679,7 @@ sweet_ufs_init(void)
++ 	flame_wlan_init();       /* /dev/wlan, en0 + Apple80211 for wifid: bsd/dev/flame_wlan.c, from ios-flame 0123 */
++ 	sweet_bb_dev_init();     /* sweetbb=1: /dev/sweet-bb + AppleBaseband for CommCenter (UniXNU QcomBaseband port) */
++ 	/* Input drivers (HID services in iokit/Kernel/arm/hid/SweetHID.cpp). */
+++	sweet_charger_init();    /* sweetcharge=1|2: PM6150 charger input limit (bsd/dev/sweet_charger.c, 0199) */
++ 	sweet_keys_init();
++ 	sweet_touch_init();
++ 	sweet_gpu_probe();
+diff --git a/xnu/patches/0200-sweet-display-dark-power.patch b/xnu/patches/0200-sweet-display-dark-power.patch
+new file mode 100644
+index 0000000..9dda25a
+--- /dev/null
++++ b/xnu/patches/0200-sweet-display-dark-power.patch
+@@ -0,0 +1,591 @@
++diff --git a/bsd/conf/files b/bsd/conf/files
++index 57e80fc..a1f784e 100644
++--- a/bsd/conf/files
+++++ b/bsd/conf/files
++@@ -114,6 +114,7 @@ bsd/dev/sweet_charger.c		standard
++ bsd/dev/sweet_usb.c			standard
++ bsd/dev/sweet_pmem.c			standard
++ bsd/dev/redwood_sta.c		standard
+++bsd/dev/sweet_dark.c			standard
++ bsd/dev/redwood_net.c		standard
++ bsd/dev/redwood_apple80211.c	standard
++ bsd/dev/flame_sta.c		standard
++diff --git a/bsd/dev/sweet_dark.c b/bsd/dev/sweet_dark.c
++new file mode 100644
++index 0000000..5c8df9d
++--- /dev/null
+++++ b/bsd/dev/sweet_dark.c
++@@ -0,0 +1,101 @@
+++/*
+++ * 0200: display-dark power state for sweet. Adapted from ios-flame (Pixel 4a "sunfish" port, MIT)
+++ * xnu 0242 "display-dark idle" (itself after akshaynexus/iOSPlus10 0382 "power idle", MIT) and 0257
+++ * "dark clocks".
+++ *
+++ * AppleCLCD's RequestPowerChange (SweetFramebuffer.cpp; backboardd sends it when the screen locks or
+++ * wakes) calls sweet_dark_set(). While dark:
+++ *   - the panel sleeps (DCS 28 display off, 10 sleep in; on wake 11 sleep out, 29 display on), see
+++ *     SweetFramebuffer.cpp (sweetpanelsleep=1), instead of a CPU fade of a lit black frame
+++ *   - USB ud_thread polls every 20 ms instead of 1 ms once the host link was quiet for 2 s (any
+++ *     event or queued frame -> 1 ms at once); the USB log thread every 250 ms instead of 100 ms
+++ *   - touch polling stops while no finger is down; keys poll every 40 ms instead of 20 ms
+++ *   - the framebuffer tick runs every 500 ms after 5 s dark (instead of 120 Hz)
+++ *   - CPU clocks: A55 at most ~1.25 GHz, A76 at most ~0.65 GHz (SweetCPU.cpp sweet_cpufreq_dark;
+++ *     cpufreq-hw LUT rows), restored on wake
+++ * Boot-arg sweetdark=0: nothing changes (the flag stays 0). sweetdarkclk=0 keeps the CPU clocks.
+++ * kern.sweet_display_dark (read-only) shows the state.
+++ */
+++#if defined(ARM64_BOARD_CONFIG_SWEET)
+++#include <sys/param.h>
+++#include <sys/systm.h>
+++#include <sys/sysctl.h>
+++#include <kern/clock.h>
+++#include <kern/thread.h>
+++#include <kern/sched_prim.h>
+++#include <pexpert/pexpert.h>
+++
+++void sweet_dark_set(int dark);
+++void sweet_dark_sleep(uint32_t ms);
+++extern void sweet_cpufreq_dark(int dark);   /* iokit/Kernel/arm/SweetCPU.cpp */
+++
+++int sweet_display_dark;                 /* 1 while the display is off (and sweetdark=1) */
+++const uint32_t sweet_dark_usb_ms = 20;
+++const uint32_t sweet_dark_usblog_ms = 250;
+++const uint32_t sweet_dark_keys_ms = 40;
+++const uint32_t sweet_dark_fb_ms = 500;
+++const uint32_t sweet_dark_fb_after_ms = 5000;
+++static int sweet_dark_enabled = -1, sweet_dark_clk = 1;
+++static unsigned sweet_dark_cycles;
+++
+++SYSCTL_INT(_kern, OID_AUTO, sweet_display_dark, CTLFLAG_RD | CTLFLAG_LOCKED, &sweet_display_dark, 0,
+++    "SWEET: display off, kernel pollers slowed (0200)");
+++
+++void
+++sweet_dark_set(int dark)
+++{
+++	if (sweet_dark_enabled < 0) {
+++		int en = 1;
+++		(void)PE_parse_boot_argn("sweetdark", &en, sizeof(en));
+++		(void)PE_parse_boot_argn("sweetdarkclk", &sweet_dark_clk, sizeof(sweet_dark_clk));
+++		sweet_dark_enabled = en != 0;
+++	}
+++	if (!sweet_dark_enabled) {
+++		return;
+++	}
+++	int was = __atomic_exchange_n(&sweet_display_dark, dark ? 1 : 0, __ATOMIC_SEQ_CST);
+++	if (!dark) {
+++		thread_wakeup((event_t)&sweet_display_dark);    /* slowed pollers restart now */
+++	}
+++	if (was == !!dark) {
+++		return;
+++	}
+++	if (sweet_dark_clk) {
+++		sweet_cpufreq_dark(dark);
+++	}
+++	if (dark) {
+++		sweet_dark_cycles++;
+++	}
+++	if (sweet_dark_cycles <= 20) {
+++		if (dark) {
+++			printf("SWEET DARK: on (%u): usb %u ms (no traffic 2 s), usblog %u ms, touch stopped, keys %u ms, "
+++			    "fb %u ms after %u ms, cpu clocks %s\n", sweet_dark_cycles, sweet_dark_usb_ms, sweet_dark_usblog_ms,
+++			    sweet_dark_keys_ms, sweet_dark_fb_ms, sweet_dark_fb_after_ms, sweet_dark_clk ? "low" : "kept");
+++		} else {
+++			printf("SWEET DARK: off: usb 1 ms, usblog 100 ms, touch 10 ms, keys 20 ms, fb full rate, cpu clocks %s\n",
+++			    sweet_dark_clk ? "restored" : "kept");
+++		}
+++	}
+++}
+++
+++/*
+++ * Sleep up to ms (0 = until the display comes on) on the dark channel. Returns at once if the display
+++ * is already on again (the check after assert_wait: a sweet_dark_set(0) in between is not lost).
+++ */
+++void
+++sweet_dark_sleep(uint32_t ms)
+++{
+++	if (ms) {
+++		uint64_t deadline;
+++		clock_interval_to_deadline(ms, NSEC_PER_MSEC, &deadline);
+++		(void)assert_wait_deadline((event_t)&sweet_display_dark, THREAD_UNINT, deadline);
+++	} else {
+++		(void)assert_wait((event_t)&sweet_display_dark, THREAD_UNINT);
+++	}
+++	if (!__atomic_load_n(&sweet_display_dark, __ATOMIC_SEQ_CST)) {
+++		clear_wait(current_thread(), THREAD_AWAKENED);
+++		return;
+++	}
+++	thread_block(THREAD_CONTINUE_NULL);
+++}
+++#endif /* ARM64_BOARD_CONFIG_SWEET */
++diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
++index a148608..380e361 100644
++--- a/bsd/dev/sweet_keys.c
+++++ b/bsd/dev/sweet_keys.c
++@@ -15,6 +15,9 @@
++ 
++ extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
++ extern void sweet_hid_key(int key, int down);
+++extern int sweet_display_dark;          /* 0200: bsd/dev/sweet_dark.c */
+++extern void sweet_dark_sleep(uint32_t ms);
+++extern const uint32_t sweet_dark_keys_ms;
++ void sweet_keys_init(void);
++ 
++ #define KEYS_CORE_PA     0x0c440000u
++@@ -118,7 +121,12 @@ keys_thread(void *arg, wait_result_t result)
++ 				sweet_hid_key(k, state[k]);
++ 			}
++ 		}
++-		keys_wait();
+++		/* 0200 (ios-flame 0242): display dark, no key down: 40 ms (a press lasts 80 ms or more) */
+++		if (!state[0] && !state[1] && !state[2] && __atomic_load_n(&sweet_display_dark, __ATOMIC_ACQUIRE)) {
+++			sweet_dark_sleep(sweet_dark_keys_ms);
+++		} else {
+++			keys_wait();
+++		}
++ 	}
++ }
++ 
++diff --git a/bsd/dev/sweet_touch.c b/bsd/dev/sweet_touch.c
++index e3f8ce8..7b071aa 100644
++--- a/bsd/dev/sweet_touch.c
+++++ b/bsd/dev/sweet_touch.c
++@@ -20,6 +20,8 @@ extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
++ extern kern_return_t thread_terminate(thread_t);
++ extern int sweet_rpmh_vreg_enable(const char *res, unsigned mv);
++ extern void sweet_hid_touch(int finger, int down, int x, int y);
+++extern int sweet_display_dark;          /* 0200: bsd/dev/sweet_dark.c */
+++extern void sweet_dark_sleep(uint32_t ms);
++ extern void sweet_sched_tap_mark(void); /* 0179 per-tap probe (sched_prim.c) */
++ void sweet_touch_init(void);
++ 
++@@ -662,6 +664,11 @@ touch_thread(void *arg, wait_result_t result)
++ 				errors = 0;
++ 			}
++ 		}
+++		/* 0200 (ios-flame 0242): display dark, no finger down: no polling until the display is on */
+++		if (st.active == 0 && __atomic_load_n(&sweet_display_dark, __ATOMIC_ACQUIRE)) {
+++			sweet_dark_sleep(0);
+++			continue;
+++		}
++ 		touch_wait(10);
++ 	}
++ 	touch_report(0, st.x, st.y);
++diff --git a/bsd/dev/sweet_usb.c b/bsd/dev/sweet_usb.c
++index 987f791..ddeaec9 100644
++--- a/bsd/dev/sweet_usb.c
+++++ b/bsd/dev/sweet_usb.c
++@@ -16,6 +16,7 @@
++ #include <kern/clock.h>
++ #include <kern/thread.h>
++ #include <kern/sched_prim.h>
+++#include <mach/mach_time.h>
++ #include <machine/machine_routines.h>
++ #include <arm/caches_internal.h>
++ #include <vm/pmap.h>
++@@ -239,8 +240,18 @@ static struct {
++ 	unsigned    txq_head, txq_count;
++ 	bool        tx_busy;
++ 	uint64_t    rx_frames, tx_frames;
+++	uint64_t    last_traffic;   /* 0200: mach time of the last event or queued TX frame */
+++	bool        poll_long;      /* 0200: ud_thread is in a dark (20 ms) sleep: ud_if_output wakes it */
++ } ud;
++ 
+++/*
+++ * 0200 (ios-flame 0242, after iOSPlus10 0382, MIT): with the display dark (sweet_dark.c) and no traffic
+++ * for 2 s, ud_thread polls every sweet_dark_usb_ms (20) instead of 1 ms; any event, a queued TX frame
+++ * (ud_if_output wakes the thread) or the display on -> 1 ms at once. The log thread: 250 ms while dark.
+++ */
+++extern int sweet_display_dark;
+++extern const uint32_t sweet_dark_usb_ms, sweet_dark_usblog_ms;
+++
++ static inline void
++ dwc_wr(uint32_t off, uint32_t v)
++ {
++@@ -628,7 +639,11 @@ ud_if_output(ifnet_t ifp, mbuf_t m)
++ 	ud.txq[(ud.txq_head + ud.txq_count) % UD_TXQ] = m;
++ 	ud.txq_count++;
++ 	ud_tx_kick_locked();
+++	ud.last_traffic = mach_absolute_time();         /* 0200 */
++ 	lck_mtx_unlock(ud.lock);
+++	if (__atomic_load_n(&ud.poll_long, __ATOMIC_SEQ_CST)) {
+++		thread_wakeup((event_t)&sweet_display_dark);    /* 0200: the completion is seen within 1 ms */
+++	}
++ 	return 0;
++ }
++ 
++@@ -826,10 +841,32 @@ ud_thread(void *arg __unused, wait_result_t wr __unused)
++ 				ud_event(ev);
++ 			}
++ 			dwc_wr(GEVNTCOUNT, count);
+++			ud.last_traffic = mach_absolute_time();         /* 0200 */
++ 		}
++ 		if ((++ticks % 30000) == 0) {
++ 			printf("SWEET USB: ue0 rx %llu tx %llu frames\n", ud.rx_frames, ud.tx_frames);
++ 		}
+++		/* 0200: dark and quiet for 2 s: the long sleep, on the dark channel (display on / TX wake it) */
+++		uint64_t quiet_abs;
+++		nanoseconds_to_absolutetime(2000ull * NSEC_PER_MSEC, &quiet_abs);
+++		if (__atomic_load_n(&sweet_display_dark, __ATOMIC_ACQUIRE) &&
+++		    mach_absolute_time() - ud.last_traffic > quiet_abs) {
+++			uint64_t deadline;
+++			clock_interval_to_deadline(sweet_dark_usb_ms, NSEC_PER_MSEC, &deadline);
+++			__atomic_store_n(&ud.poll_long, true, __ATOMIC_SEQ_CST);
+++			(void)assert_wait_deadline((event_t)&sweet_display_dark, THREAD_UNINT, deadline);
+++			/* a TX queued or the display on between the check and assert_wait: do not sleep long */
+++			if (!__atomic_load_n(&sweet_display_dark, __ATOMIC_SEQ_CST) ||
+++			    __atomic_load_n(&ud.txq_count, __ATOMIC_SEQ_CST) != 0 ||
+++			    __atomic_load_n(&ud.tx_busy, __ATOMIC_SEQ_CST) ||
+++			    mach_absolute_time() - __atomic_load_n(&ud.last_traffic, __ATOMIC_SEQ_CST) <= quiet_abs) {
+++				clear_wait(current_thread(), THREAD_AWAKENED);
+++			} else {
+++				thread_block(THREAD_CONTINUE_NULL);
+++			}
+++			__atomic_store_n(&ud.poll_long, false, __ATOMIC_SEQ_CST);
+++			continue;
+++		}
++ 		ud_sleep_ms(1);
++ 	}
++ }
++@@ -860,7 +897,7 @@ ud_log_thread(void *arg __unused, wait_result_t wr __unused)
++ 	to.sin_port = htons(5140);
++ 	to.sin_addr.s_addr = htonl(0xc0a80701);         /* 192.168.7.1 */
++ 	for (;;) {
++-		ud_sleep_ms(100);
+++		ud_sleep_ms(__atomic_load_n(&sweet_display_dark, __ATOMIC_ACQUIRE) ? sweet_dark_usblog_ms : 100);     /* 0200 */
++ 		lck_mtx_lock(ud.lock);
++   bool ready = ud.configured && ud.data_alt == 1 && ud.rx_frames > ud.epoch_rx_start;
++   uint32_t current_epoch = ud.configuration_epoch;
++diff --git a/iokit/Kernel/arm/SweetCPU.cpp b/iokit/Kernel/arm/SweetCPU.cpp
++index 86b3acc..36a10e0 100644
++--- a/iokit/Kernel/arm/SweetCPU.cpp
+++++ b/iokit/Kernel/arm/SweetCPU.cpp
++@@ -159,6 +159,42 @@ extern "C" processor_t thread_bind(processor_t);
++ #define SWEET_OSM_XO_KHZ        19200u
++ #define SWEET_OSM_GPLL0_KHZ     300000u
++ 
+++/*
+++ * 0200: dark clocks (after ios-flame 0257, MIT). While the display is off (bsd/dev/sweet_dark.c) each
+++ * domain runs at the highest LUT row at or below its dark target (A55 1248 MHz, A76 652.8 MHz, as the
+++ * sunfish port's rows 4 and 1 of the same SM7150 table), and goes back to the row selected at boot on
+++ * wake. Only rows this file chose at boot are written; nothing happens with sweetcpufreq=0.
+++ */
+++static struct {
+++	volatile uint32_t *osm;
+++	unsigned bright_row, dark_row;
+++	uint32_t bright_khz, dark_khz;
+++	bool ready;
+++} sweet_dark_dom[2];
+++static const uint32_t sweet_dark_target_khz[2] = {1248000u, 652800u};
+++
+++extern "C" void sweet_cpufreq_dark(int dark);
+++
+++void
+++sweet_cpufreq_dark(int dark)
+++{
+++	for (unsigned d = 0; d < 2; d++) {
+++		if (!sweet_dark_dom[d].ready) {
+++			continue;
+++		}
+++		sweet_dark_dom[d].osm[SWEET_OSM_PERF_STATE / 4] = dark ? sweet_dark_dom[d].dark_row : sweet_dark_dom[d].bright_row;
+++	}
+++	__builtin_arm_dsb(DSB_SY);
+++	static unsigned logged;
+++	if (logged++ < 12 && (sweet_dark_dom[0].ready || sweet_dark_dom[1].ready)) {
+++		IOLog("SWEET CPUFREQ: %s: a55 row %u (%u kHz), a76 row %u (%u kHz)\n", dark ? "dark" : "bright",
+++		    dark ? sweet_dark_dom[0].dark_row : sweet_dark_dom[0].bright_row,
+++		    dark ? sweet_dark_dom[0].dark_khz : sweet_dark_dom[0].bright_khz,
+++		    dark ? sweet_dark_dom[1].dark_row : sweet_dark_dom[1].bright_row,
+++		    dark ? sweet_dark_dom[1].dark_khz : sweet_dark_dom[1].bright_khz);
+++	}
+++}
+++
++ /* 64 dependent adds per iteration: one per cycle on both A55 and A76. */
++ static uint64_t
++ sweet_cpu_measure_khz(void)
++@@ -237,6 +273,27 @@ sweet_cpufreq_domain(const ml_topology_info_t *topology, unsigned domain,
++ 	} else {
++ 		IOLog("SWEET CPUFREQ: domain %u no write (mode=%d best=%u rows=%u)\n", domain, mode, best, rows);
++ 	}
+++	/* 0200: the dark row: the highest row at or below the target (rows rise in frequency) */
+++	if (mode == 1 && best < rows && domain < 2) {
+++		unsigned dark = best;
+++		bool found = false;
+++		for (unsigned i = 0; i < rows; i++) {
+++			const uint32_t cores = (osm[(SWEET_OSM_FREQ_LUT + i * SWEET_OSM_LUT_ROW) / 4] >> 16) & 7;
+++			if (cores != 1 && khz[i] <= sweet_dark_target_khz[domain] && (!found || khz[i] > khz[dark])) {
+++				dark = i;
+++				found = true;
+++			}
+++		}
+++		if (found) {
+++			sweet_dark_dom[domain].osm = osm;
+++			sweet_dark_dom[domain].bright_row = best;
+++			sweet_dark_dom[domain].bright_khz = khz[best];
+++			sweet_dark_dom[domain].dark_row = dark;
+++			sweet_dark_dom[domain].dark_khz = khz[dark];
+++			sweet_dark_dom[domain].ready = true;
+++			IOLog("SWEET CPUFREQ: domain %u dark row %u = %u kHz (bright row %u)\n", domain, dark, khz[dark], best);
+++		}
+++	}
++ 	thread_bind(PROCESSOR_NULL);
++ 	thread_block(THREAD_CONTINUE_NULL);
++ }
++diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
++index e8c8b38..ff9a3a0 100644
++--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
+++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
++@@ -37,6 +37,10 @@
++ #include "SweetSurface.h"
++ 
++ extern "C" int sweet_console_muted;     /* osfmk/console/serial_console.c */
+++/* 0200 (ios-flame 0242/0257, MIT): the display-dark state for the pollers and CPU clocks, bsd/dev/sweet_dark.c */
+++extern "C" int sweet_display_dark;
+++extern "C" const uint32_t sweet_dark_fb_ms, sweet_dark_fb_after_ms;
+++extern "C" void sweet_dark_set(int dark);
++ 
++ #if defined(SWEET)
++ #include <IOKit/IOService.h>
++@@ -193,15 +197,30 @@ class AppleARMBacklight : public IOService {
++ 	unsigned       fLogged;
++ 	static void    applyCall(thread_call_param_t owner, thread_call_param_t);
++ 	int            sendLevel(uint32_t level);
+++	int            sendShort(uint8_t cmd);     /* 0200: DCS short write, no parameter */
++ 	void           publish(void);
++ 	void           request(uint32_t level, uint32_t value);
+++	IOLock        *fDsiLock;                   /* 0200: one DSI command at a time */
+++	bool           fPanelWant, fPanelAsleep;   /* 0200: requested / current panel sleep */
++ public:
++ 	bool start(IOService *provider) APPLE_KEXT_OVERRIDE;
++ 	IOReturn setProperties(OSObject *properties) APPLE_KEXT_OVERRIDE;
+++	void           panelSleep(bool off);       /* 0200: from RequestPowerChange */
++ };
+++/*
+++ * 0200: panel sleep while the display is off (sweetpanelsleep=1). The K6 38/0c/0a panel's DT
+++ * qcom,mdss-dsi-off-command is DCS 0x28 (display off, 10 ms) then 0x10 (sleep in, 150 ms); waking is
+++ * 0x11 (sleep out; 120 ms before display on) then 0x29, then the brightness again. Before 0200 "off"
+++ * only faded the frame to black with the CPU (7 passes over the uncached panel memory) and left the
+++ * panel lit. A failed command falls back to that fade (sweet_panel_failed).
+++ */
+++static AppleARMBacklight *sweet_backlight;
+++static int sweet_panel_sleep = -1;
+++static volatile bool sweet_panel_failed;
++ 
++ class AppleCLCD : public IOMobileFramebuffer {
++ 	OSDeclareDefaultStructors(AppleCLCD);
+++	friend class IOMobileFramebufferUserClient;     /* 0200: the power-change path kicks fVsync */
++ 
++ 	IOWorkLoop         *fWorkLoop;
++ 	IOTimerEventSource *fVsync;
++@@ -270,6 +289,8 @@ public:
++ 	void rearmVsync(void);
++ 	bool          fPowerOff;      /* RequestPowerChange(0) */
++ 	uint32_t      fFadeStep;      /* fade-out steps done while off */
+++	uint64_t      fOffAt;         /* 0200: mach time of the last RequestPowerChange(0) */
+++	bool          fDarkKick;      /* 0200: display on during a slow dark tick: re-phase the tick now */
++ 
++ 	bool start(IOService *provider) APPLE_KEXT_OVERRIDE;
++ 	void addClient(IOMobileFramebufferUserClient *client);
++@@ -421,9 +442,10 @@ AppleARMBacklight::start(IOService *provider)
++ 		return false;
++ 	}
++ 	fLock = IOLockAlloc();
+++	fDsiLock = IOLockAlloc();
++ 	fCall = thread_call_allocate(&AppleARMBacklight::applyCall, this);
++ 	fDsi = (volatile uint32_t *)ml_io_map(SWEET_DSI0_PA, 0x400);
++-	if (fLock == NULL || fCall == NULL || fDsi == NULL) {
+++	if (fLock == NULL || fDsiLock == NULL || fCall == NULL || fDsi == NULL) {
++ 		return false;
++ 	}
++ 	const uint32_t ctrl = fDsi[DSI_REG_CTRL / 4], version = fDsi[DSI_REG_VERSION / 4];
++@@ -443,6 +465,7 @@ AppleARMBacklight::start(IOService *provider)
++ 	publish();
++ 	registerService();
++ 	IOLog("SWEET BL: AppleARMBacklight published (DCS 0x51, levels %u..%u)\n", SWEET_BL_MIN, SWEET_BL_MAX);
+++	sweet_backlight = this;     /* 0200: panel sleep */
++ 	uint32_t test = 0;
++ 	if (PE_parse_boot_argn("sweetbl", &test, sizeof(test)) && test >= SWEET_BL_MIN && test <= SWEET_BL_MAX) {
++ 		request(test, (uint32_t)(((uint64_t)(test - SWEET_BL_MIN) * SWEET_BL_SCALE) / (SWEET_BL_MAX - SWEET_BL_MIN)));
++@@ -590,10 +613,54 @@ void
++ AppleARMBacklight::applyCall(thread_call_param_t owner, thread_call_param_t)
++ {
++ 	AppleARMBacklight *bl = (AppleARMBacklight *)owner;
+++	IOLockLock(bl->fDsiLock);
+++	/* 0200: panel sleep first; loop while requests change underneath (each pass is ~150 ms) */
+++	for (unsigned pass = 0; pass < 4; pass++) {
+++		IOLockLock(bl->fLock);
+++		const bool want = bl->fPanelWant;
+++		IOLockUnlock(bl->fLock);
+++		if (want == bl->fPanelAsleep || sweet_panel_failed) {
+++			break;
+++		}
+++		static unsigned logged;
+++		uint64_t t0 = mach_absolute_time(), ns;
+++		int e1, e2;
+++		if (want) {
+++			e1 = bl->sendShort(0x28);    /* display off */
+++			IOSleep(20);
+++			e2 = bl->sendShort(0x10);    /* sleep in */
+++			IOSleep(150);
+++		} else {
+++			e1 = bl->sendShort(0x11);    /* sleep out */
+++			IOSleep(120);
+++			e2 = bl->sendShort(0x29);    /* display on */
+++			bl->fSent = 0;               /* resend the brightness: the panel may have reset it */
+++		}
+++		absolutetime_to_nanoseconds(mach_absolute_time() - t0, &ns);
+++		bl->fPanelAsleep = want;
+++		if (e1 || e2) {
+++			sweet_panel_failed = true;   /* fade from now on; a wake is still attempted below */
+++		}
+++		if (logged++ < 40 || e1 || e2) {
+++			IOLog("SWEET PANEL: %s: dcs %s %d, %s %d, %llu ms%s\n", want ? "sleep" : "wake",
+++			    want ? "28" : "11", e1, want ? "10" : "29", e2, ns / NSEC_PER_MSEC,
+++			    (e1 || e2) ? " -> panel sleep off, CPU fade" : "");
+++		}
+++		if (sweet_panel_failed && bl->fPanelAsleep) {
+++			/* never leave the panel asleep after a failure */
+++			(void)bl->sendShort(0x11);
+++			IOSleep(120);
+++			(void)bl->sendShort(0x29);
+++			bl->fPanelAsleep = false;
+++			bl->fSent = 0;
+++			break;
+++		}
+++	}
++ 	IOLockLock(bl->fLock);
++ 	const uint32_t level = bl->fWanted;
++ 	IOLockUnlock(bl->fLock);
++-	if (level == 0 || level == bl->fSent || bl->fFailures >= 4) {
+++	if (bl->fPanelAsleep || level == 0 || level == bl->fSent || bl->fFailures >= 4) {
+++		IOLockUnlock(bl->fDsiLock);
++ 		return;
++ 	}
++ 	const int error = bl->sendLevel(level);
++@@ -602,6 +669,60 @@ AppleARMBacklight::applyCall(thread_call_param_t owner, thread_call_param_t)
++ 	} else {
++ 		bl->fSent = level;
++ 	}
+++	IOLockUnlock(bl->fDsiLock);
+++}
+++
+++void
+++AppleARMBacklight::panelSleep(bool off)
+++{
+++	IOLockLock(fLock);
+++	fPanelWant = off;
+++	IOLockUnlock(fLock);
+++	thread_call_enter(fCall);
+++}
+++
+++/* 0200: DCS short write without a parameter (data type 0x05), same FIFO path as sendLevel */
+++int
+++AppleARMBacklight::sendShort(uint8_t cmd)
+++{
+++	volatile uint32_t *dsi = fDsi;
+++	const uint32_t ctrl = dsi[DSI_REG_CTRL / 4];
+++	if ((ctrl & 3) != 3) {
+++		IOLog("SWEET PANEL: DSI0 left video mode (ctrl=%#x); dcs %#x not sent\n", ctrl, cmd);
+++		return ENODEV;
+++	}
+++	const uint32_t dma_ctrl = dsi[DSI_REG_DMA_CTRL / 4];
+++	/* header {data0 = cmd, data1 = 0, data id 0x05, LAST} */
+++	const uint32_t word = (uint32_t)cmd | (0x05u << 16) | (0x80u << 24);
+++	dsi[DSI_REG_CTRL / 4] = ctrl | (1u << 2);                       /* command engine on */
+++	dsi[DSI_REG_INT_CTRL / 4] = dsi[DSI_REG_INT_CTRL / 4] | 1u;    /* W1C stale DMA done */
+++	dsi[DSI_REG_TPG_CTRL / 4] = (1u << 1) | (1u << 2) | (3u << 16);
+++	dsi[DSI_REG_TPG_DMA_DATA / 4] = word;
+++	dsi[DSI_REG_DMA_CTRL / 4] = (dma_ctrl & ~((1u << 31) | (1u << 30))) | (1u << 26) | (1u << 28);
+++	dsi[DSI_REG_DMA_LENGTH / 4] = sizeof(word);
+++	__asm__ volatile("dsb sy" ::: "memory");
+++	dsi[DSI_REG_DMA_TRIGGER / 4] = 1;
+++	unsigned us;
+++	for (us = 0; us < 50000 && !(dsi[DSI_REG_INT_CTRL / 4] & 1u); us += 50) {
+++		IODelay(50);
+++	}
+++	const bool done = (dsi[DSI_REG_INT_CTRL / 4] & 1u) != 0;
+++	const uint32_t ack = dsi[DSI_REG_ACK_ERR / 4];
+++	if (done) {
+++		dsi[DSI_REG_INT_CTRL / 4] = dsi[DSI_REG_INT_CTRL / 4] | 1u;
+++	}
+++	dsi[DSI_REG_TPG_CTRL / 4] = 0;
+++	dsi[DSI_REG_TPG_FIFO_RESET / 4] = 1;
+++	IODelay(1);
+++	dsi[DSI_REG_TPG_FIFO_RESET / 4] = 0;
+++	dsi[DSI_REG_DMA_CTRL / 4] = dma_ctrl;
+++	if (!(ctrl & (1u << 2))) {
+++		dsi[DSI_REG_CTRL / 4] = dsi[DSI_REG_CTRL / 4] & ~(1u << 2);
+++	}
+++	if (!done) {
+++		IOLog("SWEET PANEL: dcs %#x NOT acknowledged after %u us ack_err=%#x\n", cmd, us, ack);
+++	}
+++	return done ? 0 : ETIMEDOUT;
++ }
++ 
++ int
++@@ -660,6 +781,18 @@ AppleCLCD::rearmVsync(void)
++ {
++ 	uint64_t now = mach_absolute_time();
++ 	fNextVsync += fVsyncPeriod;
+++	if (__atomic_exchange_n(&fDarkKick, false, __ATOMIC_ACQ_REL)) {
+++		fNextVsync = now + fVsyncPeriod;        /* 0200: back to full rate after a slow dark tick */
+++	}
+++	/* 0200: dark for 5 s (fade and panel sleep long done): one tick per 500 ms; display on kicks it */
+++	if (fPowerOff && __atomic_load_n(&sweet_display_dark, __ATOMIC_ACQUIRE)) {
+++		uint64_t after, slow;
+++		nanoseconds_to_absolutetime((uint64_t)sweet_dark_fb_after_ms * NSEC_PER_MSEC, &after);
+++		nanoseconds_to_absolutetime((uint64_t)sweet_dark_fb_ms * NSEC_PER_MSEC, &slow);
+++		if (now - fOffAt >= after) {
+++			fNextVsync = now + slow;
+++		}
+++	}
++ 	if (fNextVsync <= now) {
++ 		uint64_t skipped = (now - fNextVsync) / fVsyncPeriod + 1;
++ 		fNextVsync += skipped * fVsyncPeriod;
++@@ -733,6 +866,10 @@ AppleCLCD::vsyncFired(OSObject *owner, IOTimerEventSource *sender)
++ 		client->notify(SWEET_FB_NOTIFY_VSYNC, values, 6);
++ 	}
++ 	if (fb->fPowerOff) {
+++		/* 0200: the panel sleeps (fFadeStep 7 = no fade); if its commands failed, fade as before */
+++		if (fb->fFadeStep == 7 && sweet_panel_failed) {
+++			fb->fFadeStep = 0;
+++		}
++ 		/* Fade out: halve every channel each vsync, then black, then idle. */
++ 		uint32_t step = fb->fFadeStep;
++ 		if (step <= 6) {
++@@ -1662,14 +1799,33 @@ IOMobileFramebufferUserClient::externalMethod(uint32_t selector, IOExternalMetho
++ 	case kSweetFBRequestPowerChange:
++ 		if (args->scalarInputCount >= 1) {
++ 			bool off = args->scalarInput[0] == 0;
+++			if (sweet_panel_sleep < 0) {
+++				int ps = 0;
+++				PE_parse_boot_argn("sweetpanelsleep", &ps, sizeof(ps));
+++				sweet_panel_sleep = ps;
+++			}
+++			const bool panel = sweet_panel_sleep == 1 && sweet_backlight != NULL && !sweet_panel_failed;
++ 			IOLockLock(fFB->fLock);
++-			if (off != fFB->fPowerOff) {
+++			bool change = off != fFB->fPowerOff;
+++			if (change) {
++ 				fFB->fPowerOff = off;
++-				fFB->fFadeStep = 0;
+++				fFB->fFadeStep = (off && panel) ? 7 : 0;    /* 0200: the panel sleeps: no CPU fade */
++ 				fFB->fDirty = true;     /* on: redraw the latest frame */
+++				if (off) {
+++					fFB->fOffAt = mach_absolute_time();
+++				}
++ 			}
++ 			IOLockUnlock(fFB->fLock);
++-			IOLog("SWEET FB: display %s\n", off ? "off" : "on");
+++			if (change && panel) {
+++				sweet_backlight->panelSleep(off);
+++			}
+++			bool wasDark = __atomic_load_n(&sweet_display_dark, __ATOMIC_ACQUIRE) != 0;
+++			sweet_dark_set(off);    /* 0200: pollers slow down / restart, CPU clocks (sweetdark=0: no-op) */
+++			if (!off && wasDark && fFB->fVsync != NULL) {
+++				__atomic_store_n(&fFB->fDarkKick, true, __ATOMIC_RELEASE);
+++				fFB->fVsync->wakeAtTime(mach_absolute_time());  /* 0200: full rate now, not after a 500 ms tick */
+++			}
+++			IOLog("SWEET FB: display %s%s\n", off ? "off" : "on", panel ? " (panel sleep)" : "");
++ 		}
++ 		break;
++ 	case kSweetFBSwapWait:
+-- 
+2.51.0
+

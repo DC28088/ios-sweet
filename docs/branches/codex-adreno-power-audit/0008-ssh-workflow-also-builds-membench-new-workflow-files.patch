@@ -1,0 +1,74 @@
+From cf14570bb1b8491c57802d7b57f1c0d9d09471fb Mon Sep 17 00:00:00 2001
+From: OpenCode <opencode@localhost>
+Date: Fri, 30 Oct 2026 10:51:44 +0530
+Subject: [PATCH 08/20] ssh workflow also builds membench (new workflow files
+ are not registered off the default branch)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+diff --git a/.github/workflows/bench.yml b/.github/workflows/bench.yml
+deleted file mode 100644
+index b77621b..0000000
+--- a/.github/workflows/bench.yml
++++ /dev/null
+@@ -1,22 +0,0 @@
+-name: sweet-bench
+-# CPU streaming memory bandwidth benchmark for the phone (what the DRAM delivers; the GPU shares it).
+-on:
+-  workflow_dispatch:
+-jobs:
+-  build:
+-    runs-on: macos-15
+-    timeout-minutes: 15
+-    steps:
+-      - uses: actions/checkout@v4
+-      - name: Build and sign
+-        run: |
+-          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+-          mkdir -p out
+-          $(xcrun --sdk iphoneos --find clang) -arch arm64 -isysroot $SDK -miphoneos-version-min=16.0 -O2 -o out/membench userspace/bench/membench.c
+-          codesign --force --sign - --pagesize 4096 --entitlements userspace/ssh/tools.entitlements out/membench
+-          codesign --verify --strict out/membench
+-          shasum -a 256 out/membench | tee out/SHA256SUMS
+-      - uses: actions/upload-artifact@v4
+-        with:
+-          name: sweet-membench-ios16
+-          path: out/
+diff --git a/.github/workflows/ssh.yml b/.github/workflows/ssh.yml
+index 8197ffa..19bac18 100644
+--- a/.github/workflows/ssh.yml
++++ b/.github/workflows/ssh.yml
+@@ -6,7 +6,7 @@ on:
+   workflow_dispatch:
+   push:
+     branches: [codex/adreno-power-audit]
+-    paths: [userspace/ssh/**, .github/workflows/ssh.yml]
++    paths: [userspace/ssh/**, userspace/bench/**, .github/workflows/ssh.yml]
+ jobs:
+   build:
+     runs-on: macos-15
+@@ -57,15 +57,19 @@ jobs:
+           make -j4 HOSTCC=cc CC="$(xcrun --sdk iphoneos --find clang)" \
+             CFLAGS="-arch arm64 -isysroot $SDK -miphoneos-version-min=16.0 -I$GITHUB_WORKSPACE/userspace/ssh/ios-include" LDFLAGS="-arch arm64 -isysroot $SDK" toybox 2>&1 | tee ../../out/toybox-build.log
+           cp toybox ../../out/
++      - name: membench (CPU streaming memory bandwidth)
++        run: |
++          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
++          $(xcrun --sdk iphoneos --find clang) -arch arm64 -isysroot $SDK -miphoneos-version-min=16.0 -O2 -o out/membench userspace/bench/membench.c
+       - name: Sign
+         run: |
+           cd out
+-          for b in dropbearmulti dash toybox; do
++          for b in dropbearmulti dash toybox membench; do
+             [ -f $b ] || continue
+             codesign --force --sign - --pagesize 4096 --entitlements ../userspace/ssh/tools.entitlements $b
+             codesign --verify --strict $b
+           done
+-          for b in dropbearmulti dash toybox; do if [ -f $b ]; then shasum -a 256 $b; fi; done > SHA256SUMS
++          for b in dropbearmulti dash toybox membench; do if [ -f $b ]; then shasum -a 256 $b; fi; done > SHA256SUMS
+           cat SHA256SUMS
+       - uses: actions/upload-artifact@v4
+         with:
+-- 
+2.51.0
+

@@ -1,0 +1,46 @@
+From e0574facd4c1fdcb55b59af0cf7ff0741949fe3b Mon Sep 17 00:00:00 2001
+From: OpenCode <opencode@localhost>
+Date: Fri, 6 Nov 2026 17:21:30 +0530
+Subject: [PATCH 21/21] Fix combined YUV generated C string escapes
+
+
+diff --git a/NOTES.md b/NOTES.md
+index ec05fcb..1d46545 100644
+--- a/NOTES.md
++++ b/NOTES.md
+@@ -1,3 +1,7 @@
++## 2026-11-06: 0213 first native compile failed; source-string generator fixed
++- Run42212678992 failed in Objective-C compile: three generated combined-YUV log strings contained literal newlines. Portable plane tests and actual converter ASan/UBSan CI checks passed; no install performed.
++- Fixed insertion to preserve C escapes using raw Python source string; added explicit generated-string assertions. Fresh pinned donor export now emits all three complete C lines correctly. Both local conversion/layout tests pass again. Rebuild pending; phone unchanged.
++
+ ## 2026-11-06: 0213 combined NV12 CPU fallback prepared and locally checked
+ - Reviewed saved active sunfish frontend CPU fallback (phone/metal2/NativeBridgeMetalFrontend.mm, snapshot 2026-11-05). Chose owned RGBA conversion for combined Metal format500 rather than assuming native multi-plane support in the pinned Mesa. Supports format520 sRGB per primary WebKit enum; deliberately does not mislabel format501 (422) as sRGB.
+ - New checked converter: only 8-bit NV12 420v/420f, validates both plane rows/dimensions/allocation bounds, 64 MiB output cap, odd dimensions supported when chroma covers them. Video/full range and BT.601/709/2020 coefficients; honors recognized IOSurface matrix metadata, defaults BT.601 only when absent, rejects unknown string matrices. Source pixels read under IOSurfaceLockReadOnly and never modified.
+diff --git a/tools/prepare-sweet-native-metal.py b/tools/prepare-sweet-native-metal.py
+index 8a004ee..8f0b2e2 100644
+--- a/tools/prepare-sweet-native-metal.py
++++ b/tools/prepare-sweet-native-metal.py
+@@ -1157,7 +1157,7 @@ static _Atomic unsigned long long native_wait_until_completed;
+                 '@property (readonly) struct rwa_texture *mesaTexture;\n- (void)nativeAttachSurface:(void *)surface plane:(NSUInteger)plane;\n- (BOOL)nativeRefreshPlanar;\n- (void)nativeEnablePlanar;\n- (struct rwa_texture *)nativeRenderTexture;')
+     method=s.index('- (id)newTextureWithDescriptor:(MTLTextureDescriptor *)d iosurface:')
+     at=s.index('\n{',method)+2
+-    s=s[:at]+'''
++    s=s[:at]+r'''
+     if(s && d && IOSurfaceGetPlaneCount(s) && ([d pixelFormat]==500 || [d pixelFormat]==520)) {
+         uint32_t format=IOSurfaceGetPixelFormat(s);
+         if(p || (format!='420v' && format!='420f') || IOSurfaceGetPlaneCount(s)!=2 ||
+@@ -1241,6 +1241,11 @@ ensure_function_encoder(void)
+         '\t\t\t    work->buffers, work->bufferOffsets, work->count);\n'
+         '\t}\n'
+         '\tif (mesa.render_draw([work->render render], &draw, why, size) != 0) {')
++    # Generated C string literals must retain their escape, not a source newline.
++    for literal in (r'combined YUV requires a read-only NV12 texture\n',
++                    r'combined YUV conversion refused\n',
++                    r'combined NV12 converted to RGBA: %ux%u usage %#x\n'):
++        if literal not in s:raise RuntimeError('Lost generated C string escape: '+repr(literal))
+     p.write_text(s)
+     shutil.copy2(NATIVE/'frontend/SweetNativeLibrary.inc',src/'SweetNativeLibrary.inc')
+     shutil.copy2(NATIVE/'frontend/SweetNativeDrawLog.inc',src/'SweetNativeDrawLog.inc')
+-- 
+2.51.0
+

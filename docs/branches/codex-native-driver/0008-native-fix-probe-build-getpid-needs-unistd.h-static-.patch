@@ -1,0 +1,31 @@
+From a2b2936a36fffe97741ba40ea0dba7e9731cec52 Mon Sep 17 00:00:00 2001
+From: OpenCode <opencode@localhost>
+Date: Fri, 30 Oct 2026 09:59:22 +0530
+Subject: [PATCH 08/13] native: fix probe build (getpid needs unistd.h; static
+ cannot be extern C)
+
+
+diff --git a/userspace/native/src/sweet_native_probe.cpp b/userspace/native/src/sweet_native_probe.cpp
+index 61d8cd4..100de6e 100644
+--- a/userspace/native/src/sweet_native_probe.cpp
++++ b/userspace/native/src/sweet_native_probe.cpp
+@@ -24,6 +24,7 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
++#include <unistd.h>
+ 
+ #include "sweet_gpu.h"
+ #include "sweet_pm4.h"
+@@ -193,7 +194,7 @@ void run()
+ 
+ }  // namespace
+ 
+-extern "C" __attribute__((constructor)) static void sweet_native_probe_entry(void)
++static void __attribute__((constructor)) sweet_native_probe_entry(void)
+ {
+     try {
+         if (requested())
+-- 
+2.51.0
+

@@ -1,0 +1,26 @@
+From 70b948d653dd1c6fea385ff6f142877bb5dd5b8a Mon Sep 17 00:00:00 2001
+From: OpenCode <opencode@localhost>
+Date: Fri, 6 Nov 2026 08:21:22 +0530
+Subject: [PATCH 10/12] NOTES: diagnose missing Wi-Fi interface announcement;
+ restore 0209
+
+
+diff --git a/NOTES.md b/NOTES.md
+index 8ffc6b4..c81a93d 100644
+--- a/NOTES.md
++++ b/NOTES.md
+@@ -1,3 +1,11 @@
++## 2026-11-06: Wi-Fi toggle failed on 0208; haptics felt weak/long; restored 0209 temporarily
++- USER could not enable Wi-Fi. Live wland firmware log confirms WMI READY + HTT VERSION_CONF + initial scan STARTED, but no terminal scan event and no bridge hello. The bridge gates FW_HELLO/interface publication on radio_scans()>0, so an unfinished first scan can withhold the Wi-Fi interface indefinitely.
++- Targeted restart of native wifid succeeded (new PID), but USER still could not enable Wi-Fi. No saved network settings changed, no wland/ADSP reset performed. This failure is not proof the 0208 kernel patch causes the scan stall.
++- USER also reports haptics regressed from quick strong buzz to long/weak, then entered fastboot. Captured haptic driver records show drive 0x6a (full DT limit), 30 ms minimum, no capped events. Perceived regression confirmed only by USER; timing/logging effect remains a hypothesis, not a diagnosed cause. Do not increase drive past DT values.
++- Temporarily booted verified 0209 image (SHA256 6cfe48cd8e2734759faac8c7d07e7f56d868ad9a1fe7c138d46570cd14f59ca0): Sending/Booting OKAY. Capture offset work/audio-runtime/0209-wifi-recovery-start.json. Awaiting startup/UTC and Wi-Fi/haptic confirmation.
++- Candidate userspace fix under research: publish bridge hello after verified firmware+transport readiness instead of a completed scan; add a bounded request to cancel an overdue scan, without pretending cancellation succeeded or clearing firmware ownership on a timer. No such fix implemented/built/installed yet.
++- Primary protocol reference: https://github.com/torvalds/linux/blob/master/drivers/net/wireless/ath/ath10k/wmi.h (wmi_stop_scan_cmd, scan event bits), and wmi-tlv.c serializer. Raw logs/network identifiers remain private outside Git.
++
+ ## 2026-11-06: 0208 boot readiness verified
+ - USB SSH reachable; corrected UTC. SpringBoard, backboardd, mediaserverd and existing wland auto are running. USER asked for one Wi-Fi + Safari YouTube reproduction and optional Bluetooth headphone result; pending. No playback fix demonstrated.
+ - Private playback capture offset recorded in work/audio-runtime/0208-playback-start.json. No audio daemon restart, DSP reset, partition flash or main audio branch change.
+-- 
+2.51.0
+

@@ -1,0 +1,104 @@
+From 2e15fdbf43784faa874867b8514912c84f4fe656 Mon Sep 17 00:00:00 2001
+From: OpenCode <opencode@localhost>
+Date: Fri, 30 Oct 2026 10:36:17 +0530
+Subject: [PATCH 07/20] membench: CPU streaming memory bandwidth benchmark for
+ iOS (what the DRAM delivers)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+diff --git a/.github/workflows/bench.yml b/.github/workflows/bench.yml
+new file mode 100644
+index 0000000..b77621b
+--- /dev/null
++++ b/.github/workflows/bench.yml
+@@ -0,0 +1,22 @@
++name: sweet-bench
++# CPU streaming memory bandwidth benchmark for the phone (what the DRAM delivers; the GPU shares it).
++on:
++  workflow_dispatch:
++jobs:
++  build:
++    runs-on: macos-15
++    timeout-minutes: 15
++    steps:
++      - uses: actions/checkout@v4
++      - name: Build and sign
++        run: |
++          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
++          mkdir -p out
++          $(xcrun --sdk iphoneos --find clang) -arch arm64 -isysroot $SDK -miphoneos-version-min=16.0 -O2 -o out/membench userspace/bench/membench.c
++          codesign --force --sign - --pagesize 4096 --entitlements userspace/ssh/tools.entitlements out/membench
++          codesign --verify --strict out/membench
++          shasum -a 256 out/membench | tee out/SHA256SUMS
++      - uses: actions/upload-artifact@v4
++        with:
++          name: sweet-membench-ios16
++          path: out/
+diff --git a/userspace/bench/membench.c b/userspace/bench/membench.c
+new file mode 100644
+index 0000000..12cc168
+--- /dev/null
++++ b/userspace/bench/membench.c
+@@ -0,0 +1,59 @@
++/* Streaming memory bandwidth of the phone's CPUs: read, write (memset) and copy over buffers far larger than
++ * the caches, with 1, 2, 4 and 6 threads. Tells what the DRAM can deliver (the GPU shares it). */
++#include <mach/mach_time.h>
++#include <pthread.h>
++#include <stdint.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#define BYTES (96u << 20)
++static mach_timebase_info_data_t tb;
++static double now(void) { return (double)mach_absolute_time() * tb.numer / tb.denom * 1e-9; }
++
++struct job { int mode; uint8_t *a, *b; size_t n; uint64_t sink; int reps; };
++
++static void *run(void *arg)
++{
++	struct job *j = arg;
++	for (int r = 0; r < j->reps; r++) {
++		if (j->mode == 0) {
++			uint64_t s0 = 0, s1 = 0, s2 = 0, s3 = 0;
++			const uint64_t *p = (const uint64_t *)j->a;
++			for (size_t i = 0; i < j->n / 8; i += 4) { s0 += p[i]; s1 += p[i + 1]; s2 += p[i + 2]; s3 += p[i + 3]; }
++			j->sink += s0 + s1 + s2 + s3;
++		} else if (j->mode == 1) {
++			memset(j->a, r + 1, j->n);
++		} else {
++			memcpy(j->b, j->a, j->n);
++		}
++	}
++	return NULL;
++}
++
++int main(void)
++{
++	static const char *const names[] = { "read", "write", "copy" };
++	mach_timebase_info(&tb);
++	for (int threads = 1; threads <= 6; threads = threads == 1 ? 2 : threads == 2 ? 4 : threads == 4 ? 6 : 7) {
++		for (int mode = 0; mode < 3; mode++) {
++			struct job jobs[6];
++			pthread_t t[6];
++			size_t each = BYTES / threads & ~(size_t)63;
++			for (int i = 0; i < threads; i++) {
++				jobs[i] = (struct job){ mode, malloc(each), malloc(each), each, 0, 4 };
++				memset(jobs[i].a, 1, each);
++				memset(jobs[i].b, 2, each);
++			}
++			double t0 = now();
++			for (int i = 0; i < threads; i++) pthread_create(&t[i], NULL, run, &jobs[i]);
++			for (int i = 0; i < threads; i++) pthread_join(t[i], NULL);
++			double dt = now() - t0;
++			double bytes = (double)each * threads * 4 * (mode == 2 ? 2 : 1);
++			printf("%d thread%s %-5s %6.2f GB/s (counting %s)\n", threads, threads > 1 ? "s" : " ", names[mode],
++			    bytes / dt / 1e9, mode == 2 ? "read+write" : "the traffic");
++			for (int i = 0; i < threads; i++) { free(jobs[i].a); free(jobs[i].b); }
++		}
++	}
++	return 0;
++}
+-- 
+2.51.0
+

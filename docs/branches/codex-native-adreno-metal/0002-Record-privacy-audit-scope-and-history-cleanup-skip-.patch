@@ -1,0 +1,35 @@
+From 67448d2151ef7520a8c4417a62a85823c62b30b5 Mon Sep 17 00:00:00 2001
+From: Repository maintenance <noreply@users.noreply.github.com>
+Date: Tue, 3 Nov 2026 20:17:49 +0530
+Subject: [PATCH 2/2] Record privacy audit scope and history cleanup [skip ci]
+
+
+diff --git a/NOTES.md b/NOTES.md
+index 320305b..58c7d8a 100644
+--- a/NOTES.md
++++ b/NOTES.md
+@@ -1,3 +1,21 @@
++## 2026-11-03: public-history privacy cleanup
++
++- Audited all six published branch histories for device/SIM identifiers and
++  private cellular observations. Removed network/location and call-test prose
++  from historical notes; sanitized a personal SSID reference.
++- Rechecked 476 rewritten notes blobs: flagged records absent. Driver/build
++  source hashes at the branch tips are unchanged. Added PRIVACY.md and agent
++  rules against publishing sensitive device data or restoring old history.
++- Full decimal IMEI/IMSI/ICCID-length values and international phone-number
++  patterns were not found; this pattern scan is not a guarantee of no secrets.
++- GitHub issues/PRs and releases were empty at audit time. Build workflows
++  package source/binaries, not runtime device captures. Downloads of older CI
++  logs timed out; those logs have not been certified clean by this audit.
++- Existing local clones and GitHub cached/unreachable commits require separate
++  handling. Reclone before further pushes. GitHub Support may need to purge
++  cached commit views; rewriting branches cannot erase external copies.
++- No device writes, boots, or driver changes performed.
++
+ ## 2026-11-02: 0183 booted (user approved): App Library FIXED; search pull-down status bar still black "sometimes"
+ - 0183 (shim/out/shim-boot-0183-rows.img 6e14e250d464..., kernel c74c894f4751..., 0183-boot-start.json log_offset 49451505): only LA08 surfaces keep rows (224/480/736), no "texture is written" refusals. USER: "the library issue is now fixed. the search pull down status bar is still black (sometimes)".
+ - Capture shots/search.png: black band = top ~135 px (status bar) over an otherwise correct blurred backdrop. No refusals in the log. Draw log (20000, scratch draws3.txt) search backdrop chain (e.g. draws 18713-18722): TimgA2Xhf_Isrc n=54 (9 quads) 1125x2436 -> 565x1220; two PBGRAXm_A2Xhf n=24 solid fills into 565x1220 (margins?); Tds8 -> 146x310; Tn23 blur -> 569x1224 -> 565x1220; TimgA2Xhfn_IsrcCcl full-screen composite WITHOUT blending from 565x1220; Bsov tint. Black band = top rows of that blurred texture: either the captured strip is black (source not yet drawn, timing -> "sometimes") or a margin fill covers it. Next: extend the draw log with vertex positions/colours (first vertices of A2Xhf/Timg draws into 565x1220) to decide.
+-- 
+2.51.0
+

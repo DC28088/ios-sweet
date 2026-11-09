@@ -1,0 +1,190 @@
+From 238e9556f6bcc79bcca8d810f6475ebfe7807877 Mon Sep 17 00:00:00 2001
+From: OpenCode <opencode@localhost>
+Date: Wed, 21 Oct 2026 22:19:48 +0530
+Subject: [PATCH 05/13] Record verified UniXNU sweet UEFI menu prototype and
+ iOS16 port state
+
+
+diff --git a/NOTES.md b/NOTES.md
+index 2b3d01e..6b01b7d 100644
+--- a/NOTES.md
++++ b/NOTES.md
+@@ -2,6 +2,27 @@
+ 
+ ## Current local device state (2026-10-21, read first)
+ 
++- **FIRST UniXNU SWEET UEFI PROTOTYPE BUILD SUCCESS, NOT BOOTED:** CI39636995649
++  succeeded on4d353bf61d5dc254895014503550d4aeb66391a7. Artifacts downloaded
++  research/unixnu-ios16-out/firmware-39636995649; published SHA256 pass.
++  Mu-sweet.img2220032bytes SHA256
++  bf846fd6e1d56aef0ca429e2ab30dd23b8a73dfec3a04e83efcd3b4216fdcc91.
++  SWEET_UEFI.fd3145728bytes SHA256
++  4902b3ee867000cfdc45867634cbf62c001836ac7b8ff5974deb094aa759347c.
++  Image header1/page2048/kernelAddress0x10000000; kernel gzip unpacks to
++  144byte ARM64header BootShim + exact compiled3MiBFD at0x9fc00000, appended
++  FDT397690bytes. UniXNU app+registrar embedded, no DarwinBoot/iOSkernel.
++  Metadata ports/uefi-sweet/initial-build.json. This is firmware/menu prototype,
++  NOT an iOS16 boot image, NOT a GPU acceleration fix. Device has NOT booted it.
++  Reference DTB msmID365 matches saved phone; generic boardID0 differs from
++  phone46. Recorded for first boot investigation; no board-ID patch guessed.
++  Board/overlay TOML updated to observed prototype header fields. Main board
++  example/readiness gate remains: iOS16 kernel/driver integration incomplete.
++  No phone I/O or flashing this turn. Existing HFS+iOS16 root remains intact.
++  New plan/source oncodex/unixnu-ios16-sweet; legacy fallbackadreno branch kept.
++  No tests run. Old boundedUSB capture likely expired; start suitable logging
++  when a later user-authorized UEFI boot is attempted.
++
+ - **iOS16 kernel patch staging started:** pristine XNU8796.141.3 archive fetched
+   into research/unixnu-ios16-source; source audit worktree in
+   /tmp/unixnu-ios16-kernel-audit. Upstream sorted patch sequence first rejected
+diff --git a/ports/UniXNU-sweet/README.md b/ports/UniXNU-sweet/README.md
+index 0047460..1bc1e3d 100644
+--- a/ports/UniXNU-sweet/README.md
++++ b/ports/UniXNU-sweet/README.md
+@@ -75,3 +75,18 @@ it does not turn the incomplete current board.toml into a kernel-ready port.
+ The output name is SWEET_UEFI.fd (confirmed from its source packaging script).
+ NativePrelink's input parser also reads the selected iOS16 kernelcache:18
+ segments and239 prelinked components. No native kernel has been linked yet.
++
++## First UEFI prototype built
++
++CI39636995649 succeeded on4d353bf after pinning setuptools80.9.0 for the
++legacy build tools. Verified artifacts are in
++research/unixnu-ios16-out/firmware-39636995649: Mu-sweet.img and SWEET_UEFI.fd.
++The image contains the generic UniXNU application and registrar in the sweet
++FV. It does not contain DarwinBoot or a native iOS16 kernel/payload. It has not
++been booted on the phone. The compiled FD, ARM64 BootShim header and appended
++DTB were inspected against the packed image, and published SHA256 checks pass.
++See ../uefi-sweet/initial-build.json for exact hashes and header parameters.
++
++The reference firmware DTB has matching SM7150 ID365 and generic board ID0;
++the saved phone tree has board ID46. This difference is recorded for the first
++boot investigation. No device tree or partition on the phone has been changed.
+diff --git a/ports/UniXNU-sweet/board.toml b/ports/UniXNU-sweet/board.toml
+index d2fa885..43bed86 100644
+--- a/ports/UniXNU-sweet/board.toml
++++ b/ports/UniXNU-sweet/board.toml
+@@ -37,15 +37,15 @@ packages = ["{uefi}", "{uefi}/Platforms/Xiaomi", "{tree}/package", "{tree}/drive
+ [firmware.defines]
+ DEVICE_MODEL = "sweet"
+ 
+-# Matches the saved stock Android boot header; packing remains gated until
+-# BootShim, the actual firmware output and the payload handoff are integrated.
++# Matches the built pinned legacy UEFI prototype header. The native iOS16
++# payload/modern build-driver integration remains gated.
+ [bootimg.image]
+-header_version = 2
+-base = 0
+-kernel_offset = 0x8000
+-ramdisk_offset = 0x1000000
+-tags_offset = 0x100
+-pagesize = 4096
++header_version = 1
++base = 0x10000000
++kernel_offset = 0
++ramdisk_offset = 0
++tags_offset = 0
++pagesize = 2048
+ 
+ [ipsw.sha256]
+ "kernelcache.release.iphone10b" = "2d6a13d040aaf87cec09bb6906d43e9bd8cea951e43d1aa1cd62707dfdc5aaec"
+diff --git a/ports/UniXNU-sweet/sources.json b/ports/UniXNU-sweet/sources.json
+index a062c5a..09793cd 100644
+--- a/ports/UniXNU-sweet/sources.json
++++ b/ports/UniXNU-sweet/sources.json
+@@ -50,11 +50,12 @@
+     ]
+   },
+   "readiness": {
+-    "uefi_compiled": false,
++    "uefi_compiled": true,
+     "kernel_adapted": false,
+     "bootable": false,
+     "tests_run": false,
+-    "device_modified": false
++    "device_modified": false,
++    "note": "Prototype image was packaged, but device boot is unverified and the iOS16 kernel/payload is not integrated."
+   },
+   "native_prelink_reference": {
+     "repository": "https://github.com/UniXNU/NativePrelink",
+diff --git a/ports/uefi-sweet/Resources/Configs/sweet.toml b/ports/uefi-sweet/Resources/Configs/sweet.toml
+index 67cd5c9..2b6d9bd 100644
+--- a/ports/uefi-sweet/Resources/Configs/sweet.toml
++++ b/ports/uefi-sweet/Resources/Configs/sweet.toml
+@@ -13,9 +13,9 @@ kernel_compression = "gzip"
+ append_dtb = true
+ 
+ [boot_image]
+-header_version = 2
+-base = 0
+-kernel_offset = 0x8000
+-ramdisk_offset = 0x1000000
+-tags_offset = 0x100
+-pagesize = 4096
++header_version = 1
++base = 0x10000000
++kernel_offset = 0
++ramdisk_offset = 0
++tags_offset = 0
++pagesize = 2048
+diff --git a/ports/uefi-sweet/initial-build.json b/ports/uefi-sweet/initial-build.json
+new file mode 100644
+index 0000000..af40769
+--- /dev/null
++++ b/ports/uefi-sweet/initial-build.json
+@@ -0,0 +1,52 @@
++{
++  "ci_run": "39636995649",
++  "source_commit": "4d353bf61d5dc254895014503550d4aeb66391a7",
++  "board": "sweet; sweetin target compatibility unverified",
++  "firmware_revision": "098e303fd9703669ab06d38744cad14d49c0f702",
++  "unixnu_revision": "89801d6e9265ba9aa49e56de642565288d679f83",
++  "contains_unixnu_menu": true,
++  "contains_ios_kernel": false,
++  "hardware_booted": false,
++  "tests_run": false,
++  "image": {
++    "bytes": 2220032,
++    "sha256": "bf846fd6e1d56aef0ca429e2ab30dd23b8a73dfec3a04e83efcd3b4216fdcc91",
++    "header_version": 1,
++    "page_size": 2048,
++    "kernel_size": 2217546,
++    "ramdisk_size": 0,
++    "bootshim_size": 144,
++    "appended_dtb_size": 397690,
++    "arm64_header_checked": true,
++    "kernel_address": "0x10000000"
++  },
++  "firmware": {
++    "base": "0x9fc00000",
++    "bytes": 3145728,
++    "sha256": "4902b3ee867000cfdc45867634cbf62c001836ac7b8ff5974deb094aa759347c"
++  },
++  "menu_inputs": {
++    "UniXNU.efi": "e07e632bb0b1a22d311ed182c2115c533b9d219bf91211777e92281ab5a8d488",
++    "UniXNUDxe.efi": "d3d4c35e3e70fc39721b9563133e414abef735776d564483082bad2f1ae09b8a",
++    "UniXNUDxe.depex": "f7126f1178fee554f86cfc02416cea9e34d816608cd6835ebf9f4251270f8171"
++  },
++  "dtb_identity": {
++    "firmware_msm_id": [
++      365,
++      0
++    ],
++    "firmware_board_id": [
++      0,
++      0
++    ],
++    "saved_phone_msm_id": [
++      365,
++      0
++    ],
++    "saved_phone_board_id": [
++      46,
++      0
++    ],
++    "observation": "The upstream firmware DTB is generic; device compatibility must be established by the first boot, not assumed from its compiled image."
++  }
++}
+-- 
+2.51.0
+

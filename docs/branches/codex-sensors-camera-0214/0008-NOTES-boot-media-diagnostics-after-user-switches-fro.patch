@@ -1,0 +1,25 @@
+From d1857b27c5bcc61af18736c12664f1166eec476c Mon Sep 17 00:00:00 2001
+From: OpenCode <opencode@localhost>
+Date: Fri, 6 Nov 2026 08:10:40 +0530
+Subject: [PATCH 08/14] NOTES: boot media diagnostics after user switches from
+ Apple ID
+
+
+diff --git a/NOTES.md b/NOTES.md
+index 5942ba2..8cc2d0f 100644
+--- a/NOTES.md
++++ b/NOTES.md
+@@ -1,3 +1,10 @@
++## 2026-11-06: USER pauses Apple ID after failed login; 0208 media diagnostics boot accepted
++- USER reports Apple ID login failed again after 0209 recovery; exact new UI error not supplied. No success claimed. USER authorizes using DeepSeek branches/logs/images and requests an image boot from fastboot.
++- Read main audio handoff/branches: c9e87ee on claude/audio-0009 remains latest local audio commit. Existing 0208 image in main shim/out has truncated sweetdtlog argument (ends backboar); used separately verified workspace package with complete mediaserverd,backboardd logging instead.
++- Kernel source 81762fb, CI 42069587462, kernel SHA256 d70dd001892d8ed1da5aa00ef670ebe4dc3097f0720d0a57c28e7a5ca3e8ad2e. Image SHA256 5101fde182181a9c8193b3991bb14dbea28d7266906ab15deb2c5c8a51915269, 18038784 bytes; preserves 0207 shim/DTB/ADT hardware baseline. Temporary fastboot Sending and Booting OKAY; no flash.
++- Existing private UDP receiver retained; capture start recorded in workspace work/audio-runtime/0208-capture-start.json. Awaiting SSH/home-screen readiness, then correct UTC and reproduce Safari playback once. Diagnostic only; no audio/video fix claimed.
++- Main audio working tree and running userspace configuration untouched. Focus now audio/Safari; Apple ID development paused.
++
+ ## 2026-11-05 20:00 IST: 0207 Safari playback crashes media + compositor; 0208 diagnostic prepared
+ - USER tested YouTube in Safari with Bluetooth headphones and reports a SpringBoard crash.
+ - logs/boot-0207-dtlog.txt (private, extracted from the existing receiver after offset 14082211) contains repeated
+-- 
+2.51.0
+

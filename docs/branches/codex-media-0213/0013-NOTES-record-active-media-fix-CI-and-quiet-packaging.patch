@@ -1,0 +1,23 @@
+From 41e2604d4015b40fbbf504d5473ef10eef2c6fe0 Mon Sep 17 00:00:00 2001
+From: OpenCode <opencode@localhost>
+Date: Fri, 6 Nov 2026 08:51:12 +0530
+Subject: [PATCH 13/21] NOTES: record active media fix CI and quiet packaging
+ plan
+
+
+diff --git a/NOTES.md b/NOTES.md
+index 6a76107..4d3b2e3 100644
+--- a/NOTES.md
++++ b/NOTES.md
+@@ -1,3 +1,8 @@
++## 2026-11-06: 0211 media fix building on Intel CI
++- Reviewed code/checker + sanitized notes committed 3df0e9955a208190a5e89ffc0851007d38fd7625 on isolated codex/media-0211 and pushed to existing DC28088/ios-sweet. Run 42155249166 is actively building on macos-15-intel, not queued. No progressing build cancelled.
++- Packaging prepared: preserve 0207 shim/DTB/ADT and working hardware args, sweetbuild=211, no broad sweetdtlog daemon logging (510 bytes). Kernel not available yet; no new image booted. Current phone stays working 0209.
++- Hardware sound remains separate: /dev/sweet-audio/mic absent; AFE-only success is not PCM output. Do not claim the planar-stride fix supplies speaker audio.
++
+ ## 2026-11-06: native planar IOSurface row-stride bug confirmed; 0211 fix prepared
+ - USER confirms Wi-Fi works and haptics are fine on recovered 0209; YouTube still fails and no sound. Fresh private capture: repeated mediaserverd SIGBUS at same H264SW decoder instruction, destination in RX shared cache. Audio device nodes remain absent. No claim that stride fix alone resolves the decoder fault.
+ - Exact target iOS16 IOSurfaceClientGetBytesPerRowOfPlane reads client+0xe0+plane*0x80; plane records begin client+0xd0, so row is record+0x10. Kernel serializer currently writes it at +0x08. Width/height/offset/size/element fields verified separately against native getters.
+-- 
+2.51.0
+

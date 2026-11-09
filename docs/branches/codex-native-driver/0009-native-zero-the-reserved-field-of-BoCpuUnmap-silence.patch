@@ -1,0 +1,36 @@
+From b048d577d1f126e05cd039274538937cd3fc0a6f Mon Sep 17 00:00:00 2001
+From: OpenCode <opencode@localhost>
+Date: Fri, 30 Oct 2026 10:00:35 +0530
+Subject: [PATCH 09/13] native: zero the reserved field of BoCpuUnmap (silence
+ -Wextra)
+
+
+diff --git a/userspace/native/src/sweet_gpu.cpp b/userspace/native/src/sweet_gpu.cpp
+index 8dd2c16..80cb0a9 100644
+--- a/userspace/native/src/sweet_gpu.cpp
++++ b/userspace/native/src/sweet_gpu.cpp
+@@ -273,7 +273,9 @@ void *sweet_gpu_bo_cpu_map(SweetGpu *handle, uint64_t bo, uint64_t *bytes,
+     kr = IOConnectMapMemory64(gpu->conn, reply.token, mach_task_self(), &address, &length,
+                               kIOMapAnywhere | kIOMapWriteCombineCache);
+     if (kr != KERN_SUCCESS || !address || length < reply.bytes) {
+-        NativeAdrenoAbiBoCpuUnmap undo{bo, reply.token};
++        NativeAdrenoAbiBoCpuUnmap undo{};
++        undo.handle = bo;
++        undo.token = reply.token;
+         call(gpu, NativeAdrenoMethodBoCpuUnmap, &undo, sizeof(undo), nullptr, 0);
+         whyf(why, why_size, "IOConnectMapMemory64(0x%llx) failed: 0x%x",
+              (unsigned long long)bo, kr);
+@@ -305,7 +307,9 @@ int sweet_gpu_bo_cpu_unmap(SweetGpu *handle, uint64_t bo, void *mapping,
+              (unsigned long long)bo, kr);
+         return SweetGpuError;
+     }
+-    NativeAdrenoAbiBoCpuUnmap undo{bo, it->second.token};
++    NativeAdrenoAbiBoCpuUnmap undo{};
++    undo.handle = bo;
++    undo.token = it->second.token;
+     call(gpu, NativeAdrenoMethodBoCpuUnmap, &undo, sizeof(undo), nullptr, 0);
+     gpu->mappings.erase(it);
+     return SweetGpuSuccess;
+-- 
+2.51.0
+

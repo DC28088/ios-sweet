@@ -1,0 +1,207 @@
+From 3421b59b2ad9c5518f4d5814cb86f6fb43fdbe55 Mon Sep 17 00:00:00 2001
+From: OpenCode <opencode@localhost>
+Date: Wed, 21 Oct 2026 22:05:47 +0530
+Subject: [PATCH 02/13] Embed UniXNU menu in exact sweet firmware and start
+ firmware CI
+
+
+diff --git a/.github/workflows/unixnu-menu.yml b/.github/workflows/unixnu-menu.yml
+index 2ea8669..5fee87a 100644
+--- a/.github/workflows/unixnu-menu.yml
++++ b/.github/workflows/unixnu-menu.yml
+@@ -46,3 +46,61 @@ jobs:
+           name: unixnu-menu-aarch64
+           path: out/
+           if-no-files-found: warn
++
++  sweet_firmware:
++    needs: menu
++    runs-on: ubuntu-22.04
++    timeout-minutes: 60
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/download-artifact@v4
++        with:
++          name: unixnu-menu-aarch64
++          path: menu-inputs
++      - name: Install legacy firmware dependencies
++        run: |
++          sudo apt-get update
++          sudo apt-get install -y build-essential uuid-dev nasm acpica-tools gcc-aarch64-linux-gnu clang llvm lld mono-devel nuget python3-venv python3-distutils gettext
++      - name: Fetch exact sweet firmware source
++        run: |
++          git init -q uefi-sweet
++          git -C uefi-sweet fetch --depth 1 https://github.com/tagicmi/Mu-Silicium-marble-davinci.git 098e303fd9703669ab06d38744cad14d49c0f702
++          git -C uefi-sweet checkout --detach FETCH_HEAD
++          git -C uefi-sweet submodule update --init --depth 1 -- Binaries Common/Mu Common/Mu_OEM_Sample Common/Mu_Tiano_Plus Features/DFCI Mu_Basecore Silicon/Arm/Mu_Tiano Silicium-ACPI
++          python3 -m venv .venv
++          .venv/bin/pip install -r uefi-sweet/pip-requirements.txt
++      - name: Integrate menu and compile sweet UEFI
++        run: |
++          (cd menu-inputs && sha256sum -c SHA256SUMS)
++          python3 ports/uefi-sweet/inject-unixnu.py uefi-sweet menu-inputs
++          source .venv/bin/activate
++          export CLANGPDB_AARCH64_PREFIX=aarch64-linux-gnu-
++          cd uefi-sweet
++          bash build_uefi.sh -d sweet -r DEBUG
++          test -s Mu-sweet.img
++          test "$(stat -c %s Build/sweetPkg/DEBUG_CLANGPDB/FV/SWEET_UEFI.fd)" = 3145728
++          mkdir -p ../firmware-out
++          cp Mu-sweet.img ../firmware-out/
++          cp Build/sweetPkg/DEBUG_CLANGPDB/FV/SWEET_UEFI.fd ../firmware-out/
++          cp Platforms/Xiaomi/sweetPkg/PrebuiltUniXNU/inputs.json ../firmware-out/menu-inputs.json
++          git submodule status > ../firmware-out/submodules.txt
++          printf '%s\n' 'Experimental sweet UEFI + UniXNU menu only. No iOS16 kernel/payload. Not hardware verified; no phone flashing performed by CI.' > ../firmware-out/README.txt
++          (cd ../firmware-out && sha256sum Mu-sweet.img SWEET_UEFI.fd > SHA256SUMS)
++      - uses: actions/upload-artifact@v4
++        if: always()
++        with:
++          name: unixnu-sweet-uefi
++          path: firmware-out/
++          if-no-files-found: warn
++      - name: Collect firmware diagnostics
++        if: failure()
++        run: |
++          mkdir -p firmware-diagnostics
++          cp uefi-sweet/Build/BUILDLOG* firmware-diagnostics/ 2>/dev/null || true
++          cp -R uefi-sweet/Build/sweetPkg/*/*.log firmware-diagnostics/ 2>/dev/null || true
++      - uses: actions/upload-artifact@v4
++        if: failure()
++        with:
++          name: unixnu-sweet-uefi-diagnostics
++          path: firmware-diagnostics/
++          if-no-files-found: warn
+diff --git a/NOTES.md b/NOTES.md
+index 5195d13..10a2aad 100644
+--- a/NOTES.md
++++ b/NOTES.md
+@@ -2,6 +2,20 @@
+ 
+ ## Current local device state (2026-10-21, read first)
+ 
++- **UniXNU initial menu SUCCESS / exact sweet firmware CI staged:** generic
++  menu CI39635176783 succeeded onba7bce9. Downloaded ARM64 EFI app/registrar
++  to research/unixnu-ios16-out/menu; published SHA verification passed.
++  Both are generic EFI binaries, NOT a sweet phone boot image. NativePrelink
++  reference2b6ffb50117eee820b98aca9bd51b5c7dfb2970e parsed20H392 kernelcache
++  successfully:18segments,239components. Original IOSurface336.60.1,
++  IOMobileGraphicsFamily343.0.0, IOGPUFamily65.60.1 identified; no prelink yet.
++  Legacy Mu source clone completed at exact098e303. Build contract confirmed:
++  actual FV filename SWEET_UEFI.fd, not SILICIUM_UEFI.fd. Added firmware CI
++  after menu job: pin legacy sweet/Mu202405 submodules, inject app/registrar
++  prebuilt into FvMain with proper variable-protocol DEPEX, compile/pack using
++  legacy upstream builder. No iOS16 payload in first prototype. No tests run;
++  firmware build pending, source injector bytecode compile only. No phone I/O.
++
+ - **PLAN CHANGED: UniXNU UEFI architecture, KEEP iOS16 (2026-10-21):** user
+   explicitly switched to unixnu.com/porting and selected keep16/adaptnewstack.
+   Work now on codex/unixnu-ios16-sweet; legacy GPU work preserved on
+@@ -13,8 +27,8 @@
+   098e303fd9703669ab06d38744cad14d49c0f702 uses old sweet.conf/library paths;
+   port overlay ports/uefi-sweet translates base0x9fc00000/size3MiB to TOML.
+   Current upstreamMu42fe563 has sweet_k6a, NOT exactsweet; never substitute.
+-  Reference clone research/unixnu-reference/mu-sweet still fetching at last
+-  check (session93738), no submodules initialized. Alternative reference
++  Reference clone research/unixnu-reference/mu-sweet completed at the pin;
++  no local submodules initialized. Alternative reference
+   sm7150-sweet7d53df4 cloned, read only, no scripts run.
+   Apple20H392 rawKernelCache/DeviceTree/StaticTrustCache extracted via ranged
+   ZIP with CRC and pinned SHA; files under research/unixnu-ios16-out/ipsw/20H392.
+diff --git a/ports/UniXNU-sweet/README.md b/ports/UniXNU-sweet/README.md
+index e16ecc9..0047460 100644
+--- a/ports/UniXNU-sweet/README.md
++++ b/ports/UniXNU-sweet/README.md
+@@ -66,3 +66,12 @@ HTTP ranges with ZIP CRC checking, SHA256-pinned in board.toml, and retained
+ outside Git. The kernelcache is LZFSE and was decoded on Fedora using the
+ already available lzfse library. Its original version is8796.142.1.703.8; the
+ source baseline8796.141.3 therefore needs an explicit prelink ABI audit.
++
++The firmware CI stage builds the pinned legacy sweet firmware with the two
++compiled EFI images embedded in its main FV. The registrar keeps its variable
++protocol DEPEX and installs the UniXNU boot option. This prototype uses the
++legacy firmware's own BootShim/Android-image packaging and pinned submodules;
++it does not turn the incomplete current board.toml into a kernel-ready port.
++The output name is SWEET_UEFI.fd (confirmed from its source packaging script).
++NativePrelink's input parser also reads the selected iOS16 kernelcache:18
++segments and239 prelinked components. No native kernel has been linked yet.
+diff --git a/ports/UniXNU-sweet/board.toml b/ports/UniXNU-sweet/board.toml
+index 1954ab2..e5ebbe0 100644
+--- a/ports/UniXNU-sweet/board.toml
++++ b/ports/UniXNU-sweet/board.toml
+@@ -27,7 +27,7 @@ defconfig = "sweet_ios16_defconfig"
+ [firmware]
+ config = "sweet"
+ dsc = "Platforms/Xiaomi/sweetPkg/sweet.dsc"
+-fd = "Build/sweetPkg/{target}_CLANGPDB/FV/SILICIUM_UEFI.fd"
++fd = "Build/sweetPkg/{target}_CLANGPDB/FV/SWEET_UEFI.fd"
+ packages = ["{uefi}", "{uefi}/Platforms/Xiaomi", "{tree}/package", "{tree}/drivers/DarwinBoot", "{edk2}"]
+ 
+ [firmware.defines]
+diff --git a/ports/UniXNU-sweet/sources.json b/ports/UniXNU-sweet/sources.json
+index 8384869..a062c5a 100644
+--- a/ports/UniXNU-sweet/sources.json
++++ b/ports/UniXNU-sweet/sources.json
+@@ -55,5 +55,12 @@
+     "bootable": false,
+     "tests_run": false,
+     "device_modified": false
++  },
++  "native_prelink_reference": {
++    "repository": "https://github.com/UniXNU/NativePrelink",
++    "revision": "2b6ffb50117eee820b98aca9bd51b5c7dfb2970e",
++    "ios16_input_parsed": true,
++    "original_components": 239,
++    "native_kernel_linked": false
+   }
+ }
+diff --git a/ports/uefi-sweet/inject-unixnu.py b/ports/uefi-sweet/inject-unixnu.py
+new file mode 100644
+index 0000000..1666559
+--- /dev/null
++++ b/ports/uefi-sweet/inject-unixnu.py
+@@ -0,0 +1,42 @@
++#!/usr/bin/env python3
++"""Embed the compiled UniXNU app/registrar in the pinned legacy sweet FV."""
++import argparse, hashlib, json, re, shutil, struct
++from pathlib import Path
++
++p=argparse.ArgumentParser(description=__doc__)
++p.add_argument('firmware',type=Path);p.add_argument('menu',type=Path)
++a=p.parse_args();fw=a.firmware.resolve();menu=a.menu.resolve()
++base=fw/'Platforms/Xiaomi/sweetPkg';out=base/'PrebuiltUniXNU';out.mkdir(exist_ok=True)
++for name in ('UniXNU.efi','UniXNUDxe.efi'):
++ data=(menu/name).read_bytes()
++ if data[:2]!=b'MZ':raise SystemExit(f'{name}: missing PE header')
++ offset=struct.unpack_from('<I',data,0x3c)[0]
++ if data[offset:offset+4]!=b'PE\0\0' or struct.unpack_from('<H',data,offset+4)[0]!=0xaa64:
++  raise SystemExit(f'{name}: expected ARM64 EFI')
++ shutil.copyfile(menu/name,out/name)
++# Preserve the registrar's two variable-service dependencies. Pull GUID values
++# from this exact firmware's MdePkg, rather than embedding platform addresses.
++dec=(fw/'Mu_Basecore/MdePkg/MdePkg.dec').read_text()
++def guid(name):
++ m=re.search(r'\b'+re.escape(name)+r'\s*=\s*(\{[^\n]+)',dec)
++ if not m:raise SystemExit(f'Missing GUID: {name}')
++ nums=[int(x,16) for x in re.findall(r'0x[0-9a-fA-F]+',m[1])]
++ if len(nums)!=11:raise SystemExit(f'Unexpected GUID form: {name}')
++ return struct.pack('<IHH8B',*nums)
++(out/'UniXNUDxe.depex').write_bytes(b'\x02'+guid('gEfiVariableArchProtocolGuid')+b'\x02'+guid('gEfiVariableWriteArchProtocolGuid')+b'\x03\x08')
++fdf=base/'sweet.fdf';source=fdf.read_text();anchor='  !include QcomPkg/Extra.fdf.inc'
++if source.count(anchor)!=1 or 'PrebuiltUniXNU' in source:raise SystemExit('Unexpected or already modified sweet FDF')
++files='''
++  FILE APPLICATION = 9B665204-A133-47A2-9396-9E2B370A4E25 {
++    SECTION PE32 = Platforms/Xiaomi/sweetPkg/PrebuiltUniXNU/UniXNU.efi
++    SECTION UI = "UniXNU"
++  }
++  FILE DRIVER = 29B950CF-586D-49EA-9D71-F88645CCDAF6 {
++    SECTION DXE_DEPEX = Platforms/Xiaomi/sweetPkg/PrebuiltUniXNU/UniXNUDxe.depex
++    SECTION PE32 = Platforms/Xiaomi/sweetPkg/PrebuiltUniXNU/UniXNUDxe.efi
++    SECTION UI = "UniXNUDxe"
++  }
++'''
++fdf.write_text(source.replace(anchor,anchor+'\n'+files))
++(out/'inputs.json').write_text(json.dumps({n:hashlib.sha256((out/n).read_bytes()).hexdigest() for n in ('UniXNU.efi','UniXNUDxe.efi','UniXNUDxe.depex')},indent=2)+'\n')
++print('Embedded UniXNU application and registrar in sweet FvMain source; firmware compilation remains required.')
+-- 
+2.51.0
+

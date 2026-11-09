@@ -1,0 +1,496 @@
+From 886d0ca953d70b2d06ceff9f1ddd2a1818efad99 Mon Sep 17 00:00:00 2001
+From: OpenCode <opencode@localhost>
+Date: Thu, 5 Nov 2026 09:02:34 +0530
+Subject: [PATCH 2/2] xnu 0199: PM6150 charger: register dump/status
+ (sweetcharge=1), input current limit from the source (=2)
+
+On USB the battery drained ~100 mA while the charger said fast charge: the
+input current limit is below the load. Register map and the high-current
+ICL sequence are Xiaomi's sweet smb5 driver. Type-C Rp/APSD decide the limit
+(Rp3A 2000, Rp1.5A/DCP/CDP 1500, float 1000, SDP sweetchgsdp=500|900|1500
+with AICL only), capped by sweetchgmax (2000). Whitelisted SPMI writes only
+(sweet_spmi_write), each read back and logged; FV/JEITA never written.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/xnu/patches/0199-sweet-charger-input-limit.patch b/xnu/patches/0199-sweet-charger-input-limit.patch
+new file mode 100644
+index 0000000..968d8f8
+--- /dev/null
++++ b/xnu/patches/0199-sweet-charger-input-limit.patch
+@@ -0,0 +1,472 @@
++diff --git a/bsd/conf/files b/bsd/conf/files
++index 770d7c7..791a1d2 100644
++--- a/bsd/conf/files
+++++ b/bsd/conf/files
++@@ -110,6 +110,7 @@ bsd/dev/sweet_keys.c			standard
++ bsd/dev/sweet_touch.c			standard
++ bsd/dev/sweet_rpmh.c			standard
++ bsd/dev/sweet_spmi.c			standard
+++bsd/dev/sweet_charger.c		standard
++ bsd/dev/sweet_usb.c			standard
++ bsd/dev/sweet_pmem.c			standard
++ bsd/dev/redwood_sta.c		standard
++diff --git a/bsd/dev/sweet_charger.c b/bsd/dev/sweet_charger.c
++new file mode 100644
++index 0000000..c943b65
++--- /dev/null
+++++ b/bsd/dev/sweet_charger.c
++@@ -0,0 +1,290 @@
+++/*
+++ * 0199: PM6150 charger (SMB5) input-current setup.
+++ *
+++ * Observed (0195b, logs/boot-0195b.txt): on USB at 14 %, "SWEET BATTERY: ... -122mA external=1
+++ * charging=1": the charger is in fast charge but the battery still drains about 100 mA, so the
+++ * input current limit is below the phone's load (the USER: "battery drained even though
+++ * connected"). Nothing in this kernel ever configured the charger; it runs with what XBL/ABL left.
+++ *
+++ * Register map and the input-current-limit sequence are Xiaomi's own sweet kernel
+++ * (MiCode/Xiaomi_Kernel_OpenSource sweet-r-oss, drivers/power/supply/qcom/smb5-reg.h, smb5-lib.c
+++ * smblib_set_icl_current/smblib_icl_override, qpnp-smb5.c pm6150 charge params): SID 0, CHGR 0x1000,
+++ * DCDC 0x1100, BATIF 0x1200, USBIN 0x1300, TYPEC 0x1500, MISC 0x1600; ICL 0x1370 and FCC 0x1061 in
+++ * 50 mA steps. The sunfish port's read-only dump of the same PMIC (ios-flame
+++ * docs/reference/charger-regs.md) showed XBL leaving FCC 2.0 A / ICL 1.5 A there.
+++ *
+++ *   sweetcharge=1  read only: one register dump (CHGR/DCDC/BATIF/USBIN/TYPEC/MISC) at start and after
+++ *                  each plug-in, a status line on every change and every 60 s
+++ *   sweetcharge=2  ... and the input current limit set from the detected source, as smblib does in
+++ *                  high-current mode (USBIN_MODE_CHG=1, no ICL override, ICL kept after APSD):
+++ *                    Type-C Rp 3.0 A: 2000 mA, Rp 1.5 A: 1500 mA, DCP/QC: 1500 mA, CDP: 1500 mA,
+++ *                    float/other: 1000 mA, SDP (a PC port): sweetchgsdp (default 500 = left alone;
+++ *                    900 or 1500 only if the charger's AICL is enabled, which backs off on a weak port);
+++ *                    capped at sweetchgmax (default 2000, at most 3000). A target of 500 mA or less is
+++ *                    never written. FCC (battery charge current) is raised to 2000 mA only if it is
+++ *                    lower (0.4 C for the 5020 mAh cell). USB input suspend is cleared, charging enable
+++ *                    set when the charger says disabled, the charger watchdog petted when it is enabled.
+++ *                  Float voltage, JEITA, termination and safety timers are never written.
+++ * Every write is to a fixed whitelist (bsd/dev/sweet_spmi.c sweet_spmi_write), read back and logged.
+++ */
+++#if defined(ARM64_BOARD_CONFIG_SWEET)
+++#include <sys/param.h>
+++#include <sys/systm.h>
+++#include <kern/clock.h>
+++#include <kern/thread.h>
+++#include <kern/sched_prim.h>
+++#include <pexpert/pexpert.h>
+++#include "sweet_spmi.h"
+++
+++extern kern_return_t thread_terminate(thread_t);
+++void sweet_charger_init(void);
+++
+++#define CHG_STATUS_1    0x1006u
+++#define CHG_STATUS_2    0x1007u
+++#define CHG_EN_CMD      0x1042u
+++#define CHG_FCC         0x1061u
+++#define CHG_FV          0x1070u
+++#define DCDC_ICL_MAX    0x1106u
+++#define DCDC_ICL_STS    0x1107u
+++#define DCDC_AICL_STS   0x110au
+++#define DCDC_PATH       0x110bu
+++#define USB_APSD_STS    0x1307u
+++#define USB_APSD_RES    0x1308u
+++#define USB_RT_STS      0x1310u
+++#define USB_CMD_IL      0x1340u
+++#define USB_CMD_ICL_OVR 0x1342u
+++#define USB_LOAD_CFG    0x1365u
+++#define USB_ICL_OPTS    0x1366u
+++#define USB_ICL         0x1370u
+++#define USB_AICL_OPTS   0x1380u
+++#define TYPEC_SNK_STS   0x1506u
+++#define MISC_WD_PET     0x1643u
+++#define MISC_WD_CFG     0x1651u
+++#define MISC_WD_BITE    0x1653u
+++
+++static int chg_mode, chg_sdp_ma = 500, chg_max_ma = 2000;
+++static int chg_chan;
+++static unsigned chg_writes, chg_dumps;
+++
+++static void
+++chg_sleep(unsigned ms)
+++{
+++	uint64_t deadline;
+++	clock_interval_to_deadline(ms, NSEC_PER_MSEC, &deadline);
+++	(void)assert_wait_deadline(&chg_chan, THREAD_UNINT, deadline);
+++	thread_block(THREAD_CONTINUE_NULL);
+++}
+++
+++static uint8_t
+++chg_rd(unsigned addr, bool *ok)
+++{
+++	uint8_t v = 0;
+++	if (sweet_spmi_read(0, addr, &v) != 0) {
+++		*ok = false;
+++	}
+++	return v;
+++}
+++
+++/* masked write, read back; false on any failure */
+++static bool
+++chg_wr(unsigned addr, uint8_t mask, uint8_t val, const char *why)
+++{
+++	bool ok = true;
+++	uint8_t old = chg_rd(addr, &ok);
+++	if (!ok) {
+++		printf("SWEET CHARGER: %s: read %#x failed, not written\n", why, addr);
+++		return false;
+++	}
+++	uint8_t want = (uint8_t)((old & ~mask) | (val & mask));
+++	if (want == old) {
+++		return true;
+++	}
+++	int err = sweet_spmi_write(0, addr, want);
+++	uint8_t now = chg_rd(addr, &ok);
+++	chg_writes++;
+++	printf("SWEET CHARGER: %s: %#x %#04x -> %#04x: err %d, reads %#04x%s\n", why, addr, old, want, err,
+++	    now, (!err && ok && (now & mask) == (want & mask)) ? "" : " MISMATCH");
+++	return !err && ok && (now & mask) == (want & mask);
+++}
+++
+++static void
+++chg_dump(const char *why)
+++{
+++	static const unsigned bases[] = {0x1000, 0x1100, 0x1200, 0x1300, 0x1500, 0x1600};
+++	if (chg_dumps++ >= 6) {
+++		return;
+++	}
+++	printf("SWEET CHARGER: register dump (%s)\n", why);
+++	for (unsigned b = 0; b < sizeof(bases) / sizeof(bases[0]); b++) {
+++		for (unsigned row = 0; row < 0x90; row += 16) {
+++			char line[3 * 16 + 1];
+++			unsigned n = 0;
+++			for (unsigned i = 0; i < 16; i++) {
+++				uint8_t v = 0;
+++				if (sweet_spmi_read(0, bases[b] + row + i, &v) == 0) {
+++					snprintf(line + n, sizeof(line) - n, " %02x", v);
+++				} else {
+++					snprintf(line + n, sizeof(line) - n, " ??");
+++				}
+++				n += 3;
+++			}
+++			printf("SWEET CHARGER: %04x:%s\n", bases[b] + row, line);
+++		}
+++	}
+++}
+++
+++static const char *
+++chg_state_name(unsigned s)
+++{
+++	static const char *names[] = {"inhibit", "trickle", "pre", "fast", "taper", "terminate", "pause", "disabled"};
+++	return names[s & 7u];
+++}
+++
+++static const char *
+++chg_apsd_name(uint8_t res)
+++{
+++	res &= 0x7fu;
+++	return (res & 0x40u) ? "QC3" : (res & 0x20u) ? "QC2" : (res & 0x10u) ? "float" : (res & 0x08u) ? "DCP" :
+++	       (res & 0x04u) ? "CDP" : (res & 0x02u) ? "OCP" : (res & 0x01u) ? "SDP" : "none";
+++}
+++
+++/* the source's current from APSD and Type-C, before the cap */
+++static int
+++chg_target_ma(uint8_t apsd_res, uint8_t snk, bool aicl)
+++{
+++	int ma = 0;
+++	apsd_res &= 0x7fu;
+++	if (snk & 0x02u) {
+++		ma = 2000;
+++	} else if (snk & 0x04u) {
+++		ma = 1500;
+++	}
+++	int a = 0;
+++	if (apsd_res & (0x40u | 0x20u | 0x08u | 0x04u)) {
+++		a = 1500;
+++	} else if (apsd_res & (0x10u | 0x02u)) {
+++		a = 1000;
+++	} else if (apsd_res & 0x01u) {
+++		a = (chg_sdp_ma > 500 && aicl) ? chg_sdp_ma : 500;
+++	}
+++	ma = a > ma ? a : ma;
+++	return ma > chg_max_ma ? chg_max_ma : ma;
+++}
+++
+++static void
+++chg_thread(void *arg __unused, wait_result_t wr __unused)
+++{
+++	chg_sleep(30000);     /* SweetBattery maps the SPMI arbiter at its start */
+++	if (sweet_spmi_init() != 0) {
+++		printf("SWEET CHARGER: SPMI not ready; stop\n");
+++		goto out;
+++	}
+++	printf("SWEET CHARGER: mode %d (sweetcharge), SDP %d mA, max %d mA\n", chg_mode, chg_sdp_ma, chg_max_ma);
+++	chg_dump("start");
+++	bool was_present = false, dumped_plug = false;
+++	uint8_t last[12] = {0};
+++	unsigned tick = 0, quiet = 0, applied_for = 0xffffu;
+++	for (;; tick++) {
+++		bool ok = true;
+++		uint8_t st1 = chg_rd(CHG_STATUS_1, &ok), st2 = chg_rd(CHG_STATUS_2, &ok);
+++		uint8_t en = chg_rd(CHG_EN_CMD, &ok), fcc = chg_rd(CHG_FCC, &ok);
+++		uint8_t icl_max = chg_rd(DCDC_ICL_MAX, &ok), icl_sts = chg_rd(DCDC_ICL_STS, &ok);
+++		uint8_t aicl = chg_rd(DCDC_AICL_STS, &ok), path = chg_rd(DCDC_PATH, &ok);
+++		uint8_t apsd = chg_rd(USB_APSD_STS, &ok), res = chg_rd(USB_APSD_RES, &ok);
+++		uint8_t rt = chg_rd(USB_RT_STS, &ok), susp = chg_rd(USB_CMD_IL, &ok);
+++		uint8_t opts = chg_rd(USB_ICL_OPTS, &ok), ovr = chg_rd(USB_CMD_ICL_OVR, &ok);
+++		uint8_t load = chg_rd(USB_LOAD_CFG, &ok), icl = chg_rd(USB_ICL, &ok);
+++		uint8_t aopt = chg_rd(USB_AICL_OPTS, &ok), snk = chg_rd(TYPEC_SNK_STS, &ok);
+++		uint8_t wd = chg_rd(MISC_WD_CFG, &ok), bite = chg_rd(MISC_WD_BITE, &ok);
+++		if (!ok) {
+++			if ((tick % 30u) == 0) {
+++				printf("SWEET CHARGER: register read failed (tick %u)\n", tick);
+++			}
+++			chg_sleep(2000);
+++			continue;
+++		}
+++		bool present = (rt & 0x10u) != 0, apsd_done = (apsd & 0x01u) != 0;
+++		uint8_t now[12] = {st1 & 7u, st2, en, fcc, icl_sts, path, res, rt & 0x10u, opts, icl, snk, susp};
+++		bool changed = memcmp(now, last, sizeof(now)) != 0;
+++		if (changed || ++quiet >= 30) {
+++			quiet = 0;
+++			memcpy(last, now, sizeof(now));
+++			printf("SWEET CHARGER: usb %d apsd %#x/%#x %s typec %#x chg %s err %#x en %#x | icl cfg %u mA "
+++			    "now %u max %u aicl %#x opts %#x ovr %#x load %#x aiclopt %#x susp %#x | fcc %u mA fv %#x "
+++			    "path %#x wd %#x/%#x\n",
+++			    present, apsd, res, chg_apsd_name(res), snk, chg_state_name(st1), st2, en, icl * 50u,
+++			    icl_sts * 50u, icl_max * 50u, aicl, opts, ovr, load, aopt, susp, fcc * 50u,
+++			    chg_rd(CHG_FV, &ok), path, wd, bite);
+++		}
+++		if (present && !was_present) {
+++			dumped_plug = false;
+++			applied_for = 0xffffu;
+++		}
+++		was_present = present;
+++		if (present && apsd_done && !dumped_plug) {
+++			dumped_plug = true;
+++			chg_dump("plugged in, APSD done");
+++		}
+++		/* the charger watchdog, if XBL armed it: pet every pass (bite is 8 s at the shortest) */
+++		if (chg_mode >= 2 && (wd & 0x02u)) {
+++			(void)sweet_spmi_write(0, MISC_WD_PET, 0x01);
+++		}
+++		if (chg_mode >= 2 && present && apsd_done && chg_writes < 200) {
+++			int target = chg_target_ma(res, snk, (aopt & 0x04u) != 0);
+++			unsigned key = ((unsigned)res << 8) | snk;
+++			/* re-check every 10 s: a re-run APSD/replug can put the hardware's own limit back */
+++			if (key != applied_for || (tick % 5u) == 0) {
+++				if (key != applied_for) {
+++					printf("SWEET CHARGER: source %s (apsd %#x, typec %#x, aicl %s): target %d mA\n",
+++					    chg_apsd_name(res), res, snk, (aopt & 0x04u) ? "on" : "off", target);
+++				}
+++				applied_for = key;
+++				if (susp & 0x01u) {
+++					(void)chg_wr(USB_CMD_IL, 0x01, 0x00, "USB input unsuspend");
+++				}
+++				if (target > 500 && icl != (uint8_t)(target / 50)) {
+++					/* smblib_set_icl_current, high-current path: limit, then SW_OVERRIDE_HC_MODE */
+++					(void)(chg_wr(USB_ICL, 0xff, (uint8_t)(target / 50), "input current limit") &&
+++					    chg_wr(USB_ICL_OPTS, 0x01, 0x01, "HC mode (USBIN_MODE_CHG)") &&
+++					    chg_wr(USB_CMD_ICL_OVR, 0x01, 0x00, "no ICL override") &&
+++					    chg_wr(USB_LOAD_CFG, 0x10, 0x10, "keep ICL after APSD"));
+++				}
+++				if (fcc < 2000u / 50u) {
+++					(void)chg_wr(CHG_FCC, 0xff, 2000u / 50u, "fast charge current");
+++				}
+++				if ((st1 & 7u) == 7u && !(en & 0x01u)) {
+++					(void)chg_wr(CHG_EN_CMD, 0x01, 0x01, "charging enable");
+++				}
+++			}
+++		}
+++		chg_sleep(2000);
+++	}
+++out:
+++	(void)thread_terminate(current_thread());
+++	thread_block(THREAD_CONTINUE_NULL);
+++}
+++
+++void
+++sweet_charger_init(void)
+++{
+++	static bool started;
+++	(void)PE_parse_boot_argn("sweetcharge", &chg_mode, sizeof(chg_mode));
+++	(void)PE_parse_boot_argn("sweetchgsdp", &chg_sdp_ma, sizeof(chg_sdp_ma));
+++	(void)PE_parse_boot_argn("sweetchgmax", &chg_max_ma, sizeof(chg_max_ma));
+++	if (chg_sdp_ma != 900 && chg_sdp_ma != 1500) {
+++		chg_sdp_ma = 500;
+++	}
+++	if (chg_max_ma < 500 || chg_max_ma > 3000) {
+++		chg_max_ma = 2000;
+++	}
+++	if (chg_mode <= 0 || started) {
+++		return;
+++	}
+++	started = true;
+++	thread_t th;
+++	if (kernel_thread_start(chg_thread, NULL, &th) == KERN_SUCCESS) {
+++		thread_deallocate(th);
+++		printf("SWEET CHARGER: armed (30 s), sweetcharge=%d\n", chg_mode);
+++	}
+++}
+++#endif /* ARM64_BOARD_CONFIG_SWEET */
++diff --git a/bsd/dev/sweet_spmi.c b/bsd/dev/sweet_spmi.c
++index f297a01..b3930ba 100644
++--- a/bsd/dev/sweet_spmi.c
+++++ b/bsd/dev/sweet_spmi.c
++@@ -1,13 +1,14 @@
++ /*
++  * Battery-only adaptation of input/sweet_keys.c, observer EXT_READL.
++- * PMIC READ ONLY. The only MMIO store issues a one-byte read command.
++- * No interrupt clear, peripheral enable, charger config, or PMIC writes.
+++ * PMIC reads through the observer channel. 0199 adds sweet_spmi_write(): a fixed list of
+++ * charger registers only (sweetcharge=2, bsd/dev/sweet_charger.c).
++  * Init is serialized by the single built-in SweetBattery personality.
++  * Battery APIDs are disjoint from the existing keys' 008/4c1 APIDs.
++  */
++ #if defined(ARM64_BOARD_CONFIG_SWEET)
++ #include <sys/param.h>
++ #include <sys/systm.h>
+++#include <sys/errno.h>
++ #include <machine/machine_routines.h>
++ #include <IOKit/IOLocks.h>
++ #include "sweet_spmi.h"
++@@ -17,9 +18,12 @@ extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
++ #define SP_CORE_PA 0x0c440000u
++ #define SP_OBS_PA  0x0e600000u
++ #define SP_CFG_PA  0x0c40a000u
+++#define SP_CHNL_PA 0x0c600000u /* 0199: RW channels (pmic-arb v5: 0x10000 per APID), from ios-flame 0190 */
++ #define SP_NO_APID 0xffffu
++ 
++ static vm_offset_t sp_core, sp_obs, sp_cfg;
+++static vm_offset_t sp_chnl;            /* 0199: the one RW channel page mapped so far */
+++static uint16_t sp_chnl_apid = 0xffffu;
++ static IOLock *sp_lock;
++ static unsigned sp_count;
++ static bool sp_attempted, sp_ready;
++@@ -92,7 +96,8 @@ sweet_spmi_read(unsigned sid, unsigned addr, uint8_t *out)
++ 	unsigned peripheral = addr >> 8;
++ 	if (!sp_ready || !out || sid != 0 || addr > 0xffffu ||
++ 	    (peripheral != 0x10 && peripheral != 0x11 && peripheral != 0x12 &&
++-	    peripheral != 0x13 && peripheral != 0x48 && peripheral != 0xb6 && peripheral != 0x60)) {
+++	    peripheral != 0x13 && peripheral != 0x48 && peripheral != 0xb6 && peripheral != 0x60 &&
+++	    peripheral != 0x15 && peripheral != 0x16)) {   /* 0199: charger TYPEC + MISC (read) */
++ 		return -1;
++ 	}
++ 	IOLockLock(sp_lock);
++@@ -125,4 +130,86 @@ sweet_spmi_read(unsigned sid, unsigned addr, uint8_t *out)
++ 	IOLockUnlock(sp_lock);
++ 	return -1;
++ }
+++
+++/*
+++ * 0199: the only PMIC write path (bsd/dev/sweet_charger.c, sweetcharge=2). A fixed list of SMB5
+++ * charger registers on SID 0 (Xiaomi sweet smb5-reg.h): charging enable 0x1042, fast-charge current
+++ * 0x1061, USB input suspend 0x1340, ICL override 0x1342, load cfg 0x1365, ICL options 0x1366, input
+++ * current limit 0x1370, watchdog pet 0x1643. The APID must be owned by EE 0 (apps). EXT_WRITEL on
+++ * the APID's RW channel (Linux spmi-pmic-arb v5 offsets: CMD 0, STATUS 8, WDATA0 0x10). A FAILURE or
+++ * DROPPED status (a bus collision with another master) is resent up to 3 times, 150 us apart
+++ * (ios-flame 0280).
+++ */
+++int
+++sweet_spmi_write(unsigned sid, unsigned addr, uint8_t val)
+++{
+++	static const uint16_t allowed[] = {0x1042, 0x1061, 0x1340, 0x1342, 0x1365, 0x1366, 0x1370, 0x1643};
+++	bool listed = false;
+++	for (unsigned i = 0; i < sizeof(allowed) / sizeof(allowed[0]); i++) {
+++		listed |= allowed[i] == addr;
+++	}
+++	if (sid != 0 || !listed) {
+++		printf("SWEET CHARGER: refused PMIC write sid %u %#x <- %#x\n", sid, addr, val);
+++		return EPERM;
+++	}
+++	if (!sp_ready) {
+++		return ENXIO;
+++	}
+++	IOLockLock(sp_lock);
+++	uint16_t apid = sp_find_apid((sid << 8) | (addr >> 8));
+++	if (apid == SP_NO_APID || sp_poisoned[apid]) {
+++		IOLockUnlock(sp_lock);
+++		return ENXIO;
+++	}
+++	unsigned owner = sp_rd(sp_cfg, 0x700u + 4u * apid) & 7u;
+++	if (owner != 0) {
+++		IOLockUnlock(sp_lock);
+++		printf("SWEET CHARGER: APID %u (%#x) owned by EE %u, not 0: no write\n", apid, addr >> 8, owner);
+++		return EPERM;
+++	}
+++	if (sp_chnl_apid != apid) {
+++		vm_offset_t m = ml_io_map(SP_CHNL_PA + 0x10000u * apid, 0x1000);
+++		if (!m) {
+++			IOLockUnlock(sp_lock);
+++			return ENOMEM;
+++		}
+++		sp_chnl = m;
+++		sp_chnl_apid = apid;
+++	}
+++	int result = ETIMEDOUT;
+++	for (unsigned attempt = 0; attempt < 3; attempt++) {
+++		__asm__ volatile("dmb oshst" ::: "memory");
+++		*(volatile uint32_t *)(sp_chnl + 0x10u) = val; /* WDATA0 */
+++		__asm__ volatile("dmb oshst" ::: "memory");
+++		*(volatile uint32_t *)(sp_chnl + 0x00u) = ((addr & 0xffu) << 4); /* EXT_WRITEL (opcode 0), BC=0 */
+++		__asm__ volatile("dsb osh" ::: "memory");
+++		uint32_t status = 0;
+++		unsigned i;
+++		for (i = 0; i < 1000; ++i) {
+++			status = sp_rd(sp_chnl, 0x08u);
+++			if (status & 1u) {
+++				break;
+++			}
+++			delay(1);
+++		}
+++		if (i == 1000) {
+++			sp_poisoned[apid] = true;
+++			printf("SWEET CHARGER: SPMI write timeout %#x APID=%u disabled\n", addr, apid);
+++			result = ETIMEDOUT;
+++			break;
+++		}
+++		if (!(status & 0x0eu)) {
+++			result = 0;
+++			break;
+++		}
+++		result = EIO;
+++		if (!(status & 0x0au) || attempt == 2) {     /* DENIED, or retries used up */
+++			printf("SWEET CHARGER: SPMI write %#x status %#x\n", addr, status);
+++			break;
+++		}
+++		delay(150);
+++	}
+++	IOLockUnlock(sp_lock);
+++	return result;
+++}
++ #endif /* ARM64_BOARD_CONFIG_SWEET */
++diff --git a/bsd/dev/sweet_spmi.h b/bsd/dev/sweet_spmi.h
++index 45565d1..af6f008 100644
++--- a/bsd/dev/sweet_spmi.h
+++++ b/bsd/dev/sweet_spmi.h
++@@ -8,6 +8,8 @@ extern "C" {
++ int sweet_spmi_init(void);
++ /* Thread context only; 0 success, -1 failure; *out unchanged on failure. */
++ int sweet_spmi_read(unsigned sid, unsigned addr, uint8_t *out);
+++/* 0199: charger registers only (sweet_spmi.c has the list); 0 or an errno */
+++int sweet_spmi_write(unsigned sid, unsigned addr, uint8_t val);
++ #ifdef __cplusplus
++ }
++ #endif
++diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
++index 577611e..ef23ba0 100644
++--- a/bsd/dev/sweet_ufs.c
+++++ b/bsd/dev/sweet_ufs.c
++@@ -60,6 +60,7 @@ extern void sweet_smmu_probe_start(void);
++ extern void sweet_rpmh_ddr_raise(void);
++ extern void sweet_bt_init(void);
++ extern void sweet_haptic_init(void);
+++extern void sweet_charger_init(void);
++ extern void sweet_audiohal_init(void);
++ extern void sweet_bb_dev_init(void);
++ extern void sweet_usb_probe(void);
++@@ -676,6 +677,7 @@ sweet_ufs_init(void)
++ 	flame_wlan_init();       /* /dev/wlan, en0 + Apple80211 for wifid: bsd/dev/flame_wlan.c, from ios-flame 0123 */
++ 	sweet_bb_dev_init();     /* sweetbb=1: /dev/sweet-bb + AppleBaseband for CommCenter (UniXNU QcomBaseband port) */
++ 	/* Input drivers (HID services in iokit/Kernel/arm/hid/SweetHID.cpp). */
+++	sweet_charger_init();    /* sweetcharge=1|2: PM6150 charger input limit (bsd/dev/sweet_charger.c, 0199) */
++ 	sweet_keys_init();
++ 	sweet_touch_init();
++ 	sweet_gpu_probe();
+-- 
+2.51.0
+

@@ -1,0 +1,257 @@
+From a6fc6deeff0aebe3f1ebee5885e023f2657c8af7 Mon Sep 17 00:00:00 2001
+From: OpenCode <opencode@localhost>
+Date: Thu, 5 Nov 2026 08:59:17 +0530
+Subject: [PATCH 1/2] xnu 0196: sweetvaudio=1 moves VirtualAudio.plugin back
+ into the HAL folder
+
+Haptics and Bluetooth audio need iOS's VirtualAudio HAL plug-in on top of
+SweetAudio.driver (the sunfish port found the same: AirPods music and
+Actuator haptics only with it). Image v12 disabled it (mediaserverd crashed
+with no audio device at all). The kernel moves it back at boot only while
+SweetAudio.driver is installed; sweetvaudio=0 moves it back out.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/xnu/patches/0196-sweet-virtualaudio-hal-plugin.patch b/xnu/patches/0196-sweet-virtualaudio-hal-plugin.patch
+new file mode 100644
+index 0000000..29be5a4
+--- /dev/null
++++ b/xnu/patches/0196-sweet-virtualaudio-hal-plugin.patch
+@@ -0,0 +1,234 @@
++diff --git a/bsd/conf/files b/bsd/conf/files
++index e361574..770d7c7 100644
++--- a/bsd/conf/files
+++++ b/bsd/conf/files
++@@ -120,6 +120,7 @@ bsd/dev/flame_wlan.c		standard
++ bsd/dev/sweet_bt.c			standard
++ bsd/dev/sweet_bt_hci.c			standard
++ bsd/dev/sweet_haptic.c			standard
+++bsd/dev/sweet_audiohal.c		standard
++ bsd/dev/sweet_files.c			standard
++ bsd/dev/sweet_gpu.c			standard
++ bsd/dev/sweet_adreno.c			standard
++diff --git a/bsd/dev/sweet_audiohal.c b/bsd/dev/sweet_audiohal.c
++new file mode 100644
++index 0000000..8eafa12
++--- /dev/null
+++++ b/bsd/dev/sweet_audiohal.c
++@@ -0,0 +1,171 @@
+++/*
+++ * 0196: iOS's VirtualAudio HAL plug-in back in /Library/Audio/Plug-Ins/HAL.
+++ *
+++ * Image v12 (2026-10-17) moved VirtualAudio.plugin to /Library/Audio/Plug-Ins/HAL.disabled: with no
+++ * audio device at all it crashed mediaserverd (no default virtual device 'vdef'). Since 0160 the
+++ * SweetAudio.driver HAL plug-in (userspace/audio) gives CoreAudio its Speaker, Hawking (mic), Actuator
+++ * (haptics) and Codec devices, but without VirtualAudio iOS has no routes on top of them: the
+++ * Actuator is never played (0195: "serving /dev/sweet-haptic (0 frames)") and Bluetooth A2DP has no
+++ * output to route to. The sunfish port (Pixel 4a, SM7150; ios-flame docs/features/audio.md
+++ * 2026-10-30 au1/U11 and haptics.md hp3) found the same: VirtualAudio + its RedwoodAudio-derived
+++ * plug-in = AirPods play music and iOS haptics reach the motor; VirtualAudio only creates devices
+++ * for the UIDs "Actuator" and "Null_Device".
+++ *
+++ *   sweetvaudio=1  move HAL.disabled/VirtualAudio.plugin -> HAL/ (only while SweetAudio.driver is
+++ *                  installed), before mediaserverd scans the folder; if mediaserverd already runs,
+++ *                  it is killed once so launchd restarts it with the plug-in
+++ *   sweetvaudio=0  move it back to HAL.disabled (the pre-0196 state)
+++ *   absent         nothing is moved; the state is only logged
+++ * The move is on disk (persists). Undo by hand over SSH:
+++ *   mv /Library/Audio/Plug-Ins/HAL/VirtualAudio.plugin /Library/Audio/Plug-Ins/HAL.disabled/
+++ */
+++#if defined(ARM64_BOARD_CONFIG_SWEET)
+++#include <sys/param.h>
+++#include <sys/systm.h>
+++#include <sys/errno.h>
+++#include <sys/vnode.h>
+++#include <sys/vnode_internal.h>
+++#include <sys/proc_internal.h>
+++#include <sys/signal.h>
+++#include <kern/clock.h>
+++#include <kern/thread.h>
+++#include <kern/sched_prim.h>
+++#include <libkern/libkern.h>
+++#include <pexpert/pexpert.h>
+++
+++extern int sweet_vfs_rename(const char *from, const char *to);
+++extern int sweet_vfs_mkdir(const char *path, int mode);
+++extern kern_return_t thread_terminate(thread_t);
+++void sweet_audiohal_init(void);
+++
+++#define VA_ON       "/Library/Audio/Plug-Ins/HAL/VirtualAudio.plugin"
+++#define VA_OFF      "/Library/Audio/Plug-Ins/HAL.disabled/VirtualAudio.plugin"
+++#define VA_HAL_DIR  "/Library/Audio/Plug-Ins/HAL"
+++#define VA_OFF_DIR  "/Library/Audio/Plug-Ins/HAL.disabled"
+++#define SWEET_DRV   "/System/Library/Audio/Plug-Ins/HAL/SweetAudio.driver/SweetAudio"
+++#define BT_DRV      "/System/Library/Audio/Plug-Ins/HAL/BTAudioHALPlugin.driver"
+++
+++static int ah_mode = -1;
+++static int ah_chan;
+++
+++static void
+++ah_sleep(unsigned ms)
+++{
+++	uint64_t deadline;
+++	clock_interval_to_deadline(ms, NSEC_PER_MSEC, &deadline);
+++	(void)assert_wait_deadline(&ah_chan, THREAD_UNINT, deadline);
+++	thread_block(THREAD_CONTINUE_NULL);
+++}
+++
+++static bool
+++ah_exists(const char *path)
+++{
+++	vnode_t vp = NULLVP;
+++	if (vnode_lookup(path, 0, &vp, vfs_context_kernel()) != 0) {
+++		return false;
+++	}
+++	vnode_put(vp);
+++	return true;
+++}
+++
+++/* pid of the first process with this name, 0 if none */
+++static int
+++ah_find(const char *name)
+++{
+++	for (int pid = 1; pid < 4096; pid++) {
+++		proc_t p = proc_find(pid);
+++		if (p == PROC_NULL) {
+++			continue;
+++		}
+++		bool match = strcmp(proc_best_name(p), name) == 0;
+++		proc_rele(p);
+++		if (match) {
+++			return pid;
+++		}
+++	}
+++	return 0;
+++}
+++
+++static void
+++ah_thread(void *arg __unused, wait_result_t wr __unused)
+++{
+++	/* the root file system: poll for it (we start from the UFS driver, before mountroot) */
+++	unsigned waited = 0;
+++	while (rootvnode == NULLVP && waited < 120000) {
+++		ah_sleep(20);
+++		waited += 20;
+++	}
+++	if (rootvnode == NULLVP) {
+++		printf("SWEET AUDIOHAL: no root file system after 120 s\n");
+++		goto out;
+++	}
+++	int err = 0;
+++	bool on = false, off = false;
+++	for (unsigned tries = 0; tries < 600; tries++) {
+++		on = ah_exists(VA_ON);
+++		off = ah_exists(VA_OFF);
+++		bool drv = ah_exists(SWEET_DRV), bt = ah_exists(BT_DRV);
+++		if (tries == 0) {
+++			printf("SWEET AUDIOHAL: VirtualAudio in HAL %d, in HAL.disabled %d; SweetAudio.driver %d, "
+++			    "BTAudioHALPlugin %d; sweetvaudio=%d; mediaserverd pid %d\n",
+++			    on, off, drv, bt, ah_mode, ah_find("mediaserverd"));
+++		}
+++		if (ah_mode < 0) {
+++			goto out;
+++		}
+++		const char *from = NULL, *to = NULL;
+++		if (ah_mode == 1 && !on && off) {
+++			if (!drv) {
+++				printf("SWEET AUDIOHAL: SweetAudio.driver missing: VirtualAudio left disabled "
+++				    "(it crashes mediaserverd without an audio device)\n");
+++				goto out;
+++			}
+++			(void)sweet_vfs_mkdir(VA_HAL_DIR, 0755);
+++			from = VA_OFF;
+++			to = VA_ON;
+++		} else if (ah_mode == 0 && on && !off) {
+++			(void)sweet_vfs_mkdir(VA_OFF_DIR, 0755);
+++			from = VA_ON;
+++			to = VA_OFF;
+++		} else {
+++			printf("SWEET AUDIOHAL: nothing to move (sweetvaudio=%d, in HAL %d, in HAL.disabled %d)\n",
+++			    ah_mode, on, off);
+++			goto out;
+++		}
+++		err = sweet_vfs_rename(from, to);
+++		if (err == 0) {
+++			int pid = ah_find("mediaserverd");
+++			printf("SWEET AUDIOHAL: moved %s -> %s after %u ms (try %u); mediaserverd pid %d%s\n",
+++			    from, to, waited, tries, pid, pid ? ": killed, launchd restarts it" : "");
+++			if (pid) {
+++				proc_signal(pid, SIGKILL);
+++			}
+++			goto out;
+++		}
+++		if (tries == 0 || err != EROFS) {
+++			printf("SWEET AUDIOHAL: rename %s -> %s: %d (retrying)\n", from, to, err);
+++		}
+++		ah_sleep(100);
+++		waited += 100;
+++	}
+++	printf("SWEET AUDIOHAL: gave up after 60 s, last error %d\n", err);
+++out:
+++	(void)thread_terminate(current_thread());
+++	thread_block(THREAD_CONTINUE_NULL);
+++}
+++
+++void
+++sweet_audiohal_init(void)
+++{
+++	static bool started;
+++	if (started) {
+++		return;
+++	}
+++	started = true;
+++	(void)PE_parse_boot_argn("sweetvaudio", &ah_mode, sizeof(ah_mode));
+++	thread_t th;
+++	if (kernel_thread_start(ah_thread, NULL, &th) == KERN_SUCCESS) {
+++		thread_deallocate(th);
+++	}
+++}
+++#endif /* ARM64_BOARD_CONFIG_SWEET */
++diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
++index b277421..577611e 100644
++--- a/bsd/dev/sweet_ufs.c
+++++ b/bsd/dev/sweet_ufs.c
++@@ -60,6 +60,7 @@ extern void sweet_smmu_probe_start(void);
++ extern void sweet_rpmh_ddr_raise(void);
++ extern void sweet_bt_init(void);
++ extern void sweet_haptic_init(void);
+++extern void sweet_audiohal_init(void);
++ extern void sweet_bb_dev_init(void);
++ extern void sweet_usb_probe(void);
++ 
++@@ -670,6 +671,7 @@ sweet_ufs_init(void)
++ 	sweet_rpmh_ddr_raise();     /* sweetddr: MC0/SH0 at the most, ACV apps (0169, from HackiOS) */
++ 	sweet_smmu_probe_start();   /* sweetsmmuprobe=1: BCM votes + apps SMMU ID read (0149) */
++ 	sweet_haptic_init();     /* sweethaptic=1|2|3: AW8624 on QUP1 SE3 (bsd/dev/sweet_haptic.c) */
+++	sweet_audiohal_init();   /* sweetvaudio=0|1: VirtualAudio HAL plug-in (bsd/dev/sweet_audiohal.c, 0196) */
++ 	sweet_bt_init();         /* sweetbt=1: WCN3990 Bluetooth over QUP0 SE3, com.apple.uart.bluetooth (bsd/dev/sweet_bt.c) */
++ 	flame_wlan_init();       /* /dev/wlan, en0 + Apple80211 for wifid: bsd/dev/flame_wlan.c, from ios-flame 0123 */
++ 	sweet_bb_dev_init();     /* sweetbb=1: /dev/sweet-bb + AppleBaseband for CommCenter (UniXNU QcomBaseband port) */
++diff --git a/bsd/vfs/vfs_syscalls.c b/bsd/vfs/vfs_syscalls.c
++index 0e744c3..b8036a5 100644
++--- a/bsd/vfs/vfs_syscalls.c
+++++ b/bsd/vfs/vfs_syscalls.c
++@@ -14588,6 +14588,7 @@ fs_snapshot(__unused proc_t p, struct fs_snapshot_args *uap,
++ int sweet_vfs_mkdir(const char *path, int mode);
++ int sweet_vfs_symlink(const char *target, const char *link);
++ int sweet_vfs_unlink(const char *path);
+++int sweet_vfs_rename(const char *from, const char *to);
++ 
++ int
++ sweet_vfs_mkdir(const char *path, int mode)
++@@ -14610,4 +14611,12 @@ sweet_vfs_unlink(const char *path)
++ {
++ 	return unlink1(vfs_context_kernel(), NULLVP, CAST_USER_ADDR_T(path), UIO_SYSSPACE, 0);
++ }
+++
+++/* 0196: bsd/dev/sweet_audiohal.c moves the VirtualAudio HAL plug-in */
+++int
+++sweet_vfs_rename(const char *from, const char *to)
+++{
+++	return renameat_internal(vfs_context_kernel(), AT_FDCWD, CAST_USER_ADDR_T(from),
+++	           AT_FDCWD, CAST_USER_ADDR_T(to), UIO_SYSSPACE, 0);
+++}
++ #endif /* ARM64_BOARD_CONFIG_SWEET */
+-- 
+2.51.0
+

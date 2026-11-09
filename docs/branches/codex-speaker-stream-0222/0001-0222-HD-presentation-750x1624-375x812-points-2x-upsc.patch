@@ -1,0 +1,244 @@
+From 2ea20b6fbc62862519edefb6c941f5c53d288f6f Mon Sep 17 00:00:00 2001
+From: OpenCode <opencode@localhost>
+Date: Sat, 7 Nov 2026 23:06:46 +0530
+Subject: [PATCH 1/2] 0222: HD presentation 750x1624 (375x812 points @2x),
+ upscaled onto the panel
+
+AppleCLCD presents 750x1624 (sweetfb_mode=3, the same 375x812 point geometry
+and aspect as the 1125x2436 presentation at 44% fewer pixels) and copyScaled()
+nearest-neighbour-upscales onto the fixed 1080x2400 panel without a division
+in the inner loop (64-bit stores fill 1-2 panel pixels). sweetfb_mode=4
+presents the real iPhone XR panel 828x1792 as a status-bar fallback; the
+general helpers work for either. mkadt: /chosen display-scale 2, disp0 canvas
+750x1624.
+
+Co-Authored-By: dipa-studio <183933817+dipa-studio@users.noreply.github.com>
+
+diff --git a/tools/mkadt.py b/tools/mkadt.py
+index 79e5e09..1bd148a 100644
+--- a/tools/mkadt.py
++++ b/tools/mkadt.py
+@@ -99,9 +99,11 @@ def build(seed=None, qemu=False, highmem=False):
+         ('crypto-hash-method', cstr('sha2-384')),
+         # MobileGestalt's screen class: display-scale (u32, default 0) comes
+         # from /chosen, the pixel size from IOMobileFramebuffer. Scale 0 makes
+-        # SpringBoard's FBSDisplayMode "infxinf@0x" invalid. 1080x2400 @3x =
+-        # 360x800 points (like iPhone X class devices).
+-        ('display-scale', u32(3)),
++        # SpringBoard's FBSDisplayMode "infxinf@0x" invalid. With the 0222 HD
++        # presentation (SweetFramebuffer.cpp: AppleCLCD presents 750x1624)
++        # 750x1624 @2x = 375x812 points, the exact old iPhone X point size:
++        # 1125x2436 @3x (sweetfb_mode=1/4 alternate sizes 828x1792 or 1080x2340).
++        ('display-scale', u32(2)),
+         # XNU derives IOPlatformUUID (gethostuuid) from these on arm; without
+         # them CFPreferences cannot use kCFPreferencesCurrentHost (no ByHost
+         # files), so e.g. DataMigration never records LastSystemVersion and
+@@ -180,14 +182,15 @@ def build(seed=None, qemu=False, highmem=False):
+         node('wdt', [ph(), ('no-pmu', u32(1))]),
+         # Main display: IOMobileFramebuffer.framework counts /arm-io children
+         # with this device_type and reads the canvas size from the node
+-        # (the presented iPhone X size, see SweetFramebuffer.cpp);
+-        # the kernel's AppleCLCD matches the compatible string.
++        # (the presented size, see SweetFramebuffer.cpp: 0222 presents
++        # 750x1624 HD; sweetfb_mode=1/2/4 alternate 1125x2436, 1080x2340,
++        # 828x1792); the kernel's AppleCLCD matches the compatible string.
+         node('disp0', [
+             ph(),
+             ('device_type', cstr('display-subsystem')),
+             ('compatible', cstr('sweet,display')),
+-            ('canvas-width', u32(1125)),
+-            ('canvas-height', u32(2436)),
++            ('canvas-width', u32(750)),
++            ('canvas-height', u32(1624)),
+         ])])
+ 
+     fbcon = node('sweet-fbcon', [
+diff --git a/xnu/patches/0222-sweet-display-hd.patch b/xnu/patches/0222-sweet-display-hd.patch
+new file mode 100644
+index 0000000..93e763a
+--- /dev/null
++++ b/xnu/patches/0222-sweet-display-hd.patch
+@@ -0,0 +1,180 @@
++--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
+++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
++@@ -106,18 +106,21 @@
++  * screens (UIKit: "No status bar visual provider for screen", the red
++  * rdar://45025538 bar for 360x800 points). The display is therefore
++  * presented as a real iPhone screen (sweet_fb_logical_size()):
++- *   sweetfb_mode=3 (default, 0165) iPhone X, 1125x2436, SCALED onto the whole 1080x2400
++- *                  panel: 24 of every 25 columns and 66 to 67 of every 67 to 68 rows (aspect
++- *                  2.5% narrower; nothing cut off, no bands, UIKit's own status bar). 0153
++- *                  hardware: with mode 2 UIKit showed the red rdar://45025538 bar again (no
++- *                  status bar provider for 360x780 points on an iPhone X identity)
+++ *   sweetfb_mode=3 (default, 0222) 750x1624 HD: 375x812 points @2x, the exact size and aspect of
+++ *                  the old iPhone X presentation at 44% fewer pixels, upscaled onto the whole
+++ *                  1080x2400 panel (every presented pixel fills 1 to 2 panel pixels). UIKit only
+++ *                  registers a Split1125 provider for a 1125-wide screen, so this mode may show
+++ *                  the red rdar://45025538 bar again; sweetfb_mode=4 is the escape hatch
+++ *   sweetfb_mode=4 iPhone XR/11 panel, 828x1792 (414x896 points @2x): a real iPhone native size
++  *   sweetfb_mode=2 iPhone 12/13 mini, 1080x2340 (360x780 points @3x): the
++  *                  full width, pixel for pixel, 30 black rows above and below
+++ *                  (0153 hardware: UIKit showed the red rdar://45025538 bar)
++  *   sweetfb_mode=1 iPhone X, 1125x2436 (375x812 points @3x), its centered 1080x2400 shown:
++  *                  23 px cut off left and right (0152 hardware: keyboard keys, the App
++  *                  Library index and "Cancel" cut at the edges)
++  *   sweetfb_mode=0 or sweetfb_native=1: the real 1080x2400 panel (the red status bar)
++- * The ADT's /product artwork-device-subtype must match (2340 / 2436).
+++ * The ADT's /product artwork-device-subtype must match (2340 / 2436 / 1624 / 1792 with the
+++ * matching /chosen display-scale and /product artwork-scale-factor).
++  */
++ extern "C" void
++ sweet_fb_logical_size(uint32_t panelW, uint32_t panelH, uint32_t *w, uint32_t *h)
++@@ -132,35 +135,50 @@
++ 	}
++ 	if (mode == 2) {
++ 		*h = 2340;
++-	} else if (mode == 1 || mode == 3) {
+++	} else if (mode == 1) {
++ 		*w = 1125;
++ 		*h = 2436;
+++	} else if (mode == 3) {
+++		/* 0222: HD presentation, 750x1624 = 375x812 points @2x: the exact iPhone X point
+++		 * geometry and aspect (1125/2436) at 44% fewer pixels. */
+++
+++		*w = 750;
+++		*h = 1624;
+++	} else if (mode == 4) {
+++		/* 0222: alternate HD presentation, exactly the iPhone XR/11 panel (828x1792 @2x =
+++		 * 414x896 points). 828 is one of UIKit's registered status bar widths, so if a
+++		 * 750-wide screen brings back the red rdar://45025538 bar, this is the land-below. */
+++		*w = 828;
+++		*h = 1792;
++ 	}
++ }
++ 
++-/* sweetfb_mode=3: the presented 1125x2436 is scaled onto the 1080x2400 panel (SweetHID maps touch
++- * the same way: the whole display is the whole panel). */
+++/* sweetfb_mode=3 or 4: the presented 750x1624 (or 828x1792) is upscaled onto the 1080x2400 panel
+++ * (SweetHID maps touch the same way: the whole display is the whole panel). */
++ extern "C" bool
++ sweet_fb_scaled(void)
++ {
++ 	int native = 0, mode = 3;
++ 	PE_parse_boot_argn("sweetfb_native", &native, sizeof(native));
++ 	PE_parse_boot_argn("sweetfb_mode", &mode, sizeof(mode));
++-	return !native && mode == 3;
+++	return !native && (mode == 3 || mode == 4);
++ }
++ 
++-/* Panel column -> presented column: 25 presented columns over every 24 panel ones. */
+++/* Panel column -> presented column: floor(px * presentedW / panelW). For the 0222 HD presentation
+++ * (presented smaller than the panel) consecutive panel columns reuse one presented column.
+++ * The old downscale maths (px + px / 24, 1125 presented over 1080 panel columns) is the same
+++ * formula with presentedW = 1125, panelW = 1080. */
++ static inline int32_t
++-sweet_fb_scaled_col(int32_t px)
+++sweet_fb_scaled_col(int32_t px, uint32_t panelW, uint32_t presentedW)
++ {
++-	return px + px / 24;
+++	return (int32_t)(((int64_t)px * presentedW) / panelW);
++ }
++ 
++-/* Panel row -> presented row: 2436 over 2400, py + floor(36 py / 2400). */
+++/* Panel row -> presented row. */
++ static inline int32_t
++-sweet_fb_scaled_row(int32_t py)
+++sweet_fb_scaled_row(int32_t py, uint32_t panelH, uint32_t presentedH)
++ {
++-	return py + (py * 3) / 200;
+++	return (int32_t)(((int64_t)py * presentedH) / panelH);
++ }
++ #define SWEET_FB_FORMAT_BGRA            0x42475241
++ 
++@@ -244,7 +262,7 @@
++ 	uint32_t      fLogicalW, fLogicalH;     /* size reported to userland */
++ 	int32_t       fOffX, fOffY;             /* logical origin of the panel */
++ 	uint32_t      fBandClears;              /* presents since start: band clearing cadence */
++-	bool          fScaled;                  /* sweetfb_mode=3: 1125x2436 scaled onto 1080x2400 */
+++	bool          fScaled;                  /* sweetfb_mode=3/4: presented upscaled onto 1080x2400 */
++ 	void          copyScaled(uintptr_t src, uint32_t srcBpr, int32_t lx, int32_t ly, int32_t lw, int32_t lh);
++ 	uintptr_t     fPixels;          /* kernel mapping of the panel memory */
++ 	IOMemoryMap  *fMap;
++@@ -1654,43 +1672,63 @@
++ 
++ /*
++  * Copy the presented rectangle (lx, ly, lw, lh), whose top-left texel is at `src` (rows srcBpr
++- * apart), to the panel rows and columns that map into it: runs of up to 24 columns per memcpy.
+++ * apart), to the panel rows and columns that show it. The 0222 presentation is smaller than the
+++ * panel, so this is nearest-neighbour upscaling: every presented pixel fills 1 to 2 panel pixels,
+++ * written as one 64-bit store when both neighbours show the same presented pixel.
++  */
++ void
++ AppleCLCD::copyScaled(uintptr_t src, uint32_t srcBpr, int32_t lx, int32_t ly, int32_t lw, int32_t lh)
++ {
++-	/* First panel column/row whose presented column/row is >= lx/ly, and the end ones. */
++-	int32_t px0 = (lx * 24 + 24) / 25, px1 = ((lx + lw) * 24 + 24) / 25;
++-	int32_t py0 = (ly * 200 + 202) / 203, py1 = ((ly + lh) * 200 + 202) / 203;
++-	while (px0 > 0 && sweet_fb_scaled_col(px0 - 1) >= lx) {
+++	/* First panel column/row drawn from presented lx/ly (ceil(lx * fWidth / fLogicalW)), and the
+++	 * first one past the rectangle. */
+++	int32_t px0 = (int32_t)(((int64_t)lx * fWidth + fLogicalW - 1) / fLogicalW);
+++	int32_t px1 = (int32_t)(((int64_t)(lx + lw) * fWidth + fLogicalW - 1) / fLogicalW);
+++	int32_t py0 = (int32_t)(((int64_t)ly * fHeight + fLogicalH - 1) / fLogicalH);
+++	int32_t py1 = (int32_t)(((int64_t)(ly + lh) * fHeight + fLogicalH - 1) / fLogicalH);
+++	while (px0 > 0 && sweet_fb_scaled_col(px0 - 1, fWidth, fLogicalW) >= lx) {
++ 		px0--;
++ 	}
++-	while (px0 < (int32_t)fWidth && sweet_fb_scaled_col(px0) < lx) {
+++	while (px0 < (int32_t)fWidth && sweet_fb_scaled_col(px0, fWidth, fLogicalW) < lx) {
++ 		px0++;
++ 	}
++-	while (px1 > px0 && sweet_fb_scaled_col(px1 - 1) >= lx + lw) {
+++	while (px1 > px0 && sweet_fb_scaled_col(px1 - 1, fWidth, fLogicalW) >= lx + lw) {
++ 		px1--;
++ 	}
++-	while (py0 > 0 && sweet_fb_scaled_row(py0 - 1) >= ly) {
+++	while (py0 > 0 && sweet_fb_scaled_row(py0 - 1, fHeight, fLogicalH) >= ly) {
++ 		py0--;
++ 	}
++-	while (py0 < (int32_t)fHeight && sweet_fb_scaled_row(py0) < ly) {
+++	while (py0 < (int32_t)fHeight && sweet_fb_scaled_row(py0, fHeight, fLogicalH) < ly) {
++ 		py0++;
++ 	}
++-	while (py1 > py0 && sweet_fb_scaled_row(py1 - 1) >= ly + lh) {
+++	while (py1 > py0 && sweet_fb_scaled_row(py1 - 1, fHeight, fLogicalH) >= ly + lh) {
++ 		py1--;
++ 	}
++ 	px1 = px1 > (int32_t)fWidth ? (int32_t)fWidth : px1;
++ 	py1 = py1 > (int32_t)fHeight ? (int32_t)fHeight : py1;
++ 	for (int32_t py = py0; py < py1; py++) {
++-		const uintptr_t srow = src + (uint64_t)(sweet_fb_scaled_row(py) - ly) * srcBpr;
+++		const uintptr_t srow = src + (uint64_t)(sweet_fb_scaled_row(py, fHeight, fLogicalH) - ly) * srcBpr;
++ 		uint8_t *drow = (uint8_t *)(fDraw + (uint64_t)py * fRowBytes);
+++		/* Panel pixel px shows presented pixel floor(px * fLogicalW / fWidth); advanced without a
+++		 * division: the remainder over fWidth grows by fLogicalW (< fWidth) per panel pixel. */
+++		int32_t sx = (int32_t)(((int64_t)px0 * fLogicalW) / fWidth);
+++		uint32_t rem = (uint32_t)(((int64_t)px0 * fLogicalW) % fWidth);
++ 		for (int32_t px = px0; px < px1;) {
++-			int32_t end = (px / 24 + 1) * 24;
++-			end = end > px1 ? px1 : end;
++-			memcpy(drow + (uint64_t)px * 4, (const void *)(srow + (uint64_t)(sweet_fb_scaled_col(px) - lx) * 4),
++-			    (size_t)(end - px) * 4);
++-			px = end;
+++			const uint32_t v = *(const uint32_t *)(srow + (uint64_t)(sx - lx) * 4);
+++			const uint32_t next = rem + fLogicalW;
+++			if ((px & 1) == 0 && px + 1 < px1 && next < fWidth) {
+++				/* px and px+1 both show presented pixel sx: one 8-byte store. */
+++				*(uint64_t *)(drow + (uint64_t)px * 4) = (uint64_t)v | ((uint64_t)v << 32);
+++				px += 2;
+++				rem = next + fLogicalW;
+++			} else {
+++				*(uint32_t *)(drow + (uint64_t)px * 4) = v;
+++				px++;
+++				rem = next;
+++			}
+++			if (rem >= fWidth) {
+++				rem -= fWidth;
+++				sx++;
+++			}
++ 		}
++ 	}
++ }
+-- 
+2.51.0
+

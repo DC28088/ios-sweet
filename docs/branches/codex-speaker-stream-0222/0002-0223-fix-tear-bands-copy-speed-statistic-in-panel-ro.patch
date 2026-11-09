@@ -1,0 +1,63 @@
+From 9415b5a8a2f933d0052ecf83689aae3a93409154 Mon Sep 17 00:00:00 2001
+From: OpenCode <opencode@localhost>
+Date: Sun, 8 Nov 2026 00:09:27 +0530
+Subject: [PATCH 2/2] 0223: fix tear bands: copy-speed statistic in panel rows,
+ not presented
+
+present() measured copy_ns / h with h = the presented damage height. The
+upscaled full frame covers fHeight = 2400 panel rows for h = 1624 presented
+rows, so fCopyRowNs ran 1.478x high and beamWait() - which models rows as
+panel rows - started the copy ~290 scan lines too early: the scan caught the
+copy mid-frame and every animated full-frame present showed a horizontal
+tear band (reported at 750x1624 as 'flicker when anything moves').
+
+Also fix the mode 1 (1125x2436 downscale) column map: the rem advance could
+need two subtractions per store; the single if left rem above fWidth and
+desynchronised sx (2.5M errors in simulation). The while loop is exact for
+every supported canvas.
+
+Co-Authored-By: dipa-studio <183933817+dipa-studio@users.noreply.github.com>
+
+diff --git a/xnu/patches/0223-sweet-display-copy-speed.patch b/xnu/patches/0223-sweet-display-copy-speed.patch
+new file mode 100644
+index 0000000..acf3a4f
+--- /dev/null
++++ b/xnu/patches/0223-sweet-display-copy-speed.patch
+@@ -0,0 +1,34 @@
++--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
+++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
++@@ -1589,8 +1589,17 @@
++ 			uint64_t copy_ns = 0;
++ 			absolutetime_to_nanoseconds(mach_absolute_time() - copy_began, &copy_ns);
++ 			__atomic_add_fetch(&fStatsCopyUs, copy_ns / NSEC_PER_USEC, __ATOMIC_RELAXED);
++-			if (h >= 256 && w >= (int32_t)fLogicalW / 2) {
++-				const uint64_t row = copy_ns / (uint64_t)h;
+++			/* 0223: the copy wall time must be divided by the PANEL rows it
+++			 * actually wrote, not by h (presented rows). The upscale damage
+++			 * covers fHeight rows for one full presented height (1624 presented
+++			 * -> 2400 panel): per presented row the old statistic ran 1.478x high,
+++			 * so beamWait() - which models `rows` as panel rows - started the
+++			 * copy far too early and the scan caught it mid-frame: the horizontal
+++			 * tear bands seen when anything moved. */
+++			const int32_t prow = sweet_fb_scaled_row((int32_t)(dy + h), fHeight, fLogicalH) -
+++			    sweet_fb_scaled_row((int32_t)dy, fHeight, fLogicalH);
+++			if (prow >= 256 && w >= (int32_t)fLogicalW / 2) {
+++				const uint64_t row = copy_ns / (uint64_t)prow;
++ 				fCopyRowNs = fCopyRowNs ? (fCopyRowNs * 3 + row) / 4 : row;
++ 			}
++ 			s->release();
++@@ -1725,7 +1734,10 @@
++ 				px++;
++ 				rem = next;
++ 			}
++-			if (rem >= fWidth) {
+++			while (rem >= fWidth) {
+++				/* 0223: a loop - a presented column wider than the panel (mode 1,
+++				 * 1125 over 1080) can need two subtractions per 32-bit store;
+++				 * single-wrap left rem above fWidth and desynchronised sx. */
++ 				rem -= fWidth;
++ 				sx++;
++ 			}
+-- 
+2.51.0
+

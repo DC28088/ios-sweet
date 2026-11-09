@@ -1,0 +1,178 @@
+From 20f1d165692698aa4376efc4368fb9a9bb1c6032 Mon Sep 17 00:00:00 2001
+From: OpenCode <opencode@localhost>
+Date: Thu, 5 Nov 2026 22:23:32 +0530
+Subject: [PATCH 10/11] iserv: add scoped repair for inaccessible ADI template
+ directories
+
+
+diff --git a/NOTES.md b/NOTES.md
+index bab5818..d357e95 100644
+--- a/NOTES.md
++++ b/NOTES.md
+@@ -1,3 +1,20 @@
++## 2026-11-05: confirmed MID -80009; ADI inaccessible directories repaired; awaiting retest
++- USER: continue Apple ID, do not clash with OpenCode/DeepSeek audio. Main checkout/NOTES dirty from audio:
++  left untouched; own isolated iServices worktree only. No reboot or audio process/config change.
++- 0209 logs confirm server "MID is invalid", ec=-80009. ADI finalization remains -42410 on reproduction.
++  Error syscall 398 = open_nocancel ENOENT; no justified generic success-return changes.
++- Found com.apple.adid's Documents, Library, Library/Caches, Library/Preferences, tmp had mode 000,
++  UID/GID 4294967294. Entitlement-free native helper as mobile 501:501 confirmed EACCES on all five.
++- Saved exact original metadata privately in chat work/iserv-runtime; repaired ONLY those five existing
++  directories to 501:501 mode 0700. Native mobile write/search access now passes for all five.
++  Container root and metadata file untouched; no account contents read/erased/changed by agent. Helper removed.
++- USER asked for one login retest on same boot; outcome pending. This fixes observed storage access only,
++  Apple ID success NOT established. Avoid claiming -42410's cause from the permissions observation alone.
++- New tools/sweet-adid-storage.py for a mounted root: inspect default; scoped exact invalid-template repair,
++  external private backup required; unexpected states/symlinks refused. Python compile/help and disposable
++  fixture refusal checks pass. Not run against a mounted phone image; live repair separately verified.
++- Raw captures, container UUIDs, backup metadata remain private outside Git. Handoff/docs sanitized.
++
+ ## 2026-11-05: 0209 temporarily booted; clean fairplayd exit confirmed; awaiting native reproduction
+ - USER entered fastboot. Sending + Booting OKAY for the previously verified 0209 image; no flash.
+ - Pre-boot receiver offset saved in chat workspace work/iserv-runtime/0209-capture-start.json.
+diff --git a/docs/ISERV_DIAGNOSTICS.md b/docs/ISERV_DIAGNOSTICS.md
+index fdf6a31..8c28c20 100644
+--- a/docs/ISERV_DIAGNOSTICS.md
++++ b/docs/ISERV_DIAGNOSTICS.md
+@@ -27,3 +27,30 @@ attestation requirements are satisfied.
+ 
+ Local validation: patch apply check against the prepared 0207 source passed;
+ whitespace check passed. A full kernel compile and hardware test remain pending.
++
++## Observed ADI storage repair
++
++On the native 0209 reproduction, the server's exact text/code was captured:
++`MID is invalid`, `ec=-80009`. ADI finalization separately returned -42410.
++
++Read-only inspection found the `com.apple.adid` system container's Documents,
++Library, Library/Caches, Library/Preferences and tmp directories had mode 000
++and UID/GID 4294967294. A temporary entitlement-free native check, running
++as mobile UID/GID 501, returned EACCES for write/search access to every one.
++
++Saved their original metadata privately and changed only these five existing
++standard directories to UID/GID 501, mode 0700. The mobile access check then
++passed for all five. Container root and metadata file, account contents,
++audio code/processes and boot state were not changed. No service success is
++claimed until native login is retested.
++
++`tools/sweet-adid-storage.py` can inspect a separately mounted root and repair
++this exact invalid-template signature. Default is inspect-only. Applying
++requires a new private backup outside the mounted root; unexpected ownership
++or modes and symlinks are refused. It does not enumerate account files.
++
++Validation: Python compilation and CLI help passed. A disposable root fixture
++confirmed inspection, refusal of unexpected metadata without mutation, and
++refusal of symlink candidates. The actual phone repair was performed separately
++with scoped SSH chmod/chown and verified by a native mobile-UID access check;
++the mounted-root Python tool has not been applied to a mounted phone image.
+diff --git a/tools/sweet-adid-storage.py b/tools/sweet-adid-storage.py
+new file mode 100644
+index 0000000..a6e4eac
+--- /dev/null
++++ b/tools/sweet-adid-storage.py
+@@ -0,0 +1,102 @@
++#!/usr/bin/env python3
++"""Inspect/repair the observed invalid ADI container template in a mounted iOS root.
++
++Only com.apple.adid's five standard directories are eligible. No account files,
++container root permissions, container metadata, or other services are changed.
++Default is inspect-only. Apply requires an external, newly created backup file.
++"""
++import argparse
++import json
++import os
++from pathlib import Path
++import plistlib
++import stat
++
++IDENTIFIER = 'com.apple.adid'
++DIRECTORIES = ('Documents', 'Library', 'Library/Caches', 'Library/Preferences', 'tmp')
++MOBILE = 501
++INVALID_OWNER = 4294967294
++
++
++def inspect(root):
++    if not (root / 'usr/libexec/adid').is_file():
++        raise ValueError('Root must contain usr/libexec/adid')
++    base = root / 'private/var/containers/Data/System'
++    matches = []
++    for metadata in base.glob('*/.com.apple.mobile_container_manager.metadata.plist'):
++        if metadata.is_symlink() or not metadata.resolve().is_relative_to(root):
++            continue
++        with metadata.open('rb') as stream:
++            data = plistlib.load(stream)
++        if data.get('MCMMetadataIdentifier') == IDENTIFIER:
++            matches.append(metadata.parent)
++    if len(matches) != 1:
++        raise ValueError(f'Expected exactly one ADI container; found {len(matches)}')
++    container = matches[0]
++    rows = []
++    for relative in DIRECTORIES:
++        path = container / relative
++        info = path.lstat()
++        if not stat.S_ISDIR(info.st_mode) or not path.resolve().is_relative_to(root):
++            raise ValueError(f'{relative}: expected a directory inside the mounted root')
++        mode = stat.S_IMODE(info.st_mode)
++        damaged = info.st_uid == INVALID_OWNER and info.st_gid == INVALID_OWNER and mode == 0
++        repaired = info.st_uid == MOBILE and info.st_gid == MOBILE and mode == 0o700
++        rows.append({'relative': relative, 'uid': info.st_uid, 'gid': info.st_gid,
++                     'mode': mode, 'action': 'repair' if damaged else 'already repaired' if repaired else 'unrecognized'})
++    return container, rows
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument('--root', type=Path, required=True, help='Mounted iOS root directory')
++    parser.add_argument('--apply', action='store_true')
++    parser.add_argument('--backup', type=Path, help='New private JSON file outside the mounted root')
++    args = parser.parse_args()
++    root = args.root.resolve(strict=True)
++    container, rows = inspect(root)
++    for row in rows:
++        print(f"{row['relative']}: uid={row['uid']} gid={row['gid']} mode={row['mode']:03o}: {row['action']}")
++    if not args.apply:
++        return
++    if any(row['action'] == 'unrecognized' for row in rows):
++        raise ValueError('Unexpected permissions: no changes made')
++    targets = [row for row in rows if row['action'] == 'repair']
++    if not targets:
++        print('No repair needed')
++        return
++    if args.backup is None:
++        raise ValueError('--apply requires --backup')
++    backup = args.backup.resolve()
++    if backup.is_relative_to(root):
++        raise ValueError('Backup must be outside the mounted root')
++    fd = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
++    with os.fdopen(fd, 'w') as stream:
++        json.dump({'identifier': IDENTIFIER, 'container_relative': str(container.relative_to(root)),
++                   'directories': rows}, stream, indent=2)
++        stream.write('\n')
++    changed = []
++    try:
++        for row in targets:
++            path = container / row['relative']
++            # Recheck immediately before mutation; refuse changed types/permissions.
++            info = path.lstat()
++            if not stat.S_ISDIR(info.st_mode) or (info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode)) != (row['uid'], row['gid'], row['mode']):
++                raise ValueError(f"{row['relative']}: metadata changed since inspection")
++            changed.append(row)
++            os.chown(path, MOBILE, MOBILE, follow_symlinks=False)
++            os.chmod(path, 0o700, follow_symlinks=False)
++            check = path.lstat()
++            if (check.st_uid, check.st_gid, stat.S_IMODE(check.st_mode)) != (MOBILE, MOBILE, 0o700):
++                raise RuntimeError(f"{row['relative']}: repair verification failed")
++    except Exception:
++        for row in reversed(changed):
++            path = container / row['relative']
++            os.chown(path, row['uid'], row['gid'], follow_symlinks=False)
++            os.chmod(path, row['mode'], follow_symlinks=False)
++        raise
++    print(f'Repaired {len(targets)} standard ADI directories; contents unchanged')
++
++
++if __name__ == '__main__':
++    main()
+-- 
+2.51.0
+
