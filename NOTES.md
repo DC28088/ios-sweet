@@ -1,3 +1,13 @@
+## 2026-11-10 01:30 IST: CRACK LINE SOLVED (live): panel awake + black frame + DCS 0x51 = 0 -> fully dark; xnu 0242 builds
+- USER: the line is a physical crack, always visible while lit; Android darkens it while asleep.
+- 2402 (0240 + sweetpanelsleep=0: CPU fade to black, panel awake, no 28/10): line still visible; log: brightness stayed
+  892 on display off (no DCS sent). Live while locked: `panel.sh bl 0` (DCS 0x51 0) -> USER "the line disappeared";
+  unlock -> normal brightness; next lock -> line back (one-shot poke). So: sleep-in shows it, VCI cut kills wake,
+  awake + black + brightness 0 = dark.
+- xnu 0242 (main 0178876, CI 42629741309 with 0241): sweetpanelsleep default 2 = fade to black + DCS 51 0 after
+  120 ms on display off, wanted level resent on display on; 1 = old DCS 28/10, 0 = fade only.
+- xnu 0241 (same build): IPA QMI 0x27/0x24 success, 0x23 rule ids + FILTER_INSTALLED_NOTIF (only with sweetipa=1).
+
 ## 2026-11-10 00:30 IST: 2401 data test: INIT_DRIVER ACCEPTED, handshake complete, endpoints open; then kernel panic
 - 2401 (0240 kernel + sweetipa=1, wland 0241): "INIT_DRIVER answer: ok 1", INIT_COMPLETE, "modem endpoints open, channel
   states TX 0:2 RX 3:2; pdp_ip0..3 = mux 1..4", rmnet_ipa0 up. Modem then sent IPA QMI 0x27 (63 B) and 0x23
