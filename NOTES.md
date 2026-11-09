@@ -31,6 +31,7 @@
   in boot ROM (0x4032 "02 06"), and every later iOS boot inherited that. Recovery when touch is dead: boot OrangeFox once,
   then reboot bootloader -> fastboot boot. TODO kernel: do the Linux power-on itself (vdd-gpio 90 high, reset-gpio 8
   low->high pulse, wait for fw) and re-probe on a zero info page.
+- USER: "touch now works" on 0242 (boot from 720096). Current phone state: 0242 running, crack-line fix + touch OK.
 
 ## 2026-11-10 01:30 IST: CRACK LINE SOLVED (live): panel awake + black frame + DCS 0x51 = 0 -> fully dark; xnu 0242 builds
 - USER: the line is a physical crack, always visible while lit; Android darkens it while asleep.
