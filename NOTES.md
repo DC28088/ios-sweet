@@ -2,8 +2,12 @@
 - Packaged USB build-2421/shim-boot-2421.img ba4984da3378 (kernel 99574bce = 0242, CI 42629741309, main 0178876) with
   scripts/package-any.py 2421 ... "sweetpanelvci=0 sweetmotion=0xbf sweetipa=1"; cmdline = 0242's + sweetipa=1.
   fastboot boot OKAY. Log boot-0225-3.txt from line 770461.
-- Expect: INIT_DRIVER ok -> modem QMI 0x27/0x23 now answered + FILTER_INSTALLED_NOTIF (0241 code); 2401 panicked ~25 s
-  after the unanswered 0x23. Result: pending.
+- RESULT (log): INIT_DRIVER ok 1, INIT_COMPLETE, endpoints open, rmnet_ipa0 up; 0x27 "answered success"; 0x23 install
+  filter rule (8 rules logged) "answered (13 ids) -> 0; FILTER_INSTALLED_NOTIF ... -> 0"; modem then sent 0x24 on the
+  client port. pdp_ip0..3 registered (initially down). CommCenter crashed once (sig 11, as on 2401) and restarted.
+  Data port set up (DPM open 0, WDA data format 0, 25 held binds sent); WDS 0xa2 replies for mux 1..5, active 0.
+  NO PANIC so far (log kept growing past the 2401 panic point). No WDS Start Network (svc 1 msg 0x20) seen yet ->
+  pdp_ip still down. Next: USER checks status bar / toggles Cellular Data; then look for svc 0x1 msg 0x20 in the log.
 
 ## 2026-11-10 02:00 IST: 0242 BOOTED (crack-line fix + 0241 IPA QMI); awaiting USER lock/unlock check
 - CI 42629741309 (main 0178876) green. Image USB build-0242/shim-boot-0242.img 17402d096639 (kernel 99574bce), extras
