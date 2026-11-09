@@ -1,0 +1,94 @@
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index 9934911..5fbc9a2 100644
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -204,10 +204,12 @@ class AppleARMBacklight : public IOService {
+ 	void           request(uint32_t level, uint32_t value);
+ 	IOLock        *fDsiLock;                   /* 0200: one DSI command at a time */
+ 	bool           fPanelWant, fPanelAsleep;   /* 0200: requested / current panel sleep */
++	bool           fBlankWant, fBlanked;       /* 0242: requested / current brightness-0 blank */
+ public:
+ 	bool start(IOService *provider) APPLE_KEXT_OVERRIDE;
+ 	IOReturn setProperties(OSObject *properties) APPLE_KEXT_OVERRIDE;
+ 	void           panelSleep(bool off);       /* 0200: from RequestPowerChange */
++	void           blank(bool off);            /* 0242: DCS 0x51 = 0 while off, panel kept awake */
+ };
+ /*
+  * 0200: panel sleep while the display is off (sweetpanelsleep=1). The K6 38/0c/0a panel's DT
+@@ -796,10 +798,32 @@ AppleARMBacklight::applyCall(thread_call_param_t owner, thread_call_param_t)
+ 			break;
+ 		}
+ 	}
++	/*
++	 * 0242: sweetpanelsleep=2 (default): the display-off frame is faded to black and the panel stays awake (no
++	 * DCS 28/10, no power cut), then DCS 0x51 = 0. Hardware 2026-11-10: the crack line stays lit in the panel's
++	 * sleep-in state and with VCI cut the panel never woke; awake + black frame + brightness 0 is fully dark
++	 * (as OrangeFox), and the brightness comes back on unlock.
++	 */
++	IOLockLock(bl->fLock);
++	const bool blankWant = bl->fBlankWant;
++	IOLockUnlock(bl->fLock);
++	if (blankWant && !bl->fBlanked) {
++		IOSleep(120);                 /* the CPU fade (7 vsyncs) reaches black first */
++		const int e = bl->sendLevel(0);
++		bl->fBlanked = true;
++		bl->fSent = 0;
++		static unsigned blogged;
++		if (blogged++ < 20 || e) {
++			IOLog("SWEET PANEL: blank: brightness 0 -> %d (panel awake)\n", e);
++		}
++	} else if (!blankWant && bl->fBlanked) {
++		bl->fBlanked = false;
++		bl->fSent = 0;                /* the wanted level goes out below */
++	}
+ 	IOLockLock(bl->fLock);
+ 	const uint32_t level = bl->fWanted;
+ 	IOLockUnlock(bl->fLock);
+-	if (bl->fPanelAsleep || level == 0 || level == bl->fSent || bl->fFailures >= 4) {
++	if (bl->fPanelAsleep || bl->fBlanked || level == 0 || level == bl->fSent || bl->fFailures >= 4) {
+ 		IOLockUnlock(bl->fDsiLock);
+ 		return;
+ 	}
+@@ -812,6 +836,15 @@ AppleARMBacklight::applyCall(thread_call_param_t owner, thread_call_param_t)
+ 	IOLockUnlock(bl->fDsiLock);
+ }
+ 
++void
++AppleARMBacklight::blank(bool off)
++{
++	IOLockLock(fLock);
++	fBlankWant = off;
++	IOLockUnlock(fLock);
++	thread_call_enter(fCall);
++}
++
+ void
+ AppleARMBacklight::panelSleep(bool off)
+ {
+@@ -2061,7 +2094,7 @@ IOMobileFramebufferUserClient::externalMethod(uint32_t selector, IOExternalMetho
+ 		if (args->scalarInputCount >= 1) {
+ 			bool off = args->scalarInput[0] == 0;
+ 			if (sweet_panel_sleep < 0) {
+-				int ps = 1;     /* 0203: on by default (0202 tested on the phone); sweetpanelsleep=0 off */
++				int ps = 2;     /* 0242: 2 = black frame + brightness 0, panel awake (default); 1 = DCS 28/10 (0203); 0 = fade only */
+ 				PE_parse_boot_argn("sweetpanelsleep", &ps, sizeof(ps));
+ 				sweet_panel_sleep = ps;
+ 			}
+@@ -2085,13 +2118,16 @@ IOMobileFramebufferUserClient::externalMethod(uint32_t selector, IOExternalMetho
+ 			if (change && panel) {
+ 				sweet_backlight->panelSleep(off);
+ 			}
++			if (change && sweet_panel_sleep == 2 && sweet_backlight != NULL) {
++				sweet_backlight->blank(off);
++			}
+ 			bool wasDark = __atomic_load_n(&sweet_display_dark, __ATOMIC_ACQUIRE) != 0;
+ 			sweet_dark_set(off);    /* 0200: pollers slow down / restart, CPU clocks (sweetdark=0: no-op) */
+ 			if (!off && wasDark && fFB->fVsync != NULL) {
+ 				__atomic_store_n(&fFB->fDarkKick, true, __ATOMIC_RELEASE);
+ 				fFB->fVsync->wakeAtTime(mach_absolute_time());  /* 0200: full rate now, not after a 500 ms tick */
+ 			}
+-			IOLog("SWEET FB: display %s%s\n", off ? "off" : "on", panel ? " (panel sleep)" : "");
++			IOLog("SWEET FB: display %s%s\n", off ? "off" : "on", panel ? " (panel sleep)" : sweet_panel_sleep == 2 ? " (black + brightness 0)" : "");
+ 		}
+ 		break;
+ 	case kSweetFBSwapWait:
