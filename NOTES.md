@@ -1,3 +1,24 @@
+## 2026-11-09 09:30 IST: USER away 8 h: 9-build plan (sleep 2, perf 3, wifi+cell 2, sensors+mic 2); builds on separate branches
+- USER plan: each track its own CI build(s), tested later one by one, then combined. Branches all from claude/speaker-0224 (83efd1b).
+- 0229 hardware (+ live /dev/pmem pokes on 0229 and 0227-novci): line gone, wake black. Findings: LANE_CTRL 0x01000000 (no
+  forced HS clock). DCS reads never return while video streams (RDBK_DATA_CTRL 0x1d0 count 0; ABL leaves 0x29). Whole on-command
+  resent live in HS: still black. Stopping only the DSI video engine while INTF_1 runs -> FIFO 0xdddd.... errors, lanes idle,
+  DSI soft reset does not restart it. Reading MDP from userland (/dev/pmem 0xae00000/0xae01000 region) FROZE the phone: do not.
+  INTF_TIMING_ENGINE_EN is offset 0 (INTF_1 0xae6b800, en=1 in the kernel's beam probe). 0227-novci locked: sleep-in again (HS)
+  and brightness 0 do not touch the line; DT pm6150l amoled (ab/ibb/oledb, swire) is status disabled -> VCI cut is the only lever.
+- Sleep 1 **xnu 0230** (claude/sleep-0230 18ba975, CI 42554715454): cold link restart: sleep 28/10 -> INTF_1 off -> DSI video off
+  (LP-11) -> DCS read 0x0A -> reset low -> VCI off; wake VCI on -> reset pulse -> clear errors -> on-command (LP, cmd mode) ->
+  read 0x0A -> DSI video on -> INTF_1 on. sweetpanelcold=1 default (0 = 0229).
+- Sleep 2 **xnu 0231** (claude/sleep-0231, CI 42554742586): same, default sweetpanelcold=7 (+ DSI soft reset with ABL snapshot
+  restore of changed config regs, + CTL0 INTF/flush).
+- Wi-Fi/cell 1 **xnu 0232 + wland 0019** (claude/wifi-0232, CI xnu 42555062063, wifi 42555065429): active scan (wildcard
+  probe, 40/110 ms dwell; DFS stays passive by channel flags), scan requests answered at once from a <30 s list + refresh;
+  kernel traces WMS(SMS)/NAS QMI headers (no TLVs). Package with sweetpanelvci=0.
+- Wi-Fi/cell 2 **wland 0020** (claude/wifi-0233, CI wifi 42555134319; kernel = 0232): rescan every 20 s while not joined and the
+  display is on. Package with sweetipa=1 (IPA data path retest; 0194 trace never booted; 0193 panicked after INIT_DRIVER).
+- Pixel 5 reference the USER named: not found locally or on GitHub (searched ios-flame forks, redfin); used ios-flame/sunfish.
+- Non-sleep images must carry sweetpanelvci=0 (0229 base cuts VCI -> black wake).
+
 ## 2026-11-09 03:30 IST: 0228 hardware: re-init sent but still black -> 0229 adds the panel reset pulse
 - 0228 boot: sleep 28/10 + VCI off; wake VCI on + "K6 re-init 45/45 commands, 0 needed HS, PPS split 0, ~310 ms -> 0"
   (90-byte 9E went through the FIFO whole, LP) + 51 level restored. USER: screen stays black. => DDIC ignores the
