@@ -1,3 +1,13 @@
+## 2026-11-09 18:20 IST: 0234 tested; wland 0239 (scan fix on the 0004 stack + boot-session guard) installed for next boot
+- 0234 boot (log boot-0225-3.txt from line 428768), wland 0004: USER: Wi-Fi + SIM work, Settings no longer crashes;
+  animation improvement "there" but not very noticeable. Log: copy_avg_us 3.5-5.4 ms (was 8.4 ms one-thread), 0-1 missed
+  deadlines per 10 s.
+- wland 0239 (branch claude/wifi-0239 7fa30a5, CI 42603119802 OK): patches 0001-0004 + 0005 fast scan (= old 0019, applied
+  unchanged) + 0006 fresh list (= old 0020) + 0007 boot stamp keyed on kern.bootsessionuuid; workflow = the 0004-era
+  build step. wland 5eb59683, artifact on USB build-0239/art.
+- Phone: /var/local/bin/wland = 0239 (effective NEXT boot; old stamp "50" will not match a UUID). Rollback:
+  cp /var/local/bin/wland-0004 /var/local/bin/wland (ef9a6d24). wland.running-0004 = the inode the current process runs.
+
 ## 2026-11-09 17:05 IST: 0232 boot: Wi-Fi + SIM DOWN; wland boot-guard bug; wland-0232 crashed the modem; 0004 restored
 - Boot-guard BUG (also explains past "wland refuses / died" cases): /var/local/wland.boot stores "boot %ld" = boot time in
   seconds, and the phone clock restarts at the same fake 1969 epoch every boot -> 0231 and 0232 were both "boot 47" ->
