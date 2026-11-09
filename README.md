@@ -4,13 +4,13 @@
 
 This project ports Apple's open-source XNU kernel (xnu-8796, the iOS 16 generation) to the Xiaomi Redmi Note 10 Pro (`sweet`, Qualcomm SM7150 / Snapdragon 732G). On top of it runs the **unmodified iOS 16.7.16 (20H392) userland of the iPhone X**: launchd, the system daemons, backboardd, SpringBoard and the stock apps.
 
-As of **2026-11-06**, the phone boots to the **iOS home screen with Metal GPU acceleration, working touch and hardware buttons, Wi-Fi, Bluetooth audio, Safari video playback, smooth haptics, and incoming/outgoing cellular calls**. Animations are smoother than earlier builds, and no visual bugs remain in current device testing, but a stable 60 fps is not yet achieved. Speaker audio partially works; general application speaker audio is still in progress.
+As of **2026-11-09**, the phone boots to the **iOS home screen with Metal GPU acceleration, working touch and hardware buttons, Wi-Fi with an instant network list, the SIM (calls), built-in speaker audio for apps, Bluetooth audio, Safari video playback, smooth haptics, and screen sleep/wake**. Motion and light sensors now stream into iOS. Animations still run at about 37 fps and apps open with a short delay.
 
 > Experimental bring-up, not a daily-driver phone OS. Apple's security model is largely disabled. The iOS root occupies `userdata` and replaces Android's user data. Keep partition backups and do not store personal data on this installation.
 
 ## What works
 
-These are results from the development phone, not a compatibility guarantee for every build. Implementation work spans development branches, including [`codex/native-adreno-metal`](https://github.com/DC28088/ios-sweet/tree/codex/native-adreno-metal) and [`codex/speaker-stream-0218`](https://github.com/DC28088/ios-sweet/tree/codex/speaker-stream-0218); the default branch does not yet contain all of that work.
+These are results from the development phone, not a compatibility guarantee for every build. All work is on `main`; the records of the former side branches are in [`docs/branches/`](docs/branches/README.md).
 
 | Area | Current result |
 | --- | --- |
@@ -18,14 +18,16 @@ These are results from the development phone, not a compatibility guarantee for 
 | Touch | Goodix GT9896 touchscreen over GENI I²C, with RPMh power and HID digitizer events; gestures work |
 | Hardware buttons | Power and volume buttons through PMIC/SPMI and HID consumer keys; lock/wake works |
 | GPU / Metal | Adreno 618 renders the iOS UI through native Metal. Animations are smoother than earlier builds, with no remaining visual bugs reported in current testing; stable 60 fps is still in progress |
-| Wi-Fi | WCN3990 scans, joins WPA2 networks, obtains a DHCP address and loads web pages |
+| Wi-Fi | WCN3990 scans, joins WPA2 networks, obtains a DHCP address and loads web pages. Active scanning: the network list appears instantly once the radio is up (boot daemon [`userspace/wifi/wland-0239`](userspace/wifi/wland-0239/README.md)). Known issue: on about 1 boot in 3 the modem firmware crashes right after start (Wi-Fi and SIM down until the next reboot) |
 | Bluetooth | WCN3990 transport and pairing work; audio playback through Bluetooth headphones is confirmed |
 | Safari video | Video playback works smoothly, with audio through Bluetooth headphones |
-| Speaker audio | Partially working: built-in speakers produce diagnostic tones; general application speaker audio is still in progress |
+| Speaker audio | Works: app audio through the built-in speakers (ADSP AFE/ADM path, Awinic amplifiers), instant start/stop |
 | Haptics | Normal iOS haptics work smoothly |
-| Cellular | Incoming and outgoing calls work; mobile data remains unfinished |
+| Cellular | Incoming and outgoing calls work; SMS and mobile data remain unfinished |
 | Live USB debugging | Kernel console streamed over USB CDC-ECM networking; SSH and a kernel file server support live diagnosis and userspace updates |
-| Battery and charging | PM6150 fuel-gauge voltage/current, charge counting and battery percentage; charger plug/unplug state is reported |
+| Battery and charging | PM6150 fuel-gauge voltage/current, charge counting and battery percentage; charger plug/unplug state is reported; the locked battery drain is fixed |
+| Sleep | Lock/unlock blanks and restores the display (panel sleep commands, lower clocks and slower pollers while dark). Cutting panel power while locked is not usable yet: the panel stays black after power returns |
+| Sensors | The ADSP sensor hub (SEE) is up: accelerometer, gyroscope, light, proximity and magnetometer are found and stream into iOS's HID sensor services. Auto-rotate, auto-brightness and the Compass app do not work yet |
 | Storage | Custom UFS host driver; writable, journaled HFS+ iOS root in `userdata` |
 | CPU and memory | PSCI SMP bring-up, GICv3 interrupts and architectural timers; development builds also enable the Cortex-A76 cores. Approximately 3.95 GiB upper-bank RAM |
 | Display | IOSurface + IOMobileFramebuffer (`AppleCLCD`); iPhone X logical display scaled to the 1080×2400 panel |
@@ -63,15 +65,17 @@ Touch uses the Goodix protocol over GENI I²C with its regulator enabled through
 
 USB CDC-ECM provides a live network connection for streamed kernel logs, key-based SSH and file transfer. Persistent kernel logs remain available from recovery when the live link fails. This makes it possible to diagnose the running compositor and update userspace bundles without rebuilding the root image each time.
 
-Source and engineering history: [development branch](https://github.com/DC28088/ios-sweet/tree/codex/native-adreno-metal), [native Metal implementation](https://github.com/DC28088/ios-sweet/tree/codex/native-adreno-metal/userspace/native-metal), [kernel patches](https://github.com/DC28088/ios-sweet/tree/codex/native-adreno-metal/xnu/patches), and [dated development notes](https://github.com/DC28088/ios-sweet/blob/codex/native-adreno-metal/NOTES.md).
+Source and engineering history: [native Metal implementation](userspace/native-metal), [kernel patches](xnu/patches), [dated development notes](NOTES.md) and [records of the former side branches](docs/branches/README.md).
 
 ## Still unfinished
 
-- Consistently smooth animations and fast app opening; sustained 60/120 fps is not achieved.
-- General application speaker audio: diagnostic speaker output works, but the continuous application-audio path is still in progress. Wired headphone audio and microphone support remain unconfirmed.
-- iServices, including Apple ID login and the App Store, remain work in progress.
-- Cameras and sensors remain work in progress; GPS and SEP / Face ID are also unfinished.
-- Sleep and power management remain work in progress; boot time also needs improvement.
+- Smooth animations and fast app opening: about 37 fps during animations (GPU wait ~7 ms + display copy ~4-8 ms per frame), and SpringBoard spends ~150 ms on the slow cores after a tap. 120 Hz panel timing is not a 120 fps UI.
+- Random modem crash on about 1 boot in 3 (Wi-Fi and SIM down until reboot); cause unknown.
+- Auto-rotate (iOS orientation service, `sweetmotion` bit 0x40, untested), auto-brightness and the Compass app.
+- Microphone (needs LPASS TX macro + SoundWire + WCD937x drivers); wired headphones unconfirmed.
+- SMS and mobile data.
+- Full panel power-off while locked.
+- iServices, including Apple ID login and the App Store; cameras, GPS and SEP / Face ID.
 - Production security: permissive AMFI/sandbox behavior, a stub AppleKeyStore and no normal data protection.
 
 ## How it boots
@@ -189,6 +193,9 @@ The log contains crash reports with backtraces (`CRASH name ...`), IOKit traces 
 | `shim/` | Bare-metal boot shim (C + asm) packed as an Android boot.img v2 |
 | `xnu/patches/` | The XNU patch series (applied in order by CI), plus staging scripts for libpthread, HFS and BearSSL |
 | `.github/workflows/xnu.yml` | Kernel CI build |
+| `.github/workflows/wifi.yml`, `wifi-0239.yml` | `wland` builds: the ADSP speaker + sensor daemon (`userspace/wifi/patches`) and the Wi-Fi/cell boot daemon (`userspace/wifi/wland-0239`) |
+| `userspace/sensors/` | ADSP sensor-hub client (from ios-redfin, MIT) built into `wland` |
+| `docs/branches/` | Records of the 49 former side branches: tip hashes, test results, unmerged commits as patches |
 | `tools/mkadt.py` | Generates the Apple Device Tree from sweet's MMIO layout and the iPhone X identity |
 | `tools/mkpayload.py` | Packs kernel + ADT + boot-args into the shim payload |
 | `tools/mkiosroot.sh` | Builds the HFS+ iOS root from the IPSW images |
@@ -226,6 +233,7 @@ Not in git: partition backups, live device trees, recovery images, Apple firmwar
 | 0066–0067 | Fault-region crash info; console mute |
 | 0068 | IOSurface lookup semantics for already-mapped surfaces |
 | 0069 | Batched persistent-log flushes |
+| 0070–0238 | GPU (Adreno 618 + native Metal), Wi-Fi/Bluetooth, USB networking, baseband, battery/charging, audio (ADSP, amplifiers), haptics, sleep, sensors, display; each patch says what it does in its header and in `NOTES.md` |
 
 ## Key hardware facts
 
@@ -236,8 +244,8 @@ Not in git: partition backups, live device trees, recovery images, Apple firmwar
 - Touch: Goodix GT9896 at I²C `0x5d` on QUP SE7 (`0xa84000`), powered by PM6150L LDO11 through RPMh.
 - Buttons: power and volume down on the PM6150 PON block, volume up on PM6150L GPIO2 (SPMI SID 4).
 
-More in the [current development notes](https://github.com/DC28088/ios-sweet/blob/codex/native-adreno-metal/NOTES.md).
+More in the [development notes](NOTES.md).
 
 ## Credits
 
-Built on Apple's open-source releases (xnu, IOHIDFamily, libpthread, hfs), [BearSSL](https://bearssl.org), [blacktop/darwin-xnu-build](https://github.com/blacktop/darwin-xnu-build), [ipsw](https://github.com/blacktop/ipsw), Qualcomm/Xiaomi's published Linux kernel sources for the hardware details, and [OrangeFox Recovery](https://orangefox.download). iOS itself is Apple's and is not distributed here.
+Built on Apple's open-source releases (xnu, IOHIDFamily, libpthread, hfs), [BearSSL](https://bearssl.org), [blacktop/darwin-xnu-build](https://github.com/blacktop/darwin-xnu-build), [ipsw](https://github.com/blacktop/ipsw), Qualcomm/Xiaomi's published Linux kernel sources for the hardware details, and [OrangeFox Recovery](https://orangefox.download), and the sensor client and motion device from [ios-redfin](https://github.com/DenialOfGravity/ios-redfin) (MIT). iOS itself is Apple's and is not distributed here.
