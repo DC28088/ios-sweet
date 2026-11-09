@@ -1,3 +1,16 @@
+## 2026-11-09 20:15 IST: 0237 boot: sensors PD up, 0 sensors -> cause: no /sys/devices/soc0 -> fake soc0 files written
+- 0237 (log from line 524773): modem OK (wlfw up), /dev/redwood-motion ready (mask 0x37), wland-0237 in the speaker job:
+  "sns: SNS service 400 at 5:e", sensors PD attached and served (registry readdir of /vendor/etc/sensors/config: 41 files
+  incl. sm7150_icm4x6xx_0, sm7150_lsm6dso_0, sm7150_ak991x_0, sm7150_tsl2540, sm7150_bu27030_0), but "motion: 0 sensors"
+  x5, "the DSP has no mag/pressure sensor".
+- Cause (strong lead): the PD reads /sys/devices/soc0/hw_platform and platform_subtype ~20 times -> ENOENT (fastrpc maps
+  /sys/devices/soc0 -> /var/local/fw/soc0, which was EMPTY). Every sm7150_*.json has "config": {"hw_platform": [..., "SWEET"],
+  "soc_id": [..., "365"]} -> no config matched -> no driver. sns_reg_version was written EMPTY.
+- On-device change (like sunfish tools/sunfish-soc0-files.sh): /var/local/fw/soc0/{,g_}hw_platform=SWEET,
+  {,g_}platform_subtype_id=0, {,g_}platform_version=65536 (guess), platform_subtype=Unknown, soc_id=365, revision=1.0.
+  Moved /var/local/sensors-persist/registry/sns_reg_version -> sns_reg_version.0237-empty so the registry is rebuilt.
+  Effective next boot (one FastRPC/SMMU session per boot). TODO: script it (tools/) once it works.
+
 ## 2026-11-09 19:50 IST: 0236 second boot: modem ERR-FATAL with wland 0239 too -> the modem crash is intermittent, not 0005-0018
 - wland 0239 at boot ("boot 43" again = same as the 0235 boot: the old guard would have refused; UUID guard started it).
   Modem PAS boot OK, glink/qrtr up, rmtfs read modemst1, then "[37] smp2p: modem state 7 ERR-FATAL" -> no Wi-Fi, no SIM.
