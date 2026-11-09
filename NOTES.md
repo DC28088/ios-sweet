@@ -19,6 +19,10 @@
   the probe differs on the display side (only "display on", no blank), and the 0241/0242 diff touches no I2C/touch code.
   A/B: waiter boots known-good 2402 next (build-2402, CI 42614675470). If 2402 also fails -> chip state, try a full power-off
   / OrangeFox touch check; if 2402 works -> 0242 kernel related after all.
+- RESULT: 2402 (e3ef1b1c, log from 697645) ALSO fails: 0x4022 zeros, pid=00000000, "no unique supported IC". => NOT the
+  0242 kernel. Touch chip state (or hardware: screen is cracked) persists across warm fastboot boots. Next: USER boots
+  OrangeFox (power + vol-up): does touch work there (Linux goodix pulses reset / may load fw)? Then OrangeFox Power off
+  (cold) -> power + vol-down -> fastboot boot 0242. TODO kernel: on zero info page pulse the reset GPIO and re-probe.
 
 ## 2026-11-10 01:30 IST: CRACK LINE SOLVED (live): panel awake + black frame + DCS 0x51 = 0 -> fully dark; xnu 0242 builds
 - USER: the line is a physical crack, always visible while lit; Android darkens it while asleep.
