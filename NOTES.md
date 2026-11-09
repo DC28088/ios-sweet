@@ -1,3 +1,10 @@
+## 2026-11-09 21:10 IST: 0237 USER: rotation NO, auto-brightness NO, speaker YES -> 0238 staged
+- Kernel: "SWEET MOTION: orientation off (sweetmotion=0x37)" + "sample type 10 flags 0x3: service not registered" x6:
+  wland posts orientation, but 0237's mask has no orientation service -> no rotation by design of that image. 0238
+  (sweetmotion=0xbf) adds it + prox. backboardd configures accel/gyro/als (ReportInterval, ALSIntegrationMode); only 31
+  ALS samples in wland's count -> auto-brightness unexplained, check on 0238.
+- /var/local/bin/wland-0225 = wland-0238 (9908af6f) for the next boot; registry (157 files) kept.
+
 ## 2026-11-09 21:00 IST: SENSORS WORK (0237 boot #3): accel + gyro + ALS stream, orientation posted
 - After the soc0 files + stale-cache removal: registry rebuilt on this boot (399 persist writes, 157 files in
   /var/local/sensors-persist/registry/registry: adux1050_0*, ak0991x_0*, icm/lsm/tsl/bu27 groups ...).
