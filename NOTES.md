@@ -1,3 +1,13 @@
+## 2026-11-09 20:45 IST: 0237 boot #2: soc0 reads OK now; registry skipped every config (stale cache) -> cache moved aside
+- soc0 served correctly (hw_platform "SWEET" read, 6 bytes; soc_id, subtype, version, revision all -> 0). sns_reg_version
+  rewritten ("version=1\0", 10 B). Still "motion: 0 sensors".
+- Cause: persist registry/registry/sns_reg_config (3805 B, 2026-11-05) is the registry's record of processed config files
+  ({"/vendor/etc/sensors/config/X.json": {"data": "1793888155"}} for all 41); written on 11-05 when soc0 was missing, so
+  no group matched; files unchanged -> every json skipped, no groups, no drivers. (sunfish: "registry builds (87 files)".)
+- Moved to /var/local/sensors-persist-stale-20261109/ (registry-sns_reg_config, sns_reg_version.0237b);
+  registry/registry now empty -> full rebuild on the next boot. Expect many "persist write" lines in adsp-speaker.log.
+- Speaker job still wland-0237. Wi-Fi this boot: not checked yet.
+
 ## 2026-11-09 20:15 IST: 0237 boot: sensors PD up, 0 sensors -> cause: no /sys/devices/soc0 -> fake soc0 files written
 - 0237 (log from line 524773): modem OK (wlfw up), /dev/redwood-motion ready (mask 0x37), wland-0237 in the speaker job:
   "sns: SNS service 400 at 5:e", sensors PD attached and served (registry readdir of /vendor/etc/sensors/config: 41 files
