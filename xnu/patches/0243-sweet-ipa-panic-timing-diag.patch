@@ -1,0 +1,118 @@
+diff --git a/bsd/dev/sweet_ipa.c b/bsd/dev/sweet_ipa.c
+index f116ee5..205497c 100644
+--- a/bsd/dev/sweet_ipa.c
++++ b/bsd/dev/sweet_ipa.c
+@@ -88,6 +88,29 @@ struct si_out { uint32_t type, a, b, c, len; uint8_t data[CI_INIT_DRIVER_REQ_MAX
+ static struct si_out si_outq[SI_OUTQ];
+ static uint32_t si_out_head, si_out_count, si_out_dropped;
+ 
++/* 0243 (diagnostic): 2401/2421 died 30-40 s after "configured", when si_thread's first 30 s report is due, and no report
++ * line reached the log. Boot-arg sweetipadiag: 0x1 = handshake only, the modem endpoints stay closed; 0x2 = no 30 s report.
++ * Always with sweetipa=1: a heartbeat every 2 s for the first 180 s of si_thread, and the first 3 reports print a marker
++ * before each step with a 300 ms pause after it (the USB log thread sends every 100 ms, so the last step shows). */
++static int si_diag = -1;
++static int
++si_diag_bits(void)
++{
++	if (si_diag < 0) {
++		int bits = 0;
++		PE_parse_boot_argn("sweetipadiag", &bits, sizeof(bits));
++		si_diag = bits;
++	}
++	return si_diag;
++}
++static uint64_t
++si_uptime_ms(void)
++{
++	uint64_t ns = 0;
++	absolutetime_to_nanoseconds(mach_absolute_time(), &ns);
++	return ns / 1000000ull;
++}
++
+ int
+ sweet_ipa_enabled(void)
+ {
+@@ -279,6 +302,13 @@ si_step(void)
+ 			continue;
+ 		}
+ 		if (step.start_modem && !si_modem_open) {
++			static int si_diag_skipped;
++			if (si_diag_bits() & 1) {
++				if (!si_diag_skipped++)
++					printf("SWEET IPA DIAG: handshake complete at %llu ms; modem endpoints NOT opened (sweetipadiag 0x1)\n",
++					    si_uptime_ms());
++				return;
++			}
+ 			printf("SWEET IPA: handshake complete, starting the modem endpoints\n");
+ 			si_modem_start();
+ 		}
+@@ -445,25 +475,59 @@ si_poll_locked(void)
+ 	}
+ }
+ 
++static unsigned si_reports;
++static void
++si_diag_step(const char *what)
++{
++	printf("SWEET IPA DIAG: report %u at %llu ms: %s\n", si_reports, si_uptime_ms(), what);
++	IOSleep(300);   /* under si_mtx: a QMI record from wland waits; diagnostic only */
++}
++
+ static void
+ si_report(unsigned second)
+ {
++	const int steps = si_reports < 3;
++	if (steps) si_diag_step("start, first line next");
+ 	printf("SWEET IPA: %u s: state %d uc_loaded %d modem_ready %d uc_ready %d indication %d/%d, LAN RX %llu/%llu/%llu, out dropped %u\n",
+ 	    second, si_state, si_ipa.uc_loaded, si_hs.modem_ready, si_hs.uc_ready, si_hs.indication_requested, si_hs.indication_sent,
+ 	    si_lan.packets, si_lan.delivered, si_lan.dropped, si_out_dropped);
++	if (steps) si_diag_step(si_modem_open ? "first line done; reading GSI channel 0 state" : "first line done; modem closed");
++	if (si_modem_open && steps) {
++		const uint32_t c0 = si_channel_state(0);
++		printf("SWEET IPA DIAG: channel 0 state %u\n", c0);
++		si_diag_step("reading GSI channel 3 state");
++		const uint32_t c3 = si_channel_state(3);
++		printf("SWEET IPA DIAG: channel 3 state %u\n", c3);
++		si_diag_step("second line next");
++	}
+ 	if (si_modem_open)
+ 		printf("SWEET IPA: %u s: channels TX 0:%u RX 3:%u, modem RX %llu delivered %llu dropped %llu, TX %llu\n", second,
+ 		    si_channel_state(0), si_channel_state(3), si_modem_rx.packets, si_modem_rx.delivered, si_modem_rx.dropped, si_modem.tx_packets);
++	if (steps) si_diag_step("done");
++	si_reports++;
+ }
+ 
+ static void
+ si_thread(void *arg, wait_result_t wr)
+ {
+ 	(void)arg; (void)wr;
+-	uint64_t last_activity = 0, quiet_rounds = 0, next_report = 0;
++	uint64_t last_activity = 0, quiet_rounds = 0, next_report = 0, loops = 0;
++	const uint64_t start_ms = si_uptime_ms();
++	uint64_t next_beat_ms = start_ms;
++	printf("SWEET IPA DIAG: poll thread up at %llu ms, sweetipadiag %#x\n", start_ms, si_diag_bits());
+ 	for (;;) {
+ 		lck_mtx_lock(&si_mtx);
+ 		si_poll_locked();
++		loops++;
++		{
++			const uint64_t ms = si_uptime_ms();
++			if (ms >= next_beat_ms && ms - start_ms <= 180000) {
++				next_beat_ms = ms + 2000;
++				printf("SWEET IPA DIAG: beat +%llu ms loops %llu activity %llu state %d open %d irq IPA 0x%x GSI 0x%x ieob 0x%x "
++				    "modem RX %llu TX %llu\n", ms - start_ms, loops, (unsigned long long)si_activity, si_state, si_modem_open,
++				    si_irq_seen_ipa, si_irq_seen_gsi, si_gsi.ieob_pending, si_modem_rx.packets, si_modem.tx_packets);
++			}
++		}
+ 		uint64_t now_s = 0;
+ 		{
+ 			uint64_t ns = 0;
+@@ -471,7 +535,7 @@ si_thread(void *arg, wait_result_t wr)
+ 			now_s = ns / 1000000000ull;
+ 		}
+ 		if (now_s >= next_report) {
+-			if (next_report) si_report((unsigned)now_s);
++			if (next_report && !(si_diag_bits() & 2)) si_report((unsigned)now_s);
+ 			next_report = now_s + 30;
+ 		}
+ 		lck_mtx_unlock(&si_mtx);
