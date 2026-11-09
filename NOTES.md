@@ -1,3 +1,15 @@
+## 2026-11-09 19:00 IST: 0236 + wland 0239 tested: Wi-Fi list instant (after warm-up); perf no visible gain; 0238 staged
+- 0236 boot (log from line 443230), wland 0239 started at boot ("boot 44 session <uuid>"), modem fine, wlfw up.
+  Active scan works: 553 frames in 33 scans vs 48 in 28 with 0004 (all nearby APs -81..-94 dBm). Every wifid FW_SCAN
+  answered from the list within ms. USER: first open "still takes 1 min+", a few minutes later "it is instant now".
+  (First-open delay = radio bring-up/first scans after boot; not measured precisely.) SIM works.
+- Kernel/wland mismatch noticed (not fixed): bridge lists APs heard in the last 120 s, flame_sta drops age > 60 s.
+  apple80211 get/set printf is capped: later SCAN_REQ/SCAN_RESULT lines stop appearing.
+- Perf: USER 0234 "improvement there, not that noticeable"; 0236 "feels the same". 0235 not booted separately.
+  Next perf step needs measurement of app-open latency (GPU vs SpringBoard vs scheduler), not more copy threads.
+- Staged for the next boot: /var/local/bin/wland-0225 = wland-0238 (9908af6f; the speaker job execs that path).
+  Rollback: cp /var/local/bin/wland-0225.orig /var/local/bin/wland-0225 (eb04140c). Boot image 0238.
+
 ## 2026-11-09 18:20 IST: 0234 tested; wland 0239 (scan fix on the 0004 stack + boot-session guard) installed for next boot
 - 0234 boot (log boot-0225-3.txt from line 428768), wland 0004: USER: Wi-Fi + SIM work, Settings no longer crashes;
   animation improvement "there" but not very noticeable. Log: copy_avg_us 3.5-5.4 ms (was 8.4 ms one-thread), 0-1 missed
