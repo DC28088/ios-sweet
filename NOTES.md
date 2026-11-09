@@ -8,6 +8,11 @@
   unlock -> brightness restored. Next data test = 2421 (0242 kernel + sweetipa=1).
 - USER asked for a SpringBoard restart: TERM to pid 294 over SSH -> new SpringBoard 343. Before that, backboardd (292)
   and SpringBoard were only ~50 s old although the boot was minutes earlier (an earlier userspace restart? not checked).
+- USER: "line is gone when locked" -> 0242 CRACK-LINE FIX CONFIRMED (log: display off (black + brightness 0), blank
+  brightness 0 -> err 0, 8 off/on cycles). USER: touch not working. Cause: NOT 0242: the 45 s SweetTouch probe read an
+  all-zero Goodix info page (0x4022 zeros, pid=00000000) -> "no unique supported IC ... stopping" (same as 0087 on 10-19;
+  49 other boots in boot-0225-3.txt selected GT9896). One-shot probe, no live retry -> reboot to fastboot, boot 0242 again.
+  TODO kernel: retry the probe (e.g. 3x, 5 s apart) when the Goodix pid reads 0.
 
 ## 2026-11-10 01:30 IST: CRACK LINE SOLVED (live): panel awake + black frame + DCS 0x51 = 0 -> fully dark; xnu 0242 builds
 - USER: the line is a physical crack, always visible while lit; Android darkens it while asleep.
