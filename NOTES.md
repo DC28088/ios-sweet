@@ -1,3 +1,12 @@
+## 2026-11-10 02:00 IST: 0242 BOOTED (crack-line fix + 0241 IPA QMI); awaiting USER lock/unlock check
+- CI 42629741309 (main 0178876) green. Image USB build-0242/shim-boot-0242.img 17402d096639 (kernel 99574bce), extras
+  sweetpanelvci=0 sweetmotion=0xbf (sweetpanelsleep default 2; NO sweetipa, so the 0241 IPA code is inactive).
+  Markers "black + brightness 0" and "FILTER_INSTALLED" verified in the kernel. fastboot boot OKAY.
+- Log boot-0225-3.txt from line 679418: launchd up (sweetbuild=242), SWEET BB 22/22 services published, wland READY.
+  Crashes so far = usual noise (bluetoothd, driverkitd, *Spotlight, assetsd, CommCenter x1).
+- To check: lock -> line gone? (log "SWEET FB: display off (black + brightness 0)", "SWEET PANEL: blank: brightness 0 ->"),
+  unlock -> brightness restored. Next data test = 2421 (0242 kernel + sweetipa=1).
+
 ## 2026-11-10 01:30 IST: CRACK LINE SOLVED (live): panel awake + black frame + DCS 0x51 = 0 -> fully dark; xnu 0242 builds
 - USER: the line is a physical crack, always visible while lit; Android darkens it while asleep.
 - 2402 (0240 + sweetpanelsleep=0: CPU fade to black, panel awake, no 28/10): line still visible; log: brightness stayed
