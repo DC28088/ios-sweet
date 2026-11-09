@@ -1,3 +1,19 @@
+## 2026-11-10 03:15 IST: phone back on 0242; IPA death = ~30-40 s after "configured"; xnu 0243 diagnostic building
+- USER: "build the diagnostic kernel, boot 0242 for now". 0242 fastboot boot OKAY (log from line 778302).
+- Timeline (10 s "SWEET FB: timing" ticks), all three sweetipa=1 boots: "SWEET IPA: configured" falls between tick N and
+  N+1, modem endpoints open ~same window, last log line comes after tick N+3 -> death 30-40 s after configure. si_thread's
+  first 30 s report (si_report) is due exactly then and NO "SWEET IPA: <n> s:" line ever reached the log. Strong lead,
+  not proof (the USB log loses the last <100 ms). The backboardd lines at the end are only what was printing then.
+  wland 0008 has no 30 s timer (only 3 s step waits). Apps-SMMU: IPA got CB5 via SMR7/SMR8, no other SMMU writes
+  after it in the window. BO pool is XNU high memory (not near the IPA DMA 0xe4000000..0xe4700000).
+- **xnu 0243** (b4c4d5c, CI 42647290166 on push): sweetipa=1 only. Heartbeat "SWEET IPA DIAG: beat +<ms>" every 2 s for
+  180 s; first 3 reports print "SWEET IPA DIAG: report N at <ms>: <step>" + 300 ms pause before each step (first line,
+  GSI ch0 state, ch3 state, second line); boot-arg sweetipadiag 0x1 = modem endpoints stay closed, 0x2 = no report.
+  Source was rebuilt in the scratchpad from patches 0192/0193/0194/0241 (sweet_ipa.c + coachz_ipa/); gcc syntax check
+  with stub headers OK (only the old `delay` implicit decl + host %llu warnings).
+- Plan: image 2431 = 0243 + sweetipa=1 (expect the death; markers show the step); 2432 = + sweetipadiag=2 (no report: if
+  it survives past 40 s, the report is the trigger); 2433 = + sweetipadiag=1 (endpoints closed). Panic photo still wanted.
+
 ## 2026-11-10 02:30 IST: 2421 data test BOOTED (0242 kernel + sweetipa=1, wland 0241 on the phone)
 - Packaged USB build-2421/shim-boot-2421.img ba4984da3378 (kernel 99574bce = 0242, CI 42629741309, main 0178876) with
   scripts/package-any.py 2421 ... "sweetpanelvci=0 sweetmotion=0xbf sweetipa=1"; cmdline = 0242's + sweetipa=1.
