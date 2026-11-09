@@ -1,3 +1,12 @@
+## 2026-11-09 23:00 IST: 0240 (no idle D-cache flush + AKS 0x6) booted: USER "animation does feel better"; app-open delay remains
+- Image USB build-0240/shim-boot-0240.img bb134af5 (CI 42614675470, main f94ac2a, + sweetpanelvci=0 sweetmotion=0xbf).
+  Log from line 612146. Wi-Fi + SIM OK; mobile data not implemented yet (expected).
+- Present path unchanged in the busy windows (vs 0235): present_avg 15-17.7 ms = gate (GPU fence) 6.1-7.9 ms + copy
+  5.6-8.6 ms; up to 541 presents/10 s (54/s). The felt gain is CPU-side (warm caches), not the present path.
+- Next perf candidates (docs/notes/redfin-findings-2026-11-09.md): 0234's 2-thread copy into main; cacheable source
+  mapping for the copy (redfin 0978); GPU fence on interrupt (redfin 1040); app-open = SpringBoard CPU on A55.
+- Next data: step 1 of the IPA plan (INIT_DRIVER without the kernel panic; wland 0239 + 0005's IPA steps).
+
 ## 2026-11-09 22:00 IST: REPO CONSOLIDATED: single `main` branch; side branches recorded and deleted (USER request)
 - USER: "update the readme on github ... clean the repository up ... should only have a single main branch, but
   everything should be recorded separately". Testing stopped for now.
