@@ -1,3 +1,14 @@
+## 2026-11-09 21:00 IST: SENSORS WORK (0237 boot #3): accel + gyro + ALS stream, orientation posted
+- After the soc0 files + stale-cache removal: registry rebuilt on this boot (399 persist writes, 157 files in
+  /var/local/sensors-persist/registry/registry: adux1050_0*, ak0991x_0*, icm/lsm/tsl/bu27 groups ...).
+  First lookup (registry still building) 0, then: "sns: motion: accel 3739 gyro 3673 als 31 compass 0(off), written 7445",
+  acc ~(-0.9, 3.9, 9.0) m/s^2, "orientation 1 posted" / "orientation 5 posted". sensd: SUID events for ambient_light,
+  gyro, mag; no "proximity"/"pressure" SUID in 0237 (0238 adds prox placement + compass/devmotion).
+- Gotcha: the speaker job starts 60 s after boot and rotates adsp-speaker.log only then; reading earlier shows the
+  previous boot (cost one wrong conclusion this session).
+- Modem ERR-FATAL again this boot ([137] ms): 3 of the last ~8 boots. Next item after the sensor check.
+- TODO: script the soc0 files + "clear registry when soc0 changes" (tools/), and keep wland-0237/0238 in the speaker job.
+
 ## 2026-11-09 20:45 IST: 0237 boot #2: soc0 reads OK now; registry skipped every config (stale cache) -> cache moved aside
 - soc0 served correctly (hw_platform "SWEET" read, 6 bytes; soc_id, subtype, version, revision all -> 0). sns_reg_version
   rewritten ("version=1\0", 10 B). Still "motion: 0 sensors".
