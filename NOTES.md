@@ -1,3 +1,12 @@
+## 2026-11-09 23:40 IST: mobile data step 1 staged: kernel IPA path (sweetipa=1) + wland 0241 (0239 stack + IPA steps)
+- Kernel IPA code (bsd/dev/sweet_ipa.c + coachz_ipa) is mainline Linux's IPA v4.2 driver order (coachz = SC7180): table
+  init by immediate commands before INIT_DRIVER is already there. 0193's panic after INIT_DRIVER is the open bug; 0194
+  (in main) prints each new IPA/GSI interrupt set before handling it. No kernel change for step 1.
+- wland 0241 = userspace/wifi/wland-0239 + 0008 (old wland 0005 IPA steps), CI 42617783761, 8424251f. Phone:
+  /var/local/bin/wland = 0241 (next boot); rollback cp wland-0239 wland. Inactive without sweetipa=1.
+- Test image USB build-2401/shim-boot-2401.img 76cb384b = 0240 kernel + sweetipa=1. Expect: SWEET IPA configured ->
+  set up -> INIT_DRIVER -> irq lines; a panic is possible (Nov 4) -> phone reboots to ABL, user re-enters fastboot.
+
 ## 2026-11-09 23:00 IST: 0240 (no idle D-cache flush + AKS 0x6) booted: USER "animation does feel better"; app-open delay remains
 - Image USB build-0240/shim-boot-0240.img bb134af5 (CI 42614675470, main f94ac2a, + sweetpanelvci=0 sweetmotion=0xbf).
   Log from line 612146. Wi-Fi + SIM OK; mobile data not implemented yet (expected).
