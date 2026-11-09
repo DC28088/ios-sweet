@@ -1,3 +1,10 @@
+## 2026-11-10 02:30 IST: 2421 data test BOOTED (0242 kernel + sweetipa=1, wland 0241 on the phone)
+- Packaged USB build-2421/shim-boot-2421.img ba4984da3378 (kernel 99574bce = 0242, CI 42629741309, main 0178876) with
+  scripts/package-any.py 2421 ... "sweetpanelvci=0 sweetmotion=0xbf sweetipa=1"; cmdline = 0242's + sweetipa=1.
+  fastboot boot OKAY. Log boot-0225-3.txt from line 770461.
+- Expect: INIT_DRIVER ok -> modem QMI 0x27/0x23 now answered + FILTER_INSTALLED_NOTIF (0241 code); 2401 panicked ~25 s
+  after the unanswered 0x23. Result: pending.
+
 ## 2026-11-10 02:00 IST: 0242 BOOTED (crack-line fix + 0241 IPA QMI); awaiting USER lock/unlock check
 - CI 42629741309 (main 0178876) green. Image USB build-0242/shim-boot-0242.img 17402d096639 (kernel 99574bce), extras
   sweetpanelvci=0 sweetmotion=0xbf (sweetpanelsleep default 2; NO sweetipa, so the 0241 IPA code is inactive).
