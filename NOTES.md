@@ -23,6 +23,14 @@
   0242 kernel. Touch chip state (or hardware: screen is cracked) persists across warm fastboot boots. Next: USER boots
   OrangeFox (power + vol-up): does touch work there (Linux goodix pulses reset / may load fw)? Then OrangeFox Power off
   (cold) -> power + vol-down -> fastboot boot 0242. TODO kernel: on zero info page pulse the reset GPIO and re-probe.
+- RESOLVED: fastboot reboot recovery -> OrangeFox: USER "touch works on orangefox"; dmesg goodix: powers vtouch regulator,
+  vdd-gpio 90, reset-gpio 8, irq-gpio 9 -> PID 9896 VID 03 02 00 0c, config equal with flash. Then adb reboot bootloader
+  (NO power-off) -> fastboot boot 0242 (log from 720096): "selected GT9896", pid=39383936. Touch back.
+- Cause (strong lead): SweetTouch never powers/resets the chip (log "TLMM reset=0 irq=0 vdd90=0" on good AND bad boots,
+  only votes L11C) -> it works only while the chip still runs from the previous OS (OrangeFox/Android). Some boot left it
+  in boot ROM (0x4032 "02 06"), and every later iOS boot inherited that. Recovery when touch is dead: boot OrangeFox once,
+  then reboot bootloader -> fastboot boot. TODO kernel: do the Linux power-on itself (vdd-gpio 90 high, reset-gpio 8
+  low->high pulse, wait for fw) and re-probe on a zero info page.
 
 ## 2026-11-10 01:30 IST: CRACK LINE SOLVED (live): panel awake + black frame + DCS 0x51 = 0 -> fully dark; xnu 0242 builds
 - USER: the line is a physical crack, always visible while lit; Android darkens it while asleep.
