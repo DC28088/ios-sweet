@@ -1,216 +1,481 @@
-## 2026-11-07: Timer coalescing isolated as dominant 1ms-wait delay
-- Downloaded/verified 0221 artifacts from successful runs42305196449 (kernel, source36fe66b) and42305202091 (native helper). Packaged temporary image shim-boot-0221-timer.img with unchanged0207 shim/DTB/ADT, sweetbuild221/sweetamp2; image SHA256a612eb7b1b11b7c1ba73abfc8584c801714dafb840bbddff04e8a0785acee6a1,18116608bytes, split PCM node/media/GPU/amp markers verified. NOT booted.
-- Staged verified /var/local/bin/sweet-timer-coalescing-0221 (source36fe66b, hashbc73fa45...). Ran on live0219 kernel with0220 service PID296 idle: coalescing ENABLED 64x1ms waits avg18327us max32949; DISABLED avg1018us max1030; restore verified value1. No DSP/amp/device operation; live sender stayed alive and counters advanced.
-- This is direct evidence that the observed16..33ms wait lateness is dominated by kern.timer.coalescing_enabled, not merely scheduler/QoS. The ISB timer-write candidate remains unproven and may be orthogonal; do not claim it fixes the delay until measured on0221. Power tradeoff of disabling coalescing globally must be considered; a targeted service-level mitigation (larger queued periods / fewer 1ms wake dependencies) may be preferable.
-- Added bounded `--off SECONDS` mode (1..300) to the same helper; it saves the enabled baseline, holds coalescing off, restores on normal exit/signal, and prints verified restore. Native run42331635964 SUCCESS, sourcea8a3c93, helper SHA256ce29006a09cd8e74a4b68ad434f338980d93419ccb80e29b79960db0d921db2c; all wifi artifact hashes verified. Staged separately /var/local/bin/sweet-timer-coalescing-0221b; short2s run restored value1 and PID296 remained alive. No DSP/amp operation.
-- Next: (a) with USER playback, compare5s counter deltas and subjective stutter during a60s coalescing-off window, then verify automatic restore and post-window behavior; (b) boot0221 ISB kernel later and repeat the same helper measurement to separate ISB from coalescing; keep current PID296 live session until a fresh boot is agreed. No startup service, gain or EQ changes.
+## 2026-11-09 21:25 IST: 0238 boot: 6 sensors, prox service live; orientation OFF by mask -> image 2381 (sweetmotion=0xff)
+- 0238 (log from line 583119): modem OK. wland-0238: "motion: 6 sensors", accel 50 Hz, gyro 200 Hz (iOS changes rates),
+  als, "orientation 1 posted"; SNS_DEVMOTION fusion on. Kernel: prox service registered, backboardd sets DetectionMode
+  0/1/3/5, ScreenUnlocked. "orientation off (sweetmotion=0xbf)", "devmotion8 off".
+- Mask bits (SweetMotion.h): 1 accel, 2 gyro, 4 als, 8 prox, 0x10 compass, 0x20 pressure, 0x40 ORIENT, 0x80 devmotion
+  {0xff0c,4}, 0x400 devmotion8 {0xff0c,8} (locationd heading). 0xbf lacks 0x40 (my packaging choice, copied from sunfish).
+  sunfish keeps 0x40 off on purpose: their auto-rotate = adspboot --sns-rot -> /var/local/sweet-orient "R N" read by
+  SweetMetal2 (iOS orientation service rotated their display wrongly). Sweet has NO sweet-orient reader.
+- Test image: USB build-2381/shim-boot-2381.img 5150ca32d3ad = 0238 kernel (CI 42556304946) + sweetmotion=0xff
+  (adds iOS orientation service; sweetbuild=2381 is only a label). Compass heading may also want 0x400 later.
 
-## 2026-11-07: Deadline self-test still late; timer sync candidate and coalescing isolation prepared
-- Scheduling probe42304167021 SUCCESS, sourcede951d6, signed/hash verified and runSELF ONLY. THREAD_TIME_CONSTRAINT_POLICY accepted (2ms/10ms, preemptible); usleep avg21504us/max33014, Machwait avg17092/max32949, noerrors. Original own policy restored successfully. Live target scheduling NOT attempted: selftest did not establish precise waits. ExistingPID296 remains nice-10; no target task port/policy modified.
-- Observed1ms waits remain~17..33ms even in deadline selftest. This points toward timer/wait delivery, but is not final proof of hardware IRQ cause. Source rtclock uses CNTV_TVAL; SWEET has direct architected timer path. Candidate0218 kernel patch adds SWEET-onlyISB after CNTV_TVAL, CNTKCTL and virtual/physical timer control writes. Applies cleanly against prior built8796 tree. Linux official ARM64 arch_timer.h usesISB after CNTV/CNTP control and CNTKCTL writes (https://raw.githubusercontent.com/torvalds/linux/master/arch/arm64/include/asm/arch_timer.h); that supports synchronization review, not a proven diagnosis for Sweet lateness.
-- Separate bounded helper compares64x1ms Mach waits with kern.timer.coalescing_enabled on/off; saves original enabled value, restores and verifies it, handles termination/interrupt/hangup. No DSP/device/process-policy operations. Intended live isolation while kernel candidate builds. Do not leave global coalescing off; verify restore output. No candidate has been built/booted yet, quality remains unresolved.
+## 2026-11-09 21:10 IST: 0237 USER: rotation NO, auto-brightness NO, speaker YES -> 0238 staged
+- Kernel: "SWEET MOTION: orientation off (sweetmotion=0x37)" + "sample type 10 flags 0x3: service not registered" x6:
+  wland posts orientation, but 0237's mask has no orientation service -> no rotation by design of that image. 0238
+  (sweetmotion=0xbf) adds it + prox. backboardd configures accel/gyro/als (ReportInterval, ALSIntegrationMode); only 31
+  ALS samples in wland's count -> auto-brightness unexplained, check on 0238.
+- /var/local/bin/wland-0225 = wland-0238 (9908af6f) for the next boot; registry (157 files) kept.
 
-## 2026-11-07: Timer probe confirms 1ms polling waits commonly take16..33ms
-- Native timer probe42303365087 SUCCESS, source5c42266; signed/hash-verified helper staged separately and run without opening PCM/DSP/amp devices.64samples/phase: default usleep avg18107us/max33004; defaultmach_wait avg21974/max32954; own-thread interactiveQoS succeeded but usleep avg16385/max33006, Machavg18298/max32944. No wait errors. This explains missed10ms refill deadlines but does NOT yet distinguish timer delivery from scheduler/coalescing/priority effects.
-- Preparing separate bounded scheduling helper: self-only deadline-policy timer check first (2ms/10ms preemptible budget). Optional live test refuses unless self Mach waits average<=3ms, target task access succeeds, target has exactly one thread, and original standard policy is saved; restores original extended policy after60s or handled termination. No device/mapping/audio writes. Live operation not yet built/run. Default helper invocation changes only own thread and restores before exiting.
-- Original audio sender remainsPID296 withnice-10, no DSP restart. Need verify deadline-policy timing before any kernel timer edits or live scheduling claim. No gain/EQ changes; active audio can reach32768peak so blind digital boost would clip.
+## 2026-11-09 21:00 IST: SENSORS WORK (0237 boot #3): accel + gyro + ALS stream, orientation posted
+- After the soc0 files + stale-cache removal: registry rebuilt on this boot (399 persist writes, 157 files in
+  /var/local/sensors-persist/registry/registry: adux1050_0*, ak0991x_0*, icm/lsm/tsl/bu27 groups ...).
+  First lookup (registry still building) 0, then: "sns: motion: accel 3739 gyro 3673 als 31 compass 0(off), written 7445",
+  acc ~(-0.9, 3.9, 9.0) m/s^2, "orientation 1 posted" / "orientation 5 posted". sensd: SUID events for ambient_light,
+  gyro, mag; no "proximity"/"pressure" SUID in 0237 (0238 adds prox placement + compass/devmotion).
+- Gotcha: the speaker job starts 60 s after boot and rotates adsp-speaker.log only then; reading earlier shows the
+  previous boot (cost one wrong conclusion this session).
+- Modem ERR-FATAL again this boot ([137] ms): 3 of the last ~8 boots. Next item after the sensor check.
+- TODO: script the soc0 files + "clear registry when soc0 changes" (tools/), and keep wland-0237/0238 in the speaker job.
 
-## 2026-11-07: USER says0220 stutter/delay similar or worse; live priority test inconclusive
-- USER comparative playback: still delay/stutter similar or worse. Active counters show windows433..486completed/5s instead of500, continuous nonzero data, cumulative>40ms gaps increasing. Several peak windows32768: do NOT add blind digital gain; full-volume app can already reach signed16 fullscale. No explicit amp/control failure. Raw counters private, aggregate public only.
-- Tried live nice priority change on existingPID296 (no DSP restart): /var/local/bin/toybox renice -n -10 -p296; verified ps nice-10. Initial ps request used unsupported uppercase field names; corrected lowercase verification succeeds. USER reports slightly better if not similar. Current sender retained atnice-10; no other process priority changed.
-- Need distinguish work time from coalesced waits. adspedge_poll(2) unconditionally usleep(1000) after each batch; observed polls frequently>10ms. Added bounded device-free timer helper (64x1ms each usleep/Mach absolute wait, default vs own-thread interactiveQoS) to measure actual wake delays on live kernel. It touches no PCM/DSP/amp devices, changes only own QoS and prints aggregates. Native compile pending; do not infer timer cause before measuring.
-- Current0220 service stilllivePID296; no remap or another audio session permitted. Preserve0219 audible fallback. Low-volume/tonal change deferred until timing behavior understood; fixed24dB amp ceiling intact.
+## 2026-11-09 20:45 IST: 0237 boot #2: soc0 reads OK now; registry skipped every config (stale cache) -> cache moved aside
+- soc0 served correctly (hw_platform "SWEET" read, 6 bytes; soc_id, subtype, version, revision all -> 0). sns_reg_version
+  rewritten ("version=1\0", 10 B). Still "motion: 0 sensors".
+- Cause: persist registry/registry/sns_reg_config (3805 B, 2026-11-05) is the registry's record of processed config files
+  ({"/vendor/etc/sensors/config/X.json": {"data": "1793888155"}} for all 41); written on 11-05 when soc0 was missing, so
+  no group matched; files unchanged -> every json skipped, no groups, no drivers. (sunfish: "registry builds (87 files)".)
+- Moved to /var/local/sensors-persist-stale-20261109/ (registry-sns_reg_config, sns_reg_version.0237b);
+  registry/registry now empty -> full rebuild on the next boot. Expect many "persist write" lines in adsp-speaker.log.
+- Speaker job still wland-0237. Wi-Fi this boot: not checked yet.
 
-## 2026-11-07: Batched0220 sender live after fresh verified0219 boot
-- USER readyFASTBOOT. Reverified0219 image9c23fbe8c10e3f7bc63f5d9e83bf5a4e9894f43a18c0ff3d1712ba37a88f3b6e and temporary boot Sending/Booting OKAY. First early SSH attempt failed before any mutation/session; after startup recovered. Corrected UTC and verified both PCM nodes, amp node, native/private profile hashes; started0220 senderPID296 once, no standalone reset/remap or competing ADSP process.
-- MAP/ASM OPEN/ADM(status0,COPP0)/route/format/RUN accepted; app PCM activated amps for startup sounds then idle reset, session retained. First live5s counters sent378/completed374, startup maxgap456ms; next5s488 completions. Later idle windows372..476 completions/5s, multiple>40ms loop gaps, no reported ASM underflows or explicit controller failure. These rates are below ideal500/5s in some windows; do not claim scheduling/latency fixed. Actual YouTube comparison still pending.
-- USER asked to play Safari video and pause5s/resume, compare stutter/pause tail with0219. Gain/tuning unchanged24dB. Service remains live on currentboot; do not start another reader or ADSP process. No persistent startup installed. Listen/measure active stream before further buffer policy or gain changes.
+## 2026-11-09 20:15 IST: 0237 boot: sensors PD up, 0 sensors -> cause: no /sys/devices/soc0 -> fake soc0 files written
+- 0237 (log from line 524773): modem OK (wlfw up), /dev/redwood-motion ready (mask 0x37), wland-0237 in the speaker job:
+  "sns: SNS service 400 at 5:e", sensors PD attached and served (registry readdir of /vendor/etc/sensors/config: 41 files
+  incl. sm7150_icm4x6xx_0, sm7150_lsm6dso_0, sm7150_ak991x_0, sm7150_tsl2540, sm7150_bu27030_0), but "motion: 0 sensors"
+  x5, "the DSP has no mag/pressure sensor".
+- Cause (strong lead): the PD reads /sys/devices/soc0/hw_platform and platform_subtype ~20 times -> ENOENT (fastrpc maps
+  /sys/devices/soc0 -> /var/local/fw/soc0, which was EMPTY). Every sm7150_*.json has "config": {"hw_platform": [..., "SWEET"],
+  "soc_id": [..., "365"]} -> no config matched -> no driver. sns_reg_version was written EMPTY.
+- On-device change (like sunfish tools/sunfish-soc0-files.sh): /var/local/fw/soc0/{,g_}hw_platform=SWEET,
+  {,g_}platform_subtype_id=0, {,g_}platform_version=65536 (guess), platform_subtype=Unknown, soc_id=365, revision=1.0.
+  Moved /var/local/sensors-persist/registry/sns_reg_version -> sns_reg_version.0237-empty so the registry is rebuilt.
+  Effective next boot (one FastRPC/SMMU session per boot). TODO: script it (tools/) once it works.
 
-## 2026-11-07: Native0220 transfer follow-up passed and staged; fresh boot requested
-- Native42301055884 SUCCESS, sourceb0a9dcd (full commit in work/speaker-runtime/0220-stream-provenance.json). CI passed actual FIFO transfer/failure tests, PCM/amp/ring/reader checks, sanitizer checks and ARM64 link/sign. Download verified all artifact hashes and live-counter marker; separately staged /var/local/bin/wland-0220-stream and rehashed. NOT run; working0219 senderPID470 left unchanged.
-- No kernel build/change needed. Same verified0219 image9c23fbe8c10e3f7bc63f5d9e83bf5a4e9894f43a18c0ff3d1712ba37a88f3b6e supports new native. USER askedFASTBOOT for fresh same-image boot, then one new WLAND_SPEAKER_SERVICE session via work/speaker-runtime/run-speaker-0220-stream.py (one-run guard, hash/profile checks). Never run onto current liveADSP mappings.
-- Next compare sustained5s counter deltas (~500periods/5s), empty/nonzero periods, peak, refill gaps and underflows with subjective stutter/pause lag. Volume remains24dB conservative attenuation; no gain or EQ changes yet. Keep0219 audible executable/image as fallback. Persistent auto-start still not installed.
+## 2026-11-09 19:50 IST: 0236 second boot: modem ERR-FATAL with wland 0239 too -> the modem crash is intermittent, not 0005-0018
+- wland 0239 at boot ("boot 43" again = same as the 0235 boot: the old guard would have refused; UUID guard started it).
+  Modem PAS boot OK, glink/qrtr up, rmtfs read modemst1, then "[37] smp2p: modem state 7 ERR-FATAL" -> no Wi-Fi, no SIM.
+  SMEM item 421 (modem crash reason) "not found" (wland-0008 item 421 2/1/0). Log copy /var/local/wland-0236b-fail.log.
+- Record so far: modem ERR-FATAL on 0232 (late hand start, wland-0232) and 0236 #2 (boot, wland 0239); OK on 0234 (0004),
+  0236 #1, 0235 (0239). So the 0232 failure is NOT proof that 0005-0018 breaks Wi-Fi. Cause UNKNOWN (EFS/rmtfs timing?).
+- USER: 0236 "performance feels exactly the same". Next boot 0237: /var/local/bin/wland-0225 = wland-0237 (1b22da17) staged;
+  rollback cp wland-0225.orig wland-0225.
 
-## 2026-11-07: USER confirms real application speaker audio; quality follow-up prepared
-- USER hears YouTube through built-in speakers on0219 +c62f9d1 retained senderPID470. Reports low volume even at full, stutters, noticeable audio tail after pausing video, and thin sound. This supersedes earlier pending listening result: general app speaker transport now demonstrated, quality unresolved. User did not explicitly confirm a clean pause/resume cycle; do not infer one. Current service left running as working fallback.
-- Fixed24dB kernel attenuation is an intentional conservative bring-up ceiling and contributes to low volume. No gain/protection/profile change made. Thinness cause not yet established; D22 processing and vendor amplifier tuning need separate evidence after stream stability.
-- Found remaining transport overhead: TX one /dev/pmem syscall per32-bit word, RX one perword even after0016. Kernel pm_rw already handles aligned device-word transfers and required cache/barriers for arbitrary aligned contiguous ranges. New0017 batches TX perFIFO wrap and RX in aligned <=4096-byte chunks; preserves publication order, rejects failed transfers via sticky error without publishing TX_HEAD or advancing RX_TAIL. No raw MMIO memcpy introduced.
-- Reworked actual-function host tests:266240 smallpeeks,2000large/wrapped peeks, bounds/canaries, exact syscall counts, TX header/padding/publication/wrap and injected first/second read/write failures all pass. Follow-up0014..0017 patches apply cleanly in order to existing0013 source. Added5s aggregate-only live counters (sent/completed/bytes/empty/nonzero/peak/refill gaps/underflows), no samples stored/transmitted.
-- Next native-only0220 build; existing0219 kernel/image supports it, no kernel changes. Fresh boot of verified0219 required before replacing standalone DSP session. Do not kill/remap live working sender just to gather counters. Need compare sustained rate, stutter and pause lag before choosing any queue trimming; arbitrary dropping could truncate legitimate HAL callbacks.
+## 2026-11-09 19:30 IST: 0235 result: no visible change ("jitters, slight delay while opening app still exists")
+- 0235 boot (log from line 485173; usblog missed the first seconds, so the "timer coalescing" init line was not seen;
+  active state unconfirmed). Busy windows: ~37 presents/s, present_avg 17 ms = gate (GPU fence) 7.3-7.9 ms + copy 7.2-8.3 ms
+  (one thread in 0235), max 31-38 ms. Idle windows: 5.4 ms.
+- All three perf builds (0234 copy x2, 0235 no coalescing, 0236 both + x4): USER sees at most a small gain. => neither the
+  copy alone nor timer slop is the limit. Known from 11-01/02 (spindumps): app-open delay = ~150-170 ms SpringBoard main
+  thread CPU before the first animation frame, mostly on A55 (kernel sees 8 cpus as one SMP cluster); GPU ~7-8 ms/frame.
+- Candidate next steps (none built): (a) USER-side A/B: Reduce Transparency + Reduce Motion (fewer GPU blur passes);
+  (b) check whether backboardd blocks in present (fence wait + copy serial with its next frame) and pipeline it;
+  (c) real AMP cluster topology (mkadt: 2 clusters, __AMP__) so the scheduler puts UI threads on A76 by design - large.
 
-## 2026-11-07: Live YouTube PCM confirmed; corrected speaker sender running
-- USER confirms video playing. Ran matching aggregate-only probe on0219, reader reopen check passed again. Measured31.666s:1519616frames (~47989fps),3037338nonzero samples,peak4618/32768. Continuous real app PCM at expected48kHz, comparable peak to earlier audible tone5181. No samples/audio recorded. Stopped probePID432 to release reader.
-- Started verifiedc62f9d1 wland-0219-split asPID470, WLAND_PCM_DELAY_MS=15000 WLAND_SPEAKER_SERVICE=1 adsp0, ONE new DSP session on this boot. Profile/kernel/binary hashes verified. MAP/ASM OPEN/ADM OPEN(status0,COPP0)/route/format/RUN accepted; service logs app PCM active continuously, alive through32s, no clock/profile gate failure. No idle cycling observed while video is playing.
-- USER asked whether video is audible through speakers and pause5s/resume/stutter results. Listening reply pending: do not claim application audio fixed. Service currently remains live; do not run a second reader/ADSP session or remap. Current user test is the first continuous-app listening result with fixed FIFO + split reader.
+## 2026-11-09 19:10 IST: Wi-Fi fix SAVED as the default; booting 0235
+- KEEP: Wi-Fi boot daemon = wland 0239 (5eb59683) = branch claude/wifi-0239 7fa30a5 (myfork), CI 42603119802.
+  Copies: phone /var/local/bin/wland and wland-0239; USB ios-sweet-backup/wland-keep/wland-0239-5eb59683.
+  Any future Wi-Fi/cell work starts from claude/wifi-0239 (0001-0004 + 0005 scan + 0006 list + 0007 guard), NOT from
+  the 0005-0018 stack (its `auto` mode crashed the modem on 0232).
+- Speaker job reverted to wland-0225 (eb04140c) for a clean perf test; wland-0238 still staged as /var/local/bin/wland-0238.
 
-## 2026-11-07: 0219 reader ownership fix passes on-device; awaiting app input levels
-- SSH/UI reached; SpringBoard26,mediaserverd28,backboardd58 and original wland auto48 running. New /dev/sweet-pcm exists. Corrected UTC. Verified signed probe hash against matching42296662603 artifact, then ran two separate1s probe processes: BOTH returned success with HAL writer alive. Confirms independent close/reopen fix on real XNU, not only host model.
-- No ADSP session or amplifiers started on this boot. USER asked to start YouTube in Safari (Bluetooth disconnected, three-quarters volume) and replyplaying; next run aggregate probe while actual app output runs, allow it to exit, then start verified /var/local/bin/wland-0219-split once using WLAND_SPEAKER_SERVICE=1 adsp0. Native sender retains32FS correction + reducedGLINKreads + watchdog. Need actual levels and listening result; no app speaker success claim.
+## 2026-11-09 19:00 IST: 0236 + wland 0239 tested: Wi-Fi list instant (after warm-up); perf no visible gain; 0238 staged
+- 0236 boot (log from line 443230), wland 0239 started at boot ("boot 44 session <uuid>"), modem fine, wlfw up.
+  Active scan works: 553 frames in 33 scans vs 48 in 28 with 0004 (all nearby APs -81..-94 dBm). Every wifid FW_SCAN
+  answered from the list within ms. USER: first open "still takes 1 min+", a few minutes later "it is instant now".
+  (First-open delay = radio bring-up/first scans after boot; not measured precisely.) SIM works.
+- Kernel/wland mismatch noticed (not fixed): bridge lists APs heard in the last 120 s, flame_sta drops age > 60 s.
+  apple80211 get/set printf is capped: later SCAN_REQ/SCAN_RESULT lines stop appearing.
+- Perf: USER 0234 "improvement there, not that noticeable"; 0236 "feels the same". 0235 not booted separately.
+  Next perf step needs measurement of app-open latency (GPU vs SpringBoard vs scheduler), not more copy threads.
+- Staged for the next boot: /var/local/bin/wland-0225 = wland-0238 (9908af6f; the speaker job execs that path).
+  Rollback: cp /var/local/bin/wland-0225.orig /var/local/bin/wland-0225 (eb04140c). Boot image 0238.
 
-## 2026-11-07: 0219 split-reader kernel built and temporary boot accepted
-- Kernel42296706687 SUCCESS in16m25s, sourcec62f9d1600ac854fae04da2f6a64bb9671d9a0c1, all required checks passed. Artifact CRC/SHA verified; kernel SHA245dddac5bf4c18daa10ed16e9bb21309089b960296be50cfaa0392af130dfbf. Packaged same proven0207 shim/DTB/ADT, sweetbuild219/sweetamp2, 521-byte args; new endpoint marker + media/GPU/amp markers verified.
-- Image work/audio-runtime/shim-boot-0219-speaker.img,18116608bytes,SHA9c23fbe8c10e3f7bc63f5d9e83bf5a4e9894f43a18c0ff3d1712ba37a88f3b6e. USER already suppliedFASTBOOT; temporary Sending/Booting OKAY, no flash. Awaiting startup/SSH; no DSP or level probe run yet. Intended next: verify root node, native1s probe twice to establish close/reopen while HAL remains open, then real app levels and one retained sender session.
-- Portsmith additional closer reference: aTechGeekDev/ios-apollo1f75f381e31da96de537653fbac2252d2eb80418 README reports working speakers with occasional crackle;0139 legacy APR formats align with Sweet including low16 COPP ID and signed16 stream. Dedicated feeder has8x20ms queued periods; CS35L41/AFE width differs. No driver copied; Sweet PMEM already flushes physical cache before/after writes, so that is not a missing fix. User is waiting for actual application speaker result, still unconfirmed.
+## 2026-11-09 18:20 IST: 0234 tested; wland 0239 (scan fix on the 0004 stack + boot-session guard) installed for next boot
+- 0234 boot (log boot-0225-3.txt from line 428768), wland 0004: USER: Wi-Fi + SIM work, Settings no longer crashes;
+  animation improvement "there" but not very noticeable. Log: copy_avg_us 3.5-5.4 ms (was 8.4 ms one-thread), 0-1 missed
+  deadlines per 10 s.
+- wland 0239 (branch claude/wifi-0239 7fa30a5, CI 42603119802 OK): patches 0001-0004 + 0005 fast scan (= old 0019, applied
+  unchanged) + 0006 fresh list (= old 0020) + 0007 boot stamp keyed on kern.bootsessionuuid; workflow = the 0004-era
+  build step. wland 5eb59683, artifact on USB build-0239/art.
+- Phone: /var/local/bin/wland = 0239 (effective NEXT boot; old stamp "50" will not match a UUID). Rollback:
+  cp /var/local/bin/wland-0004 /var/local/bin/wland (ef9a6d24). wland.running-0004 = the inode the current process runs.
 
-## 2026-11-07: Matching0219 native passed and staged; kernel build progressing
-- First0219 runs42296503283(native)/42296497819(kernel) failed in host harness because macOS already defines __unused and user_ssize_t. No device code compile failure. Fixed harness namespace/guard inc62f9d1; native42296662603 SUCCESS, all source/file hashes verified and new /dev/sweet-pcm marker present in sender/probe. Separately staged /var/local/bin/wland-0219-split and sweet-pcm-probe-0219-split, nothing executed. Old signed tools remain separate.
-- Kernel retry42296706687 fromc62f9d1 progressed through all host checks and dependencies into Build. Never cancelled a progressing job. Packaging/fetch scripts prepared as0219 with new split-endpoint marker, exact proven0207 shim/DTB/ADT retained. No image exists yet. First fresh boot then HAL levels; no more ringtone requests until a reader actually opens.
-- USER left YouTube open, but no service currently running and old kernel cannot clear stale reader ownership. Current UI/Wi-Fi stable; leave it untouched while build runs. Audio remains unconfirmed except prior native audible tone.
+## 2026-11-09 17:05 IST: 0232 boot: Wi-Fi + SIM DOWN; wland boot-guard bug; wland-0232 crashed the modem; 0004 restored
+- Boot-guard BUG (also explains past "wland refuses / died" cases): /var/local/wland.boot stores "boot %ld" = boot time in
+  seconds, and the phone clock restarts at the same fake 1969 epoch every boot -> 0231 and 0232 were both "boot 47" ->
+  "wland: already started in this boot" -> no Wi-Fi, no baseband (CommCenter crash loop sig 11, Settings unstable).
+  Fix in the next wland build: key the guard on kern.bootsessionuuid. Until then remove /var/local/wland.boot before a reboot.
+- Started wland-0232 by hand (guard moved to wland.boot.stale): modem booted, then "[1092] smp2p: modem state 7 ERR-FATAL"
+  -> no wlfw, no Wi-Fi. 0004 on the previous boot: modem fine, wlfw up. Cause (0005-0018 stack vs late start) UNKNOWN.
+- Restored: /var/local/bin/wland = 0004 ef9a6d24; tried binary kept as wland-0232.tried; guard moved to wland.boot.0232run.
+- Wi-Fi tests 0232/0233 as built are void. Next: port 0019/0020 (+ guard fix) onto the 0004 stack.
 
-## 2026-11-07: Confirmed PCM reader close bug; separate reader vnode fix prepared
-- Native42295768701 SUCCESS fromac667a9: FIFO word-read optimization, sanitizer/portable tests and signed native probe passed. All three artifact hashes/source verified. Staged /var/local/bin/wland-0219-refill and sweet-pcm-probe-0219 separately; sender NOT run. Probe immediately failed EBUSY; no audio levels recorded despite USER playing ringtone. USER later left YouTube open, but speaker service remains OFF.
-- Definitive kernel lifetime cause: xnu8796 bsd/miscfs/specfs/spec_vnops.c spec_close calls cdev d_close only when vcount reaches0 or revoke. HAL holds writer open on same /dev/sweet-audio vnode, so killed readerPID303 never triggers pcm_dev_close and stale pcm_reader blocks all new readers. Do not bypass by changing PID or resetting live DSP.
-- Fix uses separate minor/vnode: existing /dev/sweet-audio minor0 remains HAL write-only0622; new /dev/sweet-pcm minor1 root-only0600 read-only/exclusive. Writer reads and reader writes rejected, volume only on writer, reader d_close resets state independently of HAL writer lifetime. Native sender and probe now open new reader node; older sender fails closed on writer node. Actual patched entry points tested through host VFS/kernel stubs for exclusive/root reader, ownership/data/mute and reopen while HAL writer remains open; pass. Existing model/ring drift pass.
-- Requires new kernel AND native artifact together. No existing HAL bundle change. Build0219 next, preserving working graphics/haptics/Wi-Fi baseline and existing amplifier guard/attenuation. First fresh boot should measure PCM levels before one retained sender session; no multiple ADSP mappings. Current stable session left untouched.
+## 2026-11-09 16:40 IST: 0231 hardware: mode 7 (soft reset + snapshot + CTL flush) ran, wake STILL BLACK
+- Log boot-0225-3.txt from line 341502. 5+ cycles, all steps 0 errors; after cold start DSI status 0x8 (0230: 0x2008),
+  stream running. USER: reaches the home screen (touch works) but the display stays black.
+- The usb log receiver re-sends old buffer (repeated boot-args with identical timestamps): not userland restarts.
+- Both sleep builds failed. Panel state after the VCI cut stays unknown: DCS readback returns 0 bytes even from a live panel
+  (our read sequence is wrong). Next diagnostic = fix readback first (compare Linux dsi_ctrl read: cmd engine, BTA, RDBK
+  count), and check the stock DT power sequence (vddio, any panel-enable GPIO, the panel's own PMIC) - no dtc here.
+- Working fallback: the 0227-novci sleep (VCI kept on): wakes reliably, line stays visible while locked.
 
-## 2026-11-07: Audio-only follow-up: FIFO receive overhead fixed; independent HAL level probe prepared
-- USER confirms SpringBoard stable and requests audio focus. No live DSP session restarted. Reviewed GLINK receive: glink_rx_peek called rd32/pread once per byte, four repeated reads per aligned word. New0016 uses each aligned word once, preserves byte order, unaligned peeks and FIFO wrap; no bulk unaligned device reads or descriptor ownership changes. Independent byte-ring model covers266240 tail/offset/length cases and exact reduced read counts; original reader fails the read-count test and corrected one passes. This addresses observed refill overhead; audible improvement is unproven.
-- Added standalone sweet-pcm-probe: exclusive nonblocking root PCM reader only, bounded1..60s (default30), per-second aggregate frames/nonzero/peak/mean-square. No pmem/DSP/amp operations and no audio samples saved/transmitted. Can measure HAL output on current stable session after old service is stopped, without reboot/remapping. Extreme -32768/+32767, silence and accumulation tests pass; host probe compiles with -Werror. CI compiles/signs it alongside wland and records all artifact hashes.
-- USER supplied Chromitsune/Portsmith-iOS. Pinned catalog8794f29410822d2c258ad6abad57b26150a99fed. Its own matrix distinguishes upstream reports from independent qualification. New useful reference rootstockos/UniXNU-asteroids6370e66cc460202756058ae53f73afdb69abd364: audio device record reports boot tone+iOS sounds through both speakers,8.3Mframes over494s; source AsteroidsAudioProbe.cpp tracks timeline drift, signal peaks and four-slot transport. It uses newer AudioReach/GPR and a32-bit speaker-device format, not Sweet APR/AW2032 commands. Sheng remains relevant; catalog has many forks repeating shared evidence, not independent hardware validations. Raw downloaded source/evidence kept in private workspace, no firmware imported.
-- Existing PCM/amp/ring tests and kernel-portable drift checks pass. Next native CI pending; no kernel change required. Stage level probe separately first, obtain actual ringtone PCM levels, then choose fix with evidence. Corrected continuous sender will require fresh boot before any standalone ADSP mapping; keep current Wi-Fi/UI stable meanwhile.
+## 2026-11-09 16:10 IST: 0230 hardware: cold restart ran as designed, wake STILL BLACK
+- Log: logs/boot-0225-3.txt from line 280701 (the receiver kept running). Sleep: INTF_1 off -> lanes LP-11 (lane_status
+  0x1f1f, ctrl 0x1f5), reset low, VCI off. Wake: VCI on, reset pulse, 45/45 on-command in LP with the link idle, no errors;
+  "cold start (mode 1)"; stream resumed (intf1 en 1, frame counter advancing, lane_status 0x1f00). USER: display does not wake.
+- DCS read 0x0A returned 0 bytes (count 0, ack 0, no timeout) BOTH asleep-before-reset AND after the on-command -> the
+  readback path itself does not work (the panel was certainly alive at the first read), so it gives no panel state.
+- Next: 0231 (soft reset + snapshot restore + CTL flush). Mode 1 reported "regs differ 0", so the snapshot part likely changes nothing.
 
-## 2026-11-07: Wi-Fi recovered without reboot; speaker service remains stopped
-- USER did not reboot and confirms Wi-Fi now works. Read-only check: original wland auto recovery PID471 is running; experimental audio PID303 absent. SpringBoard PID407 and backboardd PID320 unchanged from the previous snapshot; no additional UI restart established during this interval. Root available127584KiB (~125MiB).
-- No new boot or DSP session started. Previous FASTBOOT request no longer needed for Wi-Fi recovery. Current app speaker audio remains unresolved; do not restart/remap the old ADSP session. Further audio diagnostics require a fresh boot at a convenient time, with current stability preserved meanwhile.
+## 2026-11-09 10:15 IST: ALL 9 IMAGES BUILT + PACKAGED (none booted); live sensor check; TEST GUIDE
+Images: /run/media/dan/MUSIC/ios-sweet-backup/build-02NN/shim-boot-02NN.img (+ NN-boot-manifest.json). All CI green.
+| img | sha256[:12] | what | cmdline extra | wland to use |
+| 0230 | 85c06bad9526 | sleep: cold restart (INTF/DSI stop-start) | VCI cut on | as is |
+| 0231 | 4a8232689fab | sleep: + DSI soft reset/snapshot + CTL flush | VCI cut on | as is |
+| 0232 | 1095a37f2ae2 | Wi-Fi fast scan + SMS/NAS trace | sweetpanelvci=0 | /var/local/bin/wland <- wland-0232 |
+| 0233 | 2e07b2ea190c | Wi-Fi fresh list + IPA data retest | sweetpanelvci=0 sweetipa=1 | wland <- wland-0233 |
+| 0234 | b7543fb04bdd | perf: 2-thread copy | sweetpanelvci=0 | as is |
+| 0235 | 075498357c0c | perf: no timer coalescing while lit | sweetpanelvci=0 | as is |
+| 0236 | ed60c6fa3624 | perf: both + 4-thread copy | sweetpanelvci=0 | as is |
+| 0237 | cc6b36ba4174 | sensors (accel/gyro/ALS/compass HID) | sweetpanelvci=0 sweetmotion=0x37 | wland-0225 <- wland-0237 |
+| 0238 | 039abfecf607 | sensors + devmotion/Compass/prox | sweetpanelvci=0 sweetmotion=0xbf | wland-0225 <- wland-0238 |
+- Staged on the phone (verified sha): /var/local/bin/wland-0232 f18a63bf, -0233 90ab17ad, -0237 1b22da17, -0238 9908af6f.
+  Active: /var/local/bin/wland = 0004 ef9a6d24 (Wi-Fi), wland-0225 eb04140c (speaker job). Swap = copy over, keep .orig.
+- CAUTION Wi-Fi: the Wi-Fi daemon has been wland 0004 since 11-04 ("0005 broke Wi-Fi" was only suspected). 0232/0233 wland
+  carry 0005-0018. If Wi-Fi does not come up with them, restore 0004 and build 0019/0020 on the 0004 stack (they do not apply
+  as is: 0010 touched radio.c/bridge.c context).
+- Live sensor check on 0227-novci (no /dev/redwood-motion): wland-0237 started from a clean ADSP: channels 33 ms, "sns: SNS
+  service 400 at 5:e". Lookups found 0 sensors because after a wland RESTART "no SMMU FastRPC stream" (the SMMU stream can be
+  set up once per boot) -> sensors PD gets no registry. Needs a real boot (the speaker job starts wland at boot, where SMMU
+  setup works). Restarting wland adsp: kill -TERM leaves the ADSP down; a restart right after can show "already up" with no
+  channels -> use WLAND_ADSP_FRESH=1. Speaker wland-0225 restored (channels up) but FastRPC files not served until reboot.
+- Packaging: /run/media/dan/MUSIC/ios-sweet-backup/scripts/{fetch-ci-any.py,package-any.py,batch-*.sh} (run with bash/python:
+  FAT stick, no exec bit). Artifact downloads from Azure blob reset often: retry loop.
+- Per test, look for: 0230/31 "SWEET PANEL: link (...)", "read 0xa (asleep, link idle)" (expect 0x08 data), "cold start";
+  0232 "bridge: scan answered from the ... list"; 0233 "SWEET IPA:" lines; 0234/36 copy_avg_us in "SWEET FB: timing";
+  0235 "timer coalescing off while the display is on"; 0237/38 wland log "sns:" + "SWEET MOTION:".
 
-## 2026-11-07: USER confirms silent ringtone, broken Wi-Fi and repeated SpringBoard restart; service stopped
-- USER could not test Safari because Wi-Fi unavailable and heard no Settings ringtone. Later reported SpringBoard repeatedly restarting. Stopped experimental PID303 with SIGTERM; subsequent ps confirms it absent. Do not claim service fixes application speaker sound. No automatic startup installed.
-- Root filesystem only11324KiB free (100% used). Found124044KiB of old diagnostic captures in /var/local/spinl. USER explicitly requests creating space then restarting same image before further tests. Archiving exact seven diagnostic files privately with pre/post SHA256 verification before removing phone copies; leave firmware/user data/shader caches intact.
-- Wi-Fi auto helper was absent. Existing /var/local/wland.log predates this boot; /var/local/wland.boot stamp64. Started existing wland auto via its own duplicate-start guard as PID471 before USER requested reboot. Recovery result not yet verified; do not claim stale marker cause proven. Several UI re-execs observed, but no explicit SpringBoard fatal PC captured; common CommCenter/shared-cache crashes and disk exhaustion need separated from speaker-service hypotheses.
-- Verified all seven diagnostics on host and rechecked phone SHA256 before removal:127010464bytes reclaimed. Root available134884KiB (~132MiB). Host backup work/speaker-runtime/spinl-private-backup with SHA256 manifest; no user caches/firmware touched. Awaiting USER FASTBOOT for requested same0218 temporary reboot; correct UTC and verify Wi-Fi/helper and home screen with speaker service OFF. No standalone DSP restart/remap in this session. Diagnose audio only after stability recovery.
+## 2026-11-09 09:00 IST (03:30 UTC): all 9 builds dispatched; perf + sensors tracks
+- Perf 1 **xnu 0234** (claude/perf-0234, CI 42555473053): scaled present copy on 2 threads (present + helper cpu5),
+  8-row bands interleaved (beamWait stays valid). Measured before (0227, animation): 36 fps, present 18.1 ms = gate 8.1
+  (GPU fence) + acquire 1.6 + copy 8.4 ms on cpu4 (A55). sweetcopythreads=1..4.
+- Perf 2 **xnu 0235** (claude/perf-0235, CI 42555567187): timer_call_slop returns 0 while the display is lit
+  (sweet_timer_nocoal via sweet_dark_set; separate from kern.timer.coalescing_enabled that wland holds for audio).
+  sweetuicoal=0 = old.
+- Perf 3 **xnu 0236** (claude/perf-0236, CI 42555692914; first run 42555600642 cancelled: empty patch, fixed in a
+  follow-up commit, force-push was refused): 0234 + 0235 + sweetcopythreads default 4 (cpu5,3,2 helpers).
+- Sensors 1 **xnu 0237 + wland 0021** (claude/sensors-0237, CI xnu 42556227828, wifi 42556232239): "Pixel 5 repo" =
+  DenialOfGravity/ios-redfin (MIT, via sunfish = Pixel 4a, SAME SM7150). Kernel: codex's 0213 sensor HID services +
+  sunfish 0229 /dev/redwood-motion (bsd/dev/sweet_motion.c, init next to /dev/pmem). wland: sunfish phone/sensors
+  (userspace/sensors, LICENSE.redfin) built in; ADSP announces SNS 0x190 at 5:e (seen in /var/local/adsp-speaker.log);
+  WLAND_SNS options (default --sns-motion --sns-secs 0). Package sweetmotion=0x37.
+- Sensors 2 **xnu 0238 + wland 0022** (claude/sensors-0238, CI xnu 42556304946, wifi 42556308218): + sunfish 0241 (prox
+  Placement), 0243 (DeviceMotion {0xff0c,4}), 0245 (Compass type 2); SNS_DEVMOTION=1 default. Package sweetmotion=0xbf.
+- Microphone: NOT built. Stock mixer_paths: handset-mic = TX macro DEC0/1 <- SWR_MIC <- WCD9375 ADC1/ADC2 (SoundWire codec).
+  Needs AP drivers for LPASS TX macro + SoundWire master + WCD937x (Linux: thousands of lines) - no blind build possible;
+  sunfish's mic path (cs35l41 amp is speaker-only) does not cover it. Both sensor/mic builds went to sensors instead.
+- Sleep 0230/0231 compiled OK; wifi 0019/0020 compiled OK.
 
-## 2026-11-07: Silent0218 result diagnosed; retained app-audio service running for listening test
-- USER reports latest image still silent and asks Codex to resume. Retrieved existing bounded native log privately: DSP accepts all setup, both amps active SYSST0x311/0x311, no faults. It consumed593920 PCM bytes but only92 nonzero10ms periods;2364 empty periods. Native30s cap aborted after2674/2674 completed buffers, with max refill gap464ms. Cleanup acknowledged; no service remained running afterward. This is not evidence of continuous application speaker sound. A boot image alone does not start the missing sender.
-- Verified/downloaded already successful native42262731215, source58285070704825bb8206f47822fd311184838093, including file hashes and service marker. No rebuild needed for this lifecycle test. Staged separately /var/local/bin/wland-0218-service; private ACF hash matched. Existing automatic Wi-Fi executable/graphics/HAL unchanged.
-- USER supplied freshFASTBOOT. Temporary boot of verified0218 image4ccb646b842657c2b6ed169452be591eb9654552264c50ed3bf38e8306819b50 accepted Sending/Booting OKAY. Both character nodes recovered; corrected UTC. Started once WLAND_PCM_DELAY_MS=15000 WLAND_SPEAKER_SERVICE=1 wland-0218-service adsp0, PID303; no standalone shutdown or stale mapping reuse.
-- Service has accepted MAP/ASM/ADM/route/format/RUN, logged app PCM active then idle reset, and resumed app PCM then idle reset again without a reported control failure. This demonstrates software lifecycle transitions, not audible output. USER asked to disconnect Bluetooth, select speaker, test Safari halfway volume, pause5s/resume and report sound/stutter; reply pending.
-- No startup plist enabled. Existing guards/24dB attenuation retained. Service remains live across this listening test; do not run another ADSP instance or remap. Fresh boot needed if it exits/fails before a new standalone session. Raw logs and runtime scripts remain private workspace files.
+## 2026-11-09 09:30 IST: USER away 8 h: 9-build plan (sleep 2, perf 3, wifi+cell 2, sensors+mic 2); builds on separate branches
+- USER plan: each track its own CI build(s), tested later one by one, then combined. Branches all from claude/speaker-0224 (83efd1b).
+- 0229 hardware (+ live /dev/pmem pokes on 0229 and 0227-novci): line gone, wake black. Findings: LANE_CTRL 0x01000000 (no
+  forced HS clock). DCS reads never return while video streams (RDBK_DATA_CTRL 0x1d0 count 0; ABL leaves 0x29). Whole on-command
+  resent live in HS: still black. Stopping only the DSI video engine while INTF_1 runs -> FIFO 0xdddd.... errors, lanes idle,
+  DSI soft reset does not restart it. Reading MDP from userland (/dev/pmem 0xae00000/0xae01000 region) FROZE the phone: do not.
+  INTF_TIMING_ENGINE_EN is offset 0 (INTF_1 0xae6b800, en=1 in the kernel's beam probe). 0227-novci locked: sleep-in again (HS)
+  and brightness 0 do not touch the line; DT pm6150l amoled (ab/ibb/oledb, swire) is status disabled -> VCI cut is the only lever.
+- Sleep 1 **xnu 0230** (claude/sleep-0230 18ba975, CI 42554715454): cold link restart: sleep 28/10 -> INTF_1 off -> DSI video off
+  (LP-11) -> DCS read 0x0A -> reset low -> VCI off; wake VCI on -> reset pulse -> clear errors -> on-command (LP, cmd mode) ->
+  read 0x0A -> DSI video on -> INTF_1 on. sweetpanelcold=1 default (0 = 0229).
+- Sleep 2 **xnu 0231** (claude/sleep-0231, CI 42554742586): same, default sweetpanelcold=7 (+ DSI soft reset with ABL snapshot
+  restore of changed config regs, + CTL0 INTF/flush).
+- Wi-Fi/cell 1 **xnu 0232 + wland 0019** (claude/wifi-0232, CI xnu 42555062063, wifi 42555065429): active scan (wildcard
+  probe, 40/110 ms dwell; DFS stays passive by channel flags), scan requests answered at once from a <30 s list + refresh;
+  kernel traces WMS(SMS)/NAS QMI headers (no TLVs). Package with sweetpanelvci=0.
+- Wi-Fi/cell 2 **wland 0020** (claude/wifi-0233, CI wifi 42555134319; kernel = 0232): rescan every 20 s while not joined and the
+  display is on. Package with sweetipa=1 (IPA data path retest; 0194 trace never booted; 0193 panicked after INIT_DRIVER).
+- Pixel 5 reference the USER named: not found locally or on GitHub (searched ios-flame forks, redfin); used ios-flame/sunfish.
+- Non-sleep images must carry sweetpanelvci=0 (0229 base cuts VCI -> black wake).
 
-## 2026-11-06: 0218 PCM kernel built cleanly; image verified, fresh boot pending
-- Kernel CI run42267915294 SUCCESS on macos-26-intel, source2e0f4a9dbb6d635cb9ee0ace62c7188e8b8022db, 10m48s. This validates the Xcode26 IIG compatibility wrapper against the full xnu build; required-patch guard and SWEET GPU checks passed. Kernel artifact xnu-kernel downloaded, kernel.development.sweet17272192bytes SHA256 7ab798d8848ba8f28950f45f403910c945f0841fdc03478a89478294da34016e, SHA256SUMS verified. Full job log retrieval still stalls after completion; success conclusion and gates are the evidence, not a reviewed log.
-- Packaged temporary image shim-boot-0218-speaker.img with unchanged verified0207 shim/DTB/ADT (base7ca0d7a7...), clean521-byte cmdline sweetbuild=218 sweetamp=2. Image SHA256 4ccb646b842657c2b6ed169452be591eb9654552264c50ed3bf38e8306819b50, 18116608bytes. Re-extracted image asserts kernel SHA, payload magic, AMP and PCM ready markers, cmdline bytes, shim/DTB/ADT identity. NOT booted or flashed. No device result yet; do not claim /dev/sweet-audio works.
-- Staged bounded app test unchanged: /var/local/bin/wland-0217-app-timed built from fbefa1c (run42260959565), hash8323c707..., private ACF hash verified. New one-shot runner work/speaker-runtime/run-speaker-0218-app.py guards a fresh boot, checks both device nodes, and runs WLAND_PCM_DELAY_MS=15000 WLAND_SPEAKER_MEDIA=1 adsp60.
-- Next: USER fastboot, temporary boot of0218, verify /dev/sweet-audio+/dev/sweet-amp, Wi-Fi/HAL/graphics intact, then one bounded app-audio run with real user playback. Do not install startup service; no sustained/volume claims before this passes.
+## 2026-11-09 03:30 IST: 0228 hardware: re-init sent but still black -> 0229 adds the panel reset pulse
+- 0228 boot: sleep 28/10 + VCI off; wake VCI on + "K6 re-init 45/45 commands, 0 needed HS, PPS split 0, ~310 ms -> 0"
+  (90-byte 9E went through the FIFO whole, LP) + 51 level restored. USER: screen stays black. => DDIC ignores the
+  on-command after VCI loss without a reset (Linux always resets after power-on).
+- 0229 (83efd1b, CI 42527667615): sweet_spmi_panel_reset(): only SID 4 0xc8xx (pm6150l GPIO 9 = DT
+  qcom,platform-reset-gpio); reads TYPE/SUBTYPE/MODE/DIG_OUT_SOURCE/EN + APID owner (logged, first 4 calls),
+  refuses unless enabled LV/MV digital output owned by EE0; writes only 0xc844 bit 7 + readback.
+  Sleep: 28/10, reset low, 10 ms, VCI off. Wake: VCI on, 10 ms, reset <0 1>,<1 10>, 45-packet on-command.
+  Package audio-runtime/package-0229.py -> USB build-0229. If still black: check the "reset GPIO" log line
+  (refused?), then suspects = DSI host state after the panel vanished (LP11/ULPS, controller error/reset), vddio.
 
-## 2026-11-06: Explicit continuous-service prototype prepared, not activated
-- On isolated codex/speaker-stream-0218, added explicit WLAND_SPEAKER_SERVICE mode. Reuses one DSP map/stream and retained SMMU allocation instead of the30s diagnostic limit. Default tone and30s media modes stay unchanged.
-- Service leaves amps off after loading profiles; four silent priming buffers establish completions before it consumes app PCM. First nonzero PCM prepares/starts amps via the same guarded operations used by the audible test. After1s of silence STOP resets both amps and restores owned pins while retaining reader/profiles/DSPsession; new sound prepares them again. Any I/O/clock/profile gate failure closes controller and aborts stream; no automatic remap/retry.
-- Unique write-token service limit0x0fffffff (~31days at10ms). Fixed completion filter to accept the token range beyond old16-bit subfield (previous filter would stall after~164s). Host tests explicitly cross16383->16388 and final service token, besides invalid limits/full finite teardown. Host -Werror passes. Native compile/on-device idle-resume and continuous playback pending; DO NOT install startup plist or claim persistent app sound yet.
-- Enlarged65536-frame ring committedc980a8c; header/kernel drift and independent80000-frame/3000-operation queue tests pass. Existing first app kernel c2ac10d continues compiling; do not cancel. First bounded real-app test remains required before enabling any service mode. Staged verified fbefa1c timing executable is separate from this prototype.
+## 2026-11-09 03:00 IST: 0227 hardware: VCI cut removes the crack line, but wake stays black -> 0228 full re-init
+- 0227 booted twice. Battery now honest: "16% (curve 14%)" after charging (was 17% vs 1-5%). Phone died once at a real
+  ~7-14% under -875 mA load on USB; console ended normally (no panic) -> brownout, not a crash.
+- Panel: sleep = 28/10 HS + "panel VCI ldoa18 off -> 0"; wake = "on -> 0" + 11/29 acked + 51 level 561 acked. USER:
+  "no line either. display is completely dark" -> VCI is what feeds the crack line; the DDIC loses its setup when VCI
+  goes. One wake was missed by the power key: SWEET KEYS read error pon-ok=0 (PRE-EXISTING: 33x on 0225, 35x on 0203).
+- Usable fallback image: USB build-0227/shim-boot-0227-novci.img (506e3de0..., cmdline + sweetpanelvci=0); BOOTED now.
+- 0228 (196c550, CI 42524969981): on wake after a VCI cut replay Xiaomi's 45-packet on-command (LP, HS retry; 90-byte
+  9E PPS split via Samsung B0 00 3B 9E offset if the 64-byte FIFO refuses it). Host mock: 45/45, split used.
+  Package audio-runtime/package-0228.py -> USB build-0228. If 0228 wake is still black: add reset GPIO (pm6150l GPIO9,
+  DT <0 1>,<1 10>) before the list, or memory-DMA for the PPS.
 
-## 2026-11-06: General-audio buffer sizing correction prepared for next kernel
-- Current HAL advertises TIMESTAMP_PERIOD16384 as maximum IO frames, whereas first PCM-node ring8192 holds only half that write. May truncate large legal callbacks even with a timely consumer. Preparing65536-frame capacity (four maximum HAL writes) with whole-frame drop policy unchanged; no disk writes. Kernel currentlybuildingc2ac10d still has8192; do not cancel progressing build.
-- Updated portable/kernel ring in lockstep; independent queue regression now covers up to80000-frame writes, wrap, empty/full and3000 operations. Native/kernel interface unchanged. Need include enlarged ring in final app-audio kernel after current build yields compilation result; current pending30s real-app test can still establish HAL->DSP data flow but is not final continuous service.
+## 2026-11-09 02:30 IST: phone died at "16%" (real ~1%) -> 0227 battery gauge fix; 0227 = 0226 + gauge
+- USER: phone turned off while iOS showed 16%; Android charge screen said 1%. Cause (code + log): SweetBattery seeds
+  from the PM6150 QG SDAM (0xb646 valid, 0xb647 SOC) = Android QG's last saved value, stale (17% every boot, while the
+  curve said 3-5%), and an SDAM seed disabled the at-rest drift to the curve (0162) -> error never corrected.
+- 0227 (9a97c28, CI 42522068917): SDAM seed only within 15 points of the curve (else logged "stale, not used");
+  drift at rest always; rest-corrected OCV < 3550 mV caps shown SOC at curve+3%. Package audio-runtime/package-0227.py
+  (USB build-0227). Boot 0227 directly (contains 0226 panel VCI-off). 0226 CI 42521488630 also built (superseded).
+- USER is charging the phone in the Android charge screen.
 
-## 2026-11-06: App-audio builds underway; matching native staged; timing counters added
-- App kernel sourcec2ac10d, run42259980459 macos-26-intel progressing. Portable/drift/amp/ring/IIG compatibility checks and deps passed; compiling, do not cancel. New IIG wrapper preserves8796 ABI; previous126 kernelContent errors diagnosed from recovered compressed log prefix. Other old macOS15 retries have failed runner allocation and are completed; no queued>40min remains at last check.
-- Matching native42259987112 SUCCESS, source/hash/Mach-O/media marker verified. Separately staged /var/local/bin/wland-0217-app and private ACF hash checked. Not run; current0214 lacks /dev/sweet-audio. Prepared one-run30s real-media test; no sine flag, expects character PCM node and freshboot.
-- Added bounded aggregate native timing telemetry: maximum refill-loop gap, counts>10ms/>40ms, validated ASM underflow event count. No audio samples or identifiers logged. Native build pending for telemetry; kernel ABI unchanged. Helps distinguish HAL starvation from playback scheduling after first app trial.
+## 2026-11-09 02:15 IST: drain fix verified; 0226 panel VCI-off (crack line) building
+- After coreduetd disabled (boot 0225 #4): locked 150 s total CPU 85 s (was 174 s; window had 3 wakes); coreduetd gone,
+  biomed 2.0 s (was 16.6 s); battery +18/+34 mA on USB (was -149/-321). Speaker launchd job WORKS (wland-0225 pid 82
+  at boot). SpringBoard pid 297 (restarted once during boot; cause not checked).
+- Crack line: Xiaomi DT (MiCode sweet-r-oss sweet-sdmmagpie.dtsi + sdmmagpie-sde-display.dtsi + sdmmagpie-regulator.dtsi):
+  K6 panel vddio = pm6150_l13 "ldoa13" (VRM, 1.9 V, pre-off 20 ms), vdda-3p3 = pm6150_l18 "ldoa18" (XOB 3.0 V, pre-off
+  10 ms), reset = pm6150l GPIO 9, reset seq <0 1>,<1 10>, lp11-init; on-command (LP) = 49 cmds incl. DSC enable 9D 01 +
+  89-byte PPS 9E; off (HS) 28/10. Touch is on pm6150l_l11 + tlmm 90 (separate). Only display uses L13A/L18A.
+- 0226 (claude/speaker-0224 d8a2cd0, CI 42521488630): step 1 = VCI (ldoa18) off after sleep-in, on before sleep-out (no
+  re-init). sweetpanelvci=0 disables. Step 2 if the line stays or wake breaks: reset + both rails + 49-cmd re-init.
+  Package: audio-runtime/package-0226.py (outputs USB build-0226/shim-boot-panel-0226.img).
 
-## 2026-11-06: USER hears speaker after32FS fix; general/app sound is now priority
-- USERFASTBOOT -> verified0214 temporary boot OKAY, SSH/UI/UTC recovered. Ran native44f7393 (CI42258190213 SUCCESS),300periods/peak5181/15sdelay, PID263. Both amplifiers nowSYSST0x311/0x311 (clock+PLL+boost+switching), active3/expired0/busdead0; USER explicitly heard "a long beep, then multiple short strokes". Confirms real built-in speaker output after32FS correction. No fault/watchdog trip.
-- Test hit native4s duration cap after181sent/181completed (failed0xfffffffc due bounded timeout), then resetamps and completed acknowledged DSP cleanup. Do not claim300 complete or smooth app audio. Delayed refills/underruns remain to investigate. USER now asks focus general/application sound, stop beep-only cycle.
-- Found app-PCM kernelBuild failure: Xcode26 iig generates IORPC.kernelContent absent from unchanged xnu8796 ABI (126 errors in recovered compressed log prefix). Added generated-code-only IIG wrapper: rpc.kernelContent -> old IORPCMessageFromMach(rpc.message,false), remove known kernelContent initializer; unknown forms fail. Tested against observed initializer/access vectors and identity/idempotence/unknown-use rejection. Does not change kernel structs or dispatch ABI. CI pins realIIG separately and exports wrapper.
-- New0217 patch suppresses only reserved-identifier style warnings from newerclang (millions of legacy header warnings made logs huge); no error/ABI suppression. Added bounded32-message/poll-deadline ADSP GLINK drain so continuous sensor RPC cannot indefinitely starve PCM refill. Defaults/phone launchd/Wi-Fi stack unchanged. Build/real app validation pending.
-- Current phone0214 after audible tone; amps reset, DMA retained until reboot. Need corrected PCM-node kernel, then verified media executable reads /dev/sweet-audio for bounded30s test. Must fresh boot before new session; no standaloneADSPshutdown. Main checkout/working video0213 unchanged.
+## 2026-11-09 01:45 IST: LOCKED BATTERY DRAIN #1 = coreduetd busy loop (~0.9 core, ~200-350 mA); disabled
+- Measured (0225, locked 150 s, USB attached): 174 s CPU in 150 s. coreduetd 136 s, biomed 16.6 s, wland-0225 3.3 s,
+  wland auto 3.2 s, rest < 3 s each. coreduetd thread "com.apple.coreduet.knowledgestorage.execution" serves an XPC
+  request from dasd (dasd blocked on it) -> CoreDuet -> BiomePubSub/BiomeStreams. Stores small (knowledgeC.db 5 MB,
+  WAL 3.5 MB). cpu_resource .ips for coreduetd since 2026-10-29 (e.g. 56% CPU over 162 s). SIGTERM ignored; SIGKILL
+  -> relaunched (pid 667) and immediately ~0.9 core again. Root cause inside CoreDuet UNKNOWN (no symbols: the
+  ipsw tool download was blocked; fs_usage/lsof/log absent). Next diag option: sweetdtlog=coreduetd,dasd boot-arg.
+- A/B with SIGSTOP (locked): battery current running -149/-321 mA (discharging on USB) vs stopped +32 mA
+  (charging); dasd/SpringBoard/backboardd unaffected for 90 s.
+- FIX (next boot): /private/var/db/com.apple.xpc.launchd/disabled.plist + com.apple.coreduetd = true.
+  Rollback: disabled.plist.pre-coreduetd (same dir) or USB launchd-20261109/disabled.plist.orig. Cost: CoreDuet
+  predictions/suggestions/Screen Time-style knowledge unavailable. Re-measure locked CPU after reboot.
 
-## 2026-11-06: USER confirms silence; longer tone hits CLKS drop; 64FS/32FS mismatch found
-- Longer native4b56d32 build42255949763 SUCCESS, artifact hash/source/ARM64 controls verified, separately staged. USERFASTBOOT,0214 temporary Sending/Booting OKAY; SSH/UI/UTC recovered. Ran300period,peak5181,15sdelay tone asPID317. Started amps and completed104/104 queued buffers, then kernel runtime gate found channel0 SYSST0x1 (PLLlocked, CLKS notstable), reset both. Native heartbeat errno60, expired1, status0xfffffffc; DSP pause/close/COPPclose/unmap cleanup completed; no SMMU faultbits. USER explicitly "No sound". Do not claim audible success or300 complete.
-- Verified exact Xiaomi Magpie pin controller: GPIO49/50/51/52 WEST, first-altfunc PRI_MI2S/WS; GPIO53/54 WEST second-altfuncQUP04. Earlier fetched sm6150 is DIFFERENT chip and not applicable; no mappings changed from it. Existing pinmux matches exact source.
-- Found shipping BOTH Music profile I2SBCK bits5:4 select64FS; current AFE uses48kHz,stereo,16bit,1.536MHz ->32FS. Model overrides sample width/rate but incorrectly preserved profile64FS. Candidate cause of silence/unstable clock, not hardware proof yet.
-- Corrected model I2SCTRL lower-byte mask to include BCK ratio32FS, preserving RXenable/channel. Added synthetic64FS regression asserts32FS and preserved selection. Also normalizes only copied I2S register bits5:4 before LOAD in native so current0214 controller can test it without waiting for new kernel; private ACF on disk unchanged. Host model tests and kernel/portable drift check pass; native build/hardware test pending. No clock/fault guard or amplifier gain relaxed.
-- Kernel42254856204 FAILED inBuild. Large job log downloads stall/partial; actual compile error not yet isolated. It did apply0214+0215 and compile many files. Never infer exact failure from unrelated upstream already-applied patch warnings. Need extract complete/compressed log tail and correct before app-PCM boot. Media node not on current0214.
+## 2026-11-09 01:30 IST: Wi-Fi daemon died silently; reboot; speaker launchd job; console receiver on USB
+- USER: Wi-Fi disconnected and could not reconnect. Observed: `wland auto` (launchd org.ios-sweet.wland, RunAtLoad,
+  no KeepAlive) exited ~12 min into the boot; wland.log ends on a normal stats line, no .ips, dmesg empty from iOS.
+  Cause UNKNOWN (timing roughly matched a SpringBoard restart; wland-0225 speaker sender ran alongside). It refuses a
+  second start per boot (/var/local/wland.boot) -> rebooted 0225.
+- Console receiver now writes to the USB stick: `python3 tools/sweet-usb-log.py
+  /run/media/dan/MUSIC/ios-sweet-backup/logs/boot-0225-3.txt` (out/err next to it). Grep it for "CRASH wland" if
+  Wi-Fi drops again. wland keeps the previous run as /var/local/wland.log.prev.
+- Speaker auto-start: launchd job /System/Library/LaunchDaemons/org.ios-sweet.speaker.plist added to
+  /System/Library/xpc/launchd.plist (533 jobs; all 532 old jobs identical): `sleep 60` then WLAND_PCM_DELAY_MS=15000
+  WLAND_SPEAKER_SERVICE=1 /var/local/bin/wland-0225 adsp 0 > /var/local/adsp-speaker.log (.prev rotated); RunAtLoad
+  only, never restarts (one DSP session per boot). Rollback: /System/Library/xpc/launchd.plist.pre-speaker (phone)
+  or USB ios-sweet-backup/launchd-20261109/launchd.plist.orig. Effective NEXT boot; this boot started by hand (pid 289).
+- NEXT: USER chose SLEEP over App Store (blocked by Apple attestation, not to be spoofed) and over 120 FPS (long
+  open-ended GPU work). Sleep sub-goal to confirm with USER: locked battery drain / full panel off / tap to wake.
 
-## 2026-11-06: Optional longer listening tone prepared; existing gain limit unchanged
-- Both full-source and local corrected tone runs100/100 completed with SYSST0x11 on both amps; audible reply for cued repeat still pending. Shipping Music profiles have receive enabled and left/right selections; neither profile forces silence. Existing runtime24dB attenuation remains stricter than shipping Music volume.
-- Added explicit optional tone period count100..300 and peak256..8192; defaults remain100periods,peak1640. Native independent cap now duration+1000ms (max4s for optional tone), media remains30s. No amplifier gain/protection change. This allows a clearly cued3s test at modest PCM level if quiet1s tone missed; not enabled automatically. Host FSM already tests10000-token maximum and finite teardown; native validation build pending.
+## 2026-11-09 01:15 IST: SPEAKER AUDIO FIXED (0225) — USER: "sound works perfectly, its instant no delay"
+- Boot 0225 (image 4fe2b8bc...) after charging; migration had finished (sentinel gone, 32 apps installed);
+  SpringBoard restarted on USER request; service wland-0225 pid 561 (run-speaker-0225.py, log
+  /var/local/adsp-0225-011047.log). USER confirms: instant start/stop, no stutter, volume OK, no cut-outs.
+- The service is still started BY HAND each boot (run-speaker-0225.py). TODO: launchd job for wland-0225 so
+  speaker audio comes up automatically; merge claude/speaker-0224 (0bdca82) into the main audio line.
 
-## 2026-11-06: Full source-built repeat also completes100/100; audible response pending
-- macos-26-intel native42254534749 SUCCESS for sourceb5fa0df, verified artifact staged separately. USER secondFASTBOOT: verified0214 temporary boot OKAY, clock corrected, normal SpringBoard/mediaserverd/wlandauto recovered. Gave15–25s listening cue, ran fullSOURCE executable /var/local/bin/wland-0215-copp PID298,15sdelay/adsp60.
-- Second corrected run: both profiles prepared, bothamps active3, SYSST0x11/0x11, expired0/busdead0;100sent/100completed, failed0/status0, mapped0/stream0/copp0 after successful cleanup, SMMUfaultbits0. Local binary patch not used. USER listening answer pending; no audible success claimed.
-- Bounded media source9824ac1 native42254862065 SUCCESS with sanitizer/ARM64 link/sign, artifact source/allhashes/Mach-O/marker checked. Staged /var/local/bin/wland-0216-media + private profile verified, not run. Needs kernel0215 /dev/sweet-audio; do not start on0214.
-- Kernel42254856204 macos-26-intel currentlyPROGRESSING; portable/drift/amplifier/ring sanitizer checks and dependencies passed, compiling. Never cancel progressing. Same-ref automatic concurrency has no other active kernel now. Older macOS15 native retries remain queued at lastcheck; originalqueued40min rule applies if stillqueued. Full source duplicate retries can finish naturally; no progressing cancellations.
+## 2026-11-09 00:52 IST: migration ran on the SAME 0225 boot; 32 apps INSTALLED; phone then ran out of battery
+- Observed: after the sentinel was created, backboardd/SpringBoard restarted and datamigrator started at once (not
+  next boot). SystemAppMigrator installed all 32 apps into /private/var/containers/Bundle/Application (staged dir
+  now empty). Migration then HUNG: CoreLocationMigrator -> locationd "com.apple.locationd.synchronous", and
+  locationd itself is deadlocked internally (main thread <- CLHarvestControllerSilo); restarting locationd did not
+  help. Fix applied: /System/Library/DataClassMigrators/CoreLocationMigrator.migrator renamed to
+  CoreLocationMigrator.migrator.sweet-disabled (revert = rename back once location works) + killed the stuck
+  plugin wrapper; next wrapper ran (2+ min CPU). Maps/Preferences migrators also link CoreLocation: may hang too.
+- ~00:50 the phone stopped answering; USER: battery ran out. Sentinel /private/var/datamigrator/migrate was still
+  present -> migration resumes on next boot (journaled HFS+, kernel replays the journal on mount).
+- NEXT: USER charges, fastboot -> boot 0225 again (USB build-0225 image) -> watch migration (spindump the
+  migrationpluginwrapper if CPU stalls) -> home screen -> run-speaker-0225.py -> sound test (volume buttons,
+  pause/resume/seek). Then SLEEP. Speaker sound result on 0225 still PENDING.
 
-## 2026-11-06: First corrected hardware PCM run fully succeeds; audible result unconfirmed
-- GitHub macOS15 allocations repeatedly fail before any steps. Created narrowly patched LOCAL diagnostic from verifieddff49cd executable: redirects exact COPP load/store through executable padding, adds ANDW10,#0xffff, returns to original code. Verified original instructions/hash, mapped padding/branches,54 ABI vectors and all ad-hoc code-page hashes. Separately staged and no-argument native loader check passed. Not represented as a source-built artifact.
-- USERFASTBOOT: verified0214 temporary boot OKAY; ran local corrected diagnostic PID302,15sdelay/adsp60. MAP, ASM OPEN, ADM OPEN(status0,COPP0), route,format,RUN accepted. Bothamps START succeeded, SYSST0x11/0x11, active3/expired0/busdead0. ALL100 PCM WRITE buffers completed, then pause/close/ADMclose/unmap status0, failed0. Both amps stopped/reset. No SMMU faultbits. USER "I may have missed it"; do not claim audible speaker success yet.
-- Full SOURCE buildb5fa0df nowSUCCESS on macos-26-intel: native42254534749, source/hash/Mach-O verified, staged separately /var/local/bin/wland-0215-copp. Local patch no longer needed for repeat. USERFASTBOOT again,0214 Sending/Booting OKAY for clearly cued repeat; startup/test pending. Local runner run-speaker-0215-copp.py uses full source artifact,15sdelay,one trial guard.
-- Kernel42251608028 also ended runner-allocation failure/no steps. Retried on working macos-26-intel as42254856204 IN_PROGRESS; leave progressing. Bounded media source9824ac1 native42254862065 SUCCESS; artifact validation/staging pending. Other macOS15 native retries42253757255 and42252459461 queued at last check; only cancel queued>40min, never progressing.
+## 2026-11-09 00:15 IST: 0225 booted (speaker fixes v2); iOS ROOT GROWN TO 107 GiB; app migration armed
+- 0224 (a7c309d, kernel CI 42507039951, wland 42507043455) booted: DSP consumption ~100 periods/s even idle
+  (8 slots fixed the slow sender). USER: "sounds loud"; then sound stopped on a volume change: ch0 SYSST
+  0x2711 = OVPS|ADPS -> our 0xcc2a fault mask reset both amps. Xiaomi AW_PID_2032_SYSST_CHECK_MASK only counts
+  UVLS|BSTOCS|NOCLKS|OCDS|OTHS -> 0225 mask 0x482a. FIFO hit 16384 frames (340 ms) around play/pause -> 0225
+  hard cut to target when >6144 frames over (cuts= in live line).
+- 0225 = claude/speaker-0224 0bdca82, kernel CI 42510127873 (kernel c141e136...), wland CI 42510130899
+  (wland eb04140c...). Image /run/media/dan/MUSIC/ios-sweet-backup/build-0225/shim-boot-0225-speaker.img
+  SHA256 4fe2b8bcc5f4... (USB stick "MUSIC" = PC storage now; /home is FULL). fastboot boot OKAY; service
+  /var/local/bin/wland-0225 started via work/speaker-runtime/run-speaker-0225.py (log /var/local/adsp-0225-*.log).
+  USER listening result PENDING.
+- PHONE ROOT WAS FULL (12 MB free of 16 GiB) -> SpringBoard restart loop. Backed up (sha-verified) + removed old
+  debug dumps (USB ios-sweet-backup/phone-var-local-20261109, phone-var-tmp-20261109). USER then asked for the
+  full userdata size and chose "grow without backup": tools sweet-hfs-grow (userspace/tools/sweet_hfs_grow.c,
+  CI 42509758761, fsctl HFSIOC_RESIZE_VOLUME = _IOW('h',2,u64) on "/") grew the mounted journaled HFS+ root
+  16.00 -> 107.06 GiB (114953269248 B = userdata 114970046464 - 16 MiB: the kernel log ring owns the last
+  4 MiB+4 KiB). 91 GiB free; persisted across the 0225 reboot.
+- Preinstalled apps (USER request): 32 apps in /private/var/staged_system_apps; SystemAppMigrator installs them
+  via InstallCoordination only during data migration. Prefs backed up to USB prefs-before-migration-20261109/
+  prefs.tar; sentinel /private/var/datamigrator/migrate (mobile:mobile) created -> migration runs on the NEXT
+  boot (expect progress UI). If anything resets, restore from prefs.tar. Then restart the speaker service.
+- USER next priority after sound: SLEEP.
 
-## 2026-11-06: Bounded app-PCM follow-up prepared separately; hardware test still pending
-- Added optional WLAND_SPEAKER_MEDIA prototype for future0215 PCM-node kernel: root-only nonblocking read /dev/sweet-audio, up to3000x10ms periods (~30s), zero-pad underflow, coherent refill only of the newly owned/free ASM slot before sending its WRITE. No audio files/dumps; telemetry counts bytes, empty periods and nonzero periods only.
-- Existing tone remains100periods/2s independent amp cap; media has30s independent cap, kernel watchdog/fault gates unchanged. Profile/reader/controller absence aborts before playback. Controlled3000period mode is diagnostic, not a complete persistent app audio service or idle power policy. Do not run until corrected hardware tone passes and /dev/sweet-audio exists.
-- Portable finite limit API accepts1..10000 only before MAP; test covers3period teardown, rejects midstream changes and invalid limits, validates10000 completion tokens. Host -Werror pass; native compile pending. Kept separate from queuedb5fa0df artifact so initial corrected tone test remains focused. Working graphics/Wi-Fi/haptics/launchd auto unchanged.
+## 2026-11-08/09: speaker 0224 (Claude) — latency/stutter/volume fix built; kernel CI running; NOT booted
+- USER (after the 0219 revert): Codex's speaker audio works but stutters, takes 1-2 s to start/stop with video,
+  low volume, thin. Discarded the uncommitted 0222 mkadt.py canvas change (USER: no lower resolution).
+- DIAGNOSIS (code + Codex 0220/0221 live counters, observed): HAL writes on mach time into the kernel ring
+  (`SWEET_PCM_RING_FRAMES` 65536 = 1.36 s, writer never blocks, drop-oldest). The sender refilled only
+  433-486 of 500 DSP periods per 5 s because 1 ms poll sleeps took 17-33 ms under timer coalescing (0221
+  helper: coalescing on avg 18 ms, off 1.0 ms). Consumer ~6% slow -> ring permanently full = the 1-2 s lag
+  (paused/resumed audio waits behind 1.36 s of backlog) + drop-oldest overruns + zero-padded short reads =
+  stutter. Volume: kernel `sweet_aw2032_start` clamped >= 24 dB attenuation; stock Music profile reg5 =
+  2.75 dB (read locally from the private ACF), so playback was ~21 dB under stock.
+- FIX branch `claude/speaker-0224` (from codex/speaker-timer-0221), commit a7c309d, pushed to myfork:
+  wland patch 0018 + userspace/adsp/sweet_pcm_fifo.h jitter FIFO (drain kernel ring each refill, 30 ms
+  prebuffer, rebuffer on dry source, trim backlog unused over two 1 s windows); coalescing off ONLY while the
+  amps play (restored on idle/exit/SIGTERM/INT/HUP); amp idle reset 10 s (was 1 s); 8 DSP slots (was 4);
+  env knobs WLAND_SPEAKER_ATTEN_DB (default 0 = stock), WLAND_PCM_PREBUF_MS, WLAND_SPEAKER_IDLE_MS; 5 s live
+  line gains fifo/max/starts/padded/trimmed/dropped. Kernel: 24 dB floor removed, never louder than the vendor
+  profile. Dropped the never-booted 0218 ISB timer patch so kernel 0224 = 0219 kernel + amp floor change only.
+- Host tests pass locally: FIFO simulation (256..4096-frame HAL cycles, 2/33 ms late wakes, 1.36 s stale backlog:
+  steady FIFO 64-166 ms, no gaps), PCM 8-slot queueing, amp model (stock-level start, fault paths),
+  amp/ring/endpoint/glink checks. Expected total latency ~0.15-0.25 s (FIFO + 80 ms DSP queue), not measured.
+- CI: native sweet-wifi 42507043455 SUCCESS (wland 620366d16e39f9d5..., verified, at
+  work/speaker-runtime/native-0224 -> symlink to /tmp scratch). Kernel xnu 42507039951 in progress (macos-26-intel).
+- DISK: /home is FULL (5 MB free of 61 GB). 0224 artifacts live on tmpfs
+  /tmp/claude-1000/-home-dan-ios-sweet/059c0883-c3ae-45cc-b822-6ab155557f1f/scratchpad/{native-0224,build-0224}
+  (LOST on PC reboot). Nothing deleted; ask USER before freeing space.
+- NEXT: fetch-ci-0224.py + package-0224.py (audio-runtime; outputs to build-0224) -> USER fastboot ->
+  `fastboot -s 21fd1806 boot shim-boot-0224-speaker.img` -> stage-0224.py -> run-speaker-0224.py (one DSP
+  session per boot) -> USER plays video, pause/resume; compare 5 s live counters (completed ~500/5 s,
+  padded/trimmed small). Thin sound NOT addressed beyond volume: suspects iOS d22_speaker_general (iPhone X
+  tuning) and the silent amp I/V-sense input; re-evaluate after the volume fix.
 
-## 2026-11-06: Parser fix built locally; native queued; kernel runner allocation failed
-- Confirmed parser correction committed/pushedb5fa0df on codex/speaker-0215; host -Werror regression passes, including nonzero reserved halfword, valid COPP0, route and close correct low16 ID. Native CI42251168480 queued, no artifact yet. Local sanitizer link unavailable because host libasan/libubsan libraries are missing; do not claim local sanitizer pass. CI runs them when acquired.
-- Kernel42248324369 ended automatically without executing steps. GitHub annotation: "The job was not acquired by Runner of type hosted even after multiple attempts", plus macOS arm64 capacity notices. Retried with runner=macos-15-intel as42251608028, same latest sourceb5fa0df, queued. No agent cancellation of progressing builds.
-- Current phone0214 after delayed diagnostic; both amplifiers reset and no PCM sent. Actual successful ADM replies were misparsed, so live DSP has unclosed COPPs: do not remap/reload/shutdown in place. Wait for verified corrected native artifact, stage separately, then request fresh FASTBOOT and temporarily boot0214 once. Existing graphics0213 unchanged. Normal-app speaker streaming still pending;0215 PCM kernel needed after hardware tone succeeds.
+## 2026-11-08 23:05 IST: REVERTED to 0219-speaker (pre-0222, default 1125x2436) — verified; canvas experiments paused
+- USER: "move back to the default resolution, older build, boot the already existing image". Booted
+  shim-boot-0219-speaker.img (the newest pre-0222 image that HAD booted; 0221-timer was never booted) via
+  `fastboot -s 21fd1806 boot` (logs/fastboot-0219-revert.txt OKAY; hash 9c23fbe8c10e... matched its manifest).
+- VERIFIED on boot (fresh section of logs/boot-revert-20261108.txt): boot-args `sweetbuild=219`; log line
+  "AppleCLCD 1080x2400 ... presented as 1125x2436"; backboardd SURF surfaces 1125x2436 bpr 4608; no real panic
+  (gPanicBase debug chatter + `exec DumpPanic` job name only); MobileGestalt REGENERATED: SubType 2436, scale 3.
+- Present stats (busy 10 s windows): copy_avg 3409-6344 us full-frame (was ~20000 us on the 0222/0223 upscale),
+  beam_avg 2667-3607 us with beam_skips=0 — beam alignment works again; 0145-0219 presentation restored.
+- MG cache deleted+synced BEFORE the 0219 boot (backup mg-backup/MobileGestalt.pre-revert-20261108.plist). An
+  interim 0223-xr boot (22:29) was needed ONLY because the fileserver exists only in a booted sweet session and
+  the phone was already in fastboot with a stale XR cache.
+- RECURRING tonight: in-session USB ECM drops (console dead at 22:03 and ~22:32; interface vanished host-side).
+  Self-recovered/was re-asserted at 22:34 (replug era); TCP 2223 + SSH then worked. Same class as the drops noted
+  on the 0203/0205 era. Watch this — 3rd drop today.
+- SEE ALSO the 22:05 entry: 0223-xr second boot; tear diagnosis unchanged: 0222/0223 per-pixel copyScaled = ~20 ms
+  full-frame > 8.33 ms frame → beamWait always skips (log evidence); 0223 only fixed the estimate. IF canvas work
+  resumes: 0224 = fast-copy patch (run-table/NEON inner loop, target <7 ms full-frame) AND/OR a presentcpu=6
+  (A76) repackage A/B — both PARKED by the user's revert decision today. The A/B image was never created; only
+  the verified 0219/0223 images sit in the audio-runtime work dir.
 
-## 2026-11-06: Delayed test reveals successful ADM response misparsed as failure
-- USER supplied FASTBOOT and UniXNU/UniXNU-sheng working-speaker reference. Rebooted verified0214 temporarily, Sending/Booting OKAY; SpringBoard/SSH/controller recovered, UTC corrected. Ran separate verifieddff49cd diagnostic with15000ms setup delay, PID330/adsp60. Both amps prepare muted, map/ASM open accepted again.
-- CRITICAL correction: matched ADM response0x10329 reports actual status0, secondword0xb0d60000 (first COPP) then0xb0d60001 (fallback COPP). ABI is u32status/u16copp_id/u16reserved; our parser incorrectly consumed all32bits as ID and synthesizedstatus1 from reserved upper bits. Thus prior "DSP rejected" conclusion is wrong: those captured ADM responses succeeded. Reserved bits must be ignored. False failure also skipped closing valid COPPs; fresh physical boot required, do not reuse live session.
-- Fixed parser to mask low16; new host vectors cover ID0 with nonzero reserved, ID3 with nonzero reserved across routing/close, invalid255 and bounded fallback. Host C99 -Werror tests pass; native sanitizer/link build pending. Do not claim real PCM or speaker sound until corrected artifact tested.
-- Sheng reference pinnedce0c600fa015964d4ecb6af864fa2ab66efa915f; porting audio record documents device tone and app playback/capture evidence. Different SM8550 AudioReach/GPR and CS35L43 amps, not Sweet APR/AW2032 drop-in. Public source saved privately under work/speaker-runtime/sheng-reference; use lifecycle/buffering comparison, retain board-specific validated electrical configuration.
+## 2026-11-08 22:05 IST: 0223-xr SECOND boot live and verified (user asked to re-install the last image)
+- The prior session left a pending `fastboot boot` + receiver; the phone entered fastboot ~21:57 IST and
+  `shim-boot-0223-xr.img` (SHA256 990b43a8ee8c20ab... = manifest) booted again: logs/fastboot-0223-xr-2.txt OKAY
+  (Sending/Booting OKAY). Live capture: logs/boot-0223-xr-2.txt.
+- Verified in the log: boot-args contain `sweetbuild=223 ... sweetfb_mode=4`; backboardd surfaces 828x1792;
+  SpringBoard exec'd; 0 panics. Crash counts (known set): PassKitSpotlight 24, assetsd 20, bluetoothd 12,
+  CommCenter 8, driverkitd 4.
+- MG cache on disk = SubType 1792, scale 2 (mg-backup/MobileGestalt.bootstate-20261108.plist) — same-canvas
+  reboot needs no MG wipe. Total time to first console packet 2026-11-08 ~21:57:53 IST.
+- USER verdict on XR canvas (Split828 status bar provider) and tearing after the 0223 copy-speed fix: PENDING.
 
-## 2026-11-06: Delayed ADM native diagnostic built and staged; fresh boot pending
-- Native sourcedff49cd847205bd5f1726743e2a1a4f982cde478, CI42249617046 SUCCESS (portable ASan/UBSan, ARM64 link/sign). Download source/all file hashes/Mach-O/markers verified. Installed separately /var/local/bin/wland-0215-delay and rechecked private ACF hash. Nothing executed/reset by staging.
-- USER asked to returnFASTBOOT for same verified0214 image, then one WLAND_PCM_DELAY_MS=15000 WLAND_SPEAKER_TONE=1 adsp60 trial. Private local runner work/speaker-runtime/run-speaker-0215-delay.py guards one trial and checks no competing standalone wland. Do not run until FRESH physical boot; previous0214 DSP test mapped owned DMA retained until reboot. Do not standalone shutdown/remap live session.
-- Kernel42248324369 (sourcee4de181 PCM ring) remains QUEUED at last check, created2026-11-06T16:00:36Z. Cancel/retry ONLY if stillqueued beyond40min; do not cancel progressing. Current branch codex/speaker-0215 tip changes only native/notes sincee4, queued kernel remains compatible. Prefer macos-15-intel on retry if ARM runner capacity unavailable. Current device0214, home screen/SSH/controller recovered, but speaker still silent due ADM failure.
+## 2026-11-08 07:2x-08:1x IST: 0223 XR BOOTED (commit 9415b5a, CI 42402373045); presents live, stable; USER visual check pending
+- 0223 = tear-band fix ("copy-speed statistic in panel rows, not presented" + mode-1 column-map rem loop). CI xnu run
+  42402373045 SUCCESS (head 9415b5a8a2f9...). Kernel downloaded via HTTP-range fetch (8 threads, ~30 s) from artifact
+  13586347051 into /home/dan/Documents/Codex/2026-11-05/new-chat/work/audio-runtime/kernel-0223/
+  (kernel.development.sweet 25b4ff2fa8dd8daf7b5d40566ca67c3274e8f4dbc27b5b71d07c4825fde9901e, SHA256SUMS verified).
+- Packaged with package-0222.py (base shim-boot-0207-dtlog.img 7ca0d7a7...); both variants share kernel 25b4ff2f:
+  shim-boot-0223-hd.img 191961ba9b6cf8f54e58e1bbdf5fd857e4ed27ed1cf19055443e10b1a9339ee4 (750x1624, fresh this session,
+  manifest 0223-boot-manifest.json) and shim-boot-0223-xr.img 990b43a8ee8c20abb1fdba5e4909ecf232a15eef67f88d7f636c45d9b78c99c1
+  (828x1792, manifest 0223-boot-manifest-xr.json; packaged by the previous session 07:15 IST).
+- MG state OBSERVED via fileserver get (192.168.7.2:2223; saved mg-backup/MobileGestalt.bootstate-20261108.plist):
+  ArtworkDeviceSubType 1792, scale 2 (product description string stale "iPhone X"; pixels are the XR canvas) -> the
+  on-disk cache already matched the 828x1792 canvas, so NO MG rm was needed before the xr boot. (Previous MG pulls:
+  .pre-0222/.post-0222b 2026-11-07 evening, .xr 00:29 IST after the 0222-xr test, .now 00:03.)
+- UNRESOLVED EVENT (honest): while I was preparing the boot the device left fastboot and self-booted ~07:26 IST; console
+  captured 07:26-07:45 in logs/boot-0223-xr.txt: system up (SpringBoard exec) but ZERO presents the whole time and the FB
+  thread in idle ticks (callbacks=20/10s = the 500 ms dark-mode tick) - the panel never got any frame; ended back in
+  fastboot ~07:45 (reboot source unknown; no panic text). The manifest was later flipped to booted:true with
+  booted_at_utc 01:59:54Z (= 07:29:54 IST, edited by the previous agent between my first read and now) - so the previous
+  session had booted 0223-xr at ~07:29. Why THAT boot never presented while MY boot of the SAME file does is unexplained
+  (my boot raced through a normal USB attach; the prior session's kickoff was not logged).
+- CONTROLLED RESULT: fastboot -s 21fd1806 boot shim-boot-0223-xr.img (Sending 17636 KB OKAY / Booting OKAY, log
+  logs/fastboot-0223-xr-2.txt); console logs/boot-0223-xr-2.txt (receiver restarted after the server restart killed the
+  first one; its stdout must go to a FILE - the first receiver died of BrokenPipe because nohup left stdout as my
+  closing pipe, NOT a device issue). Boot healthy: SpringBoard exec'd; per 10 s: presents 342-395, present_avg ~23 ms,
+  copy_avg ~20 ms, beam_skips 342-395, coalesced ~320 (numbers in the 0178-era 380-520 range), missed_deadlines 0-2,
+  callbacks=1200 (FB ticks live, unlike the zero-present boot); no panic string; sweet drivers armed (AMP/PCM/CHARGER/
+  GPU audit v2; cmdline = 0219 manifest + sweetbuild=223 + sweetfb_mode=4, 536 B).
+- Known crash set only: bluetoothd, assetsd, PassKitSpotlight (same pc 0x1f9597198 family). Haptics serving iOS
+  ("60 s: 77312 frames, 6 buzzes"). Wi-Fi scanning.
+- AWAITING USER at the phone: (1) status bar has a REAL provider at 828 (no giant red rdar://45025538 bar - the
+  Split828 provider exists); (2) scroll/animate: the horizontal split bands (tearing) should be GONE.
+  If both pass: XR 828x1792 becomes the presentation of record; the 750x1624 HD idea retests on the same fix
+  (shim-boot-0223-hd.img is ready; MG rm+sync required before an hd boot since the disk cache holds 1792 now).
+- Receiver still running: `python3 tools/sweet-usb-log.py logs/boot-0223-xr-2.txt` (from /home/dan/ios-sweet;
+  err -> logs/receiver-0223-2.err, out -> logs/receiver-0223-2.out). Stop it or leave it for live capture.
+- Lesson (REPEATS): agents hand off mid-flight here - check artifact mtimes and manifest booted flags BEFORE re-running
+  packaging/boot steps, and never let a backgrounded script inherit my shell's stdout/stderr pipes.
 
-## 2026-11-06: 0214 boot and real amplifier preparation pass; ADM rejection remains
-- USER readyFASTBOOT: temporary0214 Sending/Booting OKAY, no flash. USB SSH recovered, UTC corrected, SpringBoard26/mediaserverd28/wland48 auto active, /dev/sweet-amp present. Installed graphics unchanged.
-- Ran verified native3755735 WLAND_SPEAKER_TONE separately as PID314, bounded60s; no FRESH/reload/shutdown. AFE clock/config/start allstatus0; BOTH private Music profiles parsed/loaded and BOTH physical amplifiers prepared muted successfully. This establishes I2C writes, chip ID gates, per-chip calibration and controller setup work. It does NOT establish audible output or PLL startup.
-- DSP MAP and ASM OPEN accepted. ADM OPEN rejected NULL0x10312 then DEFAULT0x10314, finalstatus1. No PCM queued/completed; amps never active (prepared3/active0/expired0/bus_dead0), then controller STOP+close reset both. ASM pause/close and unmap acknowledged. No SMMU faultbits. DMA retained until reboot. No standalone ADSP shutdown.
-- Next native diagnostic adds optional bounded0..30000ms delay after AFE readiness before allocating/map/ASM/ADM, and matched ADM response opcode/ports/token/status-word logging. Test15000ms will distinguish an early service-start race from an immediately repeatable routing failure; hypothesis only. No automatic repeated live DMA mapping. Fixed bounded unmapped allocation leak if private profile preparation fails. Native build pending; fresh boot needed for next DMA trial.
+## 2026-11-07/08: 0222 HD presentation (750x1624) live; MG-cache reset fixed oversized UI; tear noise diagnosed; 0223 building
+- GOAL kept: lower display resolution at the SAME aspect for performance. Kernel patch xnu/patches/0222-sweet-display-hd.patch
+  (commit 2ea20b6, branch codex/speaker-stream-0222, CI 42397350899 green): AppleCLCD presents **750x1624 @2x = 375x812
+  points** (sweetfb_mode=3 default; the exact old iPhone X point geometry/scale at 44% fewer pixels), nearest-neighbour
+  upscaled onto the whole 1080x2400 panel in copyScaled() (rem-accumulator, 64-bit pair stores). `sweetfb_mode=4` same
+  build presents **828x1792** (real iPhone XR/11 panel; there IS a UIKit status-bar provider at width 828, Split828 notch
+  227x32 - the 750 width has NO provider, cf rdar://45025538/45024438). mkadt.py: /chosen display-scale 2, disp0 canvas
+  750x1624 (committed in the worktree; main tree copy still uncommitted).
+- Package: `/home/dan/Documents/Codex/2026-11-05/new-chat/work/audio-runtime/package-0222.py` (now parameterised:
+  --screen hd|x xr adds `sweetfb_mode=4`, --build/--kernel-dir/--commit/--run; B=build number names the artifacts).
+  Outputs used so far: `shim-boot-0222-hd.img` SHA256 7e365a94a561d9343c5924d182d7412721e1f4c55add65d7f0906071bba11da6
+  (Shas: hd ADT e57c4b5cfd19..., xr ADT bff84f59a324... cmdline 0219 manifest + sweetbuild=222, 521 B) and `shim-boot-0222-xr.img`
+  SHA256 8e0a23cb0262084b3a96e9cd1fa3097315014b9738352a8f5340252648fab2cd (ADT canvas 828x1792 subtype 1792 scale 2,
+  cmdline + `sweetfb_mode=4`, 536 B). NOTE: `0222.adt` on disk currently holds the XR canvas (hd variant re-generates
+  on demand).
+- DEVICE RESULT 0222-hd: booted OKAY; first boot showed oversized UI, huge red rdar bar, Control Centre off-centre,
+  flicker. **ROOT CAUSE = MobileGestalt disk cache** (UIKit laid out 1125x2436@3 over the 750x1624 kernel canvas).
+  Fix WITHOUT a rebuild, via the fileserver only: backed the cache up
+  (mg-backup/MobileGestalt.pre-0222.plist), `tools/sweet-files.py rm
+  /private/var/containers/Shared/SystemGroup/systemgroup.com.apple.mobilegestaltcache/Library/Caches/com.apple.MobileGestalt.plist`
+  + `sync` + reboot. Verified post-reboot cache: pixels 750x1624, ArtworkDeviceSubType 1624, ArtworkDeviceScaleFactor 2
+  (was 2436/scale 3); cache STABLE mid-session (no cfprefsd re-flush). USER CONFIRMED: **UI size now correct, Control
+  Centre centered - the scale fix is DONE via USB, no build for that part.**
+- REMAINING 1: red rdar status bar at 750 (expected: no Split750 provider). Test in flight: boot 0222-xr (828x1792,
+  Split828 provider exists) - user must reboot to fastboot for `fastboot -s 21fd1806 boot shim-boot-0222-xr.img`.
+  MG cache ALREADY deleted+synced for that boot.
+- REMAINING 2: "horizontal split bands (tearing), only when content moves" (screen tearing). DIAGNOSED from the code:
+  present()'s copy-speed statistic was `copy_ns / h` with h = PRESENTED line height (1624), but the upscaled copy writes
+  2400 PANEL rows: fCopyRowNs ran 1.478x high, beamWait() (which models rows as panel rows) started the copy too early
+  and the scan caught the copy mid-frame - new only in the HD presentation (at 1125x2436 the factor was 2436/2400=1.0,
+  which is why 0145-0219 never showed it). FIX = xnu/patches/0223-sweet-display-copy-speed.patch (commit 9415b5a, CI
+  run 42402373045 running): divide the statistic by the PANEL rows actually written (sweet_fb_scaled_row span), plus a
+  while-loop rem fix for the mode 1 (1125 downscale) column map (sim: 2.5M errors -> 0; 750/828 stay exact). After it
+  goes green: `python3 package-0222.py --kernel-dir kernel-0223 --build 223 --commit 9415b5a --run 42402373045`
+  (put the downloaded kernel in kernel-0223/), shas from the manifest, MG rm+sync FIRST, then fastboot boot.
+- UIKit/RE facts kept: provider match = class nativeDisplayWidth vs screen width AND notch(point) vs exclusion area x
+  scale, eps 0.0001; classes only for 828/1080/1125/1170/1242/1284; message "No status bar visual provider for screen %@
+  ... rdar://45025538". Notch point sizes: 828 = 227x32, 1080 226x34.33, 1125 209x30, 1170 210x32, 1242/1284 209.33x30.
+- Lesson (REPEATS): any canvas change needs the MG cache deleted + reboot, and XNU logs only reach the sweetlog
+  partition (no SSH) - fileserver (port 2223, tools/sweet-files.py put/get/rm/mkdir/link/chmod/sync; no ls; get ERR 2
+  = ENOENT) is the only live channel. Phone in fastboot = 21fd1806.
+- PARKED (0219 era): App Store fix - 0219 sweetstore dylib + XNU injection patch, kern_exec.c:488 apply failure.
+  No new attempt this session.
 
-## 2026-11-06: 0214 kernel/native built; image verified, waiting for FASTBOOT
-- Kernel42245885579 SUCCESS, source37557358df4bef0baf6167209ed9f34350b84e39. Selected kernel/checksum artifact members downloaded with ZIP CRC; SHA matches CI. Packaged quiet sweetamp=2/sweetbuild=214 with unchanged verified0207 shim/DTB/ADT. Image work/audio-runtime/shim-boot-0214-speaker.img SHA256 2e9b3d2ff10ef63a762faa80c98809b62d10882f26061c187eefc29da5cf8a12, 18055168bytes; kernel3b628a588b698b735532047034803e235150a255091e9e375e42924c5ff2c8ae. No boot yet. USER asked to enterFASTBOOT. Existing staged native3755735/profile verified; quiet bounded tone test prepared, not run.
-- 0215 PCM sink sourcee4de181 pushed separately to codex/speaker-0215. Native42248324691 SUCCESS; kernel42248324369 queued at last check. No progressing CI cancelled. Kernel0214 can test amplifier hardware without waiting for PCM sink;0215 adds HAL node later. Current0211 and installed working video0213 unchanged. Real speaker output remains unverified.
-
-## 2026-11-06: 0215 existing-HAL PCM sink prepared; 0214 native build passed
-- 0214 source37557358df4bef0baf6167209ed9f34350b84e39 pushed on codex/speaker-0214. Native CI42245866418 SUCCESS, including amplifier model ASan/UBSan and native ARM64 link. Artifact source, all hashes and Mach-O verified; executable and private two-channel ACF staged separately on device, not executed. Kernel CI42245885579 still progressing at last check; do not cancel.
-- Added opt-in kernel /dev/sweet-audio before HAL initialization. Existing HAL writes stereo48k/s16 to this expected node; root-only single reader feeds later ADSP service. Writers never wait for the reader; bounded8192-frame RAM ring drops oldest whole frames on overrun. Mute clears pending PCM. No audio is written to disk. Controller still defaults off without sweetamp=2.
-- Ring tested against independent reference queue through wraps, large writes and3000 randomized read/write/overrun operations. Portable and kernel header drift check added to both kernel/native CI; both kernel patches apply together locally. Kernel/native compile and real HAL-to-DSP connection remain pending; this node alone does not make speakers play.
-- Main DeepSeek/audio checkout, installed working0213 graphics, Wi-Fi and HAL bundle unchanged. Current device still0211, and previous standalone ADSP diagnostic has ended. Fresh temporary boot required for new DMA session; no standalone ADSP shutdown, no flash.
-
-## 2026-11-06: 0214 speaker controller and bounded tone path prepared
-- USER prioritizes fixing speaker. Rebooted verified0211 from supplied fastboot, Sending/Booting OKAY; SSH/SpringBoard recovered, clock corrected. Ran verified corrected-header executable67738afb (CI42236415101 SUCCESS) separately as wland-0014-adm. Memory map succeeds; ADM open still returns1, successful unmap; no PCM queued. Header correction alone did not fix it. No ADSP shutdown attempted.
-- Next transport comparison opens ASM before ADM, matching stock routing order; bounded one-time fallback from explicitly rejected NULL COPP0x10312 to stock legacy DEFAULT0x10314 (exact Sweet header constants). Host test covers both and clears recovered status. No new device acceptance claimed.
-- New isolated branch codex/speaker-0214, same worktree; copied13 missing kernel patches from verified0211 source tree, all preexisting common patch files byte-identical. Includes planar-row0211 fix and previous hardware baseline. Main audio checkout unchanged.
-- Added opt-in sweetamp=2 root-only single-owner /dev/sweet-amp controller, per-channel profile loading, muted initialization, ID2032 check, stock48k/16bit format, fresh signed10-bit per-device efuse voltage calibration. Source/profile is checked before device programming; wrong chip ID only resets, no register replay. No OTP writes. Stock per-channel Music data supplied privately, never embedded in source or kernel.
-- Controller owns QUP0SE4 and reset pins, preserves/restores original I2C/MI2S configuration and output latches, uses exact Sweet DT mux1/8mA/bias-disabled: GPIO49/50/51 output-high,52 input-enable. These directions are from Xiaomi sweet-r-oss, not a guessed SD-label interpretation. Reset pins64/72 retained from already verified board probe. Polls clock/protection faults50ms and stops both amps on error; 3000ms heartbeat timeout and device close reset both. Digital attenuation clamped to at least24dB and no louder than saved profile.
-- Portable parser/model tests pass for synthetic malformed/truncated ACFs, checksums, both actual private45-register channel profiles, signed calibration extrema, missing clock/hardware fault, wrong ID/no register writes, and every injected I/O failure. Kernel model/ABI copies match portable tested source; patch applies to stable kernel tree. Native/kernel compilation and hardware watchdog test pending; do not claim those passed.
-- Native optional WLAND_SPEAKER_TONE validates private ACF, loads/prepares kernel amps muted, initializes owned buffers with -26dBFS 1kHz sine, waits for real PCM completions before enabling both amps, stops after100 periods, aborts at2s, and closes on error. Requires kernel controller; existing Wi-Fi auto executable and installed graphics remain unchanged. It is a bounded hardware tone test, not yet a HAL/app-audio connection.
-- Primary references: MiCode/Xiaomi_Kernel_OpenSource sweet-r-oss arch/arm64/boot/dts/qcom/sweet-sdmmagpie-pinctrl.dtsi and sweet-audio-overlay.dtsi; pinned audio-kernel65be95690af834887f876ca6d4a46df7a0ec50ac aw_device.c/aw_init.c/aw_pid_2032_reg.h, q6asm.c, q6adm.c, apr_audio-v2.h. Raw logs/firmware remain private.
-
-## 2026-11-06: Reference map accepted; ADM open isolated; stock source-port/token corrected
-- Fresh recovery boot, USER prioritizes speaker. Ran verified reference-window artifact aca8d46 as separate wland-0014-reference, bounded60s, no ADSP shutdown/FRESH flag, amps untouched. ADSP READY and AFE stages status0. Control trace MAP0x10d92 -> ADM_OPEN0x10326 -> UNMAP0x10d94. This establishes successful DSP memory mapping and acknowledged unmap; ADM open rejected status1; no PCM queued. FSR0x400 faultbits0. Do not claim transport/audio success.
-- Compared pinned Xiaomi stock q6adm.c: device-open header uses source AND destination AFE port, token=(port_index<<16)|copp_index; device-close source is also AFE port. Our borrowed reference convention used source0. Corrected open/close source to0x1000 and open token40<<16, response correlation now expects matching destination0x1000. New ABI test checks exact header fields. Cause remains candidate until on-device acceptance.
-- New build/test pending. Avoid standalone ADSP shutdown due last hang. Current ADSP diagnostic ended/ending; another fresh boot will be needed for a clean new DMA session. Working graphics/kernel kept. Primary stock source: https://github.com/MiCode/vendor_qcom_opensource_audio-kernel/blob/65be95690af834887f876ca6d4a46df7a0ec50ac/dsp/q6adm.c .
-
-## 2026-11-06: USER entered fastboot; recovered quiet0211 with confirmed video bundle intact
-- Previous standalone ADSP shutdown command did not return to the host before interruption. USER now reports fastboot. No final PAS shutdown result was captured; do not claim success or diagnose a kernel panic from silence.
-- Reverified working0211 image SHA256 2be69fce130b3fb64dfbc59e9513283475cc44ab123d89f8e57bcb3f2b982309. Temporary fastboot Sending/Booting OKAY; no flash. USB SSH recovered; UTC corrected; SpringBoard26/backboardd58/mediaserverd28/wland48 running. All6 installed0213 graphics files still match verified artifact. USER asked for Wi-Fi + moving-video recovery test; pending. No panic record in initial capture.
-- Reference-window comparison source aca8d46dc60910128ec5c80111a3c72e2ba2c4f3, CI42231280555 SUCCESS. Artifact download retried after TLS timeout; all artifact file hashes, source commit and ARM64 Mach-O header now verified. Not installed or run; do not automatically retry ADSP shutdown. New fresh boot removes old live-DMA ownership; first establish UI/Wi-Fi recovery. Main checkout unchanged.
-
-## 2026-11-06: First real PCM probe rejected at map; FSR format-bit interpretation corrected
-- Verified native artifact b29120f4bef052069a4de63fa63a4f1dc38b5670 from successful CI42229688922, all artifact hashes/source/Mach-O checked. Installed separately as wland-0014-pcm, not wland auto. One bounded60s ADSP run: READY, AFE clock/config/start status0; ASM map rejected status1 before any period (sent0/completed0/mapped0). No amp or pin writes, no transport success claimed.
-- Raw FSR0x400 is FORMAT bits only, NOT a translation fault. Initially called it a fault in commentary; corrected after checking primary Linux arm-smmu.h fault mask. FSYNR/FAR are not evidence of an active fault absent fault bits. Prior FastRPC log also shows FSR0x400 while requests succeed. Private full logs stay outside Git.
-- Exact stock Sweet q6asm.c and msm_audio_ion.c confirm pool3, packed region format, 4KiB alignment, stream-bit address encoding. Tested layout itself agrees. Next comparison uses known-working active reference map window: IOVA0xa0000000, mapped32KiB (versus first0x81000000/16KiB), same coherent owned pages and alias1; no arbitrary physical memory. Adds bounded control-op logs and explicit faultbits mask. This is a comparison, not diagnosed cause or speaker fix.
-- Local PCM checks still pass, generated patch apply check passes. Corrected reference-window build/test pending. Installed working video0213 untouched; blurred preview outcome still pending; no Bluetooth/amp changes.
-
-## 2026-11-06: Speaker0014 native compile passed; high DMA mapping corrected before install
-- Initial source e67d260, run42229231026 SUCCESS including ASan/UBSan and native ARM64 link. Not installed. Saved prior ADSP log confirms physical DMA above4GiB, so low32 direct-alias approach cannot be assumed usable.
-- Revised optional test maps audio-ion SID0x1b21 via existing kernel PMEM_SMMU translating operation, IOVA0x81000000 + alias1<<32, owned coherent16KiB allocation. Kernel validates allocation ownership and page-table bounds. Queries audio-ion fault registers after trial.
-- No PMEM_SMMU teardown exists, so buffer is retained until reboot even after successful DSP unmap, preventing live SMMU page tables referencing freed pages. No looping/repeated remap; one bounded trial per process. No native test run yet; corrected-source rebuild pending. Amp/GPIO/graphics/Wi-Fi unchanged.
-
-## 2026-11-06: Speaker0014 bounded silent PCM test prepared
-- USER confirms smooth Safari video on kernel0211 + graphics0213; speaker remains silent. App-preview fix unconfirmed. Working graphics retained; separate branch codex/speaker-0014 based on audio c9e87ee, main checkout unchanged.
-- Added optional WLAND_PCM_TEST finite ASM/ADM sequence: map 4 coherent pages (audio-ion SID0x1b21 alias1), open PRI_MI2S COPP, open stereo48k/16bit stream, route, format, run, 100 silent 10ms periods, pause/close/COPP close/unmap. No amp/GPIO/profile writes. Requires successful existing AFE startup. Runtime default unchanged when flag absent.
-- Strict service/domain/token correlation, per-slot unique completion tokens, handle/address validation, 3s deadlines. Ambiguous timeout/error retains DMA; successful acknowledged teardown frees it. Native pmem close leaves allocations intact. Low32-bit physical allocation checked before alias; every page zeroed via coherent pm_wr before any map command.
-- Host C99 -Wall -Wextra -Werror test passes: reference ABI fields, complete100-period flow, slot ownership/duplicate completions, ordered teardown, timeout retention, invalid/short/wrong-domain/token responses. CI adds ASan/UBSan. Patch applies to full pinned donor with0013. Full native compile and real DSP result pending.
-- Protocol references: https://github.com/torvalds/linux/blob/master/sound/soc/qcom/qdsp6/q6asm.c and q6adm.c; saved active sunfish PCM sequence used for comparison, not its different amplifier or MI2S port. New implementation is a silent transport probe, not speaker playback or HAL integration.
+- Directory `/home/dan/ios-sweet/shim/out/batch-20261106/`; `SHA256SUMS` and `README.md` there. All eight are temporary
+  `fastboot boot` images with the 0207 shim/stock DTB/ADT unchanged; no partition/root changes.
+- 01/02/03/04 Metal native profiles A-D: `sweetmtl=2`, 120 Hz caller rows/async, 120 Hz all rows/sync, 120 Hz
+  kernel import sync/A55 present, 60 Hz 128-byte rows/sync. Builds A/B/D succeeded; C's CI retry was cancelled in
+  the queue, so 03 reuses A's identical-source kernel with C's boot arguments (manifest notes this).
+- 05 speaker 0212: `sweetamp=2` writes the stock 37-register AW882xx L/R sequences and leaves both amps enabled.
+  No `/dev/sweet-audio`/PCM yet. Sidecar `sidecar/wland-0014/wland` (bf568dc9...) sends a 3 s 697/1209 Hz DTMF
+  after `WLAND_AFE=1`; run it after the >50 s amp init. Audibility unverified.
+- 06 sensors/camera 0214: sensor HID services (`sweetmotion=0x77`) plus read-only `kern.sweet_camprobe`
+  (`sweetcamprobe=1`). No real ADSP sensor samples and no camera capture/AppleCamIn yet.
+- 07 iServices 0209: known-good SSH/SpringBoard diagnostic image (`sweetdtlog=akd,adid,appstored,fairplayd.H2`,
+  `sweetservtrace=1`); Apple ID login remains unfixed.
+- 08 media 0211: row-stride candidate; booted previously with Wi-Fi, Safari/video not validated, H264SW SIGBUS not
+  proven fixed.
+- Image SHA-256 (first 16): 01 b49698d0c7cfa97f, 02 021617d37c95f982, 03 a2362cfe52810836, 04 3284ca664ebaf257,
+  05 d66ebbafbc9f8dff, 06 2df52ef2d5012aac, 07 6cfe48cd8e273475, 08 2be69fce130b3fb6.
+- Next: user connects the phone in fastboot; boot 01/02/03/04 for animation smoothness, 05 + wland 0014 for the
+  speaker checkpoint, 06 for sensor/camera registration, 07 for a fresh iServices trace, 08 for Safari/video.
 
 ## 2026-11-05 22:45 IST: wland 0013 — ADSP audio PD answers; PRI_MI2S clock, config and port start all status 0
 - wland 0011 (CI 42066647562, wland 25dde74f...): graceful ADSP stop request not acked by the live ADSP;
