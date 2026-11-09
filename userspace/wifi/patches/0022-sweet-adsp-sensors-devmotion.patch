@@ -1,0 +1,14 @@
+diff --git a/phone/wifi/wland.c b/phone/wifi/wland.c
+index 6a363c1..fd6f24a 100644
+--- a/phone/wifi/wland.c
++++ b/phone/wifi/wland.c
+@@ -777,6 +777,9 @@ static void adsp_sns_setup(void)
+ 		printf("adsp: sensors off (WLAND_SNS=0)\n");
+ 		return;
+ 	}
++	/* 0022: device motion (9-axis dm_fusion -> the {0xff0c, 4}/{0xff0c, 8} services of xnu 0238: CoreMotion's
++	 * attitude, Compass) on by default; SNS_DEVMOTION=0 in the environment turns it off. */
++	setenv("SNS_DEVMOTION", "1", 0);
+ 	snprintf(buf, sizeof(buf), "%s", e && *e ? e : "--sns-motion --sns-secs 0");
+ 	for (char *t = strtok(buf, " "); t && argc < 15; t = strtok(NULL, " "))
+ 		argv[argc++] = t;
