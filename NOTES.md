@@ -6,6 +6,8 @@
   Crashes so far = usual noise (bluetoothd, driverkitd, *Spotlight, assetsd, CommCenter x1).
 - To check: lock -> line gone? (log "SWEET FB: display off (black + brightness 0)", "SWEET PANEL: blank: brightness 0 ->"),
   unlock -> brightness restored. Next data test = 2421 (0242 kernel + sweetipa=1).
+- USER asked for a SpringBoard restart: TERM to pid 294 over SSH -> new SpringBoard 343. Before that, backboardd (292)
+  and SpringBoard were only ~50 s old although the boot was minutes earlier (an earlier userspace restart? not checked).
 
 ## 2026-11-10 01:30 IST: CRACK LINE SOLVED (live): panel awake + black frame + DCS 0x51 = 0 -> fully dark; xnu 0242 builds
 - USER: the line is a physical crack, always visible while lit; Android darkens it while asleep.
