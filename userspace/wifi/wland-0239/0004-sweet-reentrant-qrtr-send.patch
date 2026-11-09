@@ -1,0 +1,70 @@
+diff --git a/phone/wifi/cell.c b/phone/wifi/cell.c
+index 715f702..9dc50a8 100644
+--- a/phone/wifi/cell.c
++++ b/phone/wifi/cell.c
+@@ -879,10 +879,21 @@ static void bb_poll(void)
+ 	}
+ }
+ 
++static void cell_poll_once(void);
+ void cell_poll(void)
+ {
+-	if (!cell_on)
++	/* link_poll runs this from inside link_send while a packet waits for a modem intent: no nesting (bb_buf,
++	 * the record being parsed, and the periodic requests are not reentrant). */
++	static int busy;
++	if (!cell_on || busy)
+ 		return;
++	busy = 1;
++	cell_poll_once();
++	busy = 0;
++}
++
++static void cell_poll_once(void)
++{
+ 	uint64_t now = now_ms();
+ 	if (srv[C_NAS].up && now >= next_sig) {
+ 		simple(C_NAS, 0x4f);
+diff --git a/phone/wifi/link.c b/phone/wifi/link.c
+index 8257a9a..cddf66e 100644
+--- a/phone/wifi/link.c
++++ b/phone/wifi/link.c
+@@ -4,6 +4,7 @@
+  * channel. The modem is QRTR node 0; we are node 1.
+  */
+ #include <stdio.h>
++#include <stdlib.h>
+ #include <string.h>
+ #include <time.h>
+ #include "glink.h"
+@@ -328,18 +329,26 @@ static void handle_data(const uint8_t *d, uint32_t n)
+ int qrtr_send(uint32_t type, uint32_t src_port, uint32_t dst_node, uint32_t dst_port,
+ 	      const void *payload, uint32_t len)
+ {
+-	static uint8_t b[65536 + 64];
++	/* Sweet: one buffer per call. link_send waits for a modem intent in link_poll, whose idle hook may send
++	 * again (cell_poll, rx handlers); with one static buffer the nested packet overwrote the waiting one and the
++	 * first request never reached the modem (CommCenter ATCS_TIMEOUT resets). */
++	uint8_t small[2048], *b = small;
+ 	struct qrtr_hdr hd = {
+ 		.version = 1, .type = type, .src_node = QRTR_NODE_APPS, .src_port = src_port,
+ 		.confirm_rx = 0, .size = len, .dst_node = dst_node, .dst_port = dst_port,
+ 	};
+-	uint32_t padded = (len + 3) & ~3u;
+-	if (sizeof(hd) + padded > sizeof(b))
++	uint32_t padded = (len + 3) & ~3u, total = (uint32_t)sizeof(hd) + padded;
++	if (len > 65536)
++		return -1;
++	if (total > sizeof(small) && !(b = malloc(total)))
+ 		return -1;
+ 	memset(b + sizeof(hd) + len, 0, padded - len);
+ 	memcpy(b, &hd, sizeof(hd));
+ 	memcpy(b + sizeof(hd), payload, len);
+-	return link_send(b, sizeof(hd) + padded);
++	int r = link_send(b, total);
++	if (b != small)
++		free(b);
++	return r;
+ }
+ 
+ int qrtr_new_server(uint32_t service, uint32_t version, uint32_t instance, uint32_t port)

@@ -1,0 +1,33 @@
+diff --git a/phone/wifi/wland.c b/phone/wifi/wland.c
+index 957d58c..e867ee3 100644
+--- a/phone/wifi/wland.c
++++ b/phone/wifi/wland.c
+@@ -752,8 +752,17 @@ static int auto_up(void)
+ 	struct timeval bt = { 0 };
+ 	n = sizeof(bt);
+ 	sysctlbyname("kern.boottime", &bt, &n, NULL, 0);
+-	char stamp[32] = "", now[32];
+-	snprintf(now, sizeof(now), "%ld\n", (long)bt.tv_sec);
++	/*
++	 * Sweet: the clock restarts at the same fake epoch every boot, so boottime seconds repeat across boots (two
++	 * boots in a row were both "47" and the second refused to start: no Wi-Fi, no baseband). Key the stamp on the
++	 * per-boot session UUID; boottime with microseconds only if that sysctl is missing.
++	 */
++	char uuid[64] = "";
++	n = sizeof(uuid) - 1;
++	if (sysctlbyname("kern.bootsessionuuid", uuid, &n, NULL, 0) || !uuid[0])
++		snprintf(uuid, sizeof(uuid), "t%ld.%06d", (long)bt.tv_sec, (int)bt.tv_usec);
++	char stamp[80] = "", now[80];
++	snprintf(now, sizeof(now), "%s\n", uuid);
+ 	FILE *f = fopen(WLAND_STAMP, "r");
+ 	if (f) {
+ 		if (!fgets(stamp, sizeof(stamp), f))
+@@ -772,7 +781,7 @@ static int auto_up(void)
+ 	if (freopen(WLAND_LOG, "a", stdout))
+ 		dup2(fileno(stdout), 2);
+ 	setvbuf(stdout, NULL, _IONBF, 0);
+-	printf("wland auto: boot %ld, memory limit 2048 MB -> %d\n", (long)bt.tv_sec, mrc);
++	printf("wland auto: boot %ld session %s, memory limit 2048 MB -> %d\n", (long)bt.tv_sec, uuid, mrc);
+ 	return up(0);
+ }
+ 
