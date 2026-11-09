@@ -1,3 +1,14 @@
+## 2026-11-09 19:30 IST: 0235 result: no visible change ("jitters, slight delay while opening app still exists")
+- 0235 boot (log from line 485173; usblog missed the first seconds, so the "timer coalescing" init line was not seen;
+  active state unconfirmed). Busy windows: ~37 presents/s, present_avg 17 ms = gate (GPU fence) 7.3-7.9 ms + copy 7.2-8.3 ms
+  (one thread in 0235), max 31-38 ms. Idle windows: 5.4 ms.
+- All three perf builds (0234 copy x2, 0235 no coalescing, 0236 both + x4): USER sees at most a small gain. => neither the
+  copy alone nor timer slop is the limit. Known from 11-01/02 (spindumps): app-open delay = ~150-170 ms SpringBoard main
+  thread CPU before the first animation frame, mostly on A55 (kernel sees 8 cpus as one SMP cluster); GPU ~7-8 ms/frame.
+- Candidate next steps (none built): (a) USER-side A/B: Reduce Transparency + Reduce Motion (fewer GPU blur passes);
+  (b) check whether backboardd blocks in present (fence wait + copy serial with its next frame) and pipeline it;
+  (c) real AMP cluster topology (mkadt: 2 clusters, __AMP__) so the scheduler puts UI threads on A76 by design - large.
+
 ## 2026-11-09 19:10 IST: Wi-Fi fix SAVED as the default; booting 0235
 - KEEP: Wi-Fi boot daemon = wland 0239 (5eb59683) = branch claude/wifi-0239 7fa30a5 (myfork), CI 42603119802.
   Copies: phone /var/local/bin/wland and wland-0239; USB ios-sweet-backup/wland-keep/wland-0239-5eb59683.
