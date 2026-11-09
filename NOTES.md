@@ -8,6 +8,10 @@
   Data port set up (DPM open 0, WDA data format 0, 25 held binds sent); WDS 0xa2 replies for mux 1..5, active 0.
   NO PANIC so far (log kept growing past the 2401 panic point). No WDS Start Network (svc 1 msg 0x20) seen yet ->
   pdp_ip still down. Next: USER checks status bar / toggles Cellular Data; then look for svc 0x1 msg 0x20 in the log.
+- USER: "it kernel panicked. it stuck in boot." No panic text in the USB log; it ends at line 774432 (last line
+  "hfs_clonefile: cluster_write failed - 34"; last IPA/BB lines ~WDS svc 0x1 replies, err 0xf/0x4a). Panic came later
+  than on 2401 (several minutes in, after the IPA handshake + filter rules), so answering 0x27/0x23 moved it, not fixed it.
+- 2421 boot #2 (USER request, same image): fastboot boot OKAY, log from line 774433.
 
 ## 2026-11-10 02:00 IST: 0242 BOOTED (crack-line fix + 0241 IPA QMI); awaiting USER lock/unlock check
 - CI 42629741309 (main 0178876) green. Image USB build-0242/shim-boot-0242.img 17402d096639 (kernel 99574bce), extras
