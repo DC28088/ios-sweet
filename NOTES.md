@@ -1,3 +1,31 @@
+## 2026-11-09 10:15 IST: ALL 9 IMAGES BUILT + PACKAGED (none booted); live sensor check; TEST GUIDE
+Images: /run/media/dan/MUSIC/ios-sweet-backup/build-02NN/shim-boot-02NN.img (+ NN-boot-manifest.json). All CI green.
+| img | sha256[:12] | what | cmdline extra | wland to use |
+| 0230 | 85c06bad9526 | sleep: cold restart (INTF/DSI stop-start) | VCI cut on | as is |
+| 0231 | 4a8232689fab | sleep: + DSI soft reset/snapshot + CTL flush | VCI cut on | as is |
+| 0232 | 1095a37f2ae2 | Wi-Fi fast scan + SMS/NAS trace | sweetpanelvci=0 | /var/local/bin/wland <- wland-0232 |
+| 0233 | 2e07b2ea190c | Wi-Fi fresh list + IPA data retest | sweetpanelvci=0 sweetipa=1 | wland <- wland-0233 |
+| 0234 | b7543fb04bdd | perf: 2-thread copy | sweetpanelvci=0 | as is |
+| 0235 | 075498357c0c | perf: no timer coalescing while lit | sweetpanelvci=0 | as is |
+| 0236 | ed60c6fa3624 | perf: both + 4-thread copy | sweetpanelvci=0 | as is |
+| 0237 | cc6b36ba4174 | sensors (accel/gyro/ALS/compass HID) | sweetpanelvci=0 sweetmotion=0x37 | wland-0225 <- wland-0237 |
+| 0238 | 039abfecf607 | sensors + devmotion/Compass/prox | sweetpanelvci=0 sweetmotion=0xbf | wland-0225 <- wland-0238 |
+- Staged on the phone (verified sha): /var/local/bin/wland-0232 f18a63bf, -0233 90ab17ad, -0237 1b22da17, -0238 9908af6f.
+  Active: /var/local/bin/wland = 0004 ef9a6d24 (Wi-Fi), wland-0225 eb04140c (speaker job). Swap = copy over, keep .orig.
+- CAUTION Wi-Fi: the Wi-Fi daemon has been wland 0004 since 11-04 ("0005 broke Wi-Fi" was only suspected). 0232/0233 wland
+  carry 0005-0018. If Wi-Fi does not come up with them, restore 0004 and build 0019/0020 on the 0004 stack (they do not apply
+  as is: 0010 touched radio.c/bridge.c context).
+- Live sensor check on 0227-novci (no /dev/redwood-motion): wland-0237 started from a clean ADSP: channels 33 ms, "sns: SNS
+  service 400 at 5:e". Lookups found 0 sensors because after a wland RESTART "no SMMU FastRPC stream" (the SMMU stream can be
+  set up once per boot) -> sensors PD gets no registry. Needs a real boot (the speaker job starts wland at boot, where SMMU
+  setup works). Restarting wland adsp: kill -TERM leaves the ADSP down; a restart right after can show "already up" with no
+  channels -> use WLAND_ADSP_FRESH=1. Speaker wland-0225 restored (channels up) but FastRPC files not served until reboot.
+- Packaging: /run/media/dan/MUSIC/ios-sweet-backup/scripts/{fetch-ci-any.py,package-any.py,batch-*.sh} (run with bash/python:
+  FAT stick, no exec bit). Artifact downloads from Azure blob reset often: retry loop.
+- Per test, look for: 0230/31 "SWEET PANEL: link (...)", "read 0xa (asleep, link idle)" (expect 0x08 data), "cold start";
+  0232 "bridge: scan answered from the ... list"; 0233 "SWEET IPA:" lines; 0234/36 copy_avg_us in "SWEET FB: timing";
+  0235 "timer coalescing off while the display is on"; 0237/38 wland log "sns:" + "SWEET MOTION:".
+
 ## 2026-11-09 09:00 IST (03:30 UTC): all 9 builds dispatched; perf + sensors tracks
 - Perf 1 **xnu 0234** (claude/perf-0234, CI 42555473053): scaled present copy on 2 threads (present + helper cpu5),
   8-row bands interleaved (beamWait stays valid). Measured before (0227, animation): 36 fps, present 18.1 ms = gate 8.1
