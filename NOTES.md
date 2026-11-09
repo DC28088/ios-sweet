@@ -1,3 +1,18 @@
+## 2026-11-09 22:00 IST: REPO CONSOLIDATED: single `main` branch; side branches recorded and deleted (USER request)
+- USER: "update the readme on github ... clean the repository up ... should only have a single main branch, but
+  everything should be recorded separately". Testing stopped for now.
+- main = claude/sensors-0238 (code: speaker 0225 line + sensors 0237/0238) + claude/audio-0009 (this NOTES line) +
+  the old GitHub main (PRIVACY.md, AGENTS.md rules, README, metal2.yml). 38 NOTES sections that only existed on the
+  speaker branches -> docs/notes/speaker-line-2026-11-06.md. Wi-Fi boot daemon stack -> userspace/wifi/wland-0239 +
+  .github/workflows/wifi-0239.yml. Every former branch: docs/branches/README.md (tip hash, result) and, where commits
+  are not in main, docs/branches/<name>/*.patch (33 branches, 3.3 MB). Privacy scan of the new files: no ID values.
+- Full backup of all 50 branch tips before deletion: USB ios-sweet-backup/git-bundles/ios-sweet-all-branches-20261109.bundle.
+- Phone state at stop: booted 0238 (sweetmotion=0xbf); /var/local/bin/wland = 0239 (Wi-Fi/cell), wland-0225 path =
+  wland-0238 (speaker + sensors; rollback wland-0225.orig); soc0 files + rebuilt sensor registry in place.
+  Untested image ready: USB build-2381 (0238 kernel + sweetmotion=0xff, iOS orientation service for auto-rotate).
+- Next: modem ERR-FATAL on ~1/3 boots; auto-rotate via 2381; auto-brightness (only 31 ALS samples seen); Compass
+  (devmotion8 bit 0x400); sleep diagnostic (DCS readback); perf needs measurement first.
+
 ## 2026-11-09 21:25 IST: 0238 boot: 6 sensors, prox service live; orientation OFF by mask -> image 2381 (sweetmotion=0xff)
 - 0238 (log from line 583119): modem OK. wland-0238: "motion: 6 sensors", accel 50 Hz, gyro 200 Hz (iOS changes rates),
   als, "orientation 1 posted"; SNS_DEVMOTION fusion on. Kernel: prox service registered, backboardd sets DetectionMode
