@@ -11,7 +11,16 @@
 - USER: "it kernel panicked. it stuck in boot." No panic text in the USB log; it ends at line 774432 (last line
   "hfs_clonefile: cluster_write failed - 34"; last IPA/BB lines ~WDS svc 0x1 replies, err 0xf/0x4a). Panic came later
   than on 2401 (several minutes in, after the IPA handshake + filter rules), so answering 0x27/0x23 moved it, not fixed it.
-- 2421 boot #2 (USER request, same image): fastboot boot OKAY, log from line 774433.
+- 2421 boot #2 (USER request, same image): fastboot boot OKAY, log from line 774433. Same IPA result (0x27/0x23 answered,
+  0x24 from the modem, pdp_ip0..3, CommCenter sig 11 once). Log STALLED at line 778301, last line "SWEET SURF: backboardd
+  trap 2" (first IOSurface lock of backboardd's first 1125x2436 surface); no panic text.
+- OBSERVATION: all three sweetipa=1 boots stop at the same phase, ~1800 log lines after "install filter rule answered":
+  2401 after backboardd "create id 3" (log then restarts with a new kernel), 2421#1 ~80 lines after trap 3, 2421#2 at
+  trap 2. Without sweetipa (0242, 2402) backboardd goes on past this. GUESS (unverified): a fixed time after the modem
+  endpoints open (IPA RX/GSI interrupt or DMA into memory that something else owns), not the display code itself; the
+  backboardd lines are just what is printing at that moment.
+- Next: photo of the panic screen (0193's was "panic (CPU 3 Caller 0xfffffe0..."); kernel diag options: keep IPA up but
+  skip the modem endpoint open (bisect RX buffers vs QMI), and print panic text to the USB log/persistent log before halt.
 
 ## 2026-11-10 02:00 IST: 0242 BOOTED (crack-line fix + 0241 IPA QMI); awaiting USER lock/unlock check
 - CI 42629741309 (main 0178876) green. Image USB build-0242/shim-boot-0242.img 17402d096639 (kernel 99574bce), extras
