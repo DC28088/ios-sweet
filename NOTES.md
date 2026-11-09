@@ -1,3 +1,14 @@
+## 2026-11-09 21:25 IST: 0238 boot: 6 sensors, prox service live; orientation OFF by mask -> image 2381 (sweetmotion=0xff)
+- 0238 (log from line 583119): modem OK. wland-0238: "motion: 6 sensors", accel 50 Hz, gyro 200 Hz (iOS changes rates),
+  als, "orientation 1 posted"; SNS_DEVMOTION fusion on. Kernel: prox service registered, backboardd sets DetectionMode
+  0/1/3/5, ScreenUnlocked. "orientation off (sweetmotion=0xbf)", "devmotion8 off".
+- Mask bits (SweetMotion.h): 1 accel, 2 gyro, 4 als, 8 prox, 0x10 compass, 0x20 pressure, 0x40 ORIENT, 0x80 devmotion
+  {0xff0c,4}, 0x400 devmotion8 {0xff0c,8} (locationd heading). 0xbf lacks 0x40 (my packaging choice, copied from sunfish).
+  sunfish keeps 0x40 off on purpose: their auto-rotate = adspboot --sns-rot -> /var/local/sweet-orient "R N" read by
+  SweetMetal2 (iOS orientation service rotated their display wrongly). Sweet has NO sweet-orient reader.
+- Test image: USB build-2381/shim-boot-2381.img 5150ca32d3ad = 0238 kernel (CI 42556304946) + sweetmotion=0xff
+  (adds iOS orientation service; sweetbuild=2381 is only a label). Compass heading may also want 0x400 later.
+
 ## 2026-11-09 21:10 IST: 0237 USER: rotation NO, auto-brightness NO, speaker YES -> 0238 staged
 - Kernel: "SWEET MOTION: orientation off (sweetmotion=0x37)" + "sample type 10 flags 0x3: service not registered" x6:
   wland posts orientation, but 0237's mask has no orientation service -> no rotation by design of that image. 0238
