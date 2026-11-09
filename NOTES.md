@@ -1,3 +1,13 @@
+## 2026-11-09 17:05 IST: 0232 boot: Wi-Fi + SIM DOWN; wland boot-guard bug; wland-0232 crashed the modem; 0004 restored
+- Boot-guard BUG (also explains past "wland refuses / died" cases): /var/local/wland.boot stores "boot %ld" = boot time in
+  seconds, and the phone clock restarts at the same fake 1969 epoch every boot -> 0231 and 0232 were both "boot 47" ->
+  "wland: already started in this boot" -> no Wi-Fi, no baseband (CommCenter crash loop sig 11, Settings unstable).
+  Fix in the next wland build: key the guard on kern.bootsessionuuid. Until then remove /var/local/wland.boot before a reboot.
+- Started wland-0232 by hand (guard moved to wland.boot.stale): modem booted, then "[1092] smp2p: modem state 7 ERR-FATAL"
+  -> no wlfw, no Wi-Fi. 0004 on the previous boot: modem fine, wlfw up. Cause (0005-0018 stack vs late start) UNKNOWN.
+- Restored: /var/local/bin/wland = 0004 ef9a6d24; tried binary kept as wland-0232.tried; guard moved to wland.boot.0232run.
+- Wi-Fi tests 0232/0233 as built are void. Next: port 0019/0020 (+ guard fix) onto the 0004 stack.
+
 ## 2026-11-09 16:40 IST: 0231 hardware: mode 7 (soft reset + snapshot + CTL flush) ran, wake STILL BLACK
 - Log boot-0225-3.txt from line 341502. 5+ cycles, all steps 0 errors; after cold start DSI status 0x8 (0230: 0x2008),
   stream running. USER: reaches the home screen (touch works) but the display stays black.
