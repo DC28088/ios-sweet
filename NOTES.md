@@ -13,6 +13,12 @@
   all-zero Goodix info page (0x4022 zeros, pid=00000000) -> "no unique supported IC ... stopping" (same as 0087 on 10-19;
   49 other boots in boot-0225-3.txt selected GT9896). One-shot probe, no live retry -> reboot to fastboot, boot 0242 again.
   TODO kernel: retry the probe (e.g. 3x, 5 s apart) when the Goodix pid reads 0.
+- 0242 boot #2 (log from 688518): touch probe failed AGAIN, same way. Raw bytes differ from every good boot: 0x4022 all 0
+  (good: "9896" fw 03.02.00.0c), 0x4032 "02 06 00.." (good: "03 5f 5f ad.."), 0x8240 random (good: ~0x09xx sensor data).
+  GUESS: GT9896 sits in its boot ROM / firmware not running; warm fastboot boot does not power-cycle it. Nothing before
+  the probe differs on the display side (only "display on", no blank), and the 0241/0242 diff touches no I2C/touch code.
+  A/B: waiter boots known-good 2402 next (build-2402, CI 42614675470). If 2402 also fails -> chip state, try a full power-off
+  / OrangeFox touch check; if 2402 works -> 0242 kernel related after all.
 
 ## 2026-11-10 01:30 IST: CRACK LINE SOLVED (live): panel awake + black frame + DCS 0x51 = 0 -> fully dark; xnu 0242 builds
 - USER: the line is a physical crack, always visible while lit; Android darkens it while asleep.
