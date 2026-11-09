@@ -1,3 +1,10 @@
+## 2026-11-09 19:10 IST: Wi-Fi fix SAVED as the default; booting 0235
+- KEEP: Wi-Fi boot daemon = wland 0239 (5eb59683) = branch claude/wifi-0239 7fa30a5 (myfork), CI 42603119802.
+  Copies: phone /var/local/bin/wland and wland-0239; USB ios-sweet-backup/wland-keep/wland-0239-5eb59683.
+  Any future Wi-Fi/cell work starts from claude/wifi-0239 (0001-0004 + 0005 scan + 0006 list + 0007 guard), NOT from
+  the 0005-0018 stack (its `auto` mode crashed the modem on 0232).
+- Speaker job reverted to wland-0225 (eb04140c) for a clean perf test; wland-0238 still staged as /var/local/bin/wland-0238.
+
 ## 2026-11-09 19:00 IST: 0236 + wland 0239 tested: Wi-Fi list instant (after warm-up); perf no visible gain; 0238 staged
 - 0236 boot (log from line 443230), wland 0239 started at boot ("boot 44 session <uuid>"), modem fine, wlfw up.
   Active scan works: 553 frames in 33 scans vs 48 in 28 with 0004 (all nearby APs -81..-94 dBm). Every wifid FW_SCAN
