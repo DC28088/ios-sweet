@@ -1,3 +1,19 @@
+## 2026-11-11 20:40 IST: backend profile symbolized; strict-publish A/B -> glitches, no gain -> restored
+- Installed bundle = native-metal CI 42213344710 (source e0574fac, branch codex/media-0213; backend cd052dd6);
+  artifact with symbols on USB: ios-sweet-backup/native-metal-artifact-e0574fa. Kernel symbols: 2461 kernel
+  LC_SYMTAB, __kernel__+off = __TEXT_EXEC vmaddr 0xfffffe0007308000 + off. Scratch tools (session scratchpad):
+  subprof.py (inclusive/self below an anchor frame), callers.py (call chains to a frame).
+- Render thread (2977 samples incl. blocked): idle vsync wait ipc_mqueue_receive_continue 30 %; SweetMetal2
+  commit 42 % incl, runDraw 33 %, rwa_render_draw 31 %, fd_draw_vbo 26 %, flush_deferred_submits 22 %,
+  drmCommandWriteRead 632 samples (21 %): of which transport wait() 257 (kernel delay_for_interval/thread_block),
+  submitResources 160 (kernel self 112), IOSurface allocate 63, mapBo 28, vm_deallocate 25, job release/retire 67.
+  wait() chain: fd_gmem_render_tiles -> fd_submit_sp_flush -> flush_deferred_submits -> flush_submit_list ->
+  drmCommandWriteRead -> dispatch -> wait (strict publish: sweet_drm.cpp:546 waits fences.back(), or EBUSY 575).
+- A/B: /var/local/sweet-native-strict-publish -> .off + backboardd restart: USER "performance feels the same, but
+  there are many bugs and glitches. apps disappearing while opening" -> RESTORED (file back, backboardd 943, log
+  "strict IOSurface publication"). => the strict wait is load-bearing for correctness and not the perf limit.
+- backboardd restart also re-links the brightness slider (expected; not yet confirmed by USER).
+
 ## 2026-11-11 20:10 IST: SpringBoard spindump on 2461 (60 s, USER opened/closed apps): our driver = half the render thread
 - spindump SpringBoard 60 10 -noProcessingWhileSampling -noText -o /var/tmp/sb2461.spindump; heavy text
   /var/tmp/sb2461-heavy.txt (phone); host copy in the session scratchpad (spin2461/heavy.txt, not in git).
