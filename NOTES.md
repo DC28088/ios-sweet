@@ -1,3 +1,24 @@
+## 2026-11-11 17:10 IST: xnu 0244 (live page-flip modes + MDP underrun counters) + 0243 IPA diag building
+- USER: stay on ios-sweet (no HakiOS/UEFI); start the GPU copy + page flip, and include the mobile-data diagnostic.
+  Phone in fastboot. Order: page flip first (a GPU blit into the scanned buffer cannot be beam-raced), GPU copy after.
+- 0243 CI 42647290166 (and redispatch 42650140017) FAILED "job was not acquired by Runner" (macOS arm64 capacity);
+  nothing compiled. 0243 has never been built.
+- **xnu 0244** (xnu/patches/0244-sweet-fb-flip-live-modes.patch, written against the 0242 CI buildtree
+  42629741309 + 0243, git apply --check OK; not compiled locally, no clang). Root sysctls, applied at the next present:
+  kern.sweet_fb_flip 0 = buffer 0 beam-raced (default) / 1 = 0181 double-buffer flip / 2 = scan + draw ONLY the
+  back buffer 0x9c9f0000 (black = MDSS cannot read it) / 3 = buffer 0 + SRC0 rewrite + CTL0 flush every present
+  (flashes = the flush itself blanks frames); kern.sweet_fb_flip_mask = CTL0 flush bits (default 0x20041).
+  Boot-arg sweetfbflip=N = start mode. 10 s line "SWEET FLIP: mode= flips= ... src0= mask= presents=
+  underrun_intf1= underrun_intf2= vsync_seen=" (MDP INTR_STATUS 0x1014 bits 26/27/28 read+cleared per present;
+  whether the status latches with INTR_EN=0 is UNVERIFIED: vsync_seen>0 would confirm). Panic text draws only into
+  buffer 0, so IPA/panic tests stay in mode 0.
+- CI: push run 43013293193 cancelled by the concurrency group when I dispatched 43013438379 on macos-15-intel.
+- /home is FULL (~40 MB free): buildtree extracted to the session scratchpad (tmpfs); images go to
+  /run/media/dan/MUSIC/ios-sweet-backup/build-NNNN (USER: use the USB drive for storage).
+- Plan: image 0244 (= 0242 extras sweetpanelvci=0 sweetmotion=0xbf) -> flip test over SSH: mode 2, mode 3, mode 1,
+  masks 0x1 / 0x20001; USER reports flashes per mode. IPA: 2441 = 0244 + sweetipa=1, 2442 = + sweetipadiag=2,
+  2443 = + sweetipadiag=1 (see the 11-10 03:15 entry).
+
 ## 2026-11-10 03:15 IST: phone back on 0242; IPA death = ~30-40 s after "configured"; xnu 0243 diagnostic building
 - USER: "build the diagnostic kernel, boot 0242 for now". 0242 fastboot boot OKAY (log from line 778302).
 - Timeline (10 s "SWEET FB: timing" ticks), all three sweetipa=1 boots: "SWEET IPA: configured" falls between tick N and
