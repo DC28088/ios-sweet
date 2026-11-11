@@ -1,0 +1,78 @@
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index 916e3cd..2bc534d 100644
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -78,6 +78,16 @@ SYSCTL_INT(_kern, OID_AUTO, sweet_fb_flip, CTLFLAG_RW | CTLFLAG_LOCKED, &sweet_f
+     "SWEET: page-flip mode 0-3 (0244)");
+ SYSCTL_UINT(_kern, OID_AUTO, sweet_fb_flip_mask, CTLFLAG_RW | CTLFLAG_LOCKED, &sweet_fb_flip_mask, 0,
+     "SWEET: CTL0 flush bits for flips (0244)");
++/*
++ * 0245: where in the frame the SRC0 + CTL0 flush write lands. 0244 mode 3 (flush every present, same address)
++ * flashed "here and there": guess = a flush written near the frame end / in the 32-line blanking gap races the
++ * next frame's fetch. kern.sweet_fb_flip_guard = N lines (default 64; 0 = off): a flush that would land in
++ * [last active line - N, frame end) or [0, first active line + 8) waits (<= 1 ms) until the scan is inside the
++ * active area. The 10 s line counts flushes per region (blank / near_end / active) and the guard wait.
++ */
++static unsigned int sweet_fb_flip_guard = 64;
++SYSCTL_UINT(_kern, OID_AUTO, sweet_fb_flip_guard, CTLFLAG_RW | CTLFLAG_LOCKED, &sweet_fb_flip_guard, 0,
++    "SWEET: lines before the frame end where flip flushes wait (0245)");
+ extern "C" int sweet_native_adreno_cpu_present_begin(uint32_t swap_fence);
+ extern "C" uint32_t sweet_native_adreno_last_fence(void);
+ extern "C" void sweet_native_adreno_cpu_present_end(int state);
+@@ -379,6 +389,7 @@ public:
+ 	bool          fFlipReady;       /* pipeline checked, back buffer mapped */
+ 	uint32_t      fFlipMaskUsed;    /* flush bits of the pending flip */
+ 	uint64_t      fStatsStatusPresents, fStatsUnderrun1, fStatsUnderrun2, fStatsVsyncSeen;
++	uint64_t      fStatsFlushBlank, fStatsFlushNearEnd, fStatsFlushActive, fStatsGuardUs, fStatsGuardWaits;
+ 	bool flipMapMdp(void);
+ 	void flipApplyMode(int mode);
+ 	void flipSampleStatus(void);
+@@ -1146,9 +1157,15 @@ AppleCLCD::rearmVsync(void)
+ 			const uint64_t u1 = __atomic_exchange_n(&fStatsUnderrun1, 0, __ATOMIC_RELAXED);
+ 			const uint64_t u2 = __atomic_exchange_n(&fStatsUnderrun2, 0, __ATOMIC_RELAXED);
+ 			const uint64_t vs = __atomic_exchange_n(&fStatsVsyncSeen, 0, __ATOMIC_RELAXED);
+-			IOLog("SWEET FLIP: mode=%d flips=%llu wait_avg_us=%llu wait_max_us=%llu timeouts=%llu scan=%u src0=%#x mask=%#x presents=%llu underrun_intf1=%llu underrun_intf2=%llu vsync_seen=%llu\n",
++			const uint64_t fb = __atomic_exchange_n(&fStatsFlushBlank, 0, __ATOMIC_RELAXED);
++			const uint64_t fe = __atomic_exchange_n(&fStatsFlushNearEnd, 0, __ATOMIC_RELAXED);
++			const uint64_t fa = __atomic_exchange_n(&fStatsFlushActive, 0, __ATOMIC_RELAXED);
++			const uint64_t gu = __atomic_exchange_n(&fStatsGuardUs, 0, __ATOMIC_RELAXED);
++			const uint64_t gw = __atomic_exchange_n(&fStatsGuardWaits, 0, __ATOMIC_RELAXED);
++			IOLog("SWEET FLIP: mode=%d flips=%llu wait_avg_us=%llu wait_max_us=%llu timeouts=%llu scan=%u src0=%#x mask=%#x presents=%llu underrun_intf1=%llu underrun_intf2=%llu vsync_seen=%llu flush_at blank=%llu near_end=%llu active=%llu guard=%u lines waits=%llu wait_us=%llu\n",
+ 			    fFlipMode, flips, flips ? fw / flips : 0, fwmax, fStatsFlipTimeouts, fScan,
+-			    fMdp[(0x5000 + 0x14) / 4], __atomic_load_n(&sweet_fb_flip_mask, __ATOMIC_RELAXED), sp, u1, u2, vs);
++			    fMdp[(0x5000 + 0x14) / 4], __atomic_load_n(&sweet_fb_flip_mask, __ATOMIC_RELAXED), sp, u1, u2, vs,
++			    fb, fe, fa, __atomic_load_n(&sweet_fb_flip_guard, __ATOMIC_RELAXED), gw, gu);
+ 		}
+ 		uint64_t ui_little = 0, ui_big = 0, pulls = 0, leaves = 0;
+ 		sweet_sched_take_stats(&ui_little, &ui_big, &pulls, &leaves);
+@@ -1529,6 +1546,30 @@ void
+ AppleCLCD::flipTo(unsigned idx)
+ {
+ 	__asm__ volatile ("dsb sy" ::: "memory");       /* write-combined frame reaches memory first */
++	if (fIntf != NULL && fBeamLast > fBeamFirst) {
++		/* 0245: keep the flush out of the frame end and the blanking gap (kern.sweet_fb_flip_guard). */
++		const uint32_t guard = __atomic_load_n(&sweet_fb_flip_guard, __ATOMIC_RELAXED);
++		const uint32_t from = guard < fBeamLast - fBeamFirst ? fBeamLast - guard : fBeamFirst;
++		uint32_t line = fIntf[INTF_LINE_COUNT / 4];
++		if (guard != 0 && (line >= from || line < fBeamFirst + 8)) {
++			const uint64_t began = mach_absolute_time();
++			uint64_t ns = 0;
++			while ((line >= from || line < fBeamFirst + 8) && ns < 1000000) {
++				IODelay(5);
++				line = fIntf[INTF_LINE_COUNT / 4];
++				absolutetime_to_nanoseconds(mach_absolute_time() - began, &ns);
++			}
++			__atomic_add_fetch(&fStatsGuardWaits, 1, __ATOMIC_RELAXED);
++			__atomic_add_fetch(&fStatsGuardUs, ns / NSEC_PER_USEC, __ATOMIC_RELAXED);
++		}
++		if (line >= fBeamLast || line < fBeamFirst) {
++			__atomic_add_fetch(&fStatsFlushBlank, 1, __ATOMIC_RELAXED);
++		} else if (line >= fBeamLast - 64) {
++			__atomic_add_fetch(&fStatsFlushNearEnd, 1, __ATOMIC_RELAXED);
++		} else {
++			__atomic_add_fetch(&fStatsFlushActive, 1, __ATOMIC_RELAXED);
++		}
++	}
+ 	fMdp[SWEET_VIG0_SRC0_ADDR / 4] = (uint32_t)fBufPhys[idx];
+ 	__asm__ volatile ("dsb sy" ::: "memory");
+ 	uint32_t mask = __atomic_load_n(&sweet_fb_flip_mask, __ATOMIC_RELAXED);
