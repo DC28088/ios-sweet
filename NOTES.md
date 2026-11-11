@@ -1,3 +1,27 @@
+## 2026-11-11 18:00 IST: 0244 BOOTED; flip modes tested live -> back buffer OK, the CTL0 flush itself causes flashes
+- CI 43013438379 (macos-15-intel, main 529f1b2) green; arm64 runs never got a runner. Image USB
+  build-0244/shim-boot-0244.img c3f77842 (kernel 396357f2), cmdline = 0242's + sweetbuild=244. fastboot boot ~12:05
+  UTC, log boot-0225-3.txt from line 799339. Touch OK (GT9896). NO reboot: the 2nd "Darwin Kernel Version" at
+  +19927 is the USB log backlog replay (launchd uptime matched the fastboot boot; USER: "phone didn't reboot").
+- New tool /var/local/bin/sweet-sysctl (userspace/tools/sweet-sysctl.c, tools CI 43017753192, sha256 6d8af7ec...):
+  the phone has no sysctl(8). `sweet-sysctl kern.sweet_fb_flip=N kern.sweet_fb_flip_mask=0x..`
+- MDP INTR_STATUS latches with INTR_EN=0 (first read 0x8000100, vsync bit 27 set every present) -> counters valid.
+- Results (USER at the phone):
+  - mode 2 (scan only back buffer 0x9c9f0000, ~5 s): nothing odd noticed; log 403 presents, 0 underruns -> MDSS reads
+    the back buffer fine.
+  - mode 3 mask 0x20041 (buffer 0, SRC0 rewrite + flush per present): "flashes here and there, but only small";
+    296 flushes/10 s, latch wait avg 365 us max 7.9 ms, 0 underruns.
+  - mode 3 mask 0x1 (VIG0 only): flush bit clears in ~1 us (not held to vsync?); flashes "still there while closing apps".
+  - mode 0: "no black flashes".
+  => 0181's flashes come from re-flushing ABL's pipeline, not from the back buffer; INTF underrun bits stay 0.
+- Brightness: backboardd sends only 0/1 (DCS level 8) this boot; ALS now streams real 8-9 lux (0242 had only the
+  fake initial 100 lux) -> auto-brightness pins minimum (guess). Workaround: `/var/local/bin/panel.sh bl 1024`
+  over SSH (USER: "brightness is fine"); backboardd resets it on its next change (lock/unlock).
+- USER perf: opening animation still delayed/jittery (expected, 0244 has no perf change); recents "slightly smoother".
+- Phone now: 0244 running, mode 0, mask 0x20041.
+- Next: (a) flush only inside vertical blanking (INTF line counter) and a pure flush without the SRC0 write;
+  (b) read-only DPU register dump under OrangeFox (Linux flips without flashing) to compare with ABL's state.
+
 ## 2026-11-11 17:10 IST: xnu 0244 (live page-flip modes + MDP underrun counters) + 0243 IPA diag building
 - USER: stay on ios-sweet (no HakiOS/UEFI); start the GPU copy + page flip, and include the mobile-data diagnostic.
   Phone in fastboot. Order: page flip first (a GPU blit into the scanned buffer cannot be beam-raced), GPU copy after.
