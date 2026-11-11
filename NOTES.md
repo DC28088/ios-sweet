@@ -1,3 +1,15 @@
+## 2026-11-11 21:55 IST: 2481 EARLY PANIC = stale CI kernel (0247 source) + AMP ADT; rebuilding 0248
+- USER: 2481 stuck on the red shim screen; panic "machine_routines.c:1055 assertion failed: phys_cluster_id <=
+  MAX_CPU_CLUSTER_PHY_ID". No USB console output (receiver log last line 21:18, i.e. the 2471 session).
+- CAUSE (verified): CI 43051261867 (workflow_dispatch 15:43:53Z) built headSha eaa347b = 0247 source; the push run
+  on 6b2db02 (43051260326) was cancelled by the concurrency group 1 s earlier. 2481 kernel has no sched_amp
+  (strings: dualq/clutch/multiq only); ml_parse_cpu_topology disassembly (archive machine_routines.o) branches
+  straight to the assert when cluster-type == P and keeps a 1-entry cluster_phys_to_logical => MAX_CPU_CLUSTERS 1.
+  The AMP ADT (cpu6-7 'P') then gives phys_cluster_id 1 > 0. => 2481 says nothing about 0248 itself.
+- LESSON: after pushing, wait for the push to land and check `gh run list ... --json headSha` before dispatching.
+- Rebuild: CI 43057766356 on adfa220 (contains 0248), macos-15-intel. Next: verify headSha + sched_amp strings in
+  the artifact, repackage as 2482 (package-amp.py), boot. Fallback stays 2471.
+
 ## 2026-11-11 21:15 IST: 2471 USER "slightly better, still not satisfactory"; xnu 0248 AMP topology building
 - **xnu 0248** (xnu/patches/0248-sweet-amp-two-clusters.patch on 0247): SWEET.h __ARM_AMP__ 1, board_config
   MAX_CPU_CLUSTERS 2 -> __AMP__ -> sched_amp (no CONFIG_SCHED_EDGE on iOS; proc_reg.h drops CONFIG_SCHED_CLUTCH
