@@ -1,5 +1,5 @@
 diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
-index 2bc534d..6c90ed3 100644
+index 2bc534d..746588a 100644
 --- a/iokit/Kernel/arm/SweetFramebuffer.cpp
 +++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
 @@ -86,6 +86,20 @@ SYSCTL_UINT(_kern, OID_AUTO, sweet_fb_flip_mask, CTLFLAG_RW | CTLFLAG_LOCKED, &s
@@ -66,14 +66,14 @@ index 2bc534d..6c90ed3 100644
 -	const uint64_t bytes = ((uint64_t)fRowBytes * fHeight + 0xffff) & ~0xffffULL;
 +	int gpu = 0;
 +	PE_parse_boot_argn("sweetfbgpu", &gpu, sizeof(gpu));
-+	const uint32_t stride = gpu ? ((fRowBytes + 63) & ~63u) : fRowBytes;
-+	const uint64_t bytes = ((uint64_t)stride * fHeight + 0xffff) & ~0xffffULL;
++	const uint32_t pitch = gpu ? ((fRowBytes + 63) & ~63u) : fRowBytes;
++	const uint64_t bytes = ((uint64_t)pitch * fHeight + 0xffff) & ~0xffffULL;
  	const uint64_t back = fPhys + bytes;
  	if (back + bytes > fPhys + SWEET_FB_REGION_LEN || (back + bytes) >> 32) {
  		IOLog("SWEET FLIP: off: no room for a back buffer (%#llx bytes)\n", bytes);
  		return false;
  	}
-+	if (stride != fRowBytes) {
++	if (pitch != fRowBytes) {
 +		/* 0246: buffer 1 lies beyond ABL's frame (fPhys + 4320 * 2400 < back), so ABL's frame can be converted into
 +		 * it while buffer 0 is still scanned; then VIG0 switches to buffer 1 and the new pitch in one flush. */
 +		IOMemoryDescriptor *md0 = IOMemoryDescriptor::withPhysicalAddress(fPhys, bytes, kIODirectionInOut);
@@ -93,16 +93,16 @@ index 2bc534d..6c90ed3 100644
 +		fBufPhys[1] = back;
 +		fBufVA[1] = (uintptr_t)fBufMap->getVirtualAddress();
 +		for (uint32_t y = 0; y < fHeight; y++) {
-+			memcpy((void *)(fBufVA[1] + (uintptr_t)y * stride), (const void *)(fPixels + (uintptr_t)y * fRowBytes), fRowBytes);
++			memcpy((void *)(fBufVA[1] + (uintptr_t)y * pitch), (const void *)(fPixels + (uintptr_t)y * fRowBytes), fRowBytes);
 +		}
 +		__asm__ volatile ("dsb sy" ::: "memory");
-+		fMdp[SWEET_VIG0_YSTRIDE0 / 4] = stride;
++		fMdp[SWEET_VIG0_YSTRIDE0 / 4] = pitch;
 +		fMdp[SWEET_VIG0_SRC0_ADDR / 4] = (uint32_t)back;
 +		__asm__ volatile ("dsb sy" ::: "memory");
 +		fFlipMaskUsed = SWEET_FLIP_FLUSH_BITS;
 +		fMdp[SWEET_CTL0_FLUSH / 4] = SWEET_FLIP_FLUSH_BITS;
 +		fFlipPending = true;
-+		fRowBytes = stride;
++		fRowBytes = pitch;
 +		fScan = 1;
 +		fPixels = fBufVA[1];
 +		fGpuLayout = true;
@@ -110,8 +110,8 @@ index 2bc534d..6c90ed3 100644
 +		if (__atomic_load_n(&sweet_fb_gpucopy, __ATOMIC_RELAXED) < 0) {
 +			__atomic_store_n(&sweet_fb_gpucopy, 1, __ATOMIC_RELAXED);
 +		}
-+		IOLog("SWEET FLIP: on (GPU layout): buffers %#llx %#llx (%#llx bytes), stride %u, scanning buffer 1\n",
-+		    fBufPhys[0], fBufPhys[1], bytes, stride);
++		IOLog("SWEET FLIP: on (GPU layout): buffers %#llx %#llx (%#llx bytes), pitch %u, scanning buffer 1\n",
++		    fBufPhys[0], fBufPhys[1], bytes, pitch);
 +		return true;
 +	}
  	IOMemoryDescriptor *md = IOMemoryDescriptor::withPhysicalAddress(back, bytes, kIODirectionInOut);
