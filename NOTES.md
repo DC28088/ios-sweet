@@ -1,3 +1,15 @@
+## 2026-11-11 21:05 IST: 2471 BOOTED (0247 L3 at 1459.2 MHz + flip + GPU copy by default); awaiting USER feel
+- xnu 0247 (xnu/patches/0247-sweet-l3-cache-clock.patch): L3 OSM domain 2 at 0x18321000 through the CPU-domain code
+  (top row, dark row <= 652.8 MHz), sweetl3=0 = ABL row. CI 43040552977 green; first artifact download timed out
+  (gh, slow link), retry OK. Image USB build-2471/shim-boot-2471.img d3361a14 (kernel 02a6bdb5), cmdline 0242's +
+  sweetfbflip=1 sweetfbgpu=1. fastboot boot OKAY, log from line 967725.
+- Log: "domain 2 selected lut 10 = 1459200 kHz; readback perf_state=10", "domain 2 dark row 2 = 652800 kHz", flip on
+  (GPU layout), touch selected, GPU copies 385/10 s avg 2.2 ms, 0 fallbacks.
+- RAM (USER asked "full 6 GB?"): no - XNU uses the high bank only (dram-base 0x1_00000000 size 0xfcc00000 = 3.95
+  GiB); the low 2 GiB bank holds firmware carve-outs + our driver buffers (wland 0xE0000000+, IPA 0xE4000000);
+  ~1-1.3 GiB of it is unused. UniXNU-sheng adopts its free parts (GPU pool). Not a perf lever for the app-open delay.
+- LLCC CPU-slice activation NOT done (needs the sdmmagpie slice table + activation sequence; risky).
+
 ## 2026-11-11 20:40 IST: backend profile symbolized; strict-publish A/B -> glitches, no gain -> restored
 - Installed bundle = native-metal CI 42213344710 (source e0574fac, branch codex/media-0213; backend cd052dd6);
   artifact with symbols on USB: ios-sweet-backup/native-metal-artifact-e0574fa. Kernel symbols: 2461 kernel
