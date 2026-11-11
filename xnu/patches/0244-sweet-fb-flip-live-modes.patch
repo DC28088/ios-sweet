@@ -1,0 +1,241 @@
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index 5fbc9a2..916e3cd 100644
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -58,6 +58,26 @@ extern "C" void sweet_dark_set(int dark);
+ #include <kern/thread_call.h>
+ #include <sys/proc.h>
+ #include "unixnu/NativeAdrenoMemory.h"
++#include <sys/sysctl.h>
++/*
++ * 0244: page-flip diagnostics, switchable live as root (over SSH), applied at the next present:
++ *   sysctl kern.sweet_fb_flip=N   0 single buffer 0, beam-raced copy (default)
++ *                                 1 double buffer page flip (0181)
++ *                                 2 single buffer 1: scan and draw only the back buffer
++ *                                   (black/garbage = the display controller cannot read it)
++ *                                 3 single buffer 0, but rewrite VIG0 SRC0 + CTL0 flush every present
++ *                                   (flashes = the flush itself blanks frames)
++ *   sysctl kern.sweet_fb_flip_mask=M   CTL0 flush bits used by flips (default 0x20041 = VIG0|LM0|CTL)
++ * Boot-arg sweetfbflip=N picks the start mode. The 10 s "SWEET FLIP:" line counts presents that saw a
++ * display-controller underrun (MDP INTR_STATUS INTF_1/INTF_2 underrun bits, read and cleared per present).
++ * Keep mode 0 for panic hunting: the kernel console (and panic text) draws into buffer 0 only.
++ */
++static int sweet_fb_flip_req = -1;
++static unsigned int sweet_fb_flip_mask = 0x20041;
++SYSCTL_INT(_kern, OID_AUTO, sweet_fb_flip, CTLFLAG_RW | CTLFLAG_LOCKED, &sweet_fb_flip_req, 0,
++    "SWEET: page-flip mode 0-3 (0244)");
++SYSCTL_UINT(_kern, OID_AUTO, sweet_fb_flip_mask, CTLFLAG_RW | CTLFLAG_LOCKED, &sweet_fb_flip_mask, 0,
++    "SWEET: CTL0 flush bits for flips (0244)");
+ extern "C" int sweet_native_adreno_cpu_present_begin(uint32_t swap_fence);
+ extern "C" uint32_t sweet_native_adreno_last_fence(void);
+ extern "C" void sweet_native_adreno_cpu_present_end(int state);
+@@ -354,6 +374,14 @@ public:
+ 	bool flipWait(void);
+ 	void flipTo(unsigned idx);
+ 	void flipAbandon(const char *why);
++	/* 0244: live flip modes (kern.sweet_fb_flip) and display-controller status counters */
++	int           fFlipMode;        /* applied: 0 buffer 0, 1 flip, 2 buffer 1, 3 buffer 0 + flush */
++	bool          fFlipReady;       /* pipeline checked, back buffer mapped */
++	uint32_t      fFlipMaskUsed;    /* flush bits of the pending flip */
++	uint64_t      fStatsStatusPresents, fStatsUnderrun1, fStatsUnderrun2, fStatsVsyncSeen;
++	bool flipMapMdp(void);
++	void flipApplyMode(int mode);
++	void flipSampleStatus(void);
+ 	void rearmVsync(void);
+ 	bool          fPowerOff;      /* RequestPowerChange(0) */
+ 	uint32_t      fFadeStep;      /* fade-out steps done while off */
+@@ -1110,12 +1138,17 @@ AppleCLCD::rearmVsync(void)
+ 		    fStatsMissed, fPresentHz, presents ? present_us / presents : 0, present_max, coalesced, swaps,
+ 		    presents ? gate_us / presents : 0, presents ? acquire_us / presents : 0, presents ? copy_us / presents : 0,
+ 		    presents ? beam_us / presents : 0, beam_skips);
+-		if (fFlip || fStatsFlipTimeouts) {
++		if (fMdp != NULL) {
+ 			const uint64_t flips = __atomic_exchange_n(&fStatsFlips, 0, __ATOMIC_RELAXED);
+ 			const uint64_t fw = __atomic_exchange_n(&fStatsFlipWaitUs, 0, __ATOMIC_RELAXED);
+ 			const uint64_t fwmax = __atomic_exchange_n(&fStatsFlipWaitMaxUs, 0, __ATOMIC_RELAXED);
+-			IOLog("SWEET FLIP: flips=%llu wait_avg_us=%llu wait_max_us=%llu timeouts=%llu scan=%u on=%d\n",
+-			    flips, flips ? fw / flips : 0, fwmax, fStatsFlipTimeouts, fScan, fFlip ? 1 : 0);
++			const uint64_t sp = __atomic_exchange_n(&fStatsStatusPresents, 0, __ATOMIC_RELAXED);
++			const uint64_t u1 = __atomic_exchange_n(&fStatsUnderrun1, 0, __ATOMIC_RELAXED);
++			const uint64_t u2 = __atomic_exchange_n(&fStatsUnderrun2, 0, __ATOMIC_RELAXED);
++			const uint64_t vs = __atomic_exchange_n(&fStatsVsyncSeen, 0, __ATOMIC_RELAXED);
++			IOLog("SWEET FLIP: mode=%d flips=%llu wait_avg_us=%llu wait_max_us=%llu timeouts=%llu scan=%u src0=%#x mask=%#x presents=%llu underrun_intf1=%llu underrun_intf2=%llu vsync_seen=%llu\n",
++			    fFlipMode, flips, flips ? fw / flips : 0, fwmax, fStatsFlipTimeouts, fScan,
++			    fMdp[(0x5000 + 0x14) / 4], __atomic_load_n(&sweet_fb_flip_mask, __ATOMIC_RELAXED), sp, u1, u2, vs);
+ 		}
+ 		uint64_t ui_little = 0, ui_big = 0, pulls = 0, leaves = 0;
+ 		sweet_sched_take_stats(&ui_little, &ui_big, &pulls, &leaves);
+@@ -1416,13 +1449,10 @@ sweet_fb_dump_dpu(uint64_t fb_phys)
+ bool
+ AppleCLCD::flipSetup(void)
+ {
+-	int on = 0;
+-	PE_parse_boot_argn("sweetfbflip", &on, sizeof(on));
+-	if (!on) {
+-		return false;
++	if (fFlipReady) {
++		return true;
+ 	}
+-	fMdp = (volatile uint32_t *)ml_io_map(SWEET_MDP_PA, SWEET_MDP_LEN);
+-	if (fMdp == NULL) {
++	if (!flipMapMdp()) {
+ 		IOLog("SWEET FLIP: off: MDP map failed\n");
+ 		return false;
+ 	}
+@@ -1457,6 +1487,7 @@ AppleCLCD::flipSetup(void)
+ 	__asm__ volatile ("dsb sy" ::: "memory");
+ 	fScan = 0;
+ 	fFlipPending = false;
++	fFlipReady = true;
+ 	IOLog("SWEET FLIP: on: buffers %#llx %#llx (%#llx bytes), vig0 -> ctl0 flush %#x\n",
+ 	    fBufPhys[0], fBufPhys[1], bytes, SWEET_FLIP_FLUSH_BITS);
+ 	return true;
+@@ -1473,7 +1504,7 @@ AppleCLCD::flipWait(void)
+ 	const uint64_t began = mach_absolute_time();
+ 	uint64_t ns = 0;
+ 	for (;;) {
+-		if ((fMdp[SWEET_CTL0_FLUSH / 4] & SWEET_FLIP_FLUSH_BITS) == 0) {
++		if ((fMdp[SWEET_CTL0_FLUSH / 4] & fFlipMaskUsed) == 0) {
+ 			break;
+ 		}
+ 		absolutetime_to_nanoseconds(mach_absolute_time() - began, &ns);
+@@ -1500,7 +1531,9 @@ AppleCLCD::flipTo(unsigned idx)
+ 	__asm__ volatile ("dsb sy" ::: "memory");       /* write-combined frame reaches memory first */
+ 	fMdp[SWEET_VIG0_SRC0_ADDR / 4] = (uint32_t)fBufPhys[idx];
+ 	__asm__ volatile ("dsb sy" ::: "memory");
+-	fMdp[SWEET_CTL0_FLUSH / 4] = SWEET_FLIP_FLUSH_BITS;
++	uint32_t mask = __atomic_load_n(&sweet_fb_flip_mask, __ATOMIC_RELAXED);
++	fFlipMaskUsed = mask != 0 ? mask : SWEET_FLIP_FLUSH_BITS;
++	fMdp[SWEET_CTL0_FLUSH / 4] = fFlipMaskUsed;
+ 	fScan = idx;
+ 	fPixels = fBufVA[idx];          /* fade-out and band clears draw into what is shown */
+ 	fFlipPending = true;
+@@ -1515,6 +1548,8 @@ AppleCLCD::flipAbandon(const char *why)
+ 	    why, fMdp[SWEET_CTL0_FLUSH / 4], fMdp[SWEET_VIG0_SRC0_ADDR / 4]);
+ 	fFlip = false;
+ 	fFlipPending = false;
++	fFlipMode = 0;
++	__atomic_store_n(&sweet_fb_flip_req, 0, __ATOMIC_RELAXED);
+ 	if (fScan != 0) {
+ 		memcpy((void *)fBufVA[0], (const void *)fBufVA[fScan], (size_t)fRowBytes * fHeight);
+ 		__asm__ volatile ("dsb sy" ::: "memory");
+@@ -1526,6 +1561,86 @@ AppleCLCD::flipAbandon(const char *why)
+ 	fPixels = fBufVA[0];
+ }
+ 
++#define SWEET_MDP_INTR_EN               (0x1000 + 0x10)
++#define SWEET_MDP_INTR_STATUS           (0x1000 + 0x14)
++#define SWEET_MDP_INTR_CLEAR            (0x1000 + 0x18)
++#define SWEET_INTR_INTF1_UNDERRUN       (1u << 26)      /* Linux dpu_hw_interrupts.c */
++#define SWEET_INTR_INTF1_VSYNC          (1u << 27)
++#define SWEET_INTR_INTF2_UNDERRUN       (1u << 28)
++
++bool
++AppleCLCD::flipMapMdp(void)
++{
++	if (fMdp == NULL) {
++		fMdp = (volatile uint32_t *)ml_io_map(SWEET_MDP_PA, SWEET_MDP_LEN);
++		if (fMdp != NULL) {
++			IOLog("SWEET FLIP: mdp intr en %#x status %#x ctl0 flush %#x vig0 src0 %#x\n",
++			    fMdp[SWEET_MDP_INTR_EN / 4], fMdp[SWEET_MDP_INTR_STATUS / 4],
++			    fMdp[SWEET_CTL0_FLUSH / 4], fMdp[SWEET_VIG0_SRC0_ADDR / 4]);
++		}
++	}
++	return fMdp != NULL;
++}
++
++/* Present thread only. Underrun/vsync status since the previous present; cleared after reading. */
++void
++AppleCLCD::flipSampleStatus(void)
++{
++	if (fMdp == NULL) {
++		return;
++	}
++	const uint32_t bits = SWEET_INTR_INTF1_UNDERRUN | SWEET_INTR_INTF1_VSYNC | SWEET_INTR_INTF2_UNDERRUN;
++	const uint32_t st = fMdp[SWEET_MDP_INTR_STATUS / 4] & bits;
++	__atomic_add_fetch(&fStatsStatusPresents, 1, __ATOMIC_RELAXED);
++	if (st & SWEET_INTR_INTF1_UNDERRUN) {
++		__atomic_add_fetch(&fStatsUnderrun1, 1, __ATOMIC_RELAXED);
++	}
++	if (st & SWEET_INTR_INTF2_UNDERRUN) {
++		__atomic_add_fetch(&fStatsUnderrun2, 1, __ATOMIC_RELAXED);
++	}
++	if (st & SWEET_INTR_INTF1_VSYNC) {
++		__atomic_add_fetch(&fStatsVsyncSeen, 1, __ATOMIC_RELAXED);
++	}
++	if (st != 0) {
++		fMdp[SWEET_MDP_INTR_CLEAR / 4] = st;
++		__asm__ volatile ("dsb sy" ::: "memory");
++	}
++}
++
++/* Present thread only: switch to `mode` (kern.sweet_fb_flip), latched before it returns. */
++void
++AppleCLCD::flipApplyMode(int mode)
++{
++	if (mode < 0 || mode > 3) {
++		IOLog("SWEET FLIP: mode %d unknown (0-3), staying in %d\n", mode, fFlipMode);
++		__atomic_store_n(&sweet_fb_flip_req, fFlipMode, __ATOMIC_RELAXED);
++		return;
++	}
++	if (mode != 0 && !flipSetup()) {
++		fFlip = false;
++		fFlipMode = 0;
++		__atomic_store_n(&sweet_fb_flip_req, 0, __ATOMIC_RELAXED);
++		return;
++	}
++	if (fFlipReady) {
++		if (fFlipPending && !flipWait()) {
++			return;         /* abandoned: back in mode 0 */
++		}
++		const unsigned target = mode == 2 ? 1 : (mode == 1 ? fScan : 0);
++		if (target != fScan) {
++			memcpy((void *)fBufVA[target], (const void *)fBufVA[fScan], (size_t)fRowBytes * fHeight);
++			flipTo(target);
++			if (!flipWait()) {
++				return;
++			}
++		}
++	}
++	fFlip = mode == 1;
++	fFlipMode = mode;
++	IOLog("SWEET FLIP: mode %d: scan buffer %u at %#llx, flush mask %#x\n", mode, fScan,
++	    fFlipReady ? fBufPhys[fScan] : 0ULL, __atomic_load_n(&sweet_fb_flip_mask, __ATOMIC_RELAXED));
++}
++
+ /* Find the running DSI timing engine (INTF_1/INTF_2) and measure its line
+  * period from the hardware frame counter. Any inconsistency leaves the copy
+  * unsynchronised, as before 0144. Runs once, on the present thread. */
+@@ -1717,11 +1832,20 @@ AppleCLCD::present(const uint8_t *rec)
+ 		if (!fBeamProbed) {
+ 			beamProbe();    /* also the 0180 pipeline dump */
+ 		}
+-		fFlip = flipSetup();
++		int on = 0;
++		PE_parse_boot_argn("sweetfbflip", &on, sizeof(on));
++		int unset = -1;         /* a sysctl write before the first present wins */
++		(void)__atomic_compare_exchange_n(&sweet_fb_flip_req, &unset, on, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED);
++		(void)flipMapMdp();     /* status counters in every mode */
++	}
++	const int flipWant = __atomic_load_n(&sweet_fb_flip_req, __ATOMIC_RELAXED);
++	if (flipWant != fFlipMode) {
++		flipApplyMode(flipWant);
+ 	}
+-	if (fFlip) {
+-		(void)flipWait();       /* false: abandoned, fFlip is false now */
++	if (fFlipPending) {
++		(void)flipWait();       /* false: abandoned, mode 0 now */
+ 	}
++	flipSampleStatus();
+ 	/* Flip only whole frames: one enabled layer covering the presented display
+ 	 * (CA's normal swap). Anything else is drawn into the shown buffer, raced. */
+ 	bool flipFrame = false;
+@@ -1913,6 +2037,8 @@ AppleCLCD::present(const uint8_t *rec)
+ 	/* Only a complete frame is shown: the back buffer holds a frame from two presents ago. */
+ 	if (flipFrame && flipCopied && !flipFailed) {
+ 		flipTo(fScan ^ 1);
++	} else if (fFlipMode == 3 && fFlipReady && flipCopied) {
++		flipTo(0);              /* 0244: same address, flush only */
+ 	}
+ }
+ 
