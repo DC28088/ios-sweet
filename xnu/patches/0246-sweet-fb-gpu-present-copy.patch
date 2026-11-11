@@ -1,0 +1,437 @@
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index 2bc534d..6c90ed3 100644
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -86,6 +86,20 @@ SYSCTL_UINT(_kern, OID_AUTO, sweet_fb_flip_mask, CTLFLAG_RW | CTLFLAG_LOCKED, &s
+  * active area. The 10 s line counts flushes per region (blank / near_end / active) and the guard wait.
+  */
+ static unsigned int sweet_fb_flip_guard = 64;
++/*
++ * 0246: GPU present copy. Boot-arg sweetfbgpu=1 lays both page-flip buffers out with a 64-byte aligned row pitch
++ * (4352 instead of ABL's 4320: the A6xx 2D engine's RB_2D_DST_PITCH is in 64-byte units) and points VIG0 at that
++ * layout. kern.sweet_fb_gpucopy: 0 = CPU copy, 1 = GPU 2D blit (BLIT_OP_SCALE, nearest), 2 = GPU blit bilinear;
++ * default 1 with sweetfbgpu=1. Used only for page-flipped whole frames (mode 1); anything else, or any GPU error,
++ * falls back to the CPU copy for that frame. Mesa freedreno fd6_blitter.cc / a6xx.xml (mesa-25.0.7) for the stream.
++ */
++static int sweet_fb_gpucopy = -1;
++SYSCTL_INT(_kern, OID_AUTO, sweet_fb_gpucopy, CTLFLAG_RW | CTLFLAG_LOCKED, &sweet_fb_gpucopy, 0,
++    "SWEET: present copy 0 CPU, 1 GPU nearest, 2 GPU bilinear (0246)");
++extern "C" void *sweet_native_adreno_kmap(void *task, uint64_t address, uint64_t physical, size_t bytes, uint64_t iova, int writable);
++extern "C" int sweet_native_adreno_kunmap(void *cookie);
++extern "C" int sweet_native_adreno_submit_async(const uint32_t *words, unsigned count, unsigned *fence);
++extern "C" int sweet_native_adreno_fence_wait(unsigned fence, unsigned timeout_us);
+ SYSCTL_UINT(_kern, OID_AUTO, sweet_fb_flip_guard, CTLFLAG_RW | CTLFLAG_LOCKED, &sweet_fb_flip_guard, 0,
+     "SWEET: lines before the frame end where flip flushes wait (0245)");
+ extern "C" int sweet_native_adreno_cpu_present_begin(uint32_t swap_fence);
+@@ -390,6 +404,18 @@ public:
+ 	uint32_t      fFlipMaskUsed;    /* flush bits of the pending flip */
+ 	uint64_t      fStatsStatusPresents, fStatsUnderrun1, fStatsUnderrun2, fStatsVsyncSeen;
+ 	uint64_t      fStatsFlushBlank, fStatsFlushNearEnd, fStatsFlushActive, fStatsGuardUs, fStatsGuardWaits;
++	/* 0246: GPU present copy */
++	bool          fGpuLayout;       /* sweetfbgpu=1: 64-byte aligned buffers */
++	bool          fGpuBroken;       /* a GPU copy failed hard: CPU copy from now on */
++	IOMemoryMap  *fBufMap0;
++	void         *fGpuScanMap[2];
++	void         *fGpuScratchMap;
++	void         *fGpuScratch;
++	struct GpuSrc { SweetSurface *surface; void *map; uint64_t iova; uint64_t used; } fGpuSrc[4];
++	uint64_t      fGpuUse;
++	uint64_t      fStatsGpuCopies, fStatsGpuUs, fStatsGpuMaxUs, fStatsGpuFallbacks, fStatsGpuMapMiss;
++	bool gpuCopy(SweetSurface *s, int filter);
++	uint64_t gpuSourceIova(SweetSurface *s);
+ 	bool flipMapMdp(void);
+ 	void flipApplyMode(int mode);
+ 	void flipSampleStatus(void);
+@@ -1166,6 +1192,16 @@ AppleCLCD::rearmVsync(void)
+ 			    fFlipMode, flips, flips ? fw / flips : 0, fwmax, fStatsFlipTimeouts, fScan,
+ 			    fMdp[(0x5000 + 0x14) / 4], __atomic_load_n(&sweet_fb_flip_mask, __ATOMIC_RELAXED), sp, u1, u2, vs,
+ 			    fb, fe, fa, __atomic_load_n(&sweet_fb_flip_guard, __ATOMIC_RELAXED), gw, gu);
++			if (fGpuLayout) {
++				const uint64_t gc = __atomic_exchange_n(&fStatsGpuCopies, 0, __ATOMIC_RELAXED);
++				const uint64_t gus = __atomic_exchange_n(&fStatsGpuUs, 0, __ATOMIC_RELAXED);
++				const uint64_t gmax = __atomic_exchange_n(&fStatsGpuMaxUs, 0, __ATOMIC_RELAXED);
++				const uint64_t gfb = __atomic_exchange_n(&fStatsGpuFallbacks, 0, __ATOMIC_RELAXED);
++				const uint64_t gmiss = __atomic_exchange_n(&fStatsGpuMapMiss, 0, __ATOMIC_RELAXED);
++				IOLog("SWEET GPUCOPY: mode=%d copies=%llu avg_us=%llu max_us=%llu fallbacks=%llu source_maps=%llu broken=%d stride=%u\n",
++				    __atomic_load_n(&sweet_fb_gpucopy, __ATOMIC_RELAXED), gc, gc ? gus / gc : 0, gmax, gfb, gmiss,
++				    fGpuBroken ? 1 : 0, fRowBytes);
++			}
+ 		}
+ 		uint64_t ui_little = 0, ui_big = 0, pulls = 0, leaves = 0;
+ 		sweet_sched_take_stats(&ui_little, &ui_big, &pulls, &leaves);
+@@ -1482,12 +1518,56 @@ AppleCLCD::flipSetup(void)
+ 		    addr, size, stride, layer, intf, flush);
+ 		return false;
+ 	}
+-	const uint64_t bytes = ((uint64_t)fRowBytes * fHeight + 0xffff) & ~0xffffULL;
++	int gpu = 0;
++	PE_parse_boot_argn("sweetfbgpu", &gpu, sizeof(gpu));
++	const uint32_t stride = gpu ? ((fRowBytes + 63) & ~63u) : fRowBytes;
++	const uint64_t bytes = ((uint64_t)stride * fHeight + 0xffff) & ~0xffffULL;
+ 	const uint64_t back = fPhys + bytes;
+ 	if (back + bytes > fPhys + SWEET_FB_REGION_LEN || (back + bytes) >> 32) {
+ 		IOLog("SWEET FLIP: off: no room for a back buffer (%#llx bytes)\n", bytes);
+ 		return false;
+ 	}
++	if (stride != fRowBytes) {
++		/* 0246: buffer 1 lies beyond ABL's frame (fPhys + 4320 * 2400 < back), so ABL's frame can be converted into
++		 * it while buffer 0 is still scanned; then VIG0 switches to buffer 1 and the new pitch in one flush. */
++		IOMemoryDescriptor *md0 = IOMemoryDescriptor::withPhysicalAddress(fPhys, bytes, kIODirectionInOut);
++		IOMemoryDescriptor *md1 = IOMemoryDescriptor::withPhysicalAddress(back, bytes, kIODirectionInOut);
++		fBufMap0 = md0 != NULL ? md0->map(kIOMapWriteCombineCache) : NULL;
++		fBufMap = md1 != NULL ? md1->map(kIOMapWriteCombineCache) : NULL;
++		OSSafeReleaseNULL(md0);
++		OSSafeReleaseNULL(md1);
++		if (fBufMap0 == NULL || fBufMap == NULL || fBufMap0->getVirtualAddress() == 0 || fBufMap->getVirtualAddress() == 0) {
++			OSSafeReleaseNULL(fBufMap0);
++			OSSafeReleaseNULL(fBufMap);
++			IOLog("SWEET FLIP: off: GPU-layout buffer maps failed\n");
++			return false;
++		}
++		fBufPhys[0] = fPhys;
++		fBufVA[0] = (uintptr_t)fBufMap0->getVirtualAddress();
++		fBufPhys[1] = back;
++		fBufVA[1] = (uintptr_t)fBufMap->getVirtualAddress();
++		for (uint32_t y = 0; y < fHeight; y++) {
++			memcpy((void *)(fBufVA[1] + (uintptr_t)y * stride), (const void *)(fPixels + (uintptr_t)y * fRowBytes), fRowBytes);
++		}
++		__asm__ volatile ("dsb sy" ::: "memory");
++		fMdp[SWEET_VIG0_YSTRIDE0 / 4] = stride;
++		fMdp[SWEET_VIG0_SRC0_ADDR / 4] = (uint32_t)back;
++		__asm__ volatile ("dsb sy" ::: "memory");
++		fFlipMaskUsed = SWEET_FLIP_FLUSH_BITS;
++		fMdp[SWEET_CTL0_FLUSH / 4] = SWEET_FLIP_FLUSH_BITS;
++		fFlipPending = true;
++		fRowBytes = stride;
++		fScan = 1;
++		fPixels = fBufVA[1];
++		fGpuLayout = true;
++		fFlipReady = true;
++		if (__atomic_load_n(&sweet_fb_gpucopy, __ATOMIC_RELAXED) < 0) {
++			__atomic_store_n(&sweet_fb_gpucopy, 1, __ATOMIC_RELAXED);
++		}
++		IOLog("SWEET FLIP: on (GPU layout): buffers %#llx %#llx (%#llx bytes), stride %u, scanning buffer 1\n",
++		    fBufPhys[0], fBufPhys[1], bytes, stride);
++		return true;
++	}
+ 	IOMemoryDescriptor *md = IOMemoryDescriptor::withPhysicalAddress(back, bytes, kIODirectionInOut);
+ 	fBufMap = md != NULL ? md->map(kIOMapWriteCombineCache) : NULL;
+ 	OSSafeReleaseNULL(md);
+@@ -1975,6 +2055,26 @@ AppleCLCD::present(const uint8_t *rec)
+ 				s->release();
+ 				continue;
+ 			}
++			const int gpucopy = __atomic_load_n(&sweet_fb_gpucopy, __ATOMIC_RELAXED);
++			if (flipFrame && fGpuLayout && !fGpuBroken && gpucopy > 0 && gate.state > 0 &&
++			    sx == 0 && sy == 0 && dx == 0 && dy == 0 && w == (int32_t)fLogicalW && h == (int32_t)fLogicalH) {
++				const uint64_t gpu_began = mach_absolute_time();
++				if (gpuCopy(s, gpucopy == 2 ? 1 : 0)) {
++					uint64_t gpu_ns = 0;
++					absolutetime_to_nanoseconds(mach_absolute_time() - gpu_began, &gpu_ns);
++					const uint64_t us = gpu_ns / NSEC_PER_USEC;
++					__atomic_add_fetch(&fStatsGpuCopies, 1, __ATOMIC_RELAXED);
++					__atomic_add_fetch(&fStatsGpuUs, us, __ATOMIC_RELAXED);
++					if (us > fStatsGpuMaxUs) {
++						fStatsGpuMaxUs = us;
++					}
++					__atomic_add_fetch(&fStatsCopyUs, us, __ATOMIC_RELAXED);
++					flipCopied = true;
++					s->release();
++					continue;
++				}
++				__atomic_add_fetch(&fStatsGpuFallbacks, 1, __ATOMIC_RELAXED);
++			}
+ 			if (gate.state > 0) {
+ 				const uint64_t first = (uint64_t)s->offset + (uint64_t)sy * s->bytesPerRow + (uint64_t)sx * 4;
+ 				const uint64_t acquire_began = mach_absolute_time();
+@@ -2083,6 +2183,177 @@ AppleCLCD::present(const uint8_t *rec)
+ 	}
+ }
+ 
++/*
++ * 0246: GPU present copy. Kernel GPU addresses (SweetNativeAdrenoVM.cpp kernel window 0xb0000000..0xc0000000):
++ * scanout buffer i at 0xb0000000 + i * 16 MiB, a 16 KiB scratch page for the CCU flush timestamps at 0xb1f00000,
++ * up to four source IOSurfaces at 0xb2000000 + k * 32 MiB (LRU; each holds a surface reference until evicted).
++ */
++#define SWEET_GPU_SCAN_IOVA     0xb0000000ULL
++#define SWEET_GPU_SCRATCH_IOVA  0xb1f00000ULL
++#define SWEET_GPU_SRC_IOVA      0xb2000000ULL
++#define SWEET_GPU_SRC_SLOT      0x02000000ULL
++
++uint64_t
++AppleCLCD::gpuSourceIova(SweetSurface *s)
++{
++	unsigned victim = 0;
++	for (unsigned k = 0; k < 4; k++) {
++		if (fGpuSrc[k].surface == s && fGpuSrc[k].map != NULL) {
++			fGpuSrc[k].used = ++fGpuUse;
++			return fGpuSrc[k].iova;
++		}
++		if (fGpuSrc[k].used < fGpuSrc[victim].used) {
++			victim = k;
++		}
++	}
++	const uint64_t length = s->memory != NULL ? s->memory->getLength() : 0;
++	const uintptr_t kva = s->kernelAddress();
++	const uint64_t bytes = (length + 4095) & ~4095ULL;
++	if (kva == 0 || (kva & 4095) || bytes == 0 || bytes > SWEET_GPU_SRC_SLOT ||
++	    OSDynamicCast(IOBufferMemoryDescriptor, s->memory) == NULL) {
++		return 0;       /* only kernel-allocated (IOBufferMemoryDescriptor) surfaces */
++	}
++	GpuSrc &slot = fGpuSrc[victim];
++	if (slot.map != NULL) {
++		if (sweet_native_adreno_kunmap(slot.map) != 0) {
++			fGpuBroken = true;      /* mapping retained: do not reuse the slot or the GPU path */
++			return 0;
++		}
++		slot.map = NULL;
++		OSSafeReleaseNULL(slot.surface);
++	}
++	const uint64_t iova = SWEET_GPU_SRC_IOVA + victim * SWEET_GPU_SRC_SLOT;
++	void *map = sweet_native_adreno_kmap(kernel_task, kva, 0, (size_t)bytes, iova, 0);
++	if (map == NULL) {
++		return 0;
++	}
++	s->retain();
++	slot.surface = s;
++	slot.map = map;
++	slot.iova = iova;
++	slot.used = ++fGpuUse;
++	__atomic_add_fetch(&fStatsGpuMapMiss, 1, __ATOMIC_RELAXED);
++	return iova;
++}
++
++static inline uint32_t
++sweet_pm4_parity(uint32_t v)
++{
++	return (0x9669u >> (0xf & (v ^ (v >> 4) ^ (v >> 8) ^ (v >> 12) ^ (v >> 16) ^ (v >> 20) ^ (v >> 24) ^ (v >> 28)))) & 1;
++}
++static inline uint32_t
++sweet_pm4_type4(uint32_t reg, uint32_t count)
++{
++	return 0x40000000u | count | (sweet_pm4_parity(count) << 7) | ((reg & 0x3ffff) << 8) | (sweet_pm4_parity(reg) << 27);
++}
++static inline uint32_t
++sweet_pm4_type7(uint32_t opcode, uint32_t count)
++{
++	return 0x70000000u | count | (sweet_pm4_parity(count) << 15) | ((opcode & 0x7f) << 16) | (sweet_pm4_parity(opcode) << 23);
++}
++
++/* Present thread only. True: the whole frame of `s` is scaled into the back buffer and the GPU finished. */
++bool
++AppleCLCD::gpuCopy(SweetSurface *s, int filter)
++{
++	if (s->bytesPerElement != 4 || s->elementWidth != 1 || s->elementHeight != 1 || (s->bytesPerRow & 63) ||
++	    (s->offset & 63) || s->width == 0 || s->height == 0 || s->width > 0x7fff || s->height > 0x7fff ||
++	    (fRowBytes & 63)) {
++		return false;
++	}
++	if (fGpuScanMap[0] == NULL) {
++		const uint64_t bytes = ((uint64_t)fRowBytes * fHeight + 0xffff) & ~0xffffULL;
++		for (unsigned i = 0; i < 2; i++) {
++			fGpuScanMap[i] = sweet_native_adreno_kmap(NULL, fBufVA[i], fBufPhys[i], (size_t)bytes,
++			    SWEET_GPU_SCAN_IOVA + i * 0x01000000ULL, 1);
++		}
++		fGpuScratch = IOMallocAligned(16384, 16384);
++		if (fGpuScratch != NULL) {
++			bzero(fGpuScratch, 16384);
++			fGpuScratchMap = sweet_native_adreno_kmap(kernel_task, (uintptr_t)fGpuScratch, 0, 16384, SWEET_GPU_SCRATCH_IOVA, 1);
++		}
++		IOLog("SWEET GPUCOPY: scanout maps %p %p scratch %p (iova %#llx %#llx %#llx)\n", fGpuScanMap[0], fGpuScanMap[1],
++		    fGpuScratchMap, SWEET_GPU_SCAN_IOVA, SWEET_GPU_SCAN_IOVA + 0x01000000ULL, SWEET_GPU_SCRATCH_IOVA);
++		if (fGpuScanMap[0] == NULL || fGpuScanMap[1] == NULL || fGpuScratchMap == NULL) {
++			fGpuBroken = true;
++			return false;
++		}
++	}
++	const uint64_t src = gpuSourceIova(s);
++	if (src == 0) {
++		return false;
++	}
++	const uint64_t srcAddr = src + s->offset;
++	const unsigned target = fScan ^ 1;
++	const uint64_t dst = SWEET_GPU_SCAN_IOVA + target * 0x01000000ULL;
++	const uint64_t ts = SWEET_GPU_SCRATCH_IOVA;
++	const uint32_t sw = s->width, sh = s->height;
++	uint32_t w[96];
++	unsigned n = 0;
++#define EV(e) do { w[n++] = sweet_pm4_type7(0x46, 1); w[n++] = (e); } while (0)
++#define EVTS(e) do { w[n++] = sweet_pm4_type7(0x46, 4); w[n++] = (e); w[n++] = (uint32_t)ts; w[n++] = (uint32_t)(ts >> 32); w[n++] = 1; } while (0)
++#define WFI() do { w[n++] = sweet_pm4_type7(0x26, 0); } while (0)
++#define REG(r, c) do { w[n++] = sweet_pm4_type4((r), (c)); } while (0)
++	/* emit_setup: flush + invalidate CCU colour/depth, bypass CCU layout for BLIT_OP_SCALE (a618: one CCU, 64 KiB
++	 * sysmem depth cache -> colour at 0x10000: RB_CCU_CNTL COLOR_OFFSET field = 0x10 << 23). */
++	EVTS(29);               /* PC_CCU_FLUSH_COLOR_TS */
++	EVTS(28);               /* PC_CCU_FLUSH_DEPTH_TS */
++	EV(25);                 /* PC_CCU_INVALIDATE_COLOR */
++	EV(24);                 /* PC_CCU_INVALIDATE_DEPTH */
++	EV(49);                 /* CACHE_INVALIDATE: the source was written by the 3D pipe */
++	WFI();
++	REG(0x8e07, 1); w[n++] = 0x08000000;    /* RB_CCU_CNTL */
++	/* emit_blit_texture: source / destination rectangles */
++	REG(0x8401, 4); w[n++] = 0; w[n++] = (sw - 1) << 8; w[n++] = 0; w[n++] = (sh - 1) << 8;
++	REG(0x8405, 2); w[n++] = 0; w[n++] = (fWidth - 1) | ((fHeight - 1) << 16);
++	/* emit_blit_setup: FMT6_8_8_8_8_UNORM (0x30), R2D_UNORM8 (0x10), mask 0xf, ROTATE_0 */
++	const uint32_t cntl = (0xfu << 20) | (0x30u << 8) | (0x10u << 24);
++	REG(0x8c00, 1); w[n++] = cntl;          /* RB_2D_BLIT_CNTL */
++	REG(0x8400, 1); w[n++] = cntl;          /* GRAS_2D_BLIT_CNTL */
++	REG(0xacc0, 1); w[n++] = (0x30u << 3) | (0xfu << 12);   /* SP_2D_DST_FORMAT */
++	REG(0x8c01, 1); w[n++] = 0;             /* RB_2D_UNKNOWN_8C01 */
++	/* emit_blit_src: linear, WZYX, unk20 | unk22 as Mesa */
++	REG(0xb4c0, 5);
++	w[n++] = 0x30u | ((uint32_t)filter << 16) | (1u << 20) | (1u << 22);   /* SP_PS_2D_SRC_INFO */
++	w[n++] = sw | (sh << 15);                                               /* SP_PS_2D_SRC_SIZE */
++	w[n++] = (uint32_t)srcAddr; w[n++] = (uint32_t)(srcAddr >> 32);        /* SP_PS_2D_SRC */
++	w[n++] = (s->bytesPerRow >> 6) << 9;                                    /* SP_PS_2D_SRC_PITCH */
++	/* emit_blit_dst */
++	REG(0x8c17, 4);
++	w[n++] = 0x30u;                                                         /* RB_2D_DST_INFO */
++	w[n++] = (uint32_t)dst; w[n++] = (uint32_t)(dst >> 32);                 /* RB_2D_DST */
++	w[n++] = fRowBytes >> 6;                                                /* RB_2D_DST_PITCH */
++	/* emit_blit_fini (a6xx gen1: RB_DBG_ECO_CNTL and its blit value are both 0x04100000) */
++	WFI();
++	REG(0x8e04, 1); w[n++] = 0x04100000;
++	w[n++] = sweet_pm4_type7(0x2c, 1); w[n++] = 3;  /* CP_BLIT BLIT_OP_SCALE */
++	WFI();
++	REG(0x8e04, 1); w[n++] = 0x04100000;
++	EVTS(29);               /* the blit's colour writes reach memory before the ring fence */
++	WFI();
++#undef EV
++#undef EVTS
++#undef WFI
++#undef REG
++	unsigned fence = 0;
++	int error = sweet_native_adreno_submit_async(w, n, &fence);
++	if (error == 0) {
++		error = sweet_native_adreno_fence_wait(fence, 200000);
++	}
++	if (error != 0) {
++		static unsigned logged;
++		if (logged++ < 8) {
++			IOLog("SWEET GPUCOPY: submit/wait failed %d (fence %u, %u words); %s\n", error, fence, n,
++			    error == ETIMEDOUT || error == EIO ? "GPU copy off" : "CPU copy for this frame");
++		}
++		if (error == ETIMEDOUT || error == EIO) {
++			fGpuBroken = true;
++		}
++		return false;
++	}
++	return true;
++}
++
+ /*
+  * Copy the presented rectangle (lx, ly, lw, lh), whose top-left texel is at `src` (rows srcBpr
+  * apart), to the panel rows and columns that map into it: runs of up to 24 columns per memcpy.
+diff --git a/iokit/Kernel/arm/SweetNativeAdreno.cpp b/iokit/Kernel/arm/SweetNativeAdreno.cpp
+index c229b89..109fa6f 100644
+--- a/iokit/Kernel/arm/SweetNativeAdreno.cpp
++++ b/iokit/Kernel/arm/SweetNativeAdreno.cpp
+@@ -115,6 +115,37 @@ extern "C" int sweet_native_adreno_adopt(const struct a618_dma_region *memory,
+  IOLog("SWEET NATIVE ADRENO: A618 ring adopt status=%#x ready=%u; kernel-only, no renderer\n",result,board.mounted);
+  return board.mounted?0:EIO;
+ }
++/* 0246: kernel submission without the synchronous wait, for the framebuffer's GPU present copy. User work queued
++ * ahead of the copy can take longer than sweet_native_adreno_submit's 10 ms, and a timeout there unmounts the board.
++ * The caller waits with sweet_native_adreno_fence_wait (gate taken per poll only); a failure never unmounts. */
++extern "C" int sweet_native_adreno_submit_async(const uint32_t *words,unsigned count,unsigned *fence)
++{
++ if(!words || !count || count>4096 || !fence)return EINVAL;
++ *fence=0;
++ if(!board.mounted || !native_lock)return ENXIO;
++ IOLockLock(native_lock);
++ uint32_t issued=0;
++ const IOReturn result=board.mounted?native_ring.submit(words,count,&issued):kIOReturnNotReady;
++ IOLockUnlock(native_lock);
++ if(result!=kIOReturnSuccess)return result==kIOReturnNoResources?EBUSY:EIO;
++ *fence=issued;
++ return 0;
++}
++extern "C" int sweet_native_adreno_fence_wait(unsigned fence,unsigned timeout_us)
++{
++ if(!fence)return EINVAL;
++ if(!native_lock)return ENXIO;
++ const uint64_t start=now_us(nullptr);
++ for(;;) {
++  IOLockLock(native_lock);
++  const NativeAdrenoRingFence state=native_ring.observeFence(fence,nullptr,0,nullptr);
++  IOLockUnlock(native_lock);
++  if(state==NativeAdrenoRingFenceComplete)return 0;
++  if(state!=NativeAdrenoRingFenceTimeout)return EIO;
++  if(now_us(nullptr)-start>=timeout_us)return ETIMEDOUT;
++  IODelay(25);
++ }
++}
+ /* Private synchronous kernel submission. Caller owns immutable PM4 words;
+  * the ring copies them before WPTR. Never wire to an unchecked userclient.
+  * Timeout retains allocations and marks the adapter unusable; no retry. */
+diff --git a/iokit/Kernel/arm/SweetNativeAdrenoVM.cpp b/iokit/Kernel/arm/SweetNativeAdrenoVM.cpp
+index 6095c21..064cf15 100644
+--- a/iokit/Kernel/arm/SweetNativeAdrenoVM.cpp
++++ b/iokit/Kernel/arm/SweetNativeAdrenoVM.cpp
+@@ -190,6 +190,58 @@ extern "C" int sweet_native_adreno_prepare_vm(const a618_smmu_io *hardware,
+      ArenaStart,ArenaBytes,state.tables.spans()[0].physical,state.live.tables.table_pages,result->translated);
+  return 0;
+ }
++/*
++ * 0246: kernel-owned GPU mappings for the framebuffer's GPU present copy (SweetFramebuffer.cpp), in
++ * 0xb0000000..0xc0000000 of the arena: above backboardd's window, the CP firmware/ring/fence at 0x70000000 and
++ * the three 256 MiB extra client windows from 0x80000000, so no client IOVA can collide with them. Taken under
++ * the same gate as the userclient's BO maps and submissions. task != NULL: pin address..+bytes of that task
++ * (kernel_task for an IOSurface's kernel mapping); task == NULL: a physically contiguous range with its own CPU
++ * mapping (the scanout buffers in ABL's splash region). The caller unmaps only after its GPU work completed.
++ */
++static IOLock *sweet_kernel_gate;
++namespace {
++constexpr uint64_t KernelWindowStart=0xb0000000,KernelWindowEnd=0xc0000000;
++struct SweetKernelMap {NativeAdrenoMemory memory;uint64_t handle=0;};
++}
++extern "C" void *sweet_native_adreno_kmap(void *task,uint64_t address,uint64_t physical,size_t bytes,uint64_t iova,int writable)
++{
++ if(!state.ready || !state.connected || !sweet_kernel_gate || !address || !bytes || (bytes&4095) || (iova&4095) ||
++    iova<KernelWindowStart || bytes>KernelWindowEnd-KernelWindowStart || iova>KernelWindowEnd-bytes)return nullptr;
++ SweetKernelMap *m=new SweetKernelMap;
++ if(!m)return nullptr;
++ IOLockLock(sweet_kernel_gate);
++ IOReturn error=task?m->memory.importTask(task,address,bytes,36,bytes):
++     m->memory.borrowBootStorage(reinterpret_cast<void *>(address),physical,bytes,36);
++ const IOReturn backing=error;
++ if(!error)error=state.vm.map(&m->memory,0,iova,ArmSmmu4KRead|(writable?ArmSmmu4KWrite:0u),0,2,&m->handle);
++ const bool mapped=!error;
++ if(!error)error=state.vm.invalidateTlb();
++ IOLockUnlock(sweet_kernel_gate);
++ if(error) {
++  IOLog("SWEET NATIVE VM: kernel map %#llx+%#lx (%s) failed=%#x backing=%#x\n",iova,(unsigned long)bytes,
++      task?"task":"physical",error,backing);
++  if(!mapped) {
++   IOLockLock(sweet_kernel_gate);
++   const IOReturn released=backing?kIOReturnSuccess:m->memory.release();
++   IOLockUnlock(sweet_kernel_gate);
++   if(!released)delete m;   /* else retained: ownership uncertain */
++  }
++  return nullptr;
++ }
++ return m;
++}
++extern "C" int sweet_native_adreno_kunmap(void *cookie)
++{
++ SweetKernelMap *m=static_cast<SweetKernelMap *>(cookie);
++ if(!m || !sweet_kernel_gate)return EINVAL;
++ IOLockLock(sweet_kernel_gate);
++ IOReturn error=state.vm.unmap(m->handle);
++ if(!error)error=m->memory.release();
++ IOLockUnlock(sweet_kernel_gate);
++ if(error) {IOLog("SWEET NATIVE VM: kernel unmap failed=%#x; mapping retained\n",error);return EIO;}
++ delete m;
++ return 0;
++}
+ extern "C" int sweet_native_adreno_connect_vm(NativeAdrenoRing *ring,IOLock *gate,const NativeAdrenoRingClock *clock,
+     uintptr_t core,int (*health)(void *),int (*read)(void *,uint32_t,uint32_t *))
+ {
+@@ -201,6 +253,7 @@ extern "C" int sweet_native_adreno_connect_vm(NativeAdrenoRing *ring,IOLock *gat
+  if(sweet_native_adreno_publish(&state.vm,&state.submit,ring,gate,clock,health,read,&info))
+   return failed("userclient publication",kIOReturnIOError);
+  state.connected=true;
++ sweet_kernel_gate=gate;
+  IOLog("SWEET NATIVE VM: live BO/IB manager connected to compositor userclient\n");
+  return 0;
+ }
