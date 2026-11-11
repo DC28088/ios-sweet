@@ -1,3 +1,17 @@
+## 2026-11-11 21:15 IST: 2471 USER "slightly better, still not satisfactory"; xnu 0248 AMP topology building
+- **xnu 0248** (xnu/patches/0248-sweet-amp-two-clusters.patch on 0247): SWEET.h __ARM_AMP__ 1, board_config
+  MAX_CPU_CLUSTERS 2 -> __AMP__ -> sched_amp (no CONFIG_SCHED_EDGE on iOS; proc_reg.h drops CONFIG_SCHED_CLUTCH
+  under AMP). ml_parse_cpu_topology: cluster-type read as a number vs 'E'/'P'; no HAS_CLUSTER -> cluster = type.
+  recommended_pset_type (thread groups on, no CLPC -> CLUSTER_TYPE_SMP): user threads > BASEPRI_UTILITY -> P,
+  kernel_task and <= utility -> E; spill to E when the P load average passes 2 + sched_amp_spill_count.
+  0167 sweet_choose_big + 0178 sweet_big_balance call sites compiled out under AMP (would cross psets).
+  Other __AMP__ code is generic (compressor threads bound to E, fast jetsam, recount per perf level, sysctls).
+- tools/adt-set-amp.py (in git): /cpus cpu0-5 cluster-type 0x45 'E' id 0, cpu6-7 0x50 'P' id 1, 10 bytes in place,
+  --smp round-trips byte-identical. USB scripts/package-amp.py = package-any.py + this ADT patch (payload ADT
+  asserted == patched). CI 43051261867 (macos-15-intel). Plan: image 2481 = 0248 + "sweetfbflip=1 sweetfbgpu=1".
+  Expect: boot log "pset_create(cluster_id=1)" style lines (kprintf only), SWEET TAP a76 share up.
+  Fallback: 2471 (no AMP).
+
 ## 2026-11-11 21:05 IST: 2471 BOOTED (0247 L3 at 1459.2 MHz + flip + GPU copy by default); awaiting USER feel
 - xnu 0247 (xnu/patches/0247-sweet-l3-cache-clock.patch): L3 OSM domain 2 at 0x18321000 through the CPU-domain code
   (top row, dark row <= 652.8 MHz), sweetl3=0 = ABL row. CI 43040552977 green; first artifact download timed out
