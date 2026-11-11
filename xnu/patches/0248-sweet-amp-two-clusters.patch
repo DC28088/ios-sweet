@@ -1,0 +1,75 @@
+diff --git a/osfmk/kern/sched_prim.c b/osfmk/kern/sched_prim.c
+index 5c10d0c..43b8019 100644
+--- a/osfmk/kern/sched_prim.c
++++ b/osfmk/kern/sched_prim.c
+@@ -2096,7 +2096,7 @@ int sched_smt_balance = 1;
+ #endif
+ 
+ #if defined(ARM64_BOARD_CONFIG_SWEET)
+-static bool sweet_big_balance(processor_t cprocessor, processor_set_t cpset);
++static bool sweet_big_balance(processor_t cprocessor, processor_set_t cpset) __attribute__((unused));
+ static void sweet_account_ui(thread_t thread, processor_t processor, uint64_t slice);
+ static void sweet_tap_latency(thread_t self, uint64_t now, uint64_t latency);
+ #endif
+@@ -2107,7 +2107,7 @@ sched_SMT_balance(processor_t cprocessor, processor_set_t cpset)
+ {
+ 	processor_t ast_processor = NULL;
+ 
+-#if defined(ARM64_BOARD_CONFIG_SWEET)
++#if defined(ARM64_BOARD_CONFIG_SWEET) && !__AMP__
+ 	if (sweet_big_balance(cprocessor, cpset)) {
+ 		return;
+ 	}
+@@ -5340,6 +5340,7 @@ sweet_sched_take_stats(uint64_t *little_us, uint64_t *big_us, uint64_t *pulls, u
+ 	*leaves = os_atomic_xchg(&sweet_big_leaves, 0, relaxed);
+ }
+ 
++static processor_t sweet_choose_big(processor_set_t pset, thread_t thread) __attribute__((unused));
+ static processor_t
+ sweet_choose_big(processor_set_t pset, thread_t thread)
+ {
+@@ -5381,7 +5382,8 @@ choose_processor(
+ 
+ 	assert(thread->sched_pri <= MAXPRI);
+ 
+-#if defined(ARM64_BOARD_CONFIG_SWEET)
++#if defined(ARM64_BOARD_CONFIG_SWEET) && !__AMP__
++	/* 0248: under AMP the A76s are their own pset; sched_amp places threads by cluster. */
+ 	if (pset->online_processor_count > 2) {
+ 		processor_t big = sweet_choose_big(pset, thread);
+ 		if (big != PROCESSOR_NULL) {
+diff --git a/pexpert/pexpert/arm64/SWEET.h b/pexpert/pexpert/arm64/SWEET.h
+index b99c2f4..1f0efef 100644
+--- a/pexpert/pexpert/arm64/SWEET.h
++++ b/pexpert/pexpert/arm64/SWEET.h
+@@ -25,6 +25,16 @@
+  */
+ #define SWEET_SMP_MAX_CPUS         8
+ 
++/*
++ * 0248: AMP. The ADT gives cpu0-5 (Cortex-A55) cluster-type 'E', cluster-id 0 and cpu6-7
++ * (Cortex-A76) cluster-type 'P', cluster-id 1 (tools/sweet-adt-amp.py). Without HAS_CLUSTER,
++ * ml_parse_cpu_topology makes one logical cluster per type; ml_processor_register creates
++ * one pset per cluster and XNU's sched_amp (the A11-era iPhone scheduler, multiq based)
++ * places threads: user threads above utility QoS on the P-cores, kernel and background
++ * threads on the E-cores, spilling to the E-cores when the P-cores are loaded.
++ */
++#define __ARM_AMP__               1
++
+ #define ARM_ARCH_TIMER
+ #define __ARM_ARCH__              8
+ #define __ARM_VMSA__              8
+diff --git a/pexpert/pexpert/arm64/board_config.h b/pexpert/pexpert/arm64/board_config.h
+index 88e524a..def4695 100644
+--- a/pexpert/pexpert/arm64/board_config.h
++++ b/pexpert/pexpert/arm64/board_config.h
+@@ -102,7 +102,8 @@
+ 
+ #define MAX_L2_CLINE                   6
+ #define MAX_CPUS                       8
+-#define MAX_CPU_CLUSTERS               1
++/* 0248: two clusters (six Cortex-A55 = E, two Cortex-A76 = P) for XNU's sched_amp scheduler */
++#define MAX_CPU_CLUSTERS               2
+ 
+ #define CORE_NCTRS                     8 /* Placeholder; KPC is not enabled for this target */
+ 
