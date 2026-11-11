@@ -1,3 +1,13 @@
+## 2026-11-11 18:50 IST: PAGE FLIP WORKS (0245 mode 1, guard 64): USER "there are no glitches"
+- 0245 re-booted from fastboot (log from line 922109), touch OK, SSH OK. kern.sweet_fb_flip=1 (guard 64, mask 0x20041):
+  448 flips/10 s, latch wait avg 1.3 ms max 8.2 ms, 0 timeouts, 0 underruns, all flushes in the active area (10 guard
+  waits). SpringBoard restarted on request (26 -> 409; phone ps has no awk/pgrep: use `set -- $(ps ax | grep ...)`).
+  USER: no glitches, performance the same (expected: the CPU copy still runs, now into the back buffer).
+- Why 0181 flashed and 0245 does not is NOT proven (0245 differs by the line guard; mode 3 without guard was also
+  clean). Keep the guard on.
+- Next: GPU 2D blit into the back buffer (removes the 6-8 ms CPU copy per frame); make sweetfbflip=1 the image default
+  once a longer session is clean. Brightness slider broken (USER suspects the sensor/ALS work) - investigating.
+
 ## 2026-11-11 18:30 IST: 0245 booted; mode 3 no flashes with guard on AND off; USB link lost (enumeration -71)
 - CI 43020344687 (macos-15-intel, main c0b1e3a-ish: patch 0245) green. Image build-0245/shim-boot-0245.img 60950040
   (kernel 81d5a7e9), cmdline = 0244's with sweetbuild=245. fastboot boot OKAY, log from line 908847, touch OK.
