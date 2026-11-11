@@ -1,3 +1,15 @@
+## 2026-11-11 22:22 IST: 2482 BOOTED (0248 AMP topology, CI 43057766356 on adfa220); awaiting USER feel
+- CI 43057766356 headSha adfa220 verified; kernel 0a9022e7 (SHA256SUMS OK) has sched_amp.c / sched_amp_cpu_init_completed
+  strings (85 sched_amp hits; 2481's had none). USB build-2482/shim-boot-2482.img d0c1962e via scripts/package-amp.py
+  2482 43057766356 adfa220 "sweetpanelvci=0 sweetmotion=0xbf sweetfbflip=1 sweetfbgpu=1"; cmdline = 2481's with
+  sweetbuild=2482. fastboot boot OKAY 22:18:56, log boot-0225-3.txt from line 993153 (receiver PID 44887 still running).
+- Observed: no ml_parse_cpu_topology assert; launchd boot-args show sweetbuild=2482, L3 domain 2 lut 10 = 1459.2 MHz,
+  backboardd opened SweetHIDTouch, "selected GT9896 Yellowstone", FB presents running (e.g. 60 presents/10 s, copy avg
+  2.2 ms). Crash set similar to 2471 (driverkitd 1, bluetoothd 3, AegirPoster 9 vs 4 in 2471, spotlight exts).
+- "SWEET SCHED: ui_run_us a55=0 a76=0" in every window. GUESS: those counters live in the 0167/0178 code that 0248
+  compiles out under AMP, so they no longer measure anything; not evidence about P-cluster use. No sysctl binary on
+  the phone (hw.nperflevels not checked). Next: USER feel vs 2471; if needed add an AMP-aware counter. Fallback 2471.
+
 ## 2026-11-11 21:55 IST: 2481 EARLY PANIC = stale CI kernel (0247 source) + AMP ADT; rebuilding 0248
 - USER: 2481 stuck on the red shim screen; panic "machine_routines.c:1055 assertion failed: phys_cluster_id <=
   MAX_CPU_CLUSTER_PHY_ID". No USB console output (receiver log last line 21:18, i.e. the 2471 session).
