@@ -1,3 +1,18 @@
+## 2026-11-11 18:30 IST: 0245 booted; mode 3 no flashes with guard on AND off; USB link lost (enumeration -71)
+- CI 43020344687 (macos-15-intel, main c0b1e3a-ish: patch 0245) green. Image build-0245/shim-boot-0245.img 60950040
+  (kernel 81d5a7e9), cmdline = 0244's with sweetbuild=245. fastboot boot OKAY, log from line 908847, touch OK.
+- mode 3 guard=64: 287 flushes/10 s all landed in the active area (7 guard waits, 1.5 ms total); USER "no flashes while
+  closing apps". mode 3 guard=0: USER again "no flashes". => the 0244 "small flashes" are NOT explained by flush
+  timing (and flushes almost never land in blanking anyway). Unresolved: they may have been display off/on or
+  brightness steps (0244's mode 3 window had several display off/on + DCS 0 / 8 / 12 changes), not the flush.
+- mode 1 (real flip) NOT tested yet: the USB link dropped at 18:20:12 IST (host: descriptor read -71, "not accepting
+  address") ~2 min after the last sysctl write; USER: phone works fine, replugged; still not enumerating after 3+ min.
+  Same class as the 0203/0205 drops (line ~780: suspect the 0200 dark-mode USB poll). Phone state: 0245, mode 3,
+  guard 0, mask 0x20041 (live, not persistent).
+- USER asked why GPU progress is slow; answer given from measured data (per-draw CPU ~100 us, submit drains + ~22 MB
+  cache walks per command, polled fences with ~20 ms avg / ~110 ms max completion, ~300 Mpx/s fill at a verified
+  800 MHz = GPU starved, CPU present copy). Next GPU-perf work: per-frame GPU busy via counters first.
+
 ## 2026-11-11 18:00 IST: 0244 BOOTED; flip modes tested live -> back buffer OK, the CTL0 flush itself causes flashes
 - CI 43013438379 (macos-15-intel, main 529f1b2) green; arm64 runs never got a runner. Image USB
   build-0244/shim-boot-0244.img c3f77842 (kernel 396357f2), cmdline = 0242's + sweetbuild=244. fastboot boot ~12:05
