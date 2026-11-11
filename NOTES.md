@@ -1,3 +1,17 @@
+## 2026-11-11 19:45 IST: GPU PRESENT COPY WORKS (2461 = 0246 + sweetfbflip=1 sweetfbgpu=1); app-open delay unchanged
+- 0246 first CI 43028275216 failed (redefinition of 'stride' in flipSetup); fixed (rename to pitch), CI 43031175549
+  green (kernel 847e944f). Images: build-0246/shim-boot-0246.img 3be8e9f7 (flip/GPU off = 0245 behaviour), build-2461/
+  shim-boot-2461.img b4c8222c (+ sweetfbflip=1 sweetfbgpu=1). 2461 booted (log from line 936810), touch OK.
+- Log: "SWEET FLIP: on (GPU layout): buffers 0x9c000000 0x9ca00000 (0xa00000 bytes), pitch 4352"; per 10 s
+  copies = presents (356/399/448), fallbacks 0, broken 0, flip timeouts 0, underruns 0. GPU copy avg 2.3-2.9 ms (max
+  12-20 ms) vs CPU copy 5.6-8.6 ms; present_avg 9.8-11.2 ms (was 15-17.7), acquire 0, gate (CA fence) 7.3-7.6 ms.
+- USER: "picture looks fine, still delay when opening apps. the performance is basically same."
+- SWEET TAP (43 busy windows of 72): SpringBoard on-core a55 median 159 ms + a76 234 ms = ~393 ms CPU per 600 ms
+  after a tap (0179: ~420 ms); first swap after the tap median 19 ms. => the delay is SpringBoard CPU work, not
+  present/GPU. The present thread runs on cpu4 (A55), so the freed copy time does not give the A76s anything.
+- Next (not started): fresh SpringBoard spindump during app opens on 2461 (last one 11-02, 0179) to see what the
+  0.4 s is; candidates: snapshot generation / image decode in SpringBoard, CA commit cost, AMP topology for UI threads.
+
 ## 2026-11-11 19:00 IST: xnu 0246 GPU present copy building; UniXNU-sheng reviewed; slider cause found
 - USER: "move frame copying to GPU" + "check how UniXNU-sheng made the animation so smooth".
 - UniXNU-sheng (github UniXNU/UniXNU-sheng, porting.toml): A740 (SM8550, several x our A618) still ~70 fps avg.
