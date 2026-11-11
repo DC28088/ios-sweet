@@ -1,0 +1,46 @@
+diff --git a/iokit/Kernel/arm/SweetCPU.cpp b/iokit/Kernel/arm/SweetCPU.cpp
+index 36a10e0..fd06e3e 100644
+--- a/iokit/Kernel/arm/SweetCPU.cpp
++++ b/iokit/Kernel/arm/SweetCPU.cpp
+@@ -170,15 +170,17 @@ static struct {
+ 	unsigned bright_row, dark_row;
+ 	uint32_t bright_khz, dark_khz;
+ 	bool ready;
+-} sweet_dark_dom[2];
+-static const uint32_t sweet_dark_target_khz[2] = {1248000u, 652800u};
++} sweet_dark_dom[3];
++/* 0247: domain 2 = the CPU L3 cache (OSM L3, stock DT cpucc osm_l3_base 0x18321000): ABL leaves it at row 7
++ * (1190.4 MHz of 1459.2); Android's memlat governors (cpu0/cpu6-cpu-l3-lat) raise it under memory-bound load. */
++static const uint32_t sweet_dark_target_khz[3] = {1248000u, 652800u, 652800u};
+ 
+ extern "C" void sweet_cpufreq_dark(int dark);
+ 
+ void
+ sweet_cpufreq_dark(int dark)
+ {
+-	for (unsigned d = 0; d < 2; d++) {
++	for (unsigned d = 0; d < 3; d++) {
+ 		if (!sweet_dark_dom[d].ready) {
+ 			continue;
+ 		}
+@@ -274,7 +276,7 @@ sweet_cpufreq_domain(const ml_topology_info_t *topology, unsigned domain,
+ 		IOLog("SWEET CPUFREQ: domain %u no write (mode=%d best=%u rows=%u)\n", domain, mode, best, rows);
+ 	}
+ 	/* 0200: the dark row: the highest row at or below the target (rows rise in frequency) */
+-	if (mode == 1 && best < rows && domain < 2) {
++	if (mode == 1 && best < rows && domain < 3) {
+ 		unsigned dark = best;
+ 		bool found = false;
+ 		for (unsigned i = 0; i < rows; i++) {
+@@ -306,6 +308,11 @@ sweet_cpufreq_start(const ml_topology_info_t *topology)
+ 	/* Pinned sm7150.dtsi: cpu0-5 freq-domain 0, cpu6-7 freq-domain 1. */
+ 	sweet_cpufreq_domain(topology, 0, 0x18323000ULL, 0, mode);
+ 	sweet_cpufreq_domain(topology, 1, 0x18325800ULL, 6, mode);
++	/* 0247: the L3 domain has the same OSM layout (Linux osm-l3.c sdm845 data: LUT 0x110 / 32-byte rows, perf
++	 * state 0x920). sweetl3=0 leaves ABL's row. The CPU binding and clock measurement in the helper are harmless. */
++	int l3 = 1;
++	PE_parse_boot_argn("sweetl3", &l3, sizeof(l3));
++	sweet_cpufreq_domain(topology, 2, 0x18321000ULL, 0, l3 ? mode : 0);
+ }
+ 
+ /* Do not wait in a nub's start(): matching can be asynchronous or serialized. */
