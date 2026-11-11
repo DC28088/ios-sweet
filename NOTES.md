@@ -1,3 +1,14 @@
+## 2026-11-11 22:32 IST: 2482 USER "opening app is still the same, stutters noticeably worse"; live AMP threshold A/B
+- FB timing (log windows with presents): 2471 = 299 presents + 49 missed deadlines per 10 s window, 2482 = 209 + 134.
+  gate/copy averages similar (gate ~7-8 ms, copy ~2.7 ms) => fewer frames delivered, not slower presents.
+- sweet-sysctl on the phone: hw.nperflevels 2, perflevel0 2 cpus (P), perflevel1 6 (E) => topology is as intended.
+- xnu-8796 sched_amp_common.c (read from apple-oss-distributions): spill when the smoothed P load average >=
+  (2 << PSET_LOAD_FRACTIONAL_SHIFT) + spill_count (3) and no idle P core; idle E steals when the load avg >= 2 + 1/16 AND
+  P runq > dispatching AND no idle P. GUESS: the lagging load average keeps UI bursts queued on the 2 A76s.
+- 22:31 set live (no reboot, lost on reboot): kern.sched_amp_spill_count/idle_steal/spill_steal = -32 (were 3/1/1)
+  => the gate is effectively runq-only. Revert: =3 / =1 / =1. Log offset 1003754. Waiting on USER feel.
+  If still worse than 2471: drop AMP (back to 0247 kernel/SMP ADT, 2471).
+
 ## 2026-11-11 22:22 IST: 2482 BOOTED (0248 AMP topology, CI 43057766356 on adfa220); awaiting USER feel
 - CI 43057766356 headSha adfa220 verified; kernel 0a9022e7 (SHA256SUMS OK) has sched_amp.c / sched_amp_cpu_init_completed
   strings (85 sched_amp hits; 2481's had none). USB build-2482/shim-boot-2482.img d0c1962e via scripts/package-amp.py
