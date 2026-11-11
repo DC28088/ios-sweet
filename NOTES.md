@@ -1,3 +1,26 @@
+## 2026-11-11 19:00 IST: xnu 0246 GPU present copy building; UniXNU-sheng reviewed; slider cause found
+- USER: "move frame copying to GPU" + "check how UniXNU-sheng made the animation so smooth".
+- UniXNU-sheng (github UniXNU/UniXNU-sheng, porting.toml): A740 (SM8550, several x our A618) still ~70 fps avg.
+  Its display: "dpu-scanout=2" DIRECT SCANOUT (display pipes fetch the compositor surface through a stage-1 window
+  of the display SMMU bank, no copy; the flip waits for the frame's GPU fence = removed their flicker). GPU: Turnip +
+  metal2vulkan (AdrenoMetal), fence waiters woken by the GPU interrupt, submissions no longer clean 8.5 MB of context
+  buffers each time, GPU DCVS with wake boost, GPU memory pool. Brightness: CoreBrightness needs
+  backlight-marketing-table + backlight-calibration-parameters; vmm-present selects VMBLControl, which drops every
+  brightness request. => our long-term present = direct scanout + VIG0 QSEED scaler (1125x2436 -> 1080x2400).
+- Brightness slider (0244/0245): NOT the ALS work. First 0245 boot: slider writes 4142..32413 arrived. After a
+  SpringBoard restart (TERM; 0244 and this boot) the slider writes nothing -> restart backboardd to recover (pending
+  USER ok).
+- **xnu 0246** (xnu/patches/0246-sweet-fb-gpu-present-copy.patch on 0245, apply --check OK, not compiled locally):
+  sweetfbgpu=1 -> both flip buffers with 4352 pitch (RB_2D_DST_PITCH is in 64-byte units; ABL's 4320 is not),
+  buffer 0 0x9c000000, buffer 1 0x9ca00000 (0xa00000 each, region ends 0x9d700000); ABL frame converted into buffer 1,
+  VIG0 SRC0 + YSTRIDE0 switched in one flush. kern.sweet_fb_gpucopy 0 CPU / 1 GPU nearest / 2 bilinear. Kernel GPU
+  window 0xb0000000..0xc0000000: scanout 0xb0000000 / 0xb1000000, scratch 0xb1f00000, 4 LRU source slots from
+  0xb2000000 (32 MiB). Stream: CCU flush/invalidate, RB_CCU_CNTL 0x08000000, 2D rects, BLIT_CNTL 0x10f03000,
+  SP_2D_DST_FORMAT 0xf180, src/dst info 0x30 linear WZYX, CP_BLIT SCALE, CCU colour flush; async submit + fence wait
+  (200 ms) without holding the gate. Panic/console text draws in ABL's 4320 layout into buffer 0: keep sweetfbgpu off
+  for panic hunting. CI 43028275216 (macos-15-intel).
+- Test image plan: 0246 + "sweetfbflip=1 sweetfbgpu=1"; fallback = same kernel without them (= 0245 behaviour).
+
 ## 2026-11-11 18:50 IST: PAGE FLIP WORKS (0245 mode 1, guard 64): USER "there are no glitches"
 - 0245 re-booted from fastboot (log from line 922109), touch OK, SSH OK. kern.sweet_fb_flip=1 (guard 64, mask 0x20041):
   448 flips/10 s, latch wait avg 1.3 ms max 8.2 ms, 0 timeouts, 0 underruns, all flushes in the active area (10 guard
