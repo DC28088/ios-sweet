@@ -1,3 +1,23 @@
+## 2026-11-11 20:10 IST: SpringBoard spindump on 2461 (60 s, USER opened/closed apps): our driver = half the render thread
+- spindump SpringBoard 60 10 -noProcessingWhileSampling -noText -o /var/tmp/sb2461.spindump; heavy text
+  /var/tmp/sb2461-heavy.txt (phone); host copy in the session scratchpad (spin2461/heavy.txt, not in git).
+- CPU in 60 s: backboardd 46.5 s, SpringBoard 36.4 s, kernel_task 21.6 s, spindump 16.6 s, wland-0225 7.0 s.
+- SpringBoard: main thread 17.6 s; XBApplicationSnapshot image generation 3.2 + 0.7 s; UIKit animation manager
+  ~3.8 s. Main-thread leaves diffuse as on 11-02: libobjc 26 %, QuartzCore 14 %, CF 11 %, UIKit 11 %, malloc 6 %.
+- backboardd render thread (com.apple.coreanimation.display.primary) 34.7 s = 58 % of an A76 for the whole minute.
+  Leaves: libSweetNativeBackend.dylib 31 % (unsymbolized ???), QuartzCore 27 % (CA's own updater/render), platform
+  memmove/memset 12 %, malloc 9 %, kernel (mach_vm_deallocate, mutex wait/drop) 8 %, SweetMetal2 4.5 %, plus
+  __vfprintf in the hot path. => ~half of the render thread (~17 s/min of A76 time) is our Metal backend + its
+  copies/allocations/locks: the largest controllable CPU cost, and it competes with SpringBoard for the 2 A76s.
+- Memory system (read-only via sweet-pmemrw): L3 OSM domain 0x18321000 (stock DT cpucc reg-names osm_l3_base):
+  PERF_STATE 7 = 1190.4 MHz of max row 10 = 1459.2 MHz (LUT 300/556.8/652.8/768/844.8/940.8/1132.8/1190.4/1305.6/
+  1382.4/1459.2). Nothing in XNU sets it (Android: memlat governors cpu0/cpu6-cpu-l3-lat). LLCC 0x9200000
+  (qcom,sdmmagpie-llcc): slice ATTR0/ATTR1 for slices 0-2 at +0x21000.. all 0, TRP_STATUS slice 1 = 0x2 -> CPU slice
+  apparently never configured/activated (Android's llcc driver does it). Both modest gains, not the main cause.
+- Next candidates: (1) symbolize libSweetNativeBackend hot paths (tools/sweet-spindump-profile.py + native-metal
+  symbols) and cut copies/allocs/logging per draw; (2) kernel: L3 to row 10 + LLCC CPUSS slice activation;
+  (3) AMP topology so SpringBoard's main thread gets A76 time.
+
 ## 2026-11-11 19:45 IST: GPU PRESENT COPY WORKS (2461 = 0246 + sweetfbflip=1 sweetfbgpu=1); app-open delay unchanged
 - 0246 first CI 43028275216 failed (redefinition of 'stride' in flipSetup); fixed (rename to pitch), CI 43031175549
   green (kernel 847e944f). Images: build-0246/shim-boot-0246.img 3be8e9f7 (flip/GPU off = 0245 behaviour), build-2461/
