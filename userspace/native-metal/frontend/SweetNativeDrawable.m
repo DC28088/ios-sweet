@@ -15,8 +15,15 @@ struct rwa_texture *rwd_texture_for_surface(struct rwa_device *device,void *surf
     if(took)memset(took,0,sizeof(*took));
 #define REFUSE(...) do {snprintf(why,n,__VA_ARGS__);return NULL;} while(0)
     if(!device || !s || !want)REFUSE("IOSurface import requires a device, surface and descriptor");
-    if(plane || IOSurfaceGetPlaneCount(s))REFUSE("interface: planar IOSurface textures are not implemented");
-    size_t width=IOSurfaceGetWidth(s),height=IOSurfaceGetHeight(s),pitch=IOSurfaceGetBytesPerRow(s);
+    size_t planes=IOSurfaceGetPlaneCount(s);
+    uint32_t format=IOSurfaceGetPixelFormat(s);
+    bool planar=planes!=0;
+    if((!planar && plane) || (planar && (planes!=2 || plane>=planes ||
+       (format!='420v' && format!='420f'))))
+        REFUSE("interface: unsupported IOSurface plane or planar format");
+    size_t width=planar?IOSurfaceGetWidthOfPlane(s,plane):IOSurfaceGetWidth(s);
+    size_t height=planar?IOSurfaceGetHeightOfPlane(s,plane):IOSurfaceGetHeight(s);
+    size_t pitch=planar?IOSurfaceGetBytesPerRowOfPlane(s,plane):IOSurfaceGetBytesPerRow(s);
     unsigned bpp=0;uint32_t fourcc=0;
     switch(want->pixel_format) {
     case 1:case 10:fourcc='A008';bpp=1;break;
@@ -29,7 +36,11 @@ struct rwa_texture *rwd_texture_for_surface(struct rwa_device *device,void *surf
     if(want->width!=width || want->height!=height || want->type!=2 || want->depth>1 ||
        want->array_length>1 || want->mip_levels>1 || want->sample_count>1)
         REFUSE("interface: IOSurface texture must match a single 2D plane, mip and sample");
-    if(IOSurfaceGetPixelFormat(s)!=fourcc || width>UINT32_MAX || height>UINT32_MAX ||
+    if(planar && (IOSurfaceGetBytesPerElementOfPlane(s,plane)!=bpp ||
+                  (plane==0 && want->pixel_format!=10) ||
+                  (plane==1 && want->pixel_format!=30)))
+        REFUSE("interface: NV12 requires R8 luma and RG8 chroma textures");
+    if((!planar && format!=fourcc) || !width || !height || width>UINT32_MAX || height>UINT32_MAX ||
        pitch>UINT32_MAX-63 || width>SIZE_MAX/bpp || pitch<width*bpp)
         REFUSE("interface: IOSurface %#x for Metal %u expected %#x, %zux%zu pitch %zu; incompatible A618 linear layout",IOSurfaceGetPixelFormat(s),want->pixel_format,fourcc,width,height,pitch);
     // A618 samples linear rows only at 64-byte pitches. A surface another
@@ -39,13 +50,17 @@ struct rwa_texture *rwd_texture_for_surface(struct rwa_device *device,void *surf
     // rounding rule is in sweet_drm.cpp surface_description). Only for
     // textures the GPU reads: a GPU write would not reach the surface.
     size_t gpu_pitch=pitch;
+    if(planar && (pitch&63))REFUSE("interface: planar rows require a 64-byte pitch");
     if(pitch&63) {
         if(want->usage&(2|4))
             REFUSE("interface: IOSurface %u %zux%zu pitch %zu is not 64-byte aligned and the texture is written (usage %#x); a read-only shadow cannot carry GPU writes back",
                    IOSurfaceGetID(s),width,height,pitch,want->usage);
         gpu_pitch=(pitch+63)&~(size_t)63;
     }
-    uintptr_t pixels=(uintptr_t)IOSurfaceGetBaseAddress(s),base=pixels&~(uintptr_t)16383;
+    uintptr_t whole=(uintptr_t)IOSurfaceGetBaseAddress(s),base=whole&~(uintptr_t)16383;
+    uintptr_t pixels=planar?(uintptr_t)IOSurfaceGetBaseAddressOfPlane(s,plane):whole;
+    if(planar && ((pixels-base)&63))REFUSE("interface: planar offset requires 64-byte alignment");
+    if(pixels<base)REFUSE("interface: plane precedes its allocation");
     size_t bytes=IOSurfaceGetAllocSize(s),offset=pixels-base;
     if(!base || offset>=bytes || (height && pitch>(bytes-offset)/height))
         REFUSE("interface: IOSurface rows extend beyond its mapped allocation");
@@ -66,7 +81,7 @@ struct rwa_texture *rwd_texture_for_surface(struct rwa_device *device,void *surf
     if(texture && want->pixel_format==30 && rg8_imports++<4)
         fprintf(stderr,"SweetNativeMetal: RG8 IOSurface %u imported, %zux%zu pitch %zu\n",id,width,height,pitch);
     if(texture && took)*took=(struct rwd_surface){id,0,bytes,(unsigned)offset,(unsigned)gpu_pitch,
-                                                (unsigned)width,(unsigned)height,fourcc,0};
+                                                (unsigned)width,(unsigned)height,format,(unsigned)planes};
     return texture;
 #undef REFUSE
 }

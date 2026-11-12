@@ -275,9 +275,22 @@ int surface_description(uint32_t id, struct redwood_drm_surface *out, IOSurfaceR
     size_t width=IOSurfaceGetWidth(s), height=IOSurfaceGetHeight(s), pitch=IOSurfaceGetBytesPerRow(s);
     size_t planes=IOSurfaceGetPlaneCount(s);
     int e=0;
-    if (!base || !bytes || bytes>state.params.max_bo_bytes || planes ||
+    if (!base || !bytes || bytes>state.params.max_bo_bytes ||
         width>UINT32_MAX || height>UINT32_MAX || pitch>UINT32_MAX ||
         pixel-base>=bytes || (height && pitch>(bytes-(pixel-base))/height)) e=EINVAL;
+    if (!e && planes) {
+        uint32_t format=IOSurfaceGetPixelFormat(s);
+        if(planes!=2 || (format!=0x34323076u && format!=0x34323066u))e=EINVAL;
+        for(size_t i=0;!e && i<planes;++i) {
+            uint64_t address=(uintptr_t)IOSurfaceGetBaseAddressOfPlane(s,i);
+            size_t w=IOSurfaceGetWidthOfPlane(s,i),h=IOSurfaceGetHeightOfPlane(s,i);
+            size_t row=IOSurfaceGetBytesPerRowOfPlane(s,i),bpe=i?2:1;
+            if(!w || !h || w>UINT32_MAX || h>UINT32_MAX || row>UINT32_MAX ||
+               (row&63) || IOSurfaceGetBytesPerElementOfPlane(s,i)!=bpe ||
+               w>row/bpe || address<base || ((address-base)&63) || address-base>=bytes ||
+               row>(bytes-(address-base))/h)e=EINVAL;
+        }
+    }
     if (!e) {
         vm_address_t region=base; vm_size_t length=0;
         vm_region_basic_info_data_64_t info{};
@@ -289,7 +302,7 @@ int surface_description(uint32_t id, struct redwood_drm_surface *out, IOSurfaceR
         if (kr || region>base || length<base-region || bytes>length-(base-region) ||
             !(info.protection&VM_PROT_READ) || !(info.protection&VM_PROT_WRITE)) e=EINVAL;
     }
-    if (!e && (pitch&63)) {
+    if (!e && !planes && (pitch&63)) {
         // Shadow layout (frontend SweetNativeDrawable.m uses the same rule):
         // same in-page offset, rows rounded to 64 bytes, owned storage.
         const uint64_t aligned=(uint64_t(pitch)+63)&~uint64_t(63);
@@ -484,8 +497,7 @@ int submit(drm_msm_gem_submit *s) {
     auto cmds=(drm_msm_gem_submit_cmd *)(uintptr_t)s->cmds;
     std::vector<NativeAdrenoAbiSubmitBuffer> ibs;
     ibs.reserve(s->nr_cmds);
-    // Handles are bounded by MaxBO. Keep duplicate validation linear even
-    // for large compositor submissions, without allocating a hash table.
+    // Bounded handles allow allocation-free, linear duplicate validation.
     std::bitset<MaxBO> seen_handles;
     req->resource_count=s->nr_bos;req->commands.queue=s->queueid;
     int e=0;
@@ -794,7 +806,7 @@ extern "C" int drmPrimeFDToHandle(int,int surface,uint32_t *handle) {
     struct redwood_drm_surface info{};IOSurfaceRef s=nullptr;
     int e=surface_description(surface,&info,&s);
     const size_t src_pitch=s?IOSurfaceGetBytesPerRow(s):0;
-    if(!e && (src_pitch&63)) {
+    if(!e && !info.planes && (src_pitch&63)) {
         // Owned BO; the surface stays retained as the shadow's source.
         e=allocate(info.size,MSM_BO_WC,nullptr,handle);
         Buffer *b=e?nullptr:buffer(*handle);

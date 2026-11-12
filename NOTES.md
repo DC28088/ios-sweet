@@ -1,3 +1,11 @@
+## 2026-11-12: installation preflight caught missing video changes
+- Current phone bundle hashes match the working media-0213 artifact (backend cd052dd6).
+- The first candidate based on main lacks e0574fa NV12/planar fixes. DO NOT INSTALL CI 43142933996.
+- Restored the five differing graphics source files from e0574fa and reapplied only linear submit
+  validation/reservation. Compared graphics sources against installed source before rebuilding.
+- Full existing bundle backed up locally and every file verified against device SHA256.
+  Device graphics remain unchanged pending corrected CI artifact.
+
 ## 2026-11-12: Codex bounded GPU/UI follow-up
 - Continued from Claude main edd5371 and read the uncommitted 22:40 AMP result (slightly better).
   Original checkout and uncommitted files left intact; isolated branch codex/gpu-ui-0249.

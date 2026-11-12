@@ -1140,7 +1140,9 @@ static _Atomic unsigned long long native_wait_until_completed;
                 '    if(_status==RW_CB_ERROR){[self redwoodReturnSlot];[self redwoodDeliverHandlers];return;}\n    if(_status>=RW_CB_COMMITTED){[self failWith:"command buffer committed twice"];return;}')
     s=replace(s,'- (id)iosurface                    { return nil; }',
                 '- (id)iosurface                    { return (id)_nativeSurface; }')
-    s=replace(s,'\tstruct rwa_texture_shape _shape;','\tstruct rwa_texture_shape _shape;\n    CFTypeRef _nativeSurface;')
+    s=replace(s,'- (NSUInteger)iosurfacePlane       { return 0; }',
+                '- (NSUInteger)iosurfacePlane       { return _nativePlane; }')
+    s=replace(s,'\tstruct rwa_texture_shape _shape;','\tstruct rwa_texture_shape _shape;\n    CFTypeRef _nativeSurface;\n    NSUInteger _nativePlane;\n    BOOL _nativePlanar, _nativePlanarValid;\n    uint32_t _nativePlanarSeed;\n    uint8_t *_nativePlanarPixels;\n    size_t _nativePlanarBytes;')
     # keep exact IOSurface object for Metal's iosurface accessor as well as winsys ownership
     # Locate the creation/wrapping code in the donor and add via object_setIvar is
     # unnecessary: private ivars are available to a category setter below.
@@ -1152,20 +1154,49 @@ static _Atomic unsigned long long native_wait_until_completed;
 }
 '''+s[end:]
     s=replace(s,'@property (readonly) struct rwa_texture *mesaTexture;',
-                '@property (readonly) struct rwa_texture *mesaTexture;\n- (void)nativeAttachSurface:(void *)surface;')
+                '@property (readonly) struct rwa_texture *mesaTexture;\n- (void)nativeAttachSurface:(void *)surface plane:(NSUInteger)plane;\n- (BOOL)nativeRefreshPlanar;\n- (void)nativeEnablePlanar;\n- (struct rwa_texture *)nativeRenderTexture;')
+    method=s.index('- (id)newTextureWithDescriptor:(MTLTextureDescriptor *)d iosurface:')
+    at=s.index('\n{',method)+2
+    s=s[:at]+r'''
+    if(s && d && IOSurfaceGetPlaneCount(s) && ([d pixelFormat]==500 || [d pixelFormat]==520)) {
+        uint32_t format=IOSurfaceGetPixelFormat(s);
+        if(p || (format!='420v' && format!='420f') || IOSurfaceGetPlaneCount(s)!=2 ||
+           [d textureType]!=MTLTextureType2D || [d depth]>1 || [d arrayLength]>1 ||
+           [d sampleCount]>1 || [d mipmapLevelCount]>1 || ([d usage]&2)) {
+            RW_ONCE("combined YUV requires a read-only NV12 texture\n");return nil;
+        }
+        MTLTextureDescriptor *copy=[d copy];
+        copy.pixelFormat=[d pixelFormat]==520?MTLPixelFormatRGBA8Unorm_sRGB:MTLPixelFormatRGBA8Unorm;
+        copy.storageMode=MTLStorageModeShared;copy.usage=MTLTextureUsageShaderRead;
+        RedwoodMetalTexture *result=[self newTextureWithDescriptor:copy];[copy release];
+        if(!result)return nil;
+        [result nativeAttachSurface:s plane:0];[result nativeEnablePlanar];
+        if(![result nativeRefreshPlanar]){[result release];RW_ONCE("combined YUV conversion refused\n");return nil;}
+        static unsigned planar_logs;
+        if(planar_logs++<8)rw_print("combined NV12 converted to RGBA: %ux%u usage %#x\n",(unsigned)[d width],(unsigned)[d height],(unsigned)[d usage]);
+        return result;
+    }
+'''+s[at:]
     begin=s.index('\treturn [[RedwoodMetalTexture alloc] initWithRedwoodDevice:self',s.index('- (id)newTextureWithDescriptor:(MTLTextureDescriptor *)d iosurface:'))
     end=s.index('\n}',begin)
     s=s[:begin]+'''    RedwoodMetalTexture *result=[[RedwoodMetalTexture alloc] initWithRedwoodDevice:self texture:texture shape:&shape];
-    [result nativeAttachSurface:s];return result;'''+s[end:]
+    [result nativeAttachSurface:s plane:p];return result;'''+s[end:]
+    s=s.replace('[work->color[i] mesaTexture]','[work->color[i] nativeRenderTexture]').replace('[work->depth mesaTexture]','[work->depth nativeRenderTexture]')
+    s=replace(s,'- (struct rwa_texture *)mesaTexture { return _texture; }',
+                '- (struct rwa_texture *)mesaTexture { return [self nativeRefreshPlanar] ? _texture : NULL; }')
     at=s.index('+ (void)load',s.index('@implementation RedwoodMetalTexture'))
-    s=s[:at]+'''- (void)nativeAttachSurface:(void *)surface {
+    s=s[:at]+'''- (void)nativeAttachSurface:(void *)surface plane:(NSUInteger)plane {
     if(_nativeSurface)CFRelease(_nativeSurface);
     _nativeSurface=surface?CFRetain(surface):NULL;
+    _nativePlane=plane;
 }
 '''+s[at:]
     begin=s.index('- (void)dealloc',s.index('@implementation RedwoodMetalTexture'))
     at=s.index('\n\t[super dealloc];',begin)
     s=s[:at]+'\n    if(_nativeSurface)CFRelease(_nativeSurface);'+s[at:]
+    s=replace(s,'@implementation RedwoodMetalTexture','@implementation RedwoodMetalTexture\n#include \"SweetNativePlanar.inc\"')
+    s=s.replace('    if(_nativeSurface)CFRelease(_nativeSurface);\n\t[super dealloc];', '    if(_nativeSurface)CFRelease(_nativeSurface);\n    free(_nativePlanarPixels);\n\t[super dealloc];')
+    s='#import <IOSurface/IOSurfaceRef.h>\n#include \"SweetNV12.h\"\nextern const CFStringRef kIOSurfaceYCbCrMatrix __attribute__((weak_import));\n'+s
     # Resources retain their owning device even when the application releases it.
     for cls in ('RedwoodMetalBuffer','RedwoodMetalTexture','RedwoodMetalComputePipeline','RedwoodMetalRenderPipeline','RedwoodMetalArgumentEncoder','RedwoodMetalCommandQueue'):
         begin=s.index('@implementation '+cls)
@@ -1210,10 +1241,16 @@ ensure_function_encoder(void)
         '\t\t\t    work->buffers, work->bufferOffsets, work->count);\n'
         '\t}\n'
         '\tif (mesa.render_draw([work->render render], &draw, why, size) != 0) {')
+    # Generated C string literals must retain their escape, not a source newline.
+    for literal in (r'combined YUV requires a read-only NV12 texture\n',
+                    r'combined YUV conversion refused\n',
+                    r'combined NV12 converted to RGBA: %ux%u usage %#x\n'):
+        if literal not in s:raise RuntimeError('Lost generated C string escape: '+repr(literal))
     p.write_text(s)
     shutil.copy2(NATIVE/'frontend/SweetNativeLibrary.inc',src/'SweetNativeLibrary.inc')
     shutil.copy2(NATIVE/'frontend/SweetNativeDrawLog.inc',src/'SweetNativeDrawLog.inc')
     shutil.copy2(NATIVE/'frontend/SweetNativeDrawable.m',src/'redwooddrawable.m')
+    for name in ('SweetNV12.h','SweetNativePlanar.inc'):shutil.copy2(NATIVE/'frontend'/name,src/name)
     # The donor includes structs by hand in two files; only the drawable shim's
     # geometry record remains local. The AIR header itself is shared above.
     return p
