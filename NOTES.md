@@ -8,6 +8,7 @@
 - Validation: extracted actual validation loop compared against previous algorithm for 20,000 cases,
   plus invalid handle boundaries and closing BO. Full legacy transport harness cannot compile because
   its mock SDK lacks current mapping/IOSurface APIs. Sanitizers unavailable on host (missing libasan).
+- Native Metal CI 43142933996 in progress, verified head fc1d0cc7b5dee55788a45f3c3af43d0b8e219cc3.
 - Device performance improvement NOT measured; this is a small CPU overhead reduction, not a claim
   that UI stutter is solved. Next: native-metal CI build, then controlled on-device comparison against
   installed e0574fa bundle with strict publication enabled. No device installation in this time box.
