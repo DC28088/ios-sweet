@@ -13,6 +13,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <algorithm>
+#include <bitset>
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -482,13 +483,19 @@ int submit(drm_msm_gem_submit *s) {
     auto bos=(drm_msm_gem_submit_bo *)(uintptr_t)s->bos;
     auto cmds=(drm_msm_gem_submit_cmd *)(uintptr_t)s->cmds;
     std::vector<NativeAdrenoAbiSubmitBuffer> ibs;
+    ibs.reserve(s->nr_cmds);
+    // Handles are bounded by MaxBO. Keep duplicate validation linear even
+    // for large compositor submissions, without allocating a hash table.
+    std::bitset<MaxBO> seen_handles;
     req->resource_count=s->nr_bos;req->commands.queue=s->queueid;
     int e=0;
     for(unsigned i=0;i<s->nr_bos && !e;++i) {
         Buffer *b=buffer(bos[i].handle);
         uint32_t access=bos[i].flags&(MSM_SUBMIT_BO_READ|MSM_SUBMIT_BO_WRITE);
         if(!b || b->closing || !access || (bos[i].flags&~MSM_SUBMIT_BO_FLAGS)) {e=EINVAL;break;}
-        for(unsigned j=0;j<i;++j)if(bos[j].handle==bos[i].handle)e=EINVAL;
+        const unsigned slot=bos[i].handle-1; // buffer() validated the range above
+        if(seen_handles.test(slot)){e=EINVAL;break;}
+        seen_handles.set(slot);
         req->resources[i]={b->kernel,access,0};bos[i].presumed=b->iova;
     }
     // Validate the complete list before sending its first 16-IB chunk.

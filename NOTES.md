@@ -1,3 +1,17 @@
+## 2026-11-12: Codex bounded GPU/UI follow-up
+- Continued from Claude main edd5371 and read the uncommitted 22:40 AMP result (slightly better).
+  Original checkout and uncommitted files left intact; isolated branch codex/gpu-ui-0249.
+- GPU copy already works; strict IOSurface publication remains required for correctness per prior A/B.
+- Transport submit duplicate validation replaced O(n^2) comparisons with a 4096-bit stack bitset;
+  maximum 1024-resource submission avoids 523,776 pair comparisons. Reserve IB vector once up front.
+  Fence waits, surface ownership, cache maintenance and scheduler settings unchanged.
+- Validation: extracted actual validation loop compared against previous algorithm for 20,000 cases,
+  plus invalid handle boundaries and closing BO. Full legacy transport harness cannot compile because
+  its mock SDK lacks current mapping/IOSurface APIs. Sanitizers unavailable on host (missing libasan).
+- Device performance improvement NOT measured; this is a small CPU overhead reduction, not a claim
+  that UI stutter is solved. Next: native-metal CI build, then controlled on-device comparison against
+  installed e0574fa bundle with strict publication enabled. No device installation in this time box.
+
 ## 2026-11-11 22:32 IST: 2482 USER "opening app is still the same, stutters noticeably worse"; live AMP threshold A/B
 - FB timing (log windows with presents): 2471 = 299 presents + 49 missed deadlines per 10 s window, 2482 = 209 + 134.
   gate/copy averages similar (gate ~7-8 ms, copy ~2.7 ms) => fewer frames delivered, not slower presents.
