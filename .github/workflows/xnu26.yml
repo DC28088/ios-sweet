@@ -63,7 +63,12 @@ jobs:
             cp "$f" "dxb/patches/26.0/sweet-$(basename "$f")"; n=$((n+1))
           done
           echo "copied $n files"
-          (cd berg/xnu/patches-12377 && shasum -a 256 *) > series-SHA256SUMS
+          # our own 12377 patches (sweet hardware), applied after Bergamota's series (2000+ sorts after 1130)
+          for f in xnu/patches-12377/*.patch; do
+            [ -e "$f" ] || continue
+            cp "$f" "dxb/patches/26.0/sweet-$(basename "$f")"; echo "ours: $(basename "$f")"
+          done
+          (cd berg/xnu/patches-12377 && shasum -a 256 *; cd "$GITHUB_WORKSPACE/xnu/patches-12377" 2>/dev/null && shasum -a 256 *.patch) > series-SHA256SUMS
           if [ "${{ inputs.use_kdk }}" = "false" ]; then
             # 0027-stage-coreentitlements-v2-stub.sh stands in for dxb's KDK header copy
             rm dxb/patches/26.0/00_setup_coreentitlements.sh
@@ -125,6 +130,12 @@ jobs:
           CONFIG=$(printf '%s' "$KERNEL_CONFIG" | tr '[:upper:]' '[:lower:]')
           K="out/kernel.$CONFIG.sweet"
           if [ -f "$K" ]; then file "$K"; strings -a "$K" | grep -m3 -E "Darwin Kernel Version|xnu-12377" || true; fi
+          # our patches must be in the binary
+          for p in xnu/patches-12377/*.patch; do [ -e "$p" ] || continue; echo "check $(basename "$p")"; done
+          if ls xnu/patches-12377/2000-*.patch >/dev/null 2>&1; then
+            grep -aFq 'SWEET CPUFREQ: not an SM7150 sweet board' "$K" && grep -aFq 'SWEET CPUFREQ: domain %u selected lut' "$K" \
+              && echo "2000 cpufreq strings present" || { echo "2000 cpufreq strings MISSING"; exit 1; }
+          fi
 
       - uses: actions/upload-artifact@v4
         if: always()
