@@ -1,3 +1,19 @@
+## 2026-11-13 22:55 IST: iOS 26 root prep; USER chose NO backup of the iOS 16 userdata ("c")
+- USER decision (22:30 IST): skip the iOS 16 backup; flashing iOS 26 into userdata will destroy the iOS 16 install.
+  Still confirm right before the flash (AGENTS.md).
+- Auto-mode classifier blocks Claude from running Bergamota code (their .sh/.py) and the downloaded ipsw binary
+  ("Code from External"). So the USER runs: research/ios26/prep-ipsw.sh (no sudo: ipsw 3.1.738 [blacktop release
+  tarball, checksums.txt OK] extracts DeviceTree.n104ap.im4p -> bergamota/research/ios26/n104ap.adt, decrypts both
+  .aea; then Bergamota mkadt --highmem --display-scale 2 --points 414x896 --identity n104ap -> boot/sweet-n104-2x.adt
+  and mkpayload (adds /chosen/manifest-properties) -> boot/payload-26r1.bin (cpus=1, USB log works) and
+  payload-26r8.bin (cpus=8, USB fails on sweet)), then `sudo research/ios26/build-root.sh` (Renegade mkroot-full.py
+  --size 24g --no-jb; output bergamota/research/ios26/ios26-root-full.simg). Both scripts are in research/ (ignored).
+- Boot line r1/r8: Bergamota mkboot-full.sh CMDLINE minus sweetfb_*/sweetbattery (Poco F1 display/battery) plus
+  -v sweetearlyfb=1: "debug=0xc serial=3 keepsyms=1 -noprogress rd=ufsroot0 ufsrw=1 rootrw=1
+  unentitled_ios_sim_launch=1 ignition_level=1 wdt_test=no_user_checkin launchd_unsecure_cache=1 wdt=-1 sweetusb=2
+  sweetarm64e=1 launchd_disable_all_timeouts=1 -v sweetearlyfb=1 cpus=N sweetbuild=260N".
+- Bergamota checkout: research/ios26/bergamota (sparse: xnu/patches-12377, tools/, docs/, workflow) at 37a7a7a.
+
 ## 2026-11-13 22:25 IST: MILESTONE: iOS 26 KERNEL (xnu-12377) RUNS PID 1 ON SWEET (26g)
 - 26g (16:51:09 UTC): CI 43444092685 kernel + sweet-26.adt + RAM disk research/ios26/boot/test-hfs.img (16 MiB HFSX
   "SweetTest", only /sbin/launchd = static sweet-init; built by USER with sudo mk-test-hfs.sh, SHA256 97614526...),
