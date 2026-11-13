@@ -78,7 +78,9 @@ def build(seed=None, qemu=False, highmem=False):
     """qemu=True: same tree, but with QEMU virt's GIC addresses and CNTFRQ (tools/qemu-sweet.py)."""
     phys_base, mem_size = (HIGH_PHYS_BASE, HIGH_MEM_SIZE) if highmem else (PHYS_BASE, MEM_SIZE)
     gicd, gicr, timebase = (QEMU_GICD, QEMU_GICR, QEMU_TIMEBASE) if qemu else (GICD, GICR, TIMEBASE)
-    seed = seed if seed is not None else os.urandom(64)
+    # 256 bytes: xnu-12377 (iOS 26) asks for 4 x SHA-512 of seed and panics "Expected 256 seed bytes
+    # from bootloader, but got 64"; older kernels copy only the 64 they ask for.
+    seed = seed if seed is not None else os.urandom(256)
     phandle = iter(range(1, 1000))
     ph = lambda: ('AAPL,phandle', u32(next(phandle)))
 
@@ -87,6 +89,9 @@ def build(seed=None, qemu=False, highmem=False):
         ('dram-base', u64(phys_base)),
         ('dram-size', u64(mem_size)),
         ('random-seed', seed),
+        # xnu-12377 asserts iBoot wrote this (machine_routines.c _unsafe_kernel_text_initialized);
+        # 1 = kernel text read-only, the old default. xnu-8796 ignores it. (from Bergamota's mkadt)
+        ('kernel-ctrr-to-be-enabled', u32(1)),
         ('debug-enabled', u32(1)),
         ('firmware-version', cstr('sweet-shim')),
         ('system-firmware-version', cstr('sweet-shim')),

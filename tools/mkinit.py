@@ -2,6 +2,9 @@
 """Wrap tools/sweet-init.S into a static, ad-hoc signed arm64 Mach-O executable.
 
   mkinit.py OBJECT OUT [ENTITLEMENTS.plist]   (OBJECT: clang -target arm64-apple-ios16.0 -c sweet-init.S)
+  mkinit.py --raw CODE.bin OUT [ENTITLEMENTS.plist]   (no clang: GNU as, _start at offset 0)
+      aarch64-linux-gnu-gcc -c tools/sweet-init.S -o X.o   # readelf -r X.o must list no relocations
+      aarch64-linux-gnu-objcopy -O binary -j .text X.o CODE.bin
 
 No available linker produces static iOS executables on Linux, and the program
 is a single position-independent __text section, so the executable is laid
@@ -97,8 +100,8 @@ def code_signature(image, code_limit, text_size, entitlements=None):
             struct.pack('>IIII', 0, sb_hdr, 5, sb_hdr + len(cd)) + cd + ent_blob)
 
 
-def build(obj, entitlements=None):
-    code, start = text_of(obj)
+def build(obj, entitlements=None, raw=False):
+    code, start = (obj, 0) if raw else text_of(obj)
     assert CODE_OFF + len(code) <= SEG, 'code does not fit in one __TEXT page'
     sect = struct.pack('<16s16sQQIIIIIIII', b'__text', b'__TEXT', BASE + CODE_OFF, len(code),
                        CODE_OFF, 3, 0, 0, S_ATTR_CODE, 0, 0, 0)
@@ -129,8 +132,11 @@ def build(obj, entitlements=None):
 
 
 if __name__ == '__main__':
-    # mkinit.py OBJ OUT [ENTITLEMENTS.plist]
-    ents = open(sys.argv[3], 'rb').read() if len(sys.argv) > 3 else None
-    out = build(open(sys.argv[1], 'rb').read(), ents)
-    open(sys.argv[2], 'wb').write(out)
-    print(f'{sys.argv[2]}: {len(out)} bytes')
+    # mkinit.py [--raw] OBJ OUT [ENTITLEMENTS.plist]
+    args = sys.argv[1:]
+    raw = args[:1] == ['--raw']
+    args = args[1:] if raw else args
+    ents = open(args[2], 'rb').read() if len(args) > 2 else None
+    out = build(open(args[0], 'rb').read(), ents, raw)
+    open(args[1], 'wb').write(out)
+    print(f'{args[1]}: {len(out)} bytes')
