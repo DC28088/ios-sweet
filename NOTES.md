@@ -1,3 +1,17 @@
+## 2026-11-14 00:20 IST: MILESTONE: iOS 26.6.2 BOOTS TO THE HOME SCREEN ON SWEET (26r8)
+- Image research/ios26/boot/shim-boot-26r8.img b118d8d2... booted 18:41:16 UTC: CI 43444092685 kernel (Bergamota
+  patches-12377 @37a7a7a, unchanged), ADT boot/sweet-n104-2x.adt (sweet board, N104AP/iPhone12,1, 414x896 @2x),
+  root = Renegade ios26-root-full.simg in userdata, cmdline "debug=0xc serial=3 keepsyms=1 -noprogress rd=ufsroot0
+  ufsrw=1 rootrw=1 unentitled_ios_sim_launch=1 ignition_level=1 wdt_test=no_user_checkin launchd_unsecure_cache=1
+  wdt=-1 sweetusb=2 sweetarm64e=1 launchd_disable_all_timeouts=1 -v sweetearlyfb=1 cpus=8 sweetbuild=2608".
+- USER: Apple logo (backboardd boot UI), then "it booted to homescreen. everything is extremely slow ofcrs."
+- No log/SSH: at cpus=8 the USB device never answers SET_ADDRESS on sweet (seen 26e/26r8).
+- Known causes of slowness (not measured on 26 yet): CPU clocks left at the ABL default (Bergamota cpufreq runs
+  only for beryllium; our 0126/0247 not in this kernel), CPU rendering (no Adreno/Metal: our 0081-0247 + userspace not
+  ported), no AMP. cpus=1 stalls before PID 1 on 12377 (all four cpus=1 boots).
+- NEXT (proposed): (1) USB/SSH at cpus=8, (2) CPU frequency (port 0126/0247 or enable sweet in their cpufreq),
+  (3) our display/flip patches, (4) GPU (Adreno 618 kernel + Metal backend rebuilt for iOS 26).
+
 ## 2026-11-14 00:05 IST: userdata FLASHED with iOS 26.6.2 (USER "flash it"); 26r1 stuck in launchd lookup; 26r8 next
 - Pre-checks: 1 device, product sweetin, partition-size:userdata 0x1AC4BFB000, type f2fs (label), max-download 768 MiB.
   `fastboot flash userdata ios26-root-full.simg` 18:15:54-18:25:41 UTC, 23/23 sparse pieces, 46 OKAY, no error
