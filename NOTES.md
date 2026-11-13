@@ -1,3 +1,19 @@
+## 2026-11-13 21:58 IST: iOS 26 KERNEL RUNS ON SWEET (26b-26d); PID 1 silent; 26e (cpus=8 + sampler) queued
+- 26a (no extra args): screen stopped after shim JUMP = Bergamota 0195: early console is log-only unless sweetearlyfb=1.
+- 26b (+sweetearlyfb=1 -v): USER: green early console, "BERGAMOTA verbose boot" header (1907s), then only repeating
+  "SWEET FB: stats ... swaps=0 copy_frames=0" lines, no "init running as PID 1"/"still alive" (RAM-disk test init).
+- 26c (+sweetusb=2): no USB: sweet_usb_probe() is only called from sweet_ufs_init(), which only runs for rd=ufsroot0.
+- 26d (rd=ufsroot0, NO ufsrw => read-only: every write goes through ufs_write_blocks_ex, refused when !writable;
+  syncer/sweetlog flush/selftest also off), booted 16:23:23 UTC, USB ECM live log logs/boot-26d.txt (git-ignored):
+  zone_init OK, "SWEET CPU: 1/1 CPUs initialized" (their SMP is opt-in: cpus=N, 0078), SWEET HFS registered,
+  UFS userdata read-only found, "BSD root: ufsroot0", HFS journal replay write REFUSED (errno 30, as intended),
+  "hfs: mounted iOSRoot", unsealed root, load_init_program /usr/appleinternal/sbin/launchd.development then
+  /sbin/launchd (the iOS 16 one), touch "selected GT9896 Yellowstone", USB ue0 up. Then NO userspace output
+  (only USB event/FB stats); no panic. Same symptom as the RAM-disk init.
+- GUESS: single-CPU 12377 path untested by Bergamota (they always use cpus=8). 26e = 26d + cpus=8
+  sweetsample=launchd (user pc/lr/bt of launchd, first sample 90 s after start). Image 6d2fb795...
+- package.sh: ROOTARG env (default rd=md0). sweet-usb-log.py receiver -> logs/boot-26X.txt.
+
 ## 2026-11-13 20:57 IST: FIRST iOS 26 KERNEL BOOT ATTEMPT (26a) sent; awaiting USER photo
 - CI 43441594199 (macos-26) CANCELLED: no arm64 runner capacity. 7efa2c8: runner input, default macos-15-intel.
   CI 43444092685 (7efa2c8) SUCCESS; kernel "Darwin Kernel Version 25.5.0 ... xnu-12377.121.6", SHA256SUMS OK,
