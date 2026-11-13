@@ -1,3 +1,19 @@
+## 2026-11-13 19:30 IST: USER "lets continue booting ios 27" -> feasibility check, no build
+- Host: user freed 68 GiB; added as btrfs device nvme0n1p9 to the Fedora root (/ and /home now 129 GiB, 75 GiB free).
+- OBSERVED: newest public XNU tag = xnu-12377.121.6 (macOS 26.5, `gh api repos/apple-oss-distributions/xnu/tags`);
+  no xnu-13xxx (iOS 27 / macOS 27) source yet. iOS 27 (27.2 current) oldest iPhone = iPhone 11 (A13), arm64e only.
+- Precedents: Bergamota (SD845, ARMv8.2, no PAC) boots iOS 18.7.8 to SpringBoard on xnu-11215 + "Renegade"
+  (rewrites PAC instrs 4:4 in every Mach-O + the dyld shared cache, re-signs ad hoc; kernel emulates FJCVTZS).
+  Scion-Project PR 246: xnu-12377 (iOS 26) VMAPPLE kernel linked, not booted.
+- => iOS 27 blocked on kernel source. Options given to USER: iOS 18 (proven path), iOS 26 (xnu-12377 exists, unproven),
+  or wait for xnu-13xxx. All need a rebase of our ~250 patches off xnu-8796 and a new GPU/Metal userland. Awaiting choice.
+
+## 2026-11-11 22:40 IST: 2482 + live AMP thresholds -32: USER "slightly better"
+- Interaction windows after the change: 441-467 presents/10 s (~45 fps), 0-1 missed, present avg 10.6-11.6 ms
+  (gate 7.8-8.8 ms, copy 2.4-2.6 ms), present max 33-43 ms (= the visible stutters). Compare 2471 avg ~30 fps/window.
+- Peak in the whole log: 1199 presents/10 s with gate 10 us (no GPU wait) => the present/copy path can do 120 Hz;
+  the limit is the producer (backboardd render + GPU fence wait ~8 ms/frame). Not yet baked into the kernel defaults.
+
 ## 2026-11-11 22:32 IST: 2482 USER "opening app is still the same, stutters noticeably worse"; live AMP threshold A/B
 - FB timing (log windows with presents): 2471 = 299 presents + 49 missed deadlines per 10 s window, 2482 = 209 + 134.
   gate/copy averages similar (gate ~7-8 ms, copy ~2.7 ms) => fewer frames delivered, not slower presents.
