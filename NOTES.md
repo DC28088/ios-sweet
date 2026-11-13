@@ -1,3 +1,14 @@
+## 2026-11-14 00:05 IST: userdata FLASHED with iOS 26.6.2 (USER "flash it"); 26r1 stuck in launchd lookup; 26r8 next
+- Pre-checks: 1 device, product sweetin, partition-size:userdata 0x1AC4BFB000, type f2fs (label), max-download 768 MiB.
+  `fastboot flash userdata ios26-root-full.simg` 18:15:54-18:25:41 UTC, 23/23 sparse pieces, 46 OKAY, no error
+  (research/ios26/boot/flash-userdata-ios26.log). iOS 16 install is GONE (USER chose no backup).
+- Afterwards `fastboot getvar product` hung (>5 min); USER rebooted to fastboot.
+- 26r1 (cpus=1) booted 18:30:05 UTC, logs/boot-26r1.txt: UFS read-write, "hfs: mounted iOSRoot" (clean, no journal
+  messages), unsealed root, swap on, then load_init_program launchd.development and NOTHING more for > 6 min; no UFS
+  errors. Pattern over all boots: every cpus=1 boot stalls before/at PID 1 (26b mockfs, 26d/26f iOS16 UFS, 26r1);
+  the only cpus=8 boot with a visible result (26g, HFS RAM disk) ran PID 1. GUESS: 12377 single-CPU path broken
+  (Bergamota always boots cpus=8). Trying 26r8 (cpus=8; USB/SSH do not come up at cpus=8 on sweet -> screen only).
+
 ## 2026-11-13 23:46 IST: iOS 26.6.2 ROOT IMAGE BUILT (Renegade on Linux); awaiting USER OK to flash userdata
 - build-root.sh (USER sudo): first run failed in copy (Fedora apfs-fuse 2020 = no LZBITMAP -> EIO on every file);
   fixed by PATH -> research/apfs-fuse-current/build (upstream 66b86bd). Second run: copy 337 s, macho 99 s, cache 59 s,
