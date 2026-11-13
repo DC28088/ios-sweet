@@ -1,3 +1,13 @@
+## 2026-11-13 20:57 IST: FIRST iOS 26 KERNEL BOOT ATTEMPT (26a) sent; awaiting USER photo
+- CI 43441594199 (macos-26) CANCELLED: no arm64 runner capacity. 7efa2c8: runner input, default macos-15-intel.
+  CI 43444092685 (7efa2c8) SUCCESS; kernel "Darwin Kernel Version 25.5.0 ... xnu-12377.121.6", SHA256SUMS OK,
+  research/ios26/boot/kernel-43444092685/. mkpayload: fixups 0, entry 0xfffffe00075c6488, kernel_end 0xfffffe00089bc000.
+- Image research/ios26/boot/shim-boot-26a.img 21,696,512 B SHA256 33f52d1e...e6f39a (package.sh 43444092685 a):
+  sweet-26.adt + RAM disk sweet-init, cmdline "debug=0xc serial=3 keepsyms=1 -enable_kprintf_spam -noprogress rd=md0"
+  (all CPUs); ramdisk == payload. fastboot product sweetin (as all recent boots), `fastboot boot` 15:27:16 UTC:
+  send OKAY 0.624s, boot OKAY 0.130s. Nothing flashed. Expect "*** SWEET userspace: init running as PID 1 ***".
+  If it hangs early: variant 26b = same + cpus=1.
+
 ## 2026-11-13 20:10 IST: iOS 26 track started (USER "lets start with ios 26"; then "boot it before applying all the fix patches")
 - KEY FINDING: ry-diffusion/Bergamota (a GitHub fork of this repo, Poco F1/SD845, no PAC) boots iOS 26.6.2 (23G90,
   iPhone12,1) to SpringBoard with touch + Wi-Fi on xnu-12377.121.6 (develop 37a7a7a, docs IOS26_PORT.md,
