@@ -1,3 +1,19 @@
+## 2026-11-13 22:25 IST: MILESTONE: iOS 26 KERNEL (xnu-12377) RUNS PID 1 ON SWEET (26g)
+- 26g (16:51:09 UTC): CI 43444092685 kernel + sweet-26.adt + RAM disk research/ios26/boot/test-hfs.img (16 MiB HFSX
+  "SweetTest", only /sbin/launchd = static sweet-init; built by USER with sudo mk-test-hfs.sh, SHA256 97614526...),
+  cmdline "debug=0xc serial=3 keepsyms=1 -enable_kprintf_spam -noprogress rd=md0 cpus=8 unentitled_ios_sim_launch=1
+  ignition_level=1 wdt_test=no_user_checkin wdt=-1 sweetarm64e=1 sweetearlyfb=1 -v", image 79e254f7...
+  USER: "init running as PID 1". Nothing written to the phone.
+- Why 26b/26d-f did not get there: 26b = mockfs RAM-disk path (no HFS; not used by Bergamota on 12377, cause not
+  investigated); 26d-f = iOS 16 userdata mounted read-only with an UNREPLAYED journal (replay_journal 10491904..
+  13174784, write refused) -> namei of launchd.development stalls (5-10 s in 26d, >170 s in 26f).
+- Also: 26e cpus=8 -> "SWEET CPU: 8/8" (USER), but USB device mode never answers SET_ADDRESS (host error -71, also
+  after replug); with 1 CPU (26d/26f) USB ECM works. Open issue, not needed for the next step.
+- Download (in progress): iOS 26.6.2 23G90 iPhone12,1 dmgs (Bergamota's ios26 target) via tools/remotezip.py into
+  research/ios26/ipsw/23G90__iPhone12,1/ (retry loop; Apple CDN resets: curl 56).
+- NEXT: Renegade root on Linux (needs: ipsw for AEA decryption, ldid pinned by jailbreak.py, sudo), backup of
+  userdata (iOS 16, journal dirty) BEFORE any flash, USER OK, flash, boot rd=ufsroot0 ufsrw=1 rootrw=1 + Bergamota args.
+
 ## 2026-11-13 21:58 IST: iOS 26 KERNEL RUNS ON SWEET (26b-26d); PID 1 silent; 26e (cpus=8 + sampler) queued
 - 26a (no extra args): screen stopped after shim JUMP = Bergamota 0195: early console is log-only unless sweetearlyfb=1.
 - 26b (+sweetearlyfb=1 -v): USER: green early console, "BERGAMOTA verbose boot" header (1907s), then only repeating
