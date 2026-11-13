@@ -1,3 +1,18 @@
+## 2026-11-13 23:46 IST: iOS 26.6.2 ROOT IMAGE BUILT (Renegade on Linux); awaiting USER OK to flash userdata
+- build-root.sh (USER sudo): first run failed in copy (Fedora apfs-fuse 2020 = no LZBITMAP -> EIO on every file);
+  fixed by PATH -> research/apfs-fuse-current/build (upstream 66b86bd). Second run: copy 337 s, macho 99 s, cache 59 s,
+  tweaks 2 s, seal 18 s, verify FAILED only on /bin/sh (no prebuilt tools on Linux).
+- USER chose option B: finish-root.sh = berga_tools.py --tag berga-tools-v3 (Bergamota release, zip SHA-256 + manifest
+  verified, 34 files, cache research/ios26/berga-tools-cache) + stages tweaks,seal,verify,simg. 1st try: ssh skipped
+  (no ~/.ssh pubkey) -> installed research/ssh/id_ed25519.pub as ~/.ssh/id_ed25519.pub (matches the private key; log in
+  with -i research/ssh/id_ed25519). 2nd try: ssh (dropbear key-only, dash=/bin/sh, toybox), usbnet 192.168.7.2,
+  sweetnetcfg, sweetreboot, bluetooth stub, PosterBoard sweetfp.dylib, first-boot job (49 apps, wallpaper), bglrender
+  payload (inert); verify 0 FAIL; simg research/ios26/bergamota/research/ios26/ios26-root-full.simg 18,339,556,552 B
+  (24 GiB volume, 32214 chunks). Logs research/ios26/build-root.log, finish-root.log.
+- Boot images ready (our shim): research/ios26/boot/shim-boot-26r1.img 1390cfc8... (cpus=1, USB log) and
+  shim-boot-26r8.img b118d8d2... (cpus=8); both rd=ufsroot0 ufsrw=1 rootrw=1 -> ONLY after the flash.
+- NEXT (destructive, USER OK first): fastboot flash userdata ios26-root-full.simg (erases iOS 16), then boot 26r1.
+
 ## 2026-11-13 22:55 IST: iOS 26 root prep; USER chose NO backup of the iOS 16 userdata ("c")
 - USER decision (22:30 IST): skip the iOS 16 backup; flashing iOS 26 into userdata will destroy the iOS 16 install.
   Still confirm right before the flash (AGENTS.md).
