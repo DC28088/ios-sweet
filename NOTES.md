@@ -1,3 +1,26 @@
+## 2026-11-13 20:10 IST: iOS 26 track started (USER "lets start with ios 26"; then "boot it before applying all the fix patches")
+- KEY FINDING: ry-diffusion/Bergamota (a GitHub fork of this repo, Poco F1/SD845, no PAC) boots iOS 26.6.2 (23G90,
+  iPhone12,1) to SpringBoard with touch + Wi-Fi on xnu-12377.121.6 (develop 37a7a7a, docs IOS26_PORT.md,
+  XNU12377_MIGRATION.md). Their xnu/patches-12377 = our 0001-0080 ported to 12377 + their fixes; Poco F1 drivers run only
+  when the ADT compatible says "xiaomi,beryllium" (sweet_board.h), else the inherited sweet paths. Root: Renegade
+  (tools/renegade: PAC rewrite of all Mach-Os + dyld cache, ad hoc re-sign; documented for Linux too, as root).
+- STEP 1 (running): .github/workflows/xnu26.yml (317d3e8, dispatch only) builds their series UNCHANGED at the pinned SHA
+  (fetched in CI, not vendored), macos-26 / Xcode 26.1 / KDK 26.5. CI 43441594199 (queued 14:19Z). Artifact xnu26-kernel.
+- Tools (commit after 317d3e8): mkadt.py random-seed 256 B + /chosen kernel-ctrr-to-be-enabled=1 (needed by 12377, ignored
+  by 8796); mkinit.py --raw (test init via aarch64-linux-gnu-gcc + objcopy; no clang on this host).
+  Built research/ios26/boot/sweet-init (16635 B, no relocs) and sweet-26.adt (mkadt --highmem, 12956 B).
+- FIRST PHONE TEST PLAN (non-destructive, nothing written): mkpayload kernel + sweet-26.adt + --ramdisk sweet-init,
+  cmdline "debug=0xc serial=3 keepsyms=1 -enable_kprintf_spam -noprogress rd=md0" (variant B adds cpus=1), shim/build.sh,
+  fastboot boot. Expect "*** SWEET userspace: init running as PID 1 ***". Then: Renegade root on Linux -> flash userdata
+  (DESTROYS the iOS 16 install: back up first, needs USER OK).
+- Our 0081-0247 on 12377 (later step): local scratch repo research/ios26/combo, branch `port` = x12377 (12377 + dxb 26.0 +
+  Bergamota 0001-0080) + 144 of our 146 patches cherry-picked; only conflicts were the scheduler (12377 rewrote
+  choose_processor/Edge): deferred 0167, 0248 (AMP -> CONFIG_SCHED_EDGE on 12377), dropped sched hunks of 0177-0179
+  (driver halves kept; need stubs sweet_sched_take_stats / sweet_sched_tap_mark / sweet_sched_tap_event). List in
+  research/ios26/deferred.txt. Not compiled. Bergamota generic fixes (1000-1019 etc.) still to merge into it.
+- Host: Bergamota stage .sh scripts were NOT run locally (auto-mode classifier blocked external code); CI runs them.
+- Stray repo-root file `--help` = an ADT written by `tools/mkadt.py --help` (mkadt treats argv[1] as the output); junk.
+
 ## 2026-11-13 19:30 IST: USER "lets continue booting ios 27" -> feasibility check, no build
 - Host: user freed 68 GiB; added as btrfs device nvme0n1p9 to the Fedora root (/ and /home now 129 GiB, 75 GiB free).
 - OBSERVED: newest public XNU tag = xnu-12377.121.6 (macOS 26.5, `gh api repos/apple-oss-distributions/xnu/tags`);
