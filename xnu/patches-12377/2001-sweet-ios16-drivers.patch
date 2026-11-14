@@ -13,6 +13,8 @@ Merge decisions (Bergamota kept where it already runs iOS 26 on sweet):
  - Our BT HCI exports are sweet_bt_hci_*. MiniIONetworkStack.cpp is not built and RedwoodWLAN.cpp keeps only the
    baseband bridge (Bergamota's SweetNetwork.cpp owns IONetworkStack/IONetworkInterface/IO80211Controller); 0179's
    tap mark is a no-op. sweet_audiohal restarts audiomxd (iOS 26's HAL host) after moving VirtualAudio.
+AMFI: our iOS 16 policy has no mpo_policy_syscall (it registered first and its ENOPOLICY for 0x5a aborted
+backboardd: "matched == (match_result.error_code == AICMR_MATCH)", boots 26a1/26a1b); Bergamota's handler answers.
 Not yet: our display path (flip / GPU present copy / panel power), Wi-Fi IOKit face, scheduler (0167/0248).
 GPU stays off unless sweetgpu=N (as on iOS 16).
 CI fixes (run 43547351307): <stdint.h> in kernel headers, vm/vm_kern_xnu.h in sweet_pmem.c, one skywalk table, one
@@ -18051,7 +18053,7 @@ index e8d21b0..7589b50 100644
  	if (imgp->ip_argspace < new_ptr_size) {
  		error = E2BIG;
 diff --git a/bsd/kern/sweet_amfi.c b/bsd/kern/sweet_amfi.c
-index 918ad4d..07ab29b 100644
+index 918ad4d..57b9714 100644
 --- a/bsd/kern/sweet_amfi.c
 +++ b/bsd/kern/sweet_amfi.c
 @@ -30,6 +30,7 @@
@@ -18070,7 +18072,7 @@ index 918ad4d..07ab29b 100644
  
  /* iokit/Kernel/arm/SweetEntitlements.cpp */
  void *sweet_entitlements_create(const CS_GenericBlob *blob, size_t blob_len);
-@@ -409,8 +411,87 @@ sweet_sandbox_syscall(struct proc *p, int call, user_addr_t arg)
+@@ -409,8 +411,92 @@ sweet_sandbox_syscall(struct proc *p, int call, user_addr_t arg)
  	}
  }
  
@@ -18137,7 +18139,7 @@ index 918ad4d..07ab29b 100644
 +	return false;
 +}
 +
-+static int
++static int __unused
 +sweet_gles_dyld_policy(__unused struct proc *p, int call, user_addr_t arg)
 +{
 +    int enabled=0;
@@ -18154,11 +18156,16 @@ index 918ad4d..07ab29b 100644
 +
  static const struct mac_policy_ops sweet_amfi_mac_ops = {
  	.mpo_vnode_check_signature = sweet_amfi_vnode_check_signature,
-+	.mpo_policy_syscall = sweet_gles_dyld_policy,
++	/*
++	 * xnu-12377 merge: NO .mpo_policy_syscall here. mac_syscall() hands __mac_syscall("AMFI", ...) to the FIRST
++	 * registered "AMFI" policy with a syscall hook; this one registers first, and sweet_gles_dyld_policy's
++	 * ENOPOLICY for 0x5a made libxpc abort backboardd ("matched == (match_result.error_code == AICMR_MATCH)",
++	 * boots 26a1/26a1b). Bergamota's sweet_amfi_name_syscall answers the AMFI calls instead.
++	 */
  };
  
  /*
-@@ -429,11 +510,9 @@ static int _Atomic sweet_priv_logged_count;   /* slots reserved; may exceed the
+@@ -429,11 +515,9 @@ static int _Atomic sweet_priv_logged_count;   /* slots reserved; may exceed the
  
  /*
   * Skywalk privileges, granted like AMFI does on iOS: only to a process holding the matching
@@ -18173,7 +18180,7 @@ index 918ad4d..07ab29b 100644
   */
  static const struct {
  	int priv;
-@@ -446,6 +525,11 @@ static const struct {
+@@ -446,6 +530,11 @@ static const struct {
  	{ PRIV_SKYWALK_LOW_LATENCY_CHANNEL, "com.apple.private.skywalk.low-latency-channel" },
  	{ PRIV_SKYWALK_OBSERVE_ALL, "com.apple.private.skywalk.observe-all" },
  	{ PRIV_SKYWALK_OBSERVE_STATS, "com.apple.private.skywalk.observe-stats" },
@@ -18185,7 +18192,7 @@ index 918ad4d..07ab29b 100644
  };
  
  static int
-@@ -459,6 +543,15 @@ sweet_sandbox_priv_grant(kauth_cred_t cred __unused, int priv)
+@@ -459,6 +548,15 @@ sweet_sandbox_priv_grant(kauth_cred_t cred __unused, int priv)
  			if (IOCurrentTaskHasEntitlement(sweet_skywalk_privs[i].entitlement)) {
  				return 0;
  			}
@@ -18201,7 +18208,7 @@ index 918ad4d..07ab29b 100644
  			break;
  		}
  	}
-@@ -505,7 +598,7 @@ static struct mac_policy_conf sweet_sandbox_mac_conf = {
+@@ -505,7 +603,7 @@ static struct mac_policy_conf sweet_sandbox_mac_conf = {
  static mac_policy_handle_t sweet_sandbox_mac_handle;
  
  static struct mac_policy_conf sweet_amfi_mac_conf = {
