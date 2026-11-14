@@ -1,3 +1,19 @@
+## 2026-11-15 00:00 IST: Metal on iOS 26: device + queue OK; fat metallib fixed; now MTLLoader "architecture is nil"
+- CI builds used: 6 of 8 (5 xnu26 + native-metal 43624985266 = commit 79ba8c4, SweetMetal2 dca97182, backend aaf0f53d).
+- 26b5 (1d92418f = 26b4 + sweetmtl=2 sweetgles=0, ADT wbg) with the iOS 16 SweetMetal2.bundle (CI 42213344710) in
+  /System/Library/Extensions: backboardd loads it ("native renderer FD618; AIR -> NIR -> freedreno"), opens the
+  A618 client (kernel methods 1/15/11/2/3/13/... all result=0), creates device + queue, then aborts
+  "Metal failed to load library" (x3 -> launchd critical reboot; one reboot landed in Android, others in fastboot).
+- Cause 1 (FIXED, 79ba8c4): rwa_library_open required "MTLB" at offset 0; iOS 26 QuartzCore default.metallib is
+  fat (0xCAFEBABE: AIR64 0x01000017 MTLB 1.2.9 + APPLEGPU slice). Offline research/ios26/metal/airtest/mltest:
+  slice0 OK 189 functions, fat file "not an MTLB container".
+- 26b5c (new bundle; old kept on phone as SweetMetal2.bundle.ios16-e0574fa): next abort is in Metal.framework:
+  "+[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:]:692: failed assertion `Target device
+  architecture is nil'" -> our device class must answer -architecture (MTLArchitecture) for iOS 26.
+  NEXT: disassemble iOS 26 Metal MTLLoader sliceIDForDevice (dyld shared cache from the 23G90 IPSW / phone) to see
+  which MTLArchitecture fields it reads; implement -architecture in the frontend; native-metal build 7.
+- SAFE image now: 26a3 (no sweetgpu -> no accelerator -> Metal never loads the bundle). 26b4/26b5 load the bundle.
+
 ## 2026-11-14 22:45 IST: Metal port started: iOS 26 QuartzCore shaders are compatible with the donor AIR frontend
 - USER: "wallpaper is black, start the metal port". Black wallpaper = PosterBoard/CA layers drawn only through Metal
   (Bergamota docs/METAL_ADRENO630.md (a)); expected to come with the Metal device.
