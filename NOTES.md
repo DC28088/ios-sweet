@@ -1,3 +1,26 @@
+## 2026-11-14 19:30 IST: MILESTONE: Adreno 618 GPU up on iOS 26 (26b4); 26a3 boots; ssh reboot-to-fastboot works
+- CI 5 = 43568108762 SUCCESS (2001 with Bergamota's "SWEET AMFI" policy name). 26a3 (c5f71228): AMFI calls reach
+  Bergamota's handler again (4 "SWEET AMFI: __mac_syscall" lines as on 26c8), no AICMR abort, SpringBoard up.
+  USER: "aspect ratio looks correct" (sweetfb_scale=2), "performance is still slow", haptics: 3 buzzes felt (driver
+  self-test; iOS does not use it: no /product/haptics node yet).
+- `sweetreboot fastboot` over SSH WORKS on sweet (26a3 -> fastboot 13:42:48, again 13:54:21): unattended image tests
+  are possible whenever a 2001 kernel runs.
+- 26b3 (CI 5 + sweetgpu=9, ADT wb): CX + GMU clocks OK, stopped "missing GMU firmware properties". 26b4 (f? 5cd56466,
+  ADT boot/sweet-n104-2x-wbg.adt = wb + /sweet-adreno from tools/sweet-adreno-firmware.py with
+  research/sweet-firmware-20261023/gpu a618_gmu.bin, a630_sqe.fw, a615_zap.mdt, a615_zap.b02): GMU boot + HFI OK, ZAP
+  authenticated, SQE ME_INIT 12/12, CP fence 29/29 value 0x618c0de, OPP to 800 MHz, "NativeAdreno ABI + Metal
+  discovery published on live A618 context", backboardd restarted for Metal discovery, no crash. = the iOS 16 state.
+- NEXT for GPU (userland, the big part): SweetMetal2.bundle / libSweetNativeBackend (native-metal CI, iOS 16 build)
+  must be rebuilt against iOS 26 Metal/IOGPU (private _MTLDevice ABI changed); then sweetmtl=2 and install the bundle.
+- backboardd SIGABRT "Assertion failed: (found != slist->end()), function push_surface, file ogl-context.cpp, line
+  1186" = CA software (OGL) renderer; ALSO on Bergamota-only 26c8 (5x on 26c8b): not from 2001. USER sees SpringBoard
+  reloading. The GPU (Metal) path would replace this renderer.
+- Wi-Fi on 26a3: wland 0239 boots the modem (rmtfs/tftp/QMI, SIM read), but the modem never fetches wlanmdsp.mbn and
+  no wlfw service appears; en0 never created (radio state 0). Not solved yet.
+- Audio: SweetAudio.driver moved to /System/Library/Audio/Plug-Ins/HAL/ (sweet_audiohal SWEET_DRV) on 26a3 -> test.
+- bluetoothd aborts ("Bluetooth fatal error reason 1201", later SIGABRT) although the kernel HCI link works
+  (rx 1104 / tx 808 packets, 10 connects). Not solved yet.
+
 ## 2026-11-14 12:20 IST: 2001 kernel links (CI 43551066353); 26a1/26b1/26a2 abort backboardd (AMFI); CI 5 running
 - CI builds: 3 = 43551066353 SUCCESS (first linked 2001), 4 = 43565769725 SUCCESS, 5 = 43568108762 (running). 5 of 8 used.
 - Images (all ADT sweet-n104-2x-wb.adt; driver args sweetfb_scale=2 sweetpmem=1 sweetsmmuprobe=1 sweetsmmuwlan=1
