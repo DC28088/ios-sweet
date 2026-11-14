@@ -10,8 +10,9 @@ Merge decisions (Bergamota kept where it already runs iOS 26 on sweet):
    the PM6150 charger as sweet_charger_pm6150.c (Bergamota's sweet_charger.c is PMI8998, beryllium-gated).
  - IOAcceleratorES is defined once (Bergamota's stub in SweetFramebuffer.cpp, not published when sweetmtl is set;
    our AGXAccelerator derives from it). Bergamota's A630 alias class is SweetA630AGXUserClient.
- - Our BT HCI exports are sweet_bt_hci_*. RedwoodWLAN.cpp / MiniIONetworkStack.cpp are not built (Bergamota's
-   SweetNetwork.cpp owns IONetworkStack/IONetworkInterface/IO80211Controller); 0179's tap mark is a no-op.
+ - Our BT HCI exports are sweet_bt_hci_*. MiniIONetworkStack.cpp is not built and RedwoodWLAN.cpp keeps only the
+   baseband bridge (Bergamota's SweetNetwork.cpp owns IONetworkStack/IONetworkInterface/IO80211Controller); 0179's
+   tap mark is a no-op. sweet_audiohal restarts audiomxd (iOS 26's HAL host) after moving VirtualAudio.
 Not yet: our display path (flip / GPU present copy / panel power), Wi-Fi IOKit face, scheduler (0167/0248).
 GPU stays off unless sweetgpu=N (as on iOS 16).
 CI fixes (run 43547351307): <stdint.h> in kernel headers, vm/vm_kern_xnu.h in sweet_pmem.c, one skywalk table, one
@@ -7871,10 +7872,10 @@ index 0000000..d150a71
 +#endif
 diff --git a/bsd/dev/sweet_audiohal.c b/bsd/dev/sweet_audiohal.c
 new file mode 100644
-index 0000000..8eafa12
+index 0000000..adbb594
 --- /dev/null
 +++ b/bsd/dev/sweet_audiohal.c
-@@ -0,0 +1,171 @@
+@@ -0,0 +1,175 @@
 +/*
 + * 0196: iOS's VirtualAudio HAL plug-in back in /Library/Audio/Plug-Ins/HAL.
 + *
@@ -8011,8 +8012,12 @@ index 0000000..8eafa12
 +		}
 +		err = sweet_vfs_rename(from, to);
 +		if (err == 0) {
++			/* iOS 26: the HAL host is audiomxd (no mediaserverd any more) */
 +			int pid = ah_find("mediaserverd");
-+			printf("SWEET AUDIOHAL: moved %s -> %s after %u ms (try %u); mediaserverd pid %d%s\n",
++			if (!pid) {
++				pid = ah_find("audiomxd");
++			}
++			printf("SWEET AUDIOHAL: moved %s -> %s after %u ms (try %u); HAL host (mediaserverd/audiomxd) pid %d%s\n",
 +			    from, to, waited, tries, pid, pid ? ": killed, launchd restarts it" : "");
 +			if (pid) {
 +				proc_signal(pid, SIGKILL);
@@ -18659,10 +18664,10 @@ index 0000000..081fd35
 +}
 diff --git a/iokit/Kernel/arm/RedwoodWLAN.cpp b/iokit/Kernel/arm/RedwoodWLAN.cpp
 new file mode 100644
-index 0000000..790a979
+index 0000000..9528069
 --- /dev/null
 +++ b/iokit/Kernel/arm/RedwoodWLAN.cpp
-@@ -0,0 +1,140 @@
+@@ -0,0 +1,40 @@
 +/*
 + * RedwoodWLAN: the registry entries by which iOS finds the Wi-Fi interface.
 + *
@@ -18695,111 +18700,11 @@ index 0000000..790a979
 +#include <libkern/c++/OSData.h>
 +#include <libkern/c++/OSNumber.h>
 +
-+extern "C" void RedwoodWLANStart(const char * interface, const uint8_t * address);
-+
-+class IO80211Controller : public IOService
-+{
-+	OSDeclareDefaultStructors(IO80211Controller);
-+};
-+
-+OSDefineMetaClassAndStructors(IO80211Controller, IOService);
-+
-+class IONetworkInterface : public IOService
-+{
-+	OSDeclareDefaultStructors(IONetworkInterface);
-+};
-+
-+OSDefineMetaClassAndStructors(IONetworkInterface, IOService);
-+
-+class RedwoodWLAN : public IONetworkInterface
-+{
-+	OSDeclareDefaultStructors(RedwoodWLAN);
-+
-+public:
-+	virtual IOReturn newUserClient(task_t owningTask, void * securityID, UInt32 type, OSDictionary * properties,
-+	    IOUserClient ** handler) APPLE_KEXT_OVERRIDE;
-+};
-+
-+OSDefineMetaClassAndStructors(RedwoodWLAN, IONetworkInterface);
-+
-+/* There is none (see the top); that somebody asked shows that the service was found. */
-+IOReturn
-+RedwoodWLAN::newUserClient(task_t owningTask, void * securityID, UInt32 type, OSDictionary * properties, IOUserClient ** handler)
-+{
-+	static unsigned said;
-+
-+	if (said++ < 8) {
-+		IOLog("RedwoodWLAN: a user client of type %u is asked for: there is none\n", (unsigned) type);
-+	}
-+	return kIOReturnUnsupported;
-+}
-+
-+/* attach, start, register: the service, or NULL */
-+static IOService *
-+publish(IOService * service, IOService * provider, const char * name)
-+{
-+	if (service == NULL || !service->attach(provider)) {
-+		OSSafeReleaseNULL(service);
-+		return NULL;
-+	}
-+	service->setName(name);
-+	if (!service->start(provider)) {
-+		service->detach(provider);
-+		service->release();
-+		return NULL;
-+	}
-+	service->registerService();
-+	return service;
-+}
-+
-+/* Once, when the interface of a radio exists. */
-+void
-+RedwoodWLANStart(const char * interface, const uint8_t * address)
-+{
-+	IOService * platform = IOService::getPlatform();
-+	IO80211Controller * controller = OSTypeAlloc(IO80211Controller);
-+	RedwoodWLAN * wlan = OSTypeAlloc(RedwoodWLAN);
-+	OSData * mac;
-+	OSNumber * number;
-+
-+	if (platform == NULL || controller == NULL || wlan == NULL || !controller->init() || !wlan->init()) {
-+		OSSafeReleaseNULL(controller);
-+		OSSafeReleaseNULL(wlan);
-+		IOLog("RedwoodWLAN: cannot create the services\n");
-+		return;
-+	}
-+	if ((mac = OSData::withBytes(address, 6)) != NULL) {
-+		controller->setProperty("IOMACAddress", mac);
-+		mac->release();
-+	}
-+	controller->setProperty("IOBuiltin", true);
-+	if ((controller = (IO80211Controller *) publish(controller, platform, "RedwoodWLANController")) == NULL) {
-+		wlan->release();
-+		IOLog("RedwoodWLAN: the controller did not start\n");
-+		return;
-+	}
-+
-+	wlan->setProperty("IOInterfaceName", interface);
-+	wlan->setProperty("BSD Name", interface);
-+	wlan->setProperty("IOInterfaceNamePrefix", "en");
-+	if ((number = OSNumber::withNumber(6ULL, 32)) != NULL) {        /* IFT_ETHER */
-+		wlan->setProperty("IOInterfaceType", number);
-+		number->release();
-+	}
-+	if ((number = OSNumber::withNumber((unsigned long long) (interface[2] - '0'), 32)) != NULL) {
-+		wlan->setProperty("IOInterfaceUnit", number);
-+		number->release();
-+	}
-+	wlan->setProperty("IOBuiltin", true);
-+	wlan->setProperty("IOPrimaryInterface", true);
-+	wlan->setProperty("IO80211InterfaceRole", "Infrastructure");
-+	if (publish(wlan, controller, "RedwoodWLAN") == NULL) {
-+		IOLog("RedwoodWLAN: the service did not start\n");
-+	} else {
-+		wlan->release();
-+	}
-+	controller->release();
-+}
++/*
++ * xnu-12377 merge (ios-sweet on Bergamota): the classes and RedwoodWLANStart that were here are replaced by
++ * Bergamota's iokit/Kernel/arm/SweetNetwork.cpp (same class names; en0 published through sweet_net_publish_wlan,
++ * called from bsd/dev/redwood_net.c). This file is kept for the cellular bridge below.
++ */
 +
 +/* The cellular bridge (sweetbb=1): AppleBaseband services for CommCenter/ABM over /dev/sweet-bb and wland. */
 +#include "SweetBaseband.inc"
@@ -31107,12 +31012,14 @@ index c4fdd55..a6d2d6b 100644
      "   {"
      "     'IOClass'         = IOPanicPlatform;"
 diff --git a/iokit/conf/files.arm64 b/iokit/conf/files.arm64
-index 31cb0ef..c043c89 100644
+index 31cb0ef..f5ef0e5 100644
 --- a/iokit/conf/files.arm64
 +++ b/iokit/conf/files.arm64
-@@ -17,6 +17,29 @@ iokit/Kernel/arm/SweetFramebuffer.cpp                            optional iokitc
+@@ -16,7 +16,31 @@ iokit/Kernel/arm/SweetSurface.cpp                                optional iokitc
+ iokit/Kernel/arm/SweetFramebuffer.cpp                            optional iokitcpp
  iokit/Kernel/arm/SweetAdreno.cpp                                 optional iokitcpp
  iokit/Kernel/arm/SweetNetwork.cpp                                optional iokitcpp
++iokit/Kernel/arm/RedwoodWLAN.cpp                                 optional iokitcpp
  iokit/Kernel/arm/SweetBattery.cpp                                optional iokitcpp
 +iokit/Kernel/arm/SweetAMFI.cpp                                   optional iokitcpp
 +iokit/Kernel/arm/SweetAdrenoDMA.cpp                              optional iokitcpp
