@@ -1,3 +1,29 @@
+## 2026-11-14 08:45 IST: USER away; plan: GPU kernel green, no black bars, Wi-Fi, BT, sound (<= 8 CI builds)
+- USER: "run the GPU fix build (3 builds) ... two black bars on top and bottom ... fix it (proper aspect ratio).
+  bring up wifi, bluetooth. proper playback, sound fixes from ios 16 (total you can build up to 8 builds)".
+- CI builds used: 1 = 43547351307 (failed: stdint/pmem/duplicates), 2 = 43549447625 (fixes, running).
+- Black bars: the 828x1792 (iPhone 11) canvas is 19.5:9, the panel 20:9; Bergamota's AppleCLCD fits it (bars).
+  Fix = boot-arg `sweetfb_scale=2` (stretch to the whole panel, 2.6% vertical squeeze; HID touch mapping follows
+  the same boot-arg). A real-iPhone canvas is required (a fake size broke the status bar on iOS 16, NOTES 0061).
+  Image boot/shim-boot-26c8s.img 50e1f77e... = 26c8 + sweetfb_scale=2 (sweetbuild=2619), NOT booted yet.
+- ADT boot/sweet-n104-2x-wb.adt = final ADT + /arm-io/wlan (tools/adt-add-wlan.py; launchd starts wifid only with
+  it) + /arm-io/bluetooth with the WCN3990 rampatch/NVM (tools/adt-add-bluetooth.py, research/sweet-bt-fw-0145).
+  pkg26.sh takes ADT=... now.
+- Phone root changes over SSH on the running 26c8 (effective next boot; rollback copies on the phone):
+  * Wi-Fi: /var/local/bin/{wland,netsvc} = wland 0239 (5eb59683, CI 42603119802), /var/local/fw/modem (321 files,
+    research/sweet-wifi-fw-0131 modem partition dump), /var/local/fw/rmtfs/*.img (0600 copies), job
+    org.ios-sweet.wland (wland auto). Off switch: touch /var/local/wland.off.
+  * Audio: /var/local/bin/wland-0225 = wland 0238 (9908af6f, CI 42556308218, speaker service), /var/local/fw/adsp
+    (31 files), /Library/Audio/Plug-Ins/HAL/SweetAudio.driver (userspace/out-audio-0160), job org.ios-sweet.speaker
+    (sleep 60; WLAND_PCM_DELAY_MS=15000 WLAND_SPEAKER_SERVICE=1 wland-0225 adsp 0 > /var/local/adsp-speaker.log).
+  * /System/Library/xpc/launchd.plist 692 -> 694 jobs (all old jobs identical), root:admin; backups
+    launchd.plist.pre-wland (46753e6e..., Bergamota's) and launchd.plist.pre-speaker. Host copies research/ios26/userland.
+  * Bluetooth userland was already there (Bergamota: bluetoothd BT_HCI_TRANSPORT=H4BC:POSIX:com.apple.uart.bluetooth,
+    BlueTool stub, BlueTool.orig): needs only kernel sweetbt=1 + the ADT node.
+- Kernel (2001, 2nd revision): sweet_reboot.c now also runs on sweet (IMEM 0x146aa000 restart_reason + PM6150 PON
+  spare 0x88f, PSCI SYSTEM_RESET; no PS_HOLD) -> `sweetreboot fastboot` over SSH should land in fastboot (untested);
+  en0 IOKit face via Bergamota's sweet_net_publish_wlan; sweet_audiohal also restarts audiomxd (iOS 26 HAL host).
+
 ## 2026-11-14 08:10 IST: 2001 = our iOS 16 drivers (GPU etc.) merged onto Bergamota; CI 43547351307 building
 - 26c8 (CI 43486839176 = Bergamota + 2000 cpufreq, cmdline 26r8 + sweetbuild=2618, shim-boot-26c8.img ede7450b...):
   1st boot 19:58:53 UTC: SSH OK (launchd up 5 min). Then `dd if=/dev/rufsroot0 ... count=1026` over SSH (persistent
