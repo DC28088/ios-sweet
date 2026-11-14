@@ -136,6 +136,10 @@ jobs:
             grep -aFq 'SWEET CPUFREQ: not an SM7150 sweet board' "$K" && grep -aFq 'SWEET CPUFREQ: domain %u selected lut' "$K" \
               && echo "2000 cpufreq strings present" || { echo "2000 cpufreq strings MISSING"; exit 1; }
           fi
+          if ls xnu/patches-12377/2001-*.patch >/dev/null 2>&1; then
+            grep -aFq 'SWEET GPU: GPUCC audit v2 at' "$K" && grep -aFq 'SWEET RENDER: Metal plugin %s selected' "$K" \
+              && echo "2001 GPU strings present" || { echo "2001 GPU strings MISSING"; exit 1; }
+          fi
 
       - uses: actions/upload-artifact@v4
         if: always()
