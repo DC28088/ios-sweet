@@ -1,3 +1,22 @@
+## 2026-11-14 08:10 IST: 2001 = our iOS 16 drivers (GPU etc.) merged onto Bergamota; CI 43547351307 building
+- 26c8 (CI 43486839176 = Bergamota + 2000 cpufreq, cmdline 26r8 + sweetbuild=2618, shim-boot-26c8.img ede7450b...):
+  1st boot 19:58:53 UTC: SSH OK (launchd up 5 min). Then `dd if=/dev/rufsroot0 ... count=1026` over SSH (persistent
+  log ring, raw device while HFS mounted) returned 0 bytes and the phone stopped answering (ping/ARP dead, USB log
+  stopped). GUESS: raw UFS read beside the mounted root hung UFS I/O. Do not read rufsroot0 on a live system.
+- 26c8 2nd boot 02:13:53 UTC (USER "boot the same build again"): USB ping after ~40 s (earlier than 26r8), SSH
+  ~8 min after boot. The live USB log starts at the root mount, so the SWEET CPUFREQ lines (printed before) are not
+  in it; no dmesg/sysctl binaries on the root. Benchmark research/ios26/boot/bench.sh (toybox sha256 of 64 MiB
+  zeros): single 1.89-2.19 s, 8 parallel 2.52 s -> results in boot/bench.txt. CPU speed NOT yet confirmed: needs the
+  same bench on 26r8 (no 2000) for comparison.
+- 2001 (xnu/patches-12377/2001-sweet-ios16-drivers.patch, commit b852935): git merge of research/ios26/combo `port`
+  (x12377 + our 144 cherry-picks) into `berg-cpufreq`, branch `gpu26` 4e05569. 71 conflict hunks in 18 files;
+  decisions in the patch header (Bergamota kept for USB, IOSurface, framebuffer, touch mapping, keystore, spmi;
+  ours for RPMh; one IOAcceleratorES, not published with sweetmtl; our Wi-Fi IOKit files not built). Applies on
+  tree-berg after 2000 (`git apply --check` OK). Never compiled locally (no macOS): expect CI compile errors.
+- Note: research/ios26/combo needed `git config user.name t / user.email t@t` (cherry-picks failed silently before).
+- NEXT: fix CI errors until green; boot 1 without sweetgpu (regression check vs 26c8), boot 2 with sweetgpu=9
+  (GMU/HFI/SQE/CP bring-up, kernel only). Metal userland (native backend, rebuilt for iOS 26) comes after.
+
 ## 2026-11-14 00:20 IST: MILESTONE: iOS 26.6.2 BOOTS TO THE HOME SCREEN ON SWEET (26r8)
 - Image research/ios26/boot/shim-boot-26r8.img b118d8d2... booted 18:41:16 UTC: CI 43444092685 kernel (Bergamota
   patches-12377 @37a7a7a, unchanged), ADT boot/sweet-n104-2x.adt (sweet board, N104AP/iPhone12,1, 414x896 @2x),
