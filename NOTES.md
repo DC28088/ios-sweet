@@ -1,3 +1,23 @@
+## 2026-11-14 22:45 IST: Metal port started: iOS 26 QuartzCore shaders are compatible with the donor AIR frontend
+- USER: "wallpaper is black, start the metal port". Black wallpaper = PosterBoard/CA layers drawn only through Metal
+  (Bergamota docs/METAL_ADRENO630.md (a)); expected to come with the Metal device.
+- research/ios26/metal (git-ignored): qc26.metallib = phone's /System/Library/Frameworks/QuartzCore.framework/
+  default.metallib (iOS 26.6.2, 6.6 MB, fat: slice 0 AIR64 MTLB 1.2.9 "Apple metal version 32023.886", slice 1
+  APPLEGPU binary). bc26/ = its 189 bitcode modules.
+- airtest/ = Linux harness: donor (research/hackios-userland-reference = pinned a79ff07) air_module.c + air_bitcode.c +
+  air_layout.c + Mesa util ralloc (research/mesa-gles-reference) + a u_printf_length stub. RESULT: all 189 iOS 26
+  modules parse ("parsed 189 ok, 0 failed"); decl26.txt = 162 declared intrinsics = 92 ops, ALL handled by the donor's
+  air_intrinsics.c/air_to_nir.c (llvm.lifetime/memcpy by prefix). Shader side: no format/intrinsic gap found.
+  Not yet tested: AIR -> NIR -> ir3 lowering (needs the full Mesa build) and the Objective-C MTL* selector surface.
+- iOS 16 bundles from native-metal CI 42213344710 in research/ios26/metal/nm-42213344710: SweetMetal2.bundle
+  (native-legacy; class SweetMTL2Device, needs sweetmtl=2 sweetgles=0; SweetMetal2 eac7081c, backend cd052dd6) links
+  only Foundation/Metal/IOKit/IOSurface/CoreFoundation/libobjc/libc++/libSystem -> loadable on iOS 26 as is.
+- NEXT: install it to /System/Library/Extensions/SweetMetal2.bundle (tar over SSH), image 26b5 = 26b4 cmdline +
+  sweetmtl=2 sweetgles=0 (FB stub accelerator is then not published), boot, read backboardd's first Metal failure
+  (unrecognized selector / pipeline compile). Fallback image: 26b4.
+- 26b4 ran ~1 h, then the phone vanished from USB (no fastboot, no ECM; log ends in normal gamepolicyd jetsam
+  lines, no panic, no launchd reboot). Cause unknown; USER asked to check the phone.
+
 ## 2026-11-14 19:30 IST: MILESTONE: Adreno 618 GPU up on iOS 26 (26b4); 26a3 boots; ssh reboot-to-fastboot works
 - CI 5 = 43568108762 SUCCESS (2001 with Bergamota's "SWEET AMFI" policy name). 26a3 (c5f71228): AMFI calls reach
   Bergamota's handler again (4 "SWEET AMFI: __mac_syscall" lines as on 26c8), no AICMR abort, SpringBoard up.
