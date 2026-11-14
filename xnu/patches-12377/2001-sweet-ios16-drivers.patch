@@ -14,6 +14,9 @@ Merge decisions (Bergamota kept where it already runs iOS 26 on sweet):
    SweetNetwork.cpp owns IONetworkStack/IONetworkInterface/IO80211Controller); 0179's tap mark is a no-op.
 Not yet: our display path (flip / GPU present copy / panel power), Wi-Fi IOKit face, scheduler (0167/0248).
 GPU stays off unless sweetgpu=N (as on iOS 16).
+CI fixes (run 43547351307): <stdint.h> in kernel headers, vm/vm_kern_xnu.h in sweet_pmem.c, one skywalk table, one
+cpufreq copy (2000's; 0200 dark-clock hook is a no-op). sweet board: sweet_reboot.c (IMEM 0x146aa000 + PON reason +
+PSCI reset, so `sweetreboot fastboot` works), Wi-Fi en0 published through sweet_net_publish_wlan (SweetNetwork.cpp).
 
 diff --git a/bsd/conf/files b/bsd/conf/files
 index 1b3074c..afbc849 100644
@@ -4363,10 +4366,10 @@ index 0000000..e2674ee
 +}
 diff --git a/bsd/dev/redwood_net.c b/bsd/dev/redwood_net.c
 new file mode 100644
-index 0000000..8f73b89
+index 0000000..9f7cc92
 --- /dev/null
 +++ b/bsd/dev/redwood_net.c
-@@ -0,0 +1,382 @@
+@@ -0,0 +1,389 @@
 +/*
 + * en0: a network interface that is Ethernet as far as the rest of the kernel and iOS can tell.
 + *
@@ -4401,12 +4404,19 @@ index 0000000..8f73b89
 +#include <sys/sockio.h>
 +#include <sys/systm.h>
 +
-+/* xnu-12377 merge: RedwoodWLAN.cpp (IO80211Controller/IONetworkInterface) is not built, SweetNetwork.cpp has those
-+ * classes; unifying the Wi-Fi IOKit faces is a later step. */
++/*
++ * xnu-12377 merge: the IOKit face of en0 is Bergamota's (iokit/Kernel/arm/SweetNetwork.cpp
++ * sweet_net_publish_wlan: AppleWLANDriver controller with WiFiHardwareHealthy, interface with
++ * IO80211InterfaceRole = Infrastructure, what iOS 26 wifid matches; docs/WIFI_IOS26.md 1.2 in Bergamota).
++ * RedwoodWLAN.cpp (the iOS 16 face) is not built: its classes are SweetNetwork.cpp's.
++ */
++extern int sweet_net_publish_wlan(const char *bsd_name, const char *prefix, unsigned unit, const uint8_t *mac);
 +static void
-+RedwoodWLANStart(const char *interface, const uint8_t *address __unused)
++RedwoodWLANStart(const char *interface, const uint8_t *address)
 +{
-+	printf("SWEET WLAN: RedwoodWLAN not built on xnu-12377: no IOKit face for %s\n", interface);
++	unsigned unit = (interface[0] && interface[1] && interface[2] >= '0' && interface[2] <= '9') ? (unsigned)(interface[2] - '0') : 0;
++	int ok = sweet_net_publish_wlan(interface, "en", unit, address);
++	printf("SWEET WLAN: %s IOKit interface %s (SweetNetwork.cpp)\n", interface, ok ? "published" : "NOT published");
 +}
 +
 +static LCK_GRP_DECLARE(net_lck_grp, "redwood-net");
@@ -5333,10 +5343,10 @@ index 0000000..58a1e02
 +#endif
 diff --git a/bsd/dev/sweet_adreno.h b/bsd/dev/sweet_adreno.h
 new file mode 100644
-index 0000000..d6462ff
+index 0000000..c7f2d1b
 --- /dev/null
 +++ b/bsd/dev/sweet_adreno.h
-@@ -0,0 +1,84 @@
+@@ -0,0 +1,85 @@
 +/* SPDX-License-Identifier: MIT
 + * SWEET A618 hardware core. See docs/adreno-port.md for provenance/status.
 + */
@@ -5344,6 +5354,7 @@ index 0000000..d6462ff
 +#define SWEET_ADRENO_H
 +#if defined(KERNEL)
 +#include <sys/types.h>
++#include <stdint.h>     /* xnu-12377: sys/types.h no longer brings uint32_t into the kernel */
 +#else
 +#include <stdint.h>
 +#endif
@@ -8188,15 +8199,17 @@ index 0000000..cdea282
 +}
 diff --git a/bsd/dev/sweet_aw2032.h b/bsd/dev/sweet_aw2032.h
 new file mode 100644
-index 0000000..d27e35b
+index 0000000..157965e
 --- /dev/null
 +++ b/bsd/dev/sweet_aw2032.h
-@@ -0,0 +1,34 @@
+@@ -0,0 +1,36 @@
 +/* SPDX-License-Identifier: MIT */
 +#ifndef SWEET_AW2032_H
 +#define SWEET_AW2032_H
 +#ifdef KERNEL
 +#include <sys/types.h>
++#include <stddef.h>
++#include <stdint.h>     /* xnu-12377: sys/types.h no longer brings uint8_t into the kernel */
 +#else
 +#include <stddef.h>
 +#include <stdint.h>
@@ -15236,10 +15249,10 @@ index 0000000..638978b
 +#endif
 diff --git a/bsd/dev/sweet_pmem.c b/bsd/dev/sweet_pmem.c
 new file mode 100644
-index 0000000..aadd568
+index 0000000..7a0917b
 --- /dev/null
 +++ b/bsd/dev/sweet_pmem.c
-@@ -0,0 +1,698 @@
+@@ -0,0 +1,699 @@
 +/*
 + * /dev/pmem: physical memory for userland hardware experiments (the GPU
 + * bring-up in work/userland/gpu runs on it over SSH, no reboot per try).
@@ -15277,6 +15290,7 @@ index 0000000..aadd568
 +#include <arm/caches_internal.h>
 +#include <vm/pmap.h>
 +#include <vm/vm_kern.h>
++#include <vm/vm_kern_xnu.h>    /* xnu-12377: kmem_alloc_contig / kmem_free / KMA_* moved here */
 +#include <pexpert/pexpert.h>
 +#include <libkern/libkern.h>
 +
@@ -15938,6 +15952,70 @@ index 0000000..aadd568
 +	printf("SWEET PMEM: /dev/pmem ready (major %d)\n", major);
 +}
 +#endif /* ARM64_BOARD_CONFIG_SWEET */
+diff --git a/bsd/dev/sweet_reboot.c b/bsd/dev/sweet_reboot.c
+index 8228f52..dbea036 100644
+--- a/bsd/dev/sweet_reboot.c
++++ b/bsd/dev/sweet_reboot.c
+@@ -53,6 +53,7 @@ extern int sweet_ufs_flush_final(void);      /* bsd/dev/sweet_ufs.c: SYNCHRONIZE
+ 
+ #define SR_PSHOLD_PA     0x0c264000u
+ #define SR_IMEM_PA       0x146bf000u
++#define SR_IMEM_PA_SWEET 0x146aa000u      /* ios-sweet: SM7150 IMEM (sm7150.dtsi sram@146aa000), same restart_reason@65c */
+ #define SR_IMEM_RESTART  0x65cu            /* restart_reason@65c */
+ #define SR_IMEM_BOOTLOADER 0x77665500u
+ #define SR_IMEM_RECOVERY   0x77665502u
+@@ -144,7 +145,13 @@ sweet_reboot_init(void)
+ {
+ 	char arg[16] = "";
+ 
+-	if (sr_ready || !sweet_board_beryllium()) {
++	/*
++	 * ios-sweet (xnu-12377): also the sweet board (SM7150 + PM6150: same PON spare 0x88f / GEN2 shift,
++	 * IMEM at 0x146aa000). No PS_HOLD there: PSCI SYSTEM_RESET only, as mainline Linux resets SM7150,
++	 * with the PON and IMEM reasons set first, so `sweetreboot fastboot` lands in ABL fastboot.
++	 */
++	const bool sweet = !sweet_board_beryllium();
++	if (sr_ready || (sweet && !sweet_board_is("xiaomi,sweet"))) {
+ 		return;
+ 	}
+ 	if (PE_parse_boot_argn("sweetreboot", arg, sizeof(arg))) {
+@@ -155,12 +162,12 @@ sweet_reboot_init(void)
+ 			sr_bootarg = mode;
+ 		}
+ 	}
+-	sr_pshold = (volatile uint32_t *)ml_io_map(SR_PSHOLD_PA, 0x1000);
+-	sr_imem = (volatile uint32_t *)ml_io_map(SR_IMEM_PA, 0x1000);
++	sr_pshold = sweet ? NULL : (volatile uint32_t *)ml_io_map(SR_PSHOLD_PA, 0x1000);
++	sr_imem = (volatile uint32_t *)ml_io_map(sweet ? SR_IMEM_PA_SWEET : SR_IMEM_PA, 0x1000);
+ 	if (sweet_spmi_init() == 0 && sweet_spmi_prepare_write(SR_PON_SID, SR_PON_SPARE) == 0) {
+ 		sr_pon_ready = true;
+ 	}
+-	sr_ready = sr_pshold != NULL;
++	sr_ready = sweet ? sr_imem != NULL : sr_pshold != NULL;
+ 	printf("SWEET REBOOT: boot-arg mode %s, PS_HOLD %s, IMEM %s, PON spare write %s\n",
+ 	    sr_name(sr_bootarg), sr_pshold ? "mapped" : "NOT mapped",
+ 	    sr_imem ? "mapped" : "NOT mapped", sr_pon_ready ? "ready" : "unavailable");
+@@ -242,13 +249,15 @@ sweet_reboot_restart(int panic_restart)
+ 		    mode == SR_RECOVERY ? SR_IMEM_RECOVERY : SR_IMEM_BERGAMOTA;
+ 		sr_imem[SR_IMEM_RESTART / 4] = magic;
+ 		__asm__ volatile ("dsb sy" ::: "memory");
+-		printf("SWEET REBOOT: IMEM restart_reason 0x146bf65c = 0x%08x\n", magic);
++		printf("SWEET REBOOT: IMEM restart_reason +0x65c = 0x%08x\n", magic);
+ 	}
+ 	__asm__ volatile ("dsb sy" ::: "memory");
+-	*sr_pshold = 0;
+-	__asm__ volatile ("dsb sy" ::: "memory");
+-	delay(2000 * 1000);
+-	printf("SWEET REBOOT: PS_HOLD did not reset, PSCI SYSTEM_RESET\n");
++	if (sr_pshold) {
++		*sr_pshold = 0;
++		__asm__ volatile ("dsb sy" ::: "memory");
++		delay(2000 * 1000);
++		printf("SWEET REBOOT: PS_HOLD did not reset, PSCI SYSTEM_RESET\n");
++	}
+ 	sr_psci_system_reset();
+ 	delay(2000 * 1000);
+ 	return -1;
 diff --git a/bsd/dev/sweet_rpmh.c b/bsd/dev/sweet_rpmh.c
 index 6ef2a78..8bdc332 100644
 --- a/bsd/dev/sweet_rpmh.c
@@ -17504,7 +17582,7 @@ index b40eccd..36d2fbb 100644
  }
  
 diff --git a/bsd/dev/sweet_spmi.c b/bsd/dev/sweet_spmi.c
-index 362a89b..7d86338 100644
+index 362a89b..c239d8a 100644
 --- a/bsd/dev/sweet_spmi.c
 +++ b/bsd/dev/sweet_spmi.c
 @@ -12,6 +12,7 @@
@@ -17515,7 +17593,7 @@ index 362a89b..7d86338 100644
  #include <sys/param.h>
  #include <sys/systm.h>
  #include <machine/machine_routines.h>
-@@ -160,8 +161,10 @@ sweet_spmi_read(unsigned sid, unsigned addr, uint8_t *out)
+@@ -160,8 +161,11 @@ sweet_spmi_read(unsigned sid, unsigned addr, uint8_t *out)
  		    (sid == 3 && (peripheral == 0xd8 || peripheral == 0xd9)) ||
  		    (sid == 0 && (peripheral == 0x08 || peripheral == 0x60 || peripheral == 0x61));  /* 0x60/0x61: PM8998 RTC, alarm (sweet_rtc_*) */
  	} else {
@@ -17523,11 +17601,27 @@ index 362a89b..7d86338 100644
  		allowed = sid == 0 && (peripheral == 0x10 || peripheral == 0x11 ||
 -		    peripheral == 0x12 || peripheral == 0x13 || peripheral == 0x48);
 +		    peripheral == 0x12 || peripheral == 0x13 || peripheral == 0x48 ||
-+		    peripheral == 0xb6 || peripheral == 0x60 || peripheral == 0x15 || peripheral == 0x16);
++		    peripheral == 0xb6 || peripheral == 0x60 || peripheral == 0x15 || peripheral == 0x16 ||
++		    peripheral == 0x08);   /* 0x08: PM6150 PON (reboot reason, sweet_reboot.c) */
  	}
  	if (!sp_ready || !out || addr > 0xffffu || !allowed) {
  		return -1;
-@@ -483,3 +486,195 @@ sweet_rtc_set(uint64_t unix_secs)
+@@ -227,9 +231,13 @@ sweet_spmi_charger_writes(void)
+ static bool
+ sp_write_allowed(unsigned sid, unsigned addr, unsigned len)
+ {
+-	if (!sweet_board_beryllium() || len < 1 || len > 2) {
++	if (len < 1 || len > 2) {
+ 		return false;
+ 	}
++	if (!sweet_board_beryllium()) {
++		/* ios-sweet: PM6150 PON_SOFT_RB_SPARE (reboot reason, sweet_reboot.c) only */
++		return sid == 0 && addr == 0x088fu && len == 1;
++	}
+ 	if (sid == 2) {
+ 		if (!sp_charger_writes || len != 1) {
+ 			return false;
+@@ -483,3 +491,195 @@ sweet_rtc_set(uint64_t unix_secs)
  	printf("SWEET RTC: offset %u -> %u (raw %u, time %llu)%s\n", off, want, raw, unix_secs, ok ? "" : " FAILED");
  }
  #endif /* ARM64_BOARD_CONFIG_SWEET */
@@ -17952,7 +18046,7 @@ index e8d21b0..7589b50 100644
  	if (imgp->ip_argspace < new_ptr_size) {
  		error = E2BIG;
 diff --git a/bsd/kern/sweet_amfi.c b/bsd/kern/sweet_amfi.c
-index 918ad4d..6080e92 100644
+index 918ad4d..07ab29b 100644
 --- a/bsd/kern/sweet_amfi.c
 +++ b/bsd/kern/sweet_amfi.c
 @@ -30,6 +30,7 @@
@@ -18059,38 +18153,34 @@ index 918ad4d..6080e92 100644
  };
  
  /*
-@@ -448,6 +529,30 @@ static const struct {
- 	{ PRIV_SKYWALK_OBSERVE_STATS, "com.apple.private.skywalk.observe-stats" },
- };
+@@ -429,11 +510,9 @@ static int _Atomic sweet_priv_logged_count;   /* slots reserved; may exceed the
  
-+/*
-+ * Skywalk privileges, granted like AMFI does on iOS: only to a process holding the matching
+ /*
+  * Skywalk privileges, granted like AMFI does on iOS: only to a process holding the matching
+- * entitlement. bluetoothd (com.apple.private.skywalk.register-user-pipe) registers its audio
+- * user-pipe nexus "com.apple.bluetooth.AudioPipe" when an audio device connects; without the
+- * grant nxprov_create failed with EPERM, the audio channel stayed NULL and bluetoothd crashed in
+- * os_channel_get_fd(NULL) on its media queue (boot combo9: every "Connect" dropped, then a
+- * SIGSEGV loop because bluetoothd reconnects the device on every start).
 + * entitlement (as Bergamota 0250). bluetoothd (com.apple.private.skywalk.register-user-pipe)
 + * registers its audio user-pipe nexus "com.apple.bluetooth.AudioPipe"; 0146 logged
 + * "bluetoothd privilege 12000 denied".
-+ */
-+static const struct {
-+	int priv;
-+	const char *entitlement;
-+} sweet_skywalk_privs[] = {
-+	{ PRIV_SKYWALK_REGISTER_USER_PIPE, "com.apple.private.skywalk.register-user-pipe" },
-+	{ PRIV_SKYWALK_REGISTER_KERNEL_PIPE, "com.apple.private.skywalk.register-kernel-pipe" },
-+	{ PRIV_SKYWALK_REGISTER_NET_IF, "com.apple.private.skywalk.register-net-if" },
-+	{ PRIV_SKYWALK_REGISTER_FLOW_SWITCH, "com.apple.private.skywalk.register-flow-switch" },
-+	{ PRIV_SKYWALK_LOW_LATENCY_CHANNEL, "com.apple.private.skywalk.low-latency-channel" },
-+	{ PRIV_SKYWALK_OBSERVE_ALL, "com.apple.private.skywalk.observe-all" },
-+	{ PRIV_SKYWALK_OBSERVE_STATS, "com.apple.private.skywalk.observe-stats" },
+  */
+ static const struct {
+ 	int priv;
+@@ -446,6 +525,11 @@ static const struct {
+ 	{ PRIV_SKYWALK_LOW_LATENCY_CHANNEL, "com.apple.private.skywalk.low-latency-channel" },
+ 	{ PRIV_SKYWALK_OBSERVE_ALL, "com.apple.private.skywalk.observe-all" },
+ 	{ PRIV_SKYWALK_OBSERVE_STATS, "com.apple.private.skywalk.observe-stats" },
 +	/* 0204: mediaserverd sets socket delegates for the app it streams for (SO_DELEGATED); 0202/0203
 +	 * logged "mediaserverd privilege 10001 denied" right before a mediaserverd abort loop once
 +	 * VirtualAudio (0196) gave it audio devices. Granted to holders of the iOS entitlement. */
 +	{ PRIV_NET_PRIVILEGED_SOCKET_DELEGATE, "com.apple.private.network.socket-delegate" },
 +	{ PRIV_NET_INTERFACE_CONTROL, "com.apple.private.network.interface-control" },   /* 0204: also mediaserverd's */
-+};
-+
+ };
+ 
  static int
- sweet_sandbox_priv_grant(kauth_cred_t cred __unused, int priv)
- {
-@@ -459,6 +564,15 @@ sweet_sandbox_priv_grant(kauth_cred_t cred __unused, int priv)
+@@ -459,6 +543,15 @@ sweet_sandbox_priv_grant(kauth_cred_t cred __unused, int priv)
  			if (IOCurrentTaskHasEntitlement(sweet_skywalk_privs[i].entitlement)) {
  				return 0;
  			}
@@ -18106,7 +18196,7 @@ index 918ad4d..6080e92 100644
  			break;
  		}
  	}
-@@ -505,7 +619,7 @@ static struct mac_policy_conf sweet_sandbox_mac_conf = {
+@@ -505,7 +598,7 @@ static struct mac_policy_conf sweet_sandbox_mac_conf = {
  static mac_policy_handle_t sweet_sandbox_mac_handle;
  
  static struct mac_policy_conf sweet_amfi_mac_conf = {
@@ -20696,7 +20786,7 @@ index 56b6f9c..d1ee468 100644
  			fReal = false;
  			poll();
 diff --git a/iokit/Kernel/arm/SweetCPU.cpp b/iokit/Kernel/arm/SweetCPU.cpp
-index 36d127f..3b2ae49 100644
+index 36d127f..631a45d 100644
 --- a/iokit/Kernel/arm/SweetCPU.cpp
 +++ b/iokit/Kernel/arm/SweetCPU.cpp
 @@ -134,6 +134,17 @@ SweetCPU::registerWithKernel(const ml_topology_cpu_t *cpu)
@@ -20717,195 +20807,26 @@ index 36d127f..3b2ae49 100644
  	perfmon_interrupt_handler_func pmi_handler = NULL;
  	kern_return_t result = ml_processor_register(&info, &machProcessor, &ipi_handler, &pmi_handler);
  	if (result != KERN_SUCCESS) {
-@@ -286,6 +297,187 @@ sweet_cpufreq_start(const ml_topology_info_t *topology)
+@@ -286,6 +297,18 @@ sweet_cpufreq_start(const ml_topology_info_t *topology)
  	sweet_cpufreq_domain(topology, 2, 0x18321000ULL, 0, l3 ? mode : 0);
  }
  
 +/*
-+ * CPU DVFS through the SM7150 cpufreq-hw (OSM) domains. Nothing in this
-+ * kernel ever wrote REG_PERF_STATE, so the cores stayed at whatever index the
-+ * bootloader left. Register layout is Linux qcom-cpufreq-hw.c qcom_soc_data
-+ * (the pinned sm7150.dtsi uses "qcom,cpufreq-hw"): enable 0x0, LUT 0x110 and
-+ * voltage 0x114 in 32-byte rows, current (throttled) vote 0x704, perf state
-+ * 0x920. The hardware owns voltage (CPR) and limits management; only a LUT
-+ * index is written. Each cluster's clock is estimated before and after from
-+ * a dependent-add chain against the architected timer, on a bound core.
-+ * sweetcpufreq=0 logs only; 1 (default) selects the highest non-boost row.
++ * 0200 dark clocks: their OSM half (row switch while the display is off) is not in the 2000 port; sweet_dark.c
++ * still calls this hook, which does nothing for now.
 + */
-+extern "C" vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
-+extern "C" processor_t thread_bind(processor_t);
-+
-+#define SWEET_OSM_ENABLE        0x000
-+#define SWEET_OSM_DCVS_CTRL     0x0bc
-+#define SWEET_OSM_FREQ_LUT      0x110
-+#define SWEET_OSM_VOLT_LUT      0x114
-+#define SWEET_OSM_CURRENT_VOTE  0x704
-+#define SWEET_OSM_PERF_STATE    0x920
-+#define SWEET_OSM_LUT_ROW       32u
-+#define SWEET_OSM_LUT_MAX       40u
-+#define SWEET_OSM_XO_KHZ        19200u
-+#define SWEET_OSM_GPLL0_KHZ     300000u
-+
-+/*
-+ * 0200: dark clocks (after ios-flame 0257, MIT). While the display is off (bsd/dev/sweet_dark.c) each
-+ * domain runs at the highest LUT row at or below its dark target (A55 1248 MHz, A76 652.8 MHz, as the
-+ * sunfish port's rows 4 and 1 of the same SM7150 table), and goes back to the row selected at boot on
-+ * wake. Only rows this file chose at boot are written; nothing happens with sweetcpufreq=0.
-+ */
-+static struct {
-+	volatile uint32_t *osm;
-+	unsigned bright_row, dark_row;
-+	uint32_t bright_khz, dark_khz;
-+	bool ready;
-+} sweet_dark_dom[3];
-+/* 0247: domain 2 = the CPU L3 cache (OSM L3, stock DT cpucc osm_l3_base 0x18321000): ABL leaves it at row 7
-+ * (1190.4 MHz of 1459.2); Android's memlat governors (cpu0/cpu6-cpu-l3-lat) raise it under memory-bound load. */
-+static const uint32_t sweet_dark_target_khz[3] = {1248000u, 652800u, 652800u};
-+
 +extern "C" void sweet_cpufreq_dark(int dark);
 +
 +void
 +sweet_cpufreq_dark(int dark)
 +{
-+	for (unsigned d = 0; d < 3; d++) {
-+		if (!sweet_dark_dom[d].ready) {
-+			continue;
-+		}
-+		sweet_dark_dom[d].osm[SWEET_OSM_PERF_STATE / 4] = dark ? sweet_dark_dom[d].dark_row : sweet_dark_dom[d].bright_row;
-+	}
-+	__builtin_arm_dsb(DSB_SY);
-+	static unsigned logged;
-+	if (logged++ < 12 && (sweet_dark_dom[0].ready || sweet_dark_dom[1].ready)) {
-+		IOLog("SWEET CPUFREQ: %s: a55 row %u (%u kHz), a76 row %u (%u kHz)\n", dark ? "dark" : "bright",
-+		    dark ? sweet_dark_dom[0].dark_row : sweet_dark_dom[0].bright_row,
-+		    dark ? sweet_dark_dom[0].dark_khz : sweet_dark_dom[0].bright_khz,
-+		    dark ? sweet_dark_dom[1].dark_row : sweet_dark_dom[1].bright_row,
-+		    dark ? sweet_dark_dom[1].dark_khz : sweet_dark_dom[1].bright_khz);
-+	}
-+}
-+
-+/* 64 dependent adds per iteration: one per cycle on both A55 and A76. */
-+static uint64_t
-+sweet_cpu_measure_khz(void)
-+{
-+	const uint64_t iterations = 20000;
-+	boolean_t enabled = ml_set_interrupts_enabled(FALSE);
-+	uint64_t acc = 0, n = iterations;
-+	uint64_t begin = mach_absolute_time();
-+	__asm__ volatile(
-+		"1:\n"
-+		".rept 64\n"
-+		"add %0, %0, #1\n"
-+		".endr\n"
-+		"subs %1, %1, #1\n"
-+		"b.ne 1b\n"
-+		: "+r"(acc), "+r"(n) : : "cc");
-+	uint64_t ticks = mach_absolute_time() - begin;
-+	ml_set_interrupts_enabled(enabled);
-+	uint64_t ns = 0;
-+	absolutetime_to_nanoseconds(ticks, &ns);
-+	return ns ? (iterations * 64 * 1000000ULL) / ns : 0;
-+}
-+
-+static void
-+sweet_cpufreq_domain(const ml_topology_info_t *topology, unsigned domain,
-+    uint64_t pa, unsigned first_cpu, int mode)
-+{
-+	volatile uint32_t *osm = (volatile uint32_t *)ml_io_map(pa, 0x1400);
-+	if (osm == NULL || first_cpu >= topology->num_cpus || sweet_cpus[first_cpu] == NULL) {
-+		IOLog("SWEET CPUFREQ: domain %u unavailable\n", domain);
-+		return;
-+	}
-+	const uint32_t enable = osm[SWEET_OSM_ENABLE / 4];
-+	const uint32_t dcvs = osm[SWEET_OSM_DCVS_CTRL / 4];
-+	const uint32_t state = osm[SWEET_OSM_PERF_STATE / 4];
-+	const uint32_t vote = osm[SWEET_OSM_CURRENT_VOTE / 4];
-+	IOLog("SWEET CPUFREQ: domain %u pa=0x%llx enable=%#x dcvs=%#x perf_state=%u current_vote=%#x (%u kHz)\n",
-+	    domain, pa, enable, dcvs, state, vote, (vote & 0x3ff) * SWEET_OSM_XO_KHZ);
-+	if (!(enable & 1)) {
-+		IOLog("SWEET CPUFREQ: domain %u hardware not enabled; no write\n", domain);
-+		return;
-+	}
-+	uint32_t khz[SWEET_OSM_LUT_MAX] = {0};
-+	unsigned rows = 0, best = SWEET_OSM_LUT_MAX;
-+	for (unsigned i = 0; i < SWEET_OSM_LUT_MAX; i++) {
-+		const uint32_t data = osm[(SWEET_OSM_FREQ_LUT + i * SWEET_OSM_LUT_ROW) / 4];
-+		const uint32_t volt = osm[(SWEET_OSM_VOLT_LUT + i * SWEET_OSM_LUT_ROW) / 4];
-+		const uint32_t src = data >> 30, lval = data & 0xff, cores = (data >> 16) & 7;
-+		khz[i] = src ? SWEET_OSM_XO_KHZ * lval : SWEET_OSM_GPLL0_KHZ;
-+		IOLog("SWEET CPUFREQ: domain %u lut %u data=%#x %u kHz cores=%u volt=%u mV\n",
-+		    domain, i, data, khz[i], cores, volt & 0xfff);
-+		/* Linux: a repeated frequency ends the table. */
-+		if (i > 0 && khz[i] == khz[i - 1]) {
-+			break;
-+		}
-+		rows = i + 1;
-+		/* core_count 1 marks a boost-only row (LUT_TURBO_IND). */
-+		if (cores != 1 && (best == SWEET_OSM_LUT_MAX || khz[i] > khz[best])) {
-+			best = i;
-+		}
-+	}
-+	processor_t processor = sweet_cpus[first_cpu]->processor();
-+	thread_bind(processor);
-+	thread_block(THREAD_CONTINUE_NULL);
-+	const uint64_t before = sweet_cpu_measure_khz();
-+	IOLog("SWEET CPUFREQ: domain %u cpu=%d measured before=%llu kHz (LUT state %u = %u kHz)\n",
-+	    domain, cpu_number(), before, state, state < rows ? khz[state] : 0);
-+	if (mode == 1 && best < rows && best != state) {
-+		osm[SWEET_OSM_PERF_STATE / 4] = best;
-+		__builtin_arm_dsb(DSB_SY);
-+		IOSleep(5);
-+		const uint64_t after = sweet_cpu_measure_khz();
-+		IOLog("SWEET CPUFREQ: domain %u selected lut %u = %u kHz; readback perf_state=%u current_vote=%#x (%u kHz) measured after=%llu kHz\n",
-+		    domain, best, khz[best], osm[SWEET_OSM_PERF_STATE / 4],
-+		    osm[SWEET_OSM_CURRENT_VOTE / 4], (osm[SWEET_OSM_CURRENT_VOTE / 4] & 0x3ff) * SWEET_OSM_XO_KHZ, after);
-+	} else {
-+		IOLog("SWEET CPUFREQ: domain %u no write (mode=%d best=%u rows=%u)\n", domain, mode, best, rows);
-+	}
-+	/* 0200: the dark row: the highest row at or below the target (rows rise in frequency) */
-+	if (mode == 1 && best < rows && domain < 3) {
-+		unsigned dark = best;
-+		bool found = false;
-+		for (unsigned i = 0; i < rows; i++) {
-+			const uint32_t cores = (osm[(SWEET_OSM_FREQ_LUT + i * SWEET_OSM_LUT_ROW) / 4] >> 16) & 7;
-+			if (cores != 1 && khz[i] <= sweet_dark_target_khz[domain] && (!found || khz[i] > khz[dark])) {
-+				dark = i;
-+				found = true;
-+			}
-+		}
-+		if (found) {
-+			sweet_dark_dom[domain].osm = osm;
-+			sweet_dark_dom[domain].bright_row = best;
-+			sweet_dark_dom[domain].bright_khz = khz[best];
-+			sweet_dark_dom[domain].dark_row = dark;
-+			sweet_dark_dom[domain].dark_khz = khz[dark];
-+			sweet_dark_dom[domain].ready = true;
-+			IOLog("SWEET CPUFREQ: domain %u dark row %u = %u kHz (bright row %u)\n", domain, dark, khz[dark], best);
-+		}
-+	}
-+	thread_bind(PROCESSOR_NULL);
-+	thread_block(THREAD_CONTINUE_NULL);
-+}
-+
-+static void
-+sweet_cpufreq_start(const ml_topology_info_t *topology)
-+{
-+	int mode = 1;
-+	PE_parse_boot_argn("sweetcpufreq", &mode, sizeof(mode));
-+	/* Pinned sm7150.dtsi: cpu0-5 freq-domain 0, cpu6-7 freq-domain 1. */
-+	sweet_cpufreq_domain(topology, 0, 0x18323000ULL, 0, mode);
-+	sweet_cpufreq_domain(topology, 1, 0x18325800ULL, 6, mode);
-+	/* 0247: the L3 domain has the same OSM layout (Linux osm-l3.c sdm845 data: LUT 0x110 / 32-byte rows, perf
-+	 * state 0x920). sweetl3=0 leaves ABL's row. The CPU binding and clock measurement in the helper are harmless. */
-+	int l3 = 1;
-+	PE_parse_boot_argn("sweetl3", &l3, sizeof(l3));
-+	sweet_cpufreq_domain(topology, 2, 0x18321000ULL, 0, l3 ? mode : 0);
++	(void)dark;
 +}
 +
  /* Do not wait in a nub's start(): matching can be asynchronous or serialized. */
  void
  SweetCPU::startAll(void *arg __unused, wait_result_t result __unused)
-@@ -337,6 +529,9 @@ SweetCPU::startAll(void *arg __unused, wait_result_t result __unused)
+@@ -337,6 +360,9 @@ SweetCPU::startAll(void *arg __unused, wait_result_t result __unused)
  	ml_set_max_cpus(topology->max_cpu_id + 1);
  	IOLog("SWEET CPU: %u/%u CPUs initialized, SGI1 verified\n",
  	    topology->num_cpus, topology->num_cpus);
