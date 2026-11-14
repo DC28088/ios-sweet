@@ -7,8 +7,31 @@ struct rwa_library {
    void *data;
    struct air_metallib lib;
 };
+/*
+ * iOS 26 ships its system metallibs (QuartzCore default.metallib) as a fat container: big-endian
+ * 0xCAFEBABE, nfat_arch, then {cputype, cpusubtype, offset, size, align} per slice; one slice is the
+ * generic AIR library (CPU_TYPE_AIR64 0x01000017, an MTLB container) and one an Apple GPU binary.
+ * Use the AIR slice; a plain MTLB file (iOS 16) is unchanged. Bounds are checked per slice.
+ */
+static uint32_t rwa_be32(const unsigned char *p) { return (uint32_t)p[0]<<24|(uint32_t)p[1]<<16|(uint32_t)p[2]<<8|p[3]; }
+static const void *rwa_air_slice(const void *bytes, size_t *size)
+{
+   const unsigned char *b=bytes;
+   if (*size < 8 || rwa_be32(b) != 0xcafebabeu) return bytes;
+   uint32_t count=rwa_be32(b+4);
+   if (count == 0 || count > 16 || 8 + (size_t)count * 20 > *size) return bytes;
+   for (uint32_t i=0;i<count;i++) {
+      const unsigned char *a=b+8+(size_t)i*20;
+      uint32_t cputype=rwa_be32(a), off=rwa_be32(a+8), len=rwa_be32(a+12);
+      if (cputype != 0x01000017u || off > *size || len > *size - off || len < 4) continue;
+      if (memcmp(b+off,"MTLB",4)) continue;
+      *size=len; return b+off;
+   }
+   return bytes;
+}
 struct rwa_library *rwa_library_open(const void *bytes, size_t size, char *why, size_t n)
 {
+   if (bytes) bytes=rwa_air_slice(bytes,&size);
    if (!bytes || size < 4 || memcmp(bytes,"MTLB",4)) {
       say(why,n,"reader: expected a Metal library container"); return NULL;
    }
