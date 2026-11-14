@@ -1,3 +1,21 @@
+## 2026-11-14 12:20 IST: 2001 kernel links (CI 43551066353); 26a1/26b1/26a2 abort backboardd (AMFI); CI 5 running
+- CI builds: 3 = 43551066353 SUCCESS (first linked 2001), 4 = 43565769725 SUCCESS, 5 = 43568108762 (running). 5 of 8 used.
+- Images (all ADT sweet-n104-2x-wb.adt; driver args sweetfb_scale=2 sweetpmem=1 sweetsmmuprobe=1 sweetsmmuwlan=1
+  sweetbt=1 sweetbtfast=1 sweetbtibs=1 sweetbtsk=1 sweetamp=2 sweetvaudio=1 sweethaptic=3 sweetcharge=2 sweetfiles=1):
+  26a1 (CI 3, a73be802), 26b1 (CI 3 + sweetgpu=9, abdcd3d3), 26a2 (CI 4, 5ec55a4e). All three: backboardd + familycircled
+  abort "matched == (match_result.error_code == AICMR_MATCH)" -> launchd "rebooting due to critical process crashes:
+  backboardd" (to recovery environment -> phone ends in fastboot). USER: "crashed while loading springboard".
+- Cause: __mac_syscall("AMFI", ...) goes to the first registered policy NAMED "AMFI" with a syscall hook. The merge
+  (a) gave our policy sweet_gles_dyld_policy (ENOPOLICY for 0x5a; removed in CI 4) and (b) renamed Bergamota's
+  "SWEET AMFI" policy to "AMFI", so Bergamota's real "AMFI" syscall policy was refused (26a2: zero "SWEET AMFI:
+  __mac_syscall" lines vs four on 26c8). CI 5 restores the name.
+- Seen on 26a1 before the abort: wland + wland-0225 started (pmem reads of SMEM), BT controller up at 3 Mbaud and rampatch
+  download running, charger SDP 500 mA, SWEET REBOOT ready on sweet (IMEM mapped, PON spare write ready).
+  26b1: GPU stage 9 is scheduled 60 s after boot, the abort came first (no GPU result).
+- Open: SweetAudio.driver must be in /System/Library/Audio/Plug-Ins/HAL/ (sweet_audiohal SWEET_DRV), it was installed in
+  /Library/Audio/Plug-Ins/HAL -> move over SSH on the next stable boot. bluetoothd "fatal error reason 1201" (twice):
+  probably opened HCI while the rampatch was still loading; check after a stable boot.
+
 ## 2026-11-14 08:45 IST: USER away; plan: GPU kernel green, no black bars, Wi-Fi, BT, sound (<= 8 CI builds)
 - USER: "run the GPU fix build (3 builds) ... two black bars on top and bottom ... fix it (proper aspect ratio).
   bring up wifi, bluetooth. proper playback, sound fixes from ios 16 (total you can build up to 8 builds)".
