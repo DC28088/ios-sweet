@@ -6,8 +6,10 @@
 - 26c8 2nd boot 02:13:53 UTC (USER "boot the same build again"): USB ping after ~40 s (earlier than 26r8), SSH
   ~8 min after boot. The live USB log starts at the root mount, so the SWEET CPUFREQ lines (printed before) are not
   in it; no dmesg/sysctl binaries on the root. Benchmark research/ios26/boot/bench.sh (toybox sha256 of 64 MiB
-  zeros): single 1.89-2.19 s, 8 parallel 2.52 s -> results in boot/bench.txt. CPU speed NOT yet confirmed: needs the
-  same bench on 26r8 (no 2000) for comparison.
+  zeros): single 1.89-2.19 s, 8 parallel 2.52 s -> results in boot/bench.txt.
+- 26r8 (no 2000) rebooted 02:39:48 UTC for the baseline, bench ~8 min after boot: single 2.51-2.69 s, 8 parallel
+  4.87 s (a run 1.5 min after boot, still busy booting, was 3.3-10.9 / 7.3 s: discard). => 2000 WORKS: single
+  ~1.3x, all-core ~1.9x faster (the A55s gained most). The phone has no awk (toybox lacks it).
 - 2001 (xnu/patches-12377/2001-sweet-ios16-drivers.patch, commit b852935): git merge of research/ios26/combo `port`
   (x12377 + our 144 cherry-picks) into `berg-cpufreq`, branch `gpu26` 4e05569. 71 conflict hunks in 18 files;
   decisions in the patch header (Bergamota kept for USB, IOSurface, framebuffer, touch mapping, keystore, spmi;
