@@ -120,6 +120,25 @@ air2nir = executable(""")
                           name, (unsigned long long)extra);
             }
          }''')
+    # iOS 26 QuartzCore builds arrays of structs with nested insertvalue on a poison base, e.g. in
+    # fixed_frag_lph_cph: insertvalue [N x {...}] poison, v, i, j (26b5g: "an aggregate index out of its value",
+    # block 30 instruction 12, opcode 19). The poison aggregate's elements were NULL, so the second index found
+    # no aggregate. Nested struct/array elements now start as empty aggregates; scalar leaves stay NONE.
+    s=replace(s,'''         struct air_val *v = air_val_agg(c, n);
+         /* fields stay NONE until insertvalue puts something there */
+         return v;''','''         struct air_val *v = air_val_agg(c, n);
+         /* fields stay NONE until insertvalue puts something there; nested
+          * aggregates exist (empty) so a multi-index insertvalue can reach them */
+         for (unsigned i = 0; i < n; i++) {
+            const struct air_type *et = t->kind == AIR_TYPE_STRUCT ? t->members[i] : t->elem;
+            if (et && (et->kind == AIR_TYPE_STRUCT || et->kind == AIR_TYPE_ARRAY)) {
+               struct air_constant u = { .base = { .kind = AIR_VALUE_CONSTANT, .type = et },
+                                         .ckind = k->ckind };
+               if (!(v->elems[i] = air_constant_val(c, &u)))
+                  return NULL;
+            }
+         }
+         return v;''')
     s=replace(s,'               (*out)[num++].index = idx;',
         '               const char *constant_name = md_str(node, 2);\n               (*out)[num].name = constant_name ? ralloc_strdup(mem_ctx, constant_name) : NULL;\n               (*out)[num++].index = idx;')
     s=replace(s,'   return v && (v->kind == AIR_VAL_PTR || v->kind == AIR_VAL_PTR_SELECT);',
