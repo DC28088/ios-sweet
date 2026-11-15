@@ -15,7 +15,30 @@ struct rwa_texture *rwd_texture_for_surface(struct rwa_device *device,void *surf
     if(took)memset(took,0,sizeof(*took));
 #define REFUSE(...) do {snprintf(why,n,__VA_ARGS__);return NULL;} while(0)
     if(!device || !s || !want)REFUSE("IOSurface import requires a device, surface and descriptor");
-    if(plane || IOSurfaceGetPlaneCount(s))REFUSE("interface: planar IOSurface textures are not implemented");
+    /*
+     * iOS 26 backboardd asks for its 828x1792 render targets as '&BGA' (lossless-compressed BGRA, 0x26424741),
+     * one plane plus 16 KiB of compression metadata (26b5d: "planar IOSurface textures are not implemented" on
+     * every frame, dark screen). Nothing here compresses: Sweet's IOSurface lays plane 0 out linearly at the
+     * surface base with the surface's own row pitch, and the panel scans it as BGRA. Such a surface is imported
+     * as linear BGRA; any other plane layout is still refused, and the first refusals say why.
+     */
+    uint32_t surface_format=IOSurfaceGetPixelFormat(s);
+    size_t surface_planes=IOSurfaceGetPlaneCount(s);
+    uintptr_t plane0_base=0;    /* nonzero: the pixels are plane 0's, at this address */
+    if(plane)REFUSE("interface: planar IOSurface textures are not implemented (plane %lu asked)",plane);
+    if(surface_planes) {
+        uintptr_t p0=(uintptr_t)IOSurfaceGetBaseAddressOfPlane(s,0),b0=(uintptr_t)IOSurfaceGetBaseAddress(s);
+        size_t r0=IOSurfaceGetBytesPerRowOfPlane(s,0);
+        static unsigned told;
+        if(told++<4)fprintf(stderr,"SweetNativeMetal: IOSurface %u %#x planes %zu: plane0 offset %ld bpr %zu (surface bpr %zu) %zux%zu\n",
+            IOSurfaceGetID(s),surface_format,surface_planes,(long)(p0-b0),r0,IOSurfaceGetBytesPerRow(s),
+            IOSurfaceGetWidthOfPlane(s,0),IOSurfaceGetHeightOfPlane(s,0));
+        if(surface_planes!=1 || surface_format!=0x26424741u || !p0 || p0<b0 || r0!=IOSurfaceGetBytesPerRow(s) ||
+           IOSurfaceGetWidthOfPlane(s,0)!=IOSurfaceGetWidth(s) || IOSurfaceGetHeightOfPlane(s,0)!=IOSurfaceGetHeight(s))
+            REFUSE("interface: planar IOSurface textures are not implemented (%#x, %zu planes)",surface_format,surface_planes);
+        surface_format='BGRA';     /* single linear plane: '&BGA' read and written as BGRA */
+        plane0_base=p0;            /* metadata may precede the pixels: rows start at plane 0 */
+    }
     size_t width=IOSurfaceGetWidth(s),height=IOSurfaceGetHeight(s),pitch=IOSurfaceGetBytesPerRow(s);
     unsigned bpp=0;uint32_t fourcc=0;
     switch(want->pixel_format) {
@@ -29,7 +52,7 @@ struct rwa_texture *rwd_texture_for_surface(struct rwa_device *device,void *surf
     if(want->width!=width || want->height!=height || want->type!=2 || want->depth>1 ||
        want->array_length>1 || want->mip_levels>1 || want->sample_count>1)
         REFUSE("interface: IOSurface texture must match a single 2D plane, mip and sample");
-    if(IOSurfaceGetPixelFormat(s)!=fourcc || width>UINT32_MAX || height>UINT32_MAX ||
+    if(surface_format!=fourcc || width>UINT32_MAX || height>UINT32_MAX ||
        pitch>UINT32_MAX-63 || width>SIZE_MAX/bpp || pitch<width*bpp)
         REFUSE("interface: IOSurface %#x for Metal %u expected %#x, %zux%zu pitch %zu; incompatible A618 linear layout",IOSurfaceGetPixelFormat(s),want->pixel_format,fourcc,width,height,pitch);
     // A618 samples linear rows only at 64-byte pitches. A surface another
@@ -45,7 +68,10 @@ struct rwa_texture *rwd_texture_for_surface(struct rwa_device *device,void *surf
                    IOSurfaceGetID(s),width,height,pitch,want->usage);
         gpu_pitch=(pitch+63)&~(size_t)63;
     }
-    uintptr_t pixels=(uintptr_t)IOSurfaceGetBaseAddress(s),base=pixels&~(uintptr_t)16383;
+    /* base = the allocation's first page, as transport/sweet_drm.cpp surface_description pins it; offset =
+     * where the rows start inside it (plane 0 for '&BGA'). */
+    uintptr_t pixels=plane0_base?plane0_base:(uintptr_t)IOSurfaceGetBaseAddress(s),
+              base=(uintptr_t)IOSurfaceGetBaseAddress(s)&~(uintptr_t)16383;
     size_t bytes=IOSurfaceGetAllocSize(s),offset=pixels-base;
     if(!base || offset>=bytes || (height && pitch>(bytes-offset)/height))
         REFUSE("interface: IOSurface rows extend beyond its mapped allocation");

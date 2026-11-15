@@ -273,6 +273,16 @@ int surface_description(uint32_t id, struct redwood_drm_surface *out, IOSurfaceR
     uint64_t base=pixel&~(HostPage-1), bytes=rounded(IOSurfaceGetAllocSize(s));
     size_t width=IOSurfaceGetWidth(s), height=IOSurfaceGetHeight(s), pitch=IOSurfaceGetBytesPerRow(s);
     size_t planes=IOSurfaceGetPlaneCount(s);
+    uint32_t format=IOSurfaceGetPixelFormat(s);
+    // iOS 26 '&BGA' render targets: one linear plane with the surface's pitch, possibly after metadata
+    // (frontend SweetNativeDrawable.m imports them as BGRA by the same rule); described as plane-less BGRA
+    // whose rows start at plane 0. The pinned range still begins at the allocation's first page.
+    uint64_t p0=(uintptr_t)IOSurfaceGetBaseAddressOfPlane(s,0);
+    if (planes==1 && format==0x26424741u && p0 && p0>=pixel &&
+        IOSurfaceGetBytesPerRowOfPlane(s,0)==IOSurfaceGetBytesPerRow(s) &&
+        IOSurfaceGetWidthOfPlane(s,0)==IOSurfaceGetWidth(s) && IOSurfaceGetHeightOfPlane(s,0)==IOSurfaceGetHeight(s)) {
+        planes=0; format='BGRA'; pixel=p0;
+    }
     int e=0;
     if (!base || !bytes || bytes>state.params.max_bo_bytes || planes ||
         width>UINT32_MAX || height>UINT32_MAX || pitch>UINT32_MAX ||
@@ -298,7 +308,7 @@ int surface_description(uint32_t id, struct redwood_drm_surface *out, IOSurfaceR
     }
     if (!e) {
         *out={id,0,bytes,uint32_t(pixel-base),uint32_t(pitch),uint32_t(width),uint32_t(height),
-              IOSurfaceGetPixelFormat(s),uint32_t(planes)};
+              format,uint32_t(planes)};
         if (keep) { *keep=s; return 0; }
     }
     CFRelease(s); return e;
