@@ -238,7 +238,7 @@ int rwa_command_poll(struct rwa_device *d,uint64_t fence,bool give_up,char *why,
    if(e==ETIMEDOUT && !give_up)return 1;
    d->lost=true;
    if(e==ETIMEDOUT)
-      say(why,n,"the GPU did not finish a command buffer within two seconds; its "
+      say(why,n,"the GPU did not finish a command buffer within twenty seconds; its "
                 "results are not what the shaders computed and the GPU is wedged");
    else
       say(why,n,"waiting for a command buffer's GPU fence failed (errno %d)",e);

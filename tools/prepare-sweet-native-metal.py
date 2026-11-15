@@ -943,6 +943,10 @@ static uint64_t native_completion_now(void)
 static struct {
     uint64_t window,count,latency,latency_max,polls,handlers,failures;
 } native_completion_stats;
+static NSString *commandBuffer_label_of(id commandBuffer)
+{
+    return [commandBuffer respondsToSelector:@selector(label)] ? [commandBuffer label] : nil;
+}
 static void native_completion_finish(struct native_completion *item)
 {
     @autoreleasepool {
@@ -953,14 +957,32 @@ static void native_completion_finish(struct native_completion *item)
          * submits need too: back off 250 us -> 2 ms instead of a fixed 200 us
          * (CA commands run ~15-25 ms on the GPU). */
         useconds_t pause=250;
+        /* iOS 26 (26b5h/26b5i): one command buffer per backboardd outlived the
+         * old 2 s budget, the device was then marked lost and every later draw
+         * refused (lock screen frozen, updating only on touch). Say so at 2 s,
+         * keep waiting to 20 s, and say how long it took, so a slow job and a
+         * hung GPU can be told apart. */
+        bool slow=false;
         for(;;) {
-            const bool give_up=native_completion_now()-began>=2000000000ull;
+            const uint64_t spent=native_completion_now()-began;
+            const bool give_up=spent>=20000000000ull;
+            if(!slow && spent>=2000000000ull) {
+                slow=true;
+                NSString *label=[commandBuffer_label_of(item->commandBuffer) retain];
+                rw_print("command buffer completion: fence %llu still running after 2 s (label %s); waiting up to 20 s\n",
+                         (unsigned long long)item->fence,label!=nil?[label UTF8String]:"(none)");
+                [label release];
+            }
             rc=rwa_command_poll(item->device,item->fence,give_up,why,sizeof why);
             native_completion_stats.polls++;
             if(rc!=1)break;
             usleep(pause);
             if(pause<2000)pause*=2;
         }
+        if(slow && !rc)
+            rw_print("command buffer completion: fence %llu finished after %llu ms\n",
+                     (unsigned long long)item->fence,
+                     (unsigned long long)((native_completion_now()-began)/1000000));
         if(rc)rw_print("command buffer completion: %s\n",why);
         dispatch_queue_t queue=NULL;
         id commandBuffer=item->commandBuffer;
