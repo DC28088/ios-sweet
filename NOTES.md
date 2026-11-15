@@ -1,3 +1,15 @@
+## 2026-11-15 19:05 IST: build 8 '&BGA' import WORKS; next: setResponsibleTaskIDs:count: (fix ready, NOT built)
+- native-metal build 8 = CI 43713138586 (35ec3ed, SweetMetal2 01c38531; previous kept as SweetMetal2.bundle.9551f9e):
+  "IOSurface 21/22/23 0x26424741 planes 1: plane0 offset 0 bpr 3328 828x1792" -> drawables accepted; backboardd then
+  raised NSInvalidArgumentException -[SweetNativeMetalCommandBuffer setResponsibleTaskIDs:count:] unrecognized selector
+  (x3 -> critical reboot). USER: "it crashed".
+- 26b4/26b5 runs vanished from USB after ~10-60 min twice (no panic in the log); A3 did not. Suspects: GPU active
+  (sweetgpu=9) hang, or battery drain on a 500 mA SDP charge limit. Not investigated.
+- Prepared (committed, NOT BUILT, the 8-build budget is used up): SweetMTLArchitecture.m adds the no-op
+  setResponsibleTaskIDs:count: and a -forwardingTargetForSelector: fallback on all bundle classes (log once + answer
+  0/nil). NEXT build (needs USER OK) lists every remaining missing iOS 26 selector in one boot.
+- Phone on safe image 26a3.
+
 ## 2026-11-15 18:45 IST: Metal device RUNS in iOS 26 backboardd (26b5d); drawables refused ('&BGA'); build 8
 - native-metal build 7 = CI 43712011039 (9551f9e, SweetMetal2 3e936166): "targetDeviceArchitecture -> cpu 0x1000017
   sub 0xc" -> MTLLoader passes, library loads, command buffers run; backboardd STABLE (0 crashes, no reboot).
