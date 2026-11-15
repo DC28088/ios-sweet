@@ -1,3 +1,29 @@
+## 2026-11-15 21:10 IST: build 11: LOCK SCREEN DRAWN BY METAL; blur pipeline refused (by-value [8 x i8]); build 12
+- Build 11 = CI 43717026646 (fc265e2, SweetMetal2 e5f49cbf, backend 7e044e13). First attempt compiled, then failed
+  uploading the artifact (CreateArtifact timeout); `gh run rerun --failed` succeeded. Installed over SSH (tar, all 6
+  file hashes verified on the phone); build 10 kept as SweetMetal2.bundle.041879f. Phone host key changed with the
+  iOS 26 root: research/ssh/known_hosts.ios26 (direct USB link; research/ssh/known_hosts left as is).
+- 26b5 boot logs/boot-26b5h.txt. USER: "lockscreen shows up (with white time, it was red earlier). but homescreen
+  keeps loading". Dozens of com.apple.coreanimation.* pipelines compile; stage links fixed/downsample/narrow_blur OK.
+- backboardd aborted 5x (368/393/427/467/529) "Metal failed to build render pipeline" after "this render pipeline is
+  refused: instruction: an array where a number belongs, which has no single NIR width (block 0, instruction 0,
+  opcode 7) (block 0, instruction 0, opcode 17)". No launchd critical reboot this time; pid 546 then stayed up but
+  presented nothing (SWEET FB swaps_s=0.00).
+- Offline (research/ios26/metal/airtest: gep0.c, argagg.c, dis.c = donor air_print; build: gcc -DUTIL_ARCH_LITTLE_ENDIAN=1
+  -DUTIL_ARCH_BIG_ENDIAN=0 -DHAVE_PTHREAD + air_module/bitcode/layout/print + Mesa ralloc.c hash_table.c): opcode 7 =
+  GEP, 17 = CALL. variable_blur_downsample_frag_lpf/_lph + clamp variants (f0040/41/142/143) call
+  variable_blur_downsample_base(<4 x float>, <2 x float>, [8 x i8] undef, ...) = VertexDownBlurOutput tail padding.
+  translate_callee asked air_nir_bit_size for the array's NIR parameter; that soft error got pinned on the callee's
+  first instruction (a GEP). UberShader set_lum_clip_on_format (f0004/f0005) also takes
+  [2 x FragmentShaderConfig::Image] + [3 x i8] WITH values.
+- Fix b7cf321 (prepare-sweet-native-metal.py): aggregate args take no NIR param of their own; empty ones bind the
+  caller's aggregate, ones with values are flattened (one param per SSA leaf) and rebuilt in the callee; both
+  specialise the callee. Verified only that the prepare script applies to a donor a79ff07 export (no local NIR
+  build). native-metal build 12 = CI 43727478082.
+- Also seen (not investigated): once per backboardd instance "the GPU did not finish a command buffer within two
+  seconds ... GPU is wedged" shortly before the refusal (async completion latency_max_us=1290308 before it); no
+  kernel ADRENO fault line. SpringBoard's own Metal: "no msm device to open" (expected; only backboardd has GPU).
+
 ## 2026-11-15 20:00 IST: build 10: samplers OK; nested insertvalue on poison array refused; build 11
 - native-metal build 10 = CI 43715967873 (backend 50c18ff9; previous kept as SweetMetal2.bundle.6a9129f): no sampler
   refusals; pipelines (com.apple.coreanimation.PBGRAXm_A2Xhf) refused "instruction: an aggregate index out of its
