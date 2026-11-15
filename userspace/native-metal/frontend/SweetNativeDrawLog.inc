@@ -74,6 +74,9 @@ native_drawlog_remember(const void *render, const char *label, const char *vfn, 
  * draws whose first colour attachment has that size (0x0: every draw of <= 64 vertices). */
 static unsigned native_drawlog_detail_w, native_drawlog_detail_h;
 static bool native_drawlog_detail_on;
+/* 2026-11-15 (iOS 26 slow frames): /var/local/sweet-native-drawtime present when the log is armed ->
+ * each logged draw is flushed and waited for and its time logged as "DRAWTIME seq us" (serialises the GPU). */
+static bool native_drawlog_time_on;
 
 static unsigned
 native_drawlog_next(void)
@@ -107,8 +110,11 @@ native_drawlog_next(void)
 					fclose(f);
 				}
 				if (!first) {
+					struct stat ts;
 					remaining = n;
-					fprintf(stderr, "SweetNativeMetal: DRAWLOG armed for %u draws\n", n);
+					native_drawlog_time_on = stat("/var/local/sweet-native-drawtime", &ts) == 0;
+					fprintf(stderr, "SweetNativeMetal: DRAWLOG armed for %u draws%s\n", n,
+					        native_drawlog_time_on ? " (timed: each draw flushed and waited for)" : "");
 				}
 			}
 		} else if (last_sec < 0) {

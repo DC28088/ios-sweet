@@ -535,6 +535,12 @@ pass_leaves(nir_call_instr *call, unsigned *idx, const struct air_val *v)
 };''')
     p.write_text(s)
     p=air/'air_metal.c';s=p.read_text()
+    # iOS 26 (26b6a): CoreAnimation's waitUntilCompleted reaches finish_or_say_why while a command buffer still
+    # runs on the A618 (RBBM_STATUS busy, all commands consumed) for 3-5 s; the 2 s limit marked the device lost
+    # and the next compute pipeline failed -> "Metal failed to build compute pipeline". Same 20 s as completion.
+    s=replace(s,'#define RWA_FENCE_TIMEOUT_NS 2000000000ull','#define RWA_FENCE_TIMEOUT_NS 20000000000ull')
+    s=replace(s,'"the GPU did not finish the %s within two seconds. Anything in "',
+                '"the GPU did not finish the %s within twenty seconds. Anything in "')
     s=replace(s,'#include "air_metal.h"','#include "sweet_native_ext.h"\n#include "util/u_framebuffer.h"\n#include <math.h>\n#include <time.h>\n#include "util/u_upload_mgr.h"')
     s=replace(s,'#include "nir_air.h"','#include "nir_air.h"\n#include "air_live_resources.inc"\n#include "air_stage_link.inc"\n#include "air_vertex_exports.inc"')
     # Metal ALWAYS enables primitive restart for indexed strip draws (0xFFFF /
@@ -1418,8 +1424,8 @@ ensure_function_encoder(void)
         '\t    vertex != nil ? [[vertex name] UTF8String] : "(generated)", [[fragment name] UTF8String], descriptor);\n'
         '\treturn [[SweetNativeMetalRenderPipeline alloc] initWithRedwoodDevice:self\n')
     s=replace(s,'\tif (mesa.render_draw([work->render render], &draw, why, size) != 0) {',
+        '\tconst unsigned dl = native_drawlog_next();\n'
         '\t{\n'
-        '\t\tconst unsigned dl = native_drawlog_next();\n'
         '\t\tif (dl)\n'
         '\t\t\tnative_drawlog_draw(dl, [work->render render], (unsigned)work->primitive,\n'
         '\t\t\t    (unsigned)work->vertexStart, (unsigned)work->vertexCount, work->indexBuffer != nil,\n'
@@ -1434,6 +1440,20 @@ ensure_function_encoder(void)
         '\t\t\t    work->buffers, work->bufferOffsets, work->count);\n'
         '\t}\n'
         '\tif (mesa.render_draw([work->render render], &draw, why, size) != 0) {')
+    # DRAWTIME (frontend/SweetNativeDrawLog.inc, iOS 26 slow frames): a timed draw log flushes and waits per draw.
+    s=replace(s,'\t\trw_print("the draw failed: %s\\n", why);\n\t\t[self failWith:why];\n\t\treturn NO;\n\t}\n\treturn YES;\n}\n',
+        '\t\trw_print("the draw failed: %s\\n", why);\n\t\t[self failWith:why];\n\t\treturn NO;\n\t}\n'
+        '\tif (dl && native_drawlog_time_on) {\n'
+        '\t\tstruct timespec t0, t1;\n'
+        '\t\tchar fwhy[256] = {0};\n'
+        '\t\tclock_gettime(CLOCK_MONOTONIC, &t0);\n'
+        '\t\tconst int frc = mesa.finish([[_queue device] mesaDevice], fwhy, sizeof(fwhy));\n'
+        '\t\tclock_gettime(CLOCK_MONOTONIC, &t1);\n'
+        '\t\tfprintf(stderr, "SweetNativeMetal: DRAWTIME %u %lld us%s%s\\n", dl,\n'
+        '\t\t        (long long)((t1.tv_sec - t0.tv_sec) * 1000000LL + (t1.tv_nsec - t0.tv_nsec) / 1000),\n'
+        '\t\t        frc ? " finish failed: " : "", frc ? fwhy : "");\n'
+        '\t}\n'
+        '\treturn YES;\n}\n')
     p.write_text(s)
     shutil.copy2(NATIVE/'frontend/SweetNativeLibrary.inc',src/'SweetNativeLibrary.inc')
     shutil.copy2(NATIVE/'frontend/SweetNativeDrawLog.inc',src/'SweetNativeDrawLog.inc')
