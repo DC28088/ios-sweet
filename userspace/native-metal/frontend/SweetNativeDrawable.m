@@ -32,6 +32,7 @@ struct rwa_texture *rwd_texture_for_surface(struct rwa_device *device,void *surf
      * plane is imported like any other surface whose rows start at that plane's base, with that plane's pitch.
      */
     size_t plane_width=0,plane_height=0,plane_pitch=0;
+    struct rwd_texture_shape ycbcr_shape;   /* the caller's descriptor with a YCbCr plane's own format */
     if(surface_planes==2 && (surface_format==0x34323066u || surface_format==0x34323076u)) {
         if(plane>1)REFUSE("interface: plane %lu of a 2-plane IOSurface",plane);
         uintptr_t pb=(uintptr_t)IOSurfaceGetBaseAddressOfPlane(s,plane),b0=(uintptr_t)IOSurfaceGetBaseAddress(s);
@@ -48,6 +49,14 @@ struct rwa_texture *rwd_texture_for_surface(struct rwa_device *device,void *surf
         if(want->usage&(2|4))
             REFUSE("interface: a written YCbCr IOSurface plane (usage %#x)",want->usage);
         surface_format=plane?'LA08':'A008';   /* compared with the Metal format below: RG8 / R8 */
+        /* 26b7b: CoreAnimation asks for each plane as Metal format 500 (its private YCbCr 4:2:0 bi-planar
+         * format) and samples luma from the plane-0 texture's .r and CbCr from the plane-1 texture's .rg
+         * (UberShader ycbcr_to_rgb): a plane view of 500 is R8 (plane 0) or RG8 (plane 1). */
+        if(want->pixel_format==500) {
+            ycbcr_shape=*want;
+            ycbcr_shape.pixel_format=plane?30:10;
+            want=&ycbcr_shape;
+        }
         plane0_base=pb;
         surface_planes=0;
         plane=0;
