@@ -1,3 +1,14 @@
+## 2026-11-15 18:45 IST: Metal device RUNS in iOS 26 backboardd (26b5d); drawables refused ('&BGA'); build 8
+- native-metal build 7 = CI 43712011039 (9551f9e, SweetMetal2 3e936166): "targetDeviceArchitecture -> cpu 0x1000017
+  sub 0xc" -> MTLLoader passes, library loads, command buffers run; backboardd STABLE (0 crashes, no reboot).
+  Old bundles on the phone: SweetMetal2.bundle.ios16-e0574fa, SweetMetal2.bundle.79ba8c4.
+- Screen dark (USER), SpringBoard restarted on request (367 -> 517): every drawable refused "interface: planar
+  IOSurface textures are not implemented". backboardd's 828x1792 targets are fmt 0x26424741 '&BGA' (lossless BGRA),
+  planes 1, size 5980160 (= 5963776 linear + 16 KiB metadata), bpr 3328 (SWEET SURF log).
+- Fix (build 8 = CI 43713138586, the LAST of the 8 allowed): frontend SweetNativeDrawable.m + transport sweet_drm.cpp
+  import a single-plane '&BGA' surface as linear BGRA starting at plane 0 (base = allocation page). First 4
+  planar surfaces log plane0 offset/bpr. NOTE: no CI builds left in the USER's budget after this one.
+
 ## 2026-11-15 18:00 IST: iOS 26 MTLLoader disassembled; -targetDeviceArchitecture added (native-metal build 7)
 - Phone dyld cache: /System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64e (+.01-.40, ~5 GB). Copied to
   research/ios26/dsc only main + .01/.02 (+ part of .03) and single pages of .33.dylddata/.34.dyldreadonly with dd
