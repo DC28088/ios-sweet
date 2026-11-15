@@ -1,3 +1,22 @@
+## 2026-11-15 23:30 IST: build 17 = uber-shader static initializer evaluated at translation time; frames 5-9 ms
+- Build 15 (CI 43736265140, 2c27672): per-range drop_unread_scratch + constant globals keep shadows -> 26b6c: frag
+  variants 740 -> ~250 instr, cat6 230 -> ~50; slow draws 600 -> 200-270 ms; USER: home screen reached, "extremely
+  laggy 1 frame per minute" (with disasm + drawtime on), dock blur correct, later black screen (backboardd abort,
+  reason lost), then kernel "GPU LOST (quiesce 0xe00002d6 ...)" = kernel 1 s drain limit hit by slow work.
+- Build 16 (CI 43738059096, 00f3794) diagnostic "scratch load stays in <fn>: <global> ...": all remaining loads were
+  initializer-computed flags (has_position, has_dest_N, vry_has_*, vtx_attr_has_*), "bytes not known after the
+  initializer". f0004 initializer = 462 instr, 12 blocks, 4 phis, branches on is_function_constant_defined, uses
+  air.normalize_function_constant_predicate (new in iOS 26) and loads variables it set earlier.
+- Build 17 (CI 43739163337, e0454a4): evaluate_static_initializers (air_pointer_cells.inc) runs the initializer on the
+  AIR at plan time (load/store/select/icmp/casts/binops/phi/br/ret + the two fc intrinsics); run_static_initializers
+  stores the final shadows instead. 26b6e (logs/boot-26b6e.txt): "1 static initializer(s) evaluated at translation
+  time" x4, ZERO "scratch load stays", no slow fences; async completion latency_avg 5-9 ms, max 33-43 ms (was
+  seconds). Bundles kept on phone: .00f3794 (16), .2c27672 (15), .51016d1 (14), .bdc856c (13), ...
+- Phone env: /var/local/sweet-native-env = FD_MESA_DEBUG=sysmem only; no drawlog/drawtime files. Image 26b6 (xnu 2002,
+  sweetwptrkick=1; the kick is harmless and can be dropped). Awaiting USER feel test.
+- Open: kernel 1 s quiesce/drain limit (GPU LOST on slow work); the "vanished after 10-60 min" issue; whether
+  FD_MESA_DEBUG=sysmem is still wanted.
+
 ## 2026-11-15 22:30 IST: slow frames = per-pixel scratch stores in uber shader; fix = native-metal build 15
 - 26b6a (xnu 2002, kernel CI 43730710146, image shim-boot-26b6.img cea2da0f = kernel + wbg ADT + 26b5 cmdline +
   sweetwptrkick=1): slow fences show CP_RB_RPTR == CP_RB_WPTR == next_wptr (all commands consumed) and
