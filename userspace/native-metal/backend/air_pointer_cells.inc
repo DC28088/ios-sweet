@@ -654,6 +654,42 @@ shadow_load(struct air_ctx *c, const struct air_inst *in, struct air_ptr ptr)
    return air_val_ssa(c, nir_build_imm(&c->b, comps, bits, v));
 }
 
+/* Diagnostic (iOS 26, build 16): a load outside the initializers that the
+ * shadows could not answer, which keeps scratch (and so initializer stores)
+ * alive. Names the program-scope variable and why; 200 lines per process. */
+static void
+note_unfolded_scratch_load(struct air_ctx *c, const struct air_inst *in, struct air_ptr ptr)
+{
+   static unsigned told;
+   if (told >= 200 || ptr.class != AIR_PTR_SCRATCH || c->in_static_init || inst_in_static_init(c, in))
+      return;
+   uint64_t off = 0;
+   const bool konst = !ptr.offset || fold_scalar(c, ptr.offset, &off);
+   const struct air_global_plan *pl = NULL;
+   const char *name = NULL;
+   for (unsigned i = 0; konst && i < c->m->num_globals; i++) {
+      const struct air_global_plan *q = &c->global_plan[i];
+      if (q->skip || q->class != AIR_PTR_SCRATCH || !q->has_offset)
+         continue;
+      const uint64_t size = air_type_alloc_size(c->m, c->m->globals[i]->value_type);
+      if (off >= q->offset && off < q->offset + size) {
+         pl = q;
+         name = c->m->globals[i]->base.name;
+         break;
+      }
+   }
+   const char *why = !konst ? "at a run-time offset" :
+                     !pl ? "not a program-scope variable (an alloca)" :
+                     !pl->shadow ? "no shadow (tainted, no initializer or over 4 KiB)" :
+                     "bytes not known after the initializer";
+   told++;
+   fprintf(stderr, "SweetNativeMetal: scratch load stays in %s: %s byte %llu, %s %s: %s\n",
+           c->fn && c->fn->base.name ? c->fn->base.name : "?", name ? name : "-",
+           (unsigned long long)(pl ? off - pl->offset : off),
+           in->base.type ? (in->base.type->kind == AIR_TYPE_VECTOR ? "vector" : "scalar") : "?",
+           konst ? "" : "(dynamic)", why);
+}
+
 /* Program-scope variables start as their initializers. The donor left them
  * as uninitialized scratch; a load the shadow cannot answer reads these.
  */

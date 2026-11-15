@@ -534,6 +534,22 @@ pass_leaves(nir_call_instr *call, unsigned *idx, const struct air_val *v)
     unsigned native_cull, native_winding, native_fill;
 };''')
     p.write_text(s)
+    # build 16 diagnostic: name each scratch load the shadows cannot answer (air_pointer_cells.inc)
+    p2=air/'air_to_nir.c';s2=p2.read_text()
+    s2=replace(s2,'''      struct air_val *known = p->kind == AIR_VAL_PTR ? shadow_load(c, in, p->ptr) : NULL;
+      if (known) {
+         air_set(c, &in->base, known);
+         return true;
+      }
+''','''      struct air_val *known = p->kind == AIR_VAL_PTR ? shadow_load(c, in, p->ptr) : NULL;
+      if (known) {
+         air_set(c, &in->base, known);
+         return true;
+      }
+      if (p->kind == AIR_VAL_PTR)
+         note_unfolded_scratch_load(c, in, p->ptr);
+''')
+    p2.write_text(s2)
     p=air/'air_metal.c';s=p.read_text()
     # iOS 26 (26b6a): CoreAnimation's waitUntilCompleted reaches finish_or_say_why while a command buffer still
     # runs on the A618 (RBBM_STATUS busy, all commands consumed) for 3-5 s; the 2 s limit marked the device lost
