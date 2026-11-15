@@ -57,6 +57,8 @@ def adapt_backend(donor):
    /* translating the static initializers -- and what they call, which is
     * cached and may be reused by the body: no shadow answers then */
    bool in_static_init;
+   /* the static initializers were evaluated at translation time (air_pointer_cells.inc) */
+   bool static_init_folded;
    /* the executable edges of the function translate_body is in */
    struct air_edges *edges;
 ''')
@@ -474,7 +476,8 @@ pass_leaves(nir_call_instr *call, unsigned *idx, const struct air_val *v)
          return true;
       }''')
     s=replace(s,'static void\nrun_static_initializers(struct air_ctx *c)\n{\n',
-                'static void\nrun_static_initializers(struct air_ctx *c)\n{\n   store_initializers(c);\n')
+                'static void\nrun_static_initializers(struct air_ctx *c)\n{\n   store_initializers(c);\n'
+                '   if (c->static_init_folded) {\n      store_folded_shadows(c);\n      return;\n   }\n')
     s=replace(s,'   nir_cursor saved_consts = c->const_cursor;\n',
                 '   nir_cursor saved_consts = c->const_cursor;\n   struct air_edges *saved_edges = c->edges;\n')
     s=replace(s,'   c->const_cursor = saved_consts;\n','   c->const_cursor = saved_consts;\n   c->edges = saved_edges;\n')

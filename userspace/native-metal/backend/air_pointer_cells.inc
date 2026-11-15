@@ -447,6 +447,7 @@ inst_in_static_init_entry(const struct air_ctx *c, const struct air_inst *in)
 
 static bool lay_out_constant(struct air_ctx *c, const struct air_type *t,
                              const struct air_value *v, uint8_t *dst, uint64_t room);
+static void evaluate_static_initializers(struct air_ctx *c);
 
 /* Program-scope memory, known byte by byte at translation time.
  *
@@ -571,6 +572,516 @@ plan_static_constants(struct air_ctx *c)
       if (lay_out_constant(c, g->value_type, g->init, pl->shadow, size))
          memset(pl->shadow_known, 1, size);
    }
+   evaluate_static_initializers(c);
+}
+
+/* -- evaluating the static initializers at translation time ----------------
+ *
+ * iOS 26's uber shaders (f0004/f0005 fixed_*) compute their program-scope
+ * flags in a 12-block static initializer: loads of function constants and of
+ * variables it set a moment earlier, selects, compares, phis after branches on
+ * is_function_constant_defined, air.normalize_function_constant_predicate.
+ * Translated as code, phis and in-initializer loads defeat the shadows and the
+ * initializer's stores ran per pixel (26b6d: has_position, has_dest_N,
+ * vry_has_* "bytes not known"). Every input is known here, so the initializers
+ * are RUN on the AIR: the shadows end as the bytes the GPU would compute, and
+ * run_static_initializers stores those instead of translating the code. Any
+ * operation or address this does not know gives up and changes nothing.
+ */
+struct sev { bool ok; unsigned n; uint8_t b[16]; };
+
+static unsigned
+sev_type_bytes(const struct air_type *t)
+{
+   if (!t)
+      return 0;
+   if (t->kind == AIR_TYPE_INT)
+      return t->bits <= 8 ? 1 : t->bits / 8;
+   if (t->kind == AIR_TYPE_HALF)
+      return 2;
+   if (t->kind == AIR_TYPE_FLOAT)
+      return 4;
+   if (t->kind == AIR_TYPE_VECTOR) {
+      unsigned e = sev_type_bytes(t->elem);
+      return e && t->count * e <= 16 ? (unsigned)t->count * e : 0;
+   }
+   return 0;
+}
+
+static uint64_t
+sev_u(const struct sev *v)
+{
+   uint64_t u = 0;
+   for (unsigned i = 0; i < v->n && i < 8; i++)
+      u |= (uint64_t)v->b[i] << (8 * i);
+   return u;
+}
+
+static struct sev
+sev_of_u(uint64_t u, unsigned n)
+{
+   struct sev v = { .ok = n && n <= 8, .n = n };
+   for (unsigned i = 0; i < n && i < 8; i++)
+      v.b[i] = u >> (8 * i);
+   return v;
+}
+
+struct sev_state {
+   struct air_ctx *c;
+   struct hash_table *vals;   /* air_value -> struct sev * */
+   struct hash_table *addrs;  /* air_value -> (global + 1) << 32 | offset */
+};
+
+static struct sev
+sev_get(struct sev_state *st, const struct air_value *v)
+{
+   struct sev bad = { .ok = false };
+   if (!v)
+      return bad;
+   struct hash_entry *e = _mesa_hash_table_search(st->vals, v);
+   if (e)
+      return *(struct sev *)e->data;
+   const struct air_constant *k = air_value_as_constant(v);
+   unsigned n = sev_type_bytes(v->type);
+   if (!k || !n)
+      return bad;
+   struct sev r = { .ok = true, .n = n };
+   switch (k->ckind) {
+   case AIR_CONST_INT:
+   case AIR_CONST_FLOAT:
+      if (n > 8)
+         return bad;
+      return sev_of_u(k->u, n);
+   case AIR_CONST_NULL:
+   case AIR_CONST_UNDEF:
+   case AIR_CONST_POISON:
+      return r;   /* zero bytes; any value refines undef */
+   case AIR_CONST_DATA:
+   case AIR_CONST_AGGREGATE: {
+      if (v->type->kind != AIR_TYPE_VECTOR)
+         return bad;
+      unsigned eb = sev_type_bytes(v->type->elem);
+      for (unsigned i = 0; i < k->num_elems && (i + 1) * eb <= n; i++) {
+         uint64_t u;
+         if (k->ckind == AIR_CONST_DATA)
+            u = k->data[i];
+         else {
+            struct sev ev = sev_get(st, k->elems[i]);
+            if (!ev.ok)
+               return bad;
+            u = sev_u(&ev);
+         }
+         for (unsigned b = 0; b < eb; b++)
+            r.b[i * eb + b] = u >> (8 * b);
+      }
+      return r;
+   }
+   default:
+      return bad;
+   }
+}
+
+static void
+sev_set(struct sev_state *st, const struct air_value *v, struct sev r)
+{
+   struct sev *p = ralloc(st->c->mem_ctx, struct sev);
+   *p = r;
+   _mesa_hash_table_insert(st->vals, v, p);
+}
+
+/* global index and byte offset that ADDRESS V names */
+static bool
+sev_addr(struct sev_state *st, const struct air_value *v, int *g, uint64_t *off,
+         unsigned depth)
+{
+   if (!v || depth > 16)
+      return false;
+   int gi = global_index(st->c, v);
+   if (gi >= 0) {
+      *g = gi;
+      *off = 0;
+      return true;
+   }
+   struct hash_entry *e = _mesa_hash_table_search(st->addrs, v);
+   if (e) {
+      uint64_t a = (uint64_t)(uintptr_t)e->data;
+      *g = (int)(a >> 32) - 1;
+      *off = a & 0xffffffffu;
+      return true;
+   }
+   const struct air_constant *k = air_value_as_constant(v);
+   if (!k || k->ckind != AIR_CONST_EXPR || !k->num_operands)
+      return false;
+   if (k->expr_op == AIR_OP_CAST)
+      return (k->expr_sub == AIR_CAST_BITCAST || k->expr_sub == AIR_CAST_ADDRSPACECAST) &&
+             sev_addr(st, k->operands[0], g, off, depth + 1);
+   if (k->expr_op != AIR_OP_GEP || !sev_addr(st, k->operands[0], g, off, depth + 1))
+      return false;
+   const struct air_type *t = k->src_type;
+   for (unsigned i = 1; i < k->num_operands; i++) {
+      uint64_t idx;
+      if (!air_const_uint(k->operands[i], &idx) || !t)
+         return false;
+      if (i == 1) {
+         *off += idx * air_type_alloc_size(st->c->m, t);
+      } else if (t->kind == AIR_TYPE_STRUCT) {
+         if (idx >= t->num_members)
+            return false;
+         *off += air_struct_member_offset(st->c->m, t, idx);
+         t = t->members[idx];
+      } else if (t->kind == AIR_TYPE_ARRAY || t->kind == AIR_TYPE_VECTOR) {
+         *off += idx * (t->kind == AIR_TYPE_ARRAY ? air_type_alloc_size(st->c->m, t->elem)
+                                                  : sev_type_bytes(t->elem));
+         t = t->elem;
+      } else {
+         return false;
+      }
+   }
+   return true;
+}
+
+static bool
+sev_fc_value(const struct air_ctx *c, unsigned index, uint64_t *bits)
+{
+   for (unsigned i = 0; c->options && i < c->options->num_constants; i++)
+      if (c->options->constants[i].index == index) {
+         *bits = c->options->constants[i].bits;
+         return true;
+      }
+   return false;
+}
+
+static bool
+sev_load(struct sev_state *st, int g, uint64_t off, unsigned n, struct sev *out)
+{
+   struct air_ctx *c = st->c;
+   const struct air_global_plan *pl = &c->global_plan[g];
+   const struct air_global *gl = c->m->globals[g];
+   *out = (struct sev){ .ok = true, .n = n };
+   if (pl->class == AIR_PTR_FUNCTION_CONSTANT) {
+      uint64_t bits = 0;
+      (void)sev_fc_value(c, pl->binding, &bits);   /* undefined: 0 refines undef */
+      if (off + n > 8)
+         return false;
+      for (unsigned b = 0; b < n; b++)
+         out->b[b] = bits >> (8 * (off + b));
+      return true;
+   }
+   if (pl->shadow) {
+      if (off + n > pl->shadow_size)
+         return false;
+      for (unsigned b = 0; b < n; b++) {
+         if (!pl->shadow_known[off + b])
+            return false;
+         out->b[b] = pl->shadow[off + b];
+      }
+      return true;
+   }
+   if (gl->is_const && gl->init) {
+      uint64_t size = air_type_alloc_size(c->m, gl->value_type);
+      if (!size || size > 4096 || off + n > size)
+         return false;
+      uint8_t *bytes = rzalloc_size(c->mem_ctx, size);
+      if (!lay_out_constant(c, gl->value_type, gl->init, bytes, size))
+         return false;
+      memcpy(out->b, bytes + off, n);
+      return true;
+   }
+   return false;
+}
+
+static int64_t
+sev_s(uint64_t u, unsigned bits)
+{
+   return bits >= 64 ? (int64_t)u : (int64_t)(u << (64 - bits)) >> (64 - bits);
+}
+
+static bool
+sev_run(struct sev_state *st, const struct air_function *f)
+{
+   struct air_ctx *c = st->c;
+   const struct air_block *b = &f->blocks[0], *prev = NULL;
+   for (unsigned steps = 0; steps < 100000; steps++) {
+      const struct air_block *next = NULL;
+      for (unsigned ii = 0; ii < b->num_insts; ii++) {
+         const struct air_inst *in = b->insts[ii];
+         const unsigned n = sev_type_bytes(in->base.type);
+         switch (in->op) {
+         case AIR_OP_PHI: {
+            bool found = false;
+            for (unsigned k = 0; k < in->num_targets && k < in->num_operands; k++)
+               if (in->targets[k] == prev) {
+                  struct sev v = sev_get(st, in->operands[k]);
+                  if (!v.ok)
+                     return false;
+                  sev_set(st, &in->base, v);
+                  found = true;
+                  break;
+               }
+            if (!found)
+               return false;
+            break;
+         }
+         case AIR_OP_LOAD: {
+            int g;
+            uint64_t off;
+            struct sev v;
+            if (in->is_volatile || !n || !sev_addr(st, in->operands[0], &g, &off, 0) ||
+                !sev_load(st, g, off, n, &v))
+               return false;
+            sev_set(st, &in->base, v);
+            break;
+         }
+         case AIR_OP_STORE: {
+            int g;
+            uint64_t off;
+            struct sev v = sev_get(st, in->operands[0]);
+            if (in->is_volatile || !v.ok || !sev_addr(st, in->operands[1], &g, &off, 0))
+               return false;
+            struct air_global_plan *pl = &c->global_plan[g];
+            if (!pl->shadow || off + v.n > pl->shadow_size)
+               return false;
+            for (unsigned i = 0; i < v.n; i++) {
+               pl->shadow[off + i] = v.b[i];
+               pl->shadow_known[off + i] = 1;
+            }
+            break;
+         }
+         case AIR_OP_GEP:
+         case AIR_OP_CAST: {
+            if (in->op == AIR_OP_CAST && in->base.type->kind != AIR_TYPE_POINTER) {
+               struct sev v = sev_get(st, in->operands[0]);
+               unsigned bits = in->base.type->kind == AIR_TYPE_INT ? in->base.type->bits : 0;
+               unsigned sbits = in->operands[0]->type && in->operands[0]->type->kind == AIR_TYPE_INT
+                                ? in->operands[0]->type->bits : 0;
+               if (!v.ok || !n || n > 8 || (!bits && in->sub != AIR_CAST_BITCAST))
+                  return false;
+               uint64_t u = sev_u(&v);
+               if (in->sub == AIR_CAST_ZEXT || in->sub == AIR_CAST_TRUNC)
+                  u = sbits && sbits < 64 && in->sub == AIR_CAST_ZEXT ? u & ((1ull << sbits) - 1) : u;
+               else if (in->sub == AIR_CAST_SEXT)
+                  u = (uint64_t)sev_s(u, sbits);
+               else if (in->sub != AIR_CAST_BITCAST || v.n != n)
+                  return false;
+               if (bits && bits < 64)
+                  u &= (1ull << bits) - 1;
+               sev_set(st, &in->base, sev_of_u(u, n));
+               break;
+            }
+            /* an address: a constant-index getelementptr or a pointer cast */
+            int g;
+            uint64_t off;
+            if (!sev_addr(st, in->operands[0], &g, &off, 0))
+               return false;
+            if (in->op == AIR_OP_GEP) {
+               const struct air_type *t = in->aux_type;
+               for (unsigned i = 1; i < in->num_operands; i++) {
+                  struct sev iv = sev_get(st, in->operands[i]);
+                  if (!iv.ok || !t)
+                     return false;
+                  uint64_t idx = sev_u(&iv);
+                  if (i == 1)
+                     off += idx * air_type_alloc_size(c->m, t);
+                  else if (t->kind == AIR_TYPE_STRUCT && idx < t->num_members) {
+                     off += air_struct_member_offset(c->m, t, idx);
+                     t = t->members[idx];
+                  } else if (t->kind == AIR_TYPE_ARRAY) {
+                     off += idx * air_type_alloc_size(c->m, t->elem);
+                     t = t->elem;
+                  } else {
+                     return false;
+                  }
+               }
+            }
+            _mesa_hash_table_insert(st->addrs, &in->base,
+                                    (void *)(uintptr_t)(((uint64_t)(g + 1) << 32) | off));
+            break;
+         }
+         case AIR_OP_SELECT: {
+            struct sev cond = sev_get(st, in->operands[0]);
+            if (!cond.ok || cond.n != 1)
+               return false;
+            const struct air_value *pick = cond.b[0] & 1 ? in->operands[1] : in->operands[2];
+            if (in->base.type->kind == AIR_TYPE_POINTER) {
+               int g;
+               uint64_t off;
+               if (!sev_addr(st, pick, &g, &off, 0))
+                  return false;
+               _mesa_hash_table_insert(st->addrs, &in->base,
+                                       (void *)(uintptr_t)(((uint64_t)(g + 1) << 32) | off));
+            } else {
+               struct sev v = sev_get(st, pick);
+               if (!v.ok)
+                  return false;
+               sev_set(st, &in->base, v);
+            }
+            break;
+         }
+         case AIR_OP_CMP: {
+            struct sev x = sev_get(st, in->operands[0]), y = sev_get(st, in->operands[1]);
+            const struct air_type *ot = in->operands[0]->type;
+            if (!x.ok || !y.ok || !ot || ot->kind != AIR_TYPE_INT || x.n > 8)
+               return false;
+            unsigned bits = ot->bits;
+            uint64_t m = bits >= 64 ? ~0ull : (1ull << bits) - 1;
+            uint64_t a = sev_u(&x) & m, bb = sev_u(&y) & m;
+            int64_t sa = sev_s(a, bits), sb = sev_s(bb, bits);
+            bool r;
+            switch (in->sub) {
+            case AIR_ICMP_EQ: r = a == bb; break;
+            case AIR_ICMP_NE: r = a != bb; break;
+            case AIR_ICMP_UGT: r = a > bb; break;
+            case AIR_ICMP_UGE: r = a >= bb; break;
+            case AIR_ICMP_ULT: r = a < bb; break;
+            case AIR_ICMP_ULE: r = a <= bb; break;
+            case AIR_ICMP_SGT: r = sa > sb; break;
+            case AIR_ICMP_SGE: r = sa >= sb; break;
+            case AIR_ICMP_SLT: r = sa < sb; break;
+            case AIR_ICMP_SLE: r = sa <= sb; break;
+            default: return false;
+            }
+            sev_set(st, &in->base, sev_of_u(r, 1));
+            break;
+         }
+         case AIR_OP_BINOP: {
+            struct sev x = sev_get(st, in->operands[0]), y = sev_get(st, in->operands[1]);
+            const struct air_type *t = in->base.type;
+            if (!x.ok || !y.ok || !t || t->kind != AIR_TYPE_INT || n > 8)
+               return false;
+            uint64_t a = sev_u(&x), bb = sev_u(&y), r;
+            switch (in->sub) {
+            case AIR_BINOP_ADD: r = a + bb; break;
+            case AIR_BINOP_SUB: r = a - bb; break;
+            case AIR_BINOP_MUL: r = a * bb; break;
+            case AIR_BINOP_AND: r = a & bb; break;
+            case AIR_BINOP_OR: r = a | bb; break;
+            case AIR_BINOP_XOR: r = a ^ bb; break;
+            case AIR_BINOP_SHL: r = bb < 64 ? a << bb : 0; break;
+            case AIR_BINOP_LSHR: r = bb < 64 ? (a & (t->bits >= 64 ? ~0ull : (1ull << t->bits) - 1)) >> bb : 0; break;
+            default: return false;
+            }
+            if (t->bits < 64)
+               r &= (1ull << t->bits) - 1;
+            sev_set(st, &in->base, sev_of_u(r, n));
+            break;
+         }
+         case AIR_OP_CALL: {
+            const struct air_value *callee = in->num_operands ? in->operands[0] : NULL;
+            const char *name = callee && callee->name ? callee->name : "";
+            if (!strncmp(name, "llvm.lifetime.", 14))
+               break;
+            if (!strcmp(name, "air.is_function_constant_defined")) {
+               int g;
+               uint64_t off, bits;
+               if (in->num_operands != 2 || !sev_addr(st, in->operands[1], &g, &off, 0) ||
+                   c->global_plan[g].class != AIR_PTR_FUNCTION_CONSTANT)
+                  return false;
+               sev_set(st, &in->base, sev_of_u(sev_fc_value(c, c->global_plan[g].binding, &bits), 1));
+               break;
+            }
+            if (!strncmp(name, "air.normalize_function_constant_predicate.", 42)) {
+               struct sev v = in->num_operands == 2 ? sev_get(st, in->operands[1]) : (struct sev){0};
+               if (!v.ok || !n)
+                  return false;
+               sev_set(st, &in->base, sev_of_u(sev_u(&v) != 0, n));
+               break;
+            }
+            return false;
+         }
+         case AIR_OP_BR:
+            if (in->num_targets == 1) {
+               next = in->targets[0];
+            } else if (in->num_targets == 2) {
+               struct sev cond = sev_get(st, in->operands[0]);
+               if (!cond.ok)
+                  return false;
+               next = cond.b[0] & 1 ? in->targets[0] : in->targets[1];
+            } else {
+               return false;
+            }
+            break;
+         case AIR_OP_RET:
+            return true;
+         default:
+            return false;
+         }
+         if (next)
+            break;
+      }
+      if (!next)
+         return false;
+      prev = b;
+      b = next;
+   }
+   return false;
+}
+
+/* Run every static initializer on copies of the shadows; keep the result
+ * only if all of them ran to their ret. */
+static void
+evaluate_static_initializers(struct air_ctx *c)
+{
+   unsigned ng = c->m->num_globals, inits = 0;
+   uint8_t **saved = rzalloc_array(c->mem_ctx, uint8_t *, MAX2(ng, 1));
+   uint8_t **saved_known = rzalloc_array(c->mem_ctx, uint8_t *, MAX2(ng, 1));
+   for (unsigned i = 0; i < ng; i++) {
+      struct air_global_plan *pl = &c->global_plan[i];
+      if (!pl->shadow)
+         continue;
+      saved[i] = ralloc_memdup(c->mem_ctx, pl->shadow, pl->shadow_size);
+      saved_known[i] = ralloc_memdup(c->mem_ctx, pl->shadow_known, pl->shadow_size);
+   }
+   struct sev_state st = {
+      .c = c,
+      .vals = _mesa_pointer_hash_table_create(c->mem_ctx),
+      .addrs = _mesa_pointer_hash_table_create(c->mem_ctx),
+   };
+   bool ok = true;
+   for (unsigned fi = 0; ok && fi < c->m->num_functions; fi++) {
+      const struct air_function *f = c->m->functions[fi];
+      if (!function_is_static_init(f))
+         continue;
+      inits++;
+      ok = f->num_blocks && sev_run(&st, f);
+   }
+   if (!inits)
+      return;
+   if (!ok) {
+      for (unsigned i = 0; i < ng; i++) {
+         struct air_global_plan *pl = &c->global_plan[i];
+         if (!pl->shadow)
+            continue;
+         memcpy(pl->shadow, saved[i], pl->shadow_size);
+         memcpy(pl->shadow_known, saved_known[i], pl->shadow_size);
+      }
+      static unsigned told_fail;
+      if (told_fail++ < 4)
+         fprintf(stderr, "SweetNativeMetal: static initializer not evaluable here; translated as code\n");
+      return;
+   }
+   c->static_init_folded = true;
+   static unsigned told;
+   if (told++ < 4)
+      fprintf(stderr, "SweetNativeMetal: %u static initializer(s) evaluated at translation time\n", inits);
+}
+
+/* run_static_initializers, when the initializers were evaluated: program-scope
+ * variables hold their final bytes (unread ones are dropped later). */
+static void
+store_folded_shadows(struct air_ctx *c)
+{
+   for (unsigned i = 0; i < c->m->num_globals; i++) {
+      const struct air_global_plan *pl = &c->global_plan[i];
+      if (!pl->shadow || !pl->has_offset)
+         continue;
+      for (uint64_t b = 0; b < pl->shadow_size; b++) {
+         if (!pl->shadow_known[b])
+            continue;
+         nir_store_scratch(&c->b, nir_imm_intN_t(&c->b, pl->shadow[b], 8),
+                           nir_imm_int(&c->b, pl->offset + b), .align_mul = 1,
+                           .write_mask = 1);
+      }
+   }
 }
 
 /* the shadowed variable holding scratch byte OFF, or NULL */
@@ -592,7 +1103,7 @@ static void
 shadow_store(struct air_ctx *c, const struct air_inst *in, struct air_ptr ptr, nir_def *value)
 {
    uint64_t off = 0;
-   if (ptr.class != AIR_PTR_SCRATCH || !inst_in_static_init(c, in))
+   if (c->static_init_folded || ptr.class != AIR_PTR_SCRATCH || !inst_in_static_init(c, in))
       return;
    /* getelementptr builds array steps as imul(u2u32(i), stride): fold them */
    if (ptr.offset && !fold_scalar(c, ptr.offset, &off)) {
