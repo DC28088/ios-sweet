@@ -271,10 +271,12 @@ cpp_std = 'c++17'
     # Capture source diagnostics early, before the full Mesa dependency graph.
     src=donor/'userland/src';air=mesa/'src/compiler/air'
     frontend=WORK/'SweetNativeMetal.o';drawable=WORK/'SweetNativeDrawable.o'
+    archobj=WORK/'SweetMTLArchitecture.o'   # iOS 26 -targetDeviceArchitecture (MTLLoader slice selection)
     common=[*flags,'-fno-objc-arc','-fblocks','-Wall','-Werror=implicit-function-declaration',
             '-I'+str(air),'-I'+str(src)]
     run(clang,*common,'-c',src/'redwoodmetal.m','-o',frontend)
     run(clang,*common,'-c',src/'redwooddrawable.m','-o',drawable)
+    run(clang,*common,'-c',ROOT/'userspace/native-metal/frontend/SweetMTLArchitecture.m','-o',archobj)
     logged(WORK/'ninja.log','ninja','-j','3','-C',build,'src/gallium/libSweetNativeBackend.dylib',env=env)
     out=ROOT/'userspace/out';out.mkdir(parents=True,exist_ok=True)
     bundle=out/'SweetNativeMetal.bundle'
@@ -283,7 +285,7 @@ cpp_std = 'c++17'
     shutil.copy2(build/'src/gallium/libSweetNativeBackend.dylib',backend)
     run('install_name_tool','-id','@loader_path/libSweetNativeBackend.dylib',backend)
     executable=bundle/'SweetNativeMetal'
-    run(clangxx,*flags,'-bundle','-Wl,-dead_strip',frontend,drawable,backend,
+    run(clangxx,*flags,'-bundle','-Wl,-dead_strip',frontend,drawable,archobj,backend,
         '-framework','Foundation','-framework','Metal','-framework','IOKit',
         '-framework','IOSurface','-framework','CoreFoundation','-lobjc','-o',executable)
     (bundle/'Info.plist').write_bytes(plistlib.dumps(dict(CFBundleIdentifier='org.sweet.SweetNativeMetal',
@@ -324,7 +326,7 @@ cpp_std = 'c++17'
     alias_obj=WORK/'SweetNativeLegacyAlias.o'
     run(clang,*common,'-c',alias,'-o',alias_obj)
     legacy_exe=legacy/'SweetMetal2'
-    run(clangxx,*flags,'-bundle','-Wl,-dead_strip',frontend,drawable,alias_obj,
+    run(clangxx,*flags,'-bundle','-Wl,-dead_strip',frontend,drawable,archobj,alias_obj,
         legacy/'libSweetNativeBackend.dylib','-framework','Foundation',
         '-framework','Metal','-framework','IOKit','-framework','IOSurface',
         '-framework','CoreFoundation','-lobjc','-o',legacy_exe)
