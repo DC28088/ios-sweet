@@ -1,3 +1,12 @@
+## 2026-11-15 20:00 IST: build 10: samplers OK; nested insertvalue on poison array refused; build 11
+- native-metal build 10 = CI 43715967873 (backend 50c18ff9; previous kept as SweetMetal2.bundle.6a9129f): no sampler
+  refusals; pipelines (com.apple.coreanimation.PBGRAXm_A2Xhf) refused "instruction: an aggregate index out of its
+  value (block 30, instruction 12, opcode 19)"; 3 aborts -> reboot. USER: "crashed".
+- Offline (airtest/agg + ../agg26.txt): opcode 19 = INSERTVAL; fixed_frag_lph_cph/_cpf block 30 inst 12 =
+  insertvalue with 2 indices into a POISON [N x struct] constant; donor air_constant_val left undef/poison aggregate
+  elements NULL. Fix (prepare-sweet-native-metal.py): nested struct/array elements are created as empty aggregates.
+  native-metal build 11 = CI 43717026646.
+
 ## 2026-11-15 19:30 IST: build 9: no missing selectors; pipelines refused (iOS 26 inline sampler layout); build 10
 - native-metal build 9 = CI 43714935271 (6a9129f, SweetMetal2 ccb460d4; previous kept as SweetMetal2.bundle.35ec3ed):
   "iOS 26 fallbacks on 16 of 19 classes", ZERO "unimplemented -[...]" lines; backboardd aborted "Metal failed to build
