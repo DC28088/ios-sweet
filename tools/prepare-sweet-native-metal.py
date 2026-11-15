@@ -509,6 +509,68 @@ pass_leaves(nir_call_instr *call, unsigned *idx, const struct air_val *v)
                 '         add_varying(c, md_key_str(node, "air.fragment_input"), slot, air_nir_components(t), node);')
     p.write_text(s)
     p=air/'air_intrinsics.c';s=p.read_text()
+    # iOS 26 (26b6f): texture.read() compiles to air.read_texture_*(tex, air.get_read_sampler(), coord, <int offset>,
+    # lod, ...): a placeholder sampler after the texture and an integer offset after the coordinate, neither in the
+    # iOS 16 form. compute_average_luma was refused "intrinsic: air.get_read_sampler" -> backboardd abort on app open.
+    s=replace(s,'   if (!strcmp(n.part[0], "is_function_constant_defined"))\n      return fc_defined_op(c, in);\n',
+        '   if (!strcmp(n.part[0], "is_function_constant_defined"))\n      return fc_defined_op(c, in);\n'
+        '   if (!strcmp(n.part[0], "get_read_sampler")) {\n'
+        '      /* a read takes no sampler state: a placeholder only read_texture_* skips */\n'
+        '      struct air_ptr none = { .class = AIR_PTR_NONE };\n'
+        '      air_set(c, &in->base, air_val_ptr(c, none));\n'
+        '      return true;\n'
+        '   }\n')
+    s=replace(s,
+        '   if (have_sampler) {\n'
+        '      if (!tex_handle(c, in, arg, AIR_PTR_SAMPLER, &samp))\n'
+        '         return false;\n'
+        '      arg++;\n'
+        '   }\n',
+        '   if (have_sampler) {\n'
+        '      if (!tex_handle(c, in, arg, AIR_PTR_SAMPLER, &samp))\n'
+        '         return false;\n'
+        '      arg++;\n'
+        '   }\n'
+        '   /* iOS 26 read: the air.get_read_sampler() placeholder after the texture */\n'
+        '   bool read26 = !strcmp(t.op, "read") && in->num_operands > arg && in->operands[arg]->type &&\n'
+        '                 in->operands[arg]->type->kind == AIR_TYPE_POINTER;\n'
+        '   if (read26)\n'
+        '      arg++;\n')
+    s=replace(s,
+        '   nir_def *coord = tex_coord_and_layer(c, in, &t, n, &arg, ncoord);\n'
+        '   if (!coord)\n'
+        '      return false;\n'
+        '\n'
+        '   if (!strcmp(t.op, "read") && tex.is_image) {\n',
+        '   nir_def *coord = tex_coord_and_layer(c, in, &t, n, &arg, ncoord);\n'
+        '   if (!coord)\n'
+        '      return false;\n'
+        '   /* and the iOS 26 read: an integer texel offset after the coordinate */\n'
+        '   nir_def *read_offset = NULL;\n'
+        '   if (read26) {\n'
+        '      if (in->num_operands <= arg || !(read_offset = air_get_ssa(c, in->operands[arg++])))\n'
+        '         return false;\n'
+        '      if (all_zero(read_offset))\n'
+        '         read_offset = NULL;\n'
+        '   }\n'
+        '\n'
+        '   if (!strcmp(t.op, "read") && tex.is_image) {\n'
+        '      if (read_offset)\n'
+        '         return air_error(c, "intrinsic: air.%s of an image with a texel offset", n->part[0]);\n')
+    s=replace(s,
+        '      op = t.is_ms ? nir_texop_txf_ms : nir_texop_txf;\n'
+        '      srcs[nsrc++] = (nir_tex_src){\n'
+        '         .src_type = t.is_ms ? nir_tex_src_ms_index : nir_tex_src_lod,\n'
+        '         .src = nir_src_for_ssa(which),\n'
+        '      };\n',
+        '      op = t.is_ms ? nir_texop_txf_ms : nir_texop_txf;\n'
+        '      srcs[nsrc++] = (nir_tex_src){\n'
+        '         .src_type = t.is_ms ? nir_tex_src_ms_index : nir_tex_src_lod,\n'
+        '         .src = nir_src_for_ssa(which),\n'
+        '      };\n'
+        '      if (read_offset)\n'
+        '         srcs[nsrc++] = (nir_tex_src){ .src_type = nir_tex_src_offset,\n'
+        '                                       .src = nir_src_for_ssa(nir_u2u32(&c->b, read_offset)) };\n')
     s=replace(s,'   struct air_tex_name t;\n   if (!parse_tex_name(n->part[0], &t))\n','''   /* metal::texture2d() and its kin: a NULL handle, which is no binding. Every
     * member but is_null_texture is undefined on one, so a use that reaches
     * tex_handle is refused there; the QuartzCore uber shaders only phi it with
