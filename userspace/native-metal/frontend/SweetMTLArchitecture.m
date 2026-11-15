@@ -67,6 +67,82 @@ static id sweet_target_device_architecture(id self, SEL _cmd)
 	return sweet_arch;
 }
 
+/*
+ * iOS 26 QuartzCore sends methods the iOS 16 donor objects never had (26b5e: backboardd aborted on
+ * -[SweetNativeMetalCommandBuffer setResponsibleTaskIDs:count:], an NSInvalidArgumentException). One build per
+ * selector is too slow, so every class of this bundle gets -forwardingTargetForSelector: answering a sink: an
+ * unimplemented message is logged once ("SweetNativeMetal: unimplemented -[Class sel] answered 0") and returns
+ * 0 / nil instead of raising. -respondsToSelector: is untouched, so Metal's optional-feature probes are not
+ * fooled. Methods with known meaning get real (no-op) implementations below.
+ */
+#include <dlfcn.h>
+#include <string.h>
+
+@interface SweetMTLSink : NSObject
+@end
+
+@implementation SweetMTLSink
+- (NSMethodSignature *)methodSignatureForSelector:(SEL)sel
+{
+	/* Any number of pointer-sized arguments: the sink reads none of them, returns a zeroed pointer. */
+	unsigned args = 0;
+	for (const char *p = sel_getName(sel); *p; p++) args += (*p == ':');
+	char types[64] = "@@:";
+	for (unsigned i = 0; i < args && i < 16; i++) strlcat(types, "@", sizeof(types));
+	return [NSMethodSignature signatureWithObjCTypes:types];
+}
+- (void)forwardInvocation:(NSInvocation *)inv
+{
+	id zero = nil;
+	[inv setReturnValue:&zero];
+}
+@end
+
+static SweetMTLSink *sweet_sink;
+static NSMutableSet *sweet_told;
+
+static id sweet_forwarding_target(id self, SEL _cmd, SEL sel)
+{
+	(void)_cmd;
+	@synchronized ([SweetMTLSink class]) {
+		NSString *key = [NSString stringWithFormat:@"%s %s", object_getClassName(self), sel_getName(sel)];
+		if (![sweet_told containsObject:key]) {
+			[sweet_told addObject:key];
+			fprintf(stderr, "SweetNativeMetal[%s %d]: unimplemented -[%s %s] answered 0 (iOS 26 caller)\n",
+			    getprogname(), getpid(), object_getClassName(self), sel_getName(sel));
+		}
+	}
+	return sweet_sink;
+}
+
+/* -[MTLCommandBuffer setResponsibleTaskIDs:count:] (iOS 26 QuartzCore): attribution only; nothing to schedule. */
+static void sweet_set_responsible_task_ids(id self, SEL _cmd, const void *ids, unsigned long count)
+{
+	(void)self; (void)_cmd; (void)ids; (void)count;
+}
+
+static void sweet_install_fallbacks(void)
+{
+	sweet_sink = [[SweetMTLSink alloc] init];
+	sweet_told = [[NSMutableSet alloc] init];
+	Dl_info info;
+	if (!dladdr((const void *)sweet_install_fallbacks, &info) || !info.dli_fname) return;
+	unsigned count = 0;
+	const char **names = objc_copyClassNamesForImage(info.dli_fname, &count);
+	SEL fwd = sel_registerName("forwardingTargetForSelector:");
+	unsigned covered = 0;
+	for (unsigned i = 0; i < count; i++) {
+		if (!strncmp(names[i], "SweetMTLSink", 12) || !strncmp(names[i], "SweetMTLArchitecture", 20)) continue;
+		Class c = objc_getClass(names[i]);
+		if (c && class_addMethod(c, fwd, (IMP)sweet_forwarding_target, "@24@0:8:16")) covered++;
+	}
+	free(names);
+	Class cb = objc_getClass("SweetNativeMetalCommandBuffer");
+	if (cb) class_addMethod(cb, sel_registerName("setResponsibleTaskIDs:count:"), (IMP)sweet_set_responsible_task_ids, "v32@0:8^v16Q24");
+	fprintf(stderr, "SweetNativeMetal: iOS 26 fallbacks on %u of %u classes (unimplemented messages answer 0 and are logged)\n",
+	    covered, count);
+}
+
 @interface SweetMTLArchitectureInstaller : NSObject
 @end
 
@@ -84,5 +160,6 @@ static id sweet_target_device_architecture(id self, SEL _cmd)
 	if (!class_addMethod(device, sel, (IMP)sweet_target_device_architecture, "@16@0:8")) {
 		fprintf(stderr, "SweetNativeMetal: SweetNativeMetalDevice already implements targetDeviceArchitecture\n");
 	}
+	sweet_install_fallbacks();
 }
 @end
