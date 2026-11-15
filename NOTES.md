@@ -1,3 +1,24 @@
+## 2026-11-15 22:10 IST: build 12 blur OK, no refusals; slow last-frame fences froze UI; build 13 waits 20 s
+- Build 12 = CI 43727478082 (b7cf321, backend d7e3fbfa; build 11 kept as SweetMetal2.bundle.fc265e2). 26b5 boot
+  logs/boot-26b5i.txt: ZERO pipeline refusals, no backboardd crash, bursts to 47 fps. USER: "homescreen doesn't load.
+  it doesn't get past the lockscreen", later "the time keeps changing from 01 to 02 whenever I touch the screen..
+  nothing else happens". SpringBoard restarted on request (372 -> 514): same.
+- Cause of the freeze (observed): one command buffer per backboardd exceeded the frontend's 2 s completion budget ->
+  rwa_command_poll set d->lost -> every later draw refused (lost device); only forced commits redrew.
+- Draw log (/var/local/sweet-native-drawlog, created AFTER backboardd start; 20000) + build 13 = CI 43728809173
+  (bdc856c, SweetMetal2 b6ffe80a; build 12 kept as SweetMetal2.bundle.b7cf321), installed live (backboardd restart,
+  no reboot): slow fences 437 (3272 ms), 440 (5032 ms), then with FD_MESA_DEBUG=sysmem 584 (3318 ms), 587 (5139 ms);
+  all label com.apple.coreanimation.command-buffer; all FINISH (GPU not hung). Each is the last command buffer
+  before the screen idles; every CA frame ends with std_vert1_lph|luma_boost_lph (f0167, BrimJumpUniforms, reads
+  air.render_target 0 = framebuffer fetch + 128x1 LUT). Fence 437 finished right after the next submission (DRAW
+  528). Kernel "fence retire N" samples (every 120th) show gpu_wait_us=3-5.
+  GUESS (not verified): the last submission before idle is not executed/observed until the GPU is kicked again
+  (WPTR write vs GMU IFPC/AHB fence, or completion detection) -- needs a kernel diagnostic (log observed/
+  lastSubmitted/completedFence = native_adreno_fence_wait[] on slow waits, RPTR/WPTR/RBBM_STATUS).
+- FD_MESA_DEBUG=sysmem (the iOS 16 default; the fresh iOS 26 root had no /var/local/sweet-native-env) made no
+  difference to the slow fences. File left in place = FD_MESA_DEBUG=sysmem.
+- Phone now: 26b5 running, bundle = build 13, backboardd 997 stable (no device lost). Awaiting USER swipe test.
+
 ## 2026-11-15 21:10 IST: build 11: LOCK SCREEN DRAWN BY METAL; blur pipeline refused (by-value [8 x i8]); build 12
 - Build 11 = CI 43717026646 (fc265e2, SweetMetal2 e5f49cbf, backend 7e044e13). First attempt compiled, then failed
   uploading the artifact (CreateArtifact timeout); `gh run rerun --failed` succeeded. Installed over SSH (tar, all 6
