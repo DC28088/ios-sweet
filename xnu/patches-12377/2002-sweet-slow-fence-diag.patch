@@ -1,0 +1,109 @@
+diff --git a/iokit/Kernel/arm/SweetNativeAdrenoClient.cpp b/iokit/Kernel/arm/SweetNativeAdrenoClient.cpp
+index dfe734d..3ed17f3 100644
+--- a/iokit/Kernel/arm/SweetNativeAdrenoClient.cpp
++++ b/iokit/Kernel/arm/SweetNativeAdrenoClient.cpp
+@@ -43,6 +43,7 @@ struct Backend {
+  bool present_locked=false;   // sweetpresentlock=1: present holds the lock across drain and copy
+  bool present_swap_fence=false;   // sweetpresentfence=1: wait for the SwapEnd-time fence
+  bool wait_unlocked=true;   // sweetwaitlock=1: WaitFence spins with the lock held, as before 0144
++ bool wptr_kick=false;   // sweetwptrkick=1 (2002): rewrite CP_RB_WPTR every 20 ms while a fence is slow
+  /* Slot 0 is backboardd's original window. Extra slots are separate 256 MiB
+   * windows of the same 2 GiB arena above it, each with its own queue range,
+   * so one client's IOVAs can never collide with another's. */
+@@ -486,6 +487,40 @@ IOReturn AGXDeviceUserClient::externalMethod(uint32_t selector,IOExternalMethodA
+   }
+  }
+ 
++ /* Sweet 2002: a fence still pending 20 ms after its first poll (iOS 26: the last command buffer before
++  * the UI idles completes 3-5 s late). One snapshot per slow fence (64 per boot), taken before any kick;
++  * with sweetwptrkick=1 the committed WPTR is rewritten every 20 ms until the fence passes. */
++ if(selector==NativeAdrenoMethodWaitFence && backend.ring) {
++  static uint64_t slow_fence,slow_since,slow_kicked_at;static bool slow_told;static unsigned slow_reports,slow_kicks;
++  NativeAdrenoAbiWaitFence request{};memcpy(&request,args->structureInput,sizeof request);
++  const uint64_t now=backend.clock.now_us(backend.clock.cookie);
++  if(result==kIOReturnTimeout) {
++   if(request.fence!=slow_fence) {
++    slow_fence=request.fence;slow_since=slow_kicked_at=now;slow_told=false;slow_kicks=0;
++   } else if(now-slow_since>=20000) {
++    uint32_t d[8];
++    if(!slow_told) {
++     slow_told=true;
++     const IOReturn e=backend.ring->diagnose(d,false);
++     if(slow_reports++<64)
++      IOLog("SWEET RENDER: slow fence %llu pending %llu us: issued=%u completed=%u next_wptr=%#x mem_fence=%u "
++            "mem_rptr=%#x CP_RB_RPTR=%#x CP_RB_WPTR=%#x RBBM_STATUS=%#x diag=%#x kick=%d\n",
++            (unsigned long long)request.fence,(unsigned long long)(now-slow_since),d[0],d[1],d[2],d[3],d[4],
++            d[5],d[6],d[7],e,backend.wptr_kick);
++    }
++    if(backend.wptr_kick && now-slow_kicked_at>=20000) {
++     (void)backend.ring->diagnose(d,true);
++     slow_kicked_at=now;++slow_kicks;
++    }
++   }
++  } else if(request.fence==slow_fence) {
++   if(slow_told && slow_reports<=64)
++    IOLog("SWEET RENDER: slow fence %llu done after %llu us (kicks %u) result=%#x\n",
++          (unsigned long long)request.fence,(unsigned long long)(now-slow_since),slow_kicks,result);
++   slow_fence=0;slow_told=false;
++  }
++ }
++
+  bool pending_poll=false;
+  if(selector==NativeAdrenoMethodWaitFence && result==kIOReturnTimeout) {
+   NativeAdrenoAbiWaitFence request{};memcpy(&request,args->structureInput,sizeof request);
+@@ -617,6 +652,10 @@ extern "C" int sweet_native_adreno_publish(NativeAdrenoVm *vm,NativeAdrenoSubmit
+  backend.pipeline=pipeline!=0;
+  int wait_locked=0;PE_parse_boot_argn("sweetwaitlock",&wait_locked,sizeof(wait_locked));
+  backend.wait_unlocked=wait_locked==0;
++ int wptr_kick=0;PE_parse_boot_argn("sweetwptrkick",&wptr_kick,sizeof(wptr_kick));
++ backend.wptr_kick=wptr_kick!=0;
++ IOLog("SWEET RENDER: slow fences logged after 20 ms; WPTR kick %s (sweetwptrkick=%d)\n",
++   backend.wptr_kick?"every 20 ms":"off",wptr_kick);
+  IOLog("SWEET RENDER: fence waits %s (sweetwaitlock=%d)\n",
+    backend.wait_unlocked?"poll with the lock dropped between checks":"spin under the lock",wait_locked);
+  IOLog("SWEET RENDER: submission pipelining %s (BoFree/close still drain); extra Metal slots=%u\n",
+diff --git a/iokit/Kernel/arm/unixnu/NativeAdrenoRing.cpp b/iokit/Kernel/arm/unixnu/NativeAdrenoRing.cpp
+index 9bd17ad..b56e2f2 100644
+--- a/iokit/Kernel/arm/unixnu/NativeAdrenoRing.cpp
++++ b/iokit/Kernel/arm/unixnu/NativeAdrenoRing.cpp
+@@ -270,6 +270,26 @@ IOReturn NativeAdrenoRing::detach()
+     ring_iova_=fence_iova_=0;next_=rptr_shadow_=seqno_=completed_=submissions_=0;
+     return kIOReturnSuccess;
+ }
++IOReturn NativeAdrenoRing::diagnose(uint32_t out[8],bool kick)
++{
++    for(unsigned i=0;i<8;++i)out[i]=0;
++    if(!attached_ || poisoned_)return kIOReturnNotReady;
++    out[0]=seqno_;out[1]=completed_;out[2]=next_;
++    if(cache_.acquire(cache_.cookie,fence_,fence_bytes_))return kIOReturnIOError;
++    out[3]=fence_[fence_word_];
++    if(a6xx_shadow_) {
++        if(cache_.acquire(cache_.cookie,a6xx_shadow_,sizeof(*a6xx_shadow_)))return kIOReturnIOError;
++        out[4]=*a6xx_shadow_;
++    }
++    (void)io_.read32(io_.cookie,RingRptr,&out[5]);
++    (void)io_.read32(io_.cookie,RingWptr,&out[6]);
++    (void)io_.read32(io_.cookie,0x0210,&out[7]);   /* RBBM_STATUS */
++    if(kick) {
++        if(io_.barrier(io_.cookie))return kIOReturnIOError;
++        if(io_.write32(io_.cookie,RingWptr,next_))return kIOReturnIOError;
++    }
++    return kIOReturnSuccess;
++}
+ IOReturn NativeAdrenoRing::submit(const uint32_t *words,size_t word_count,uint32_t *fence)
+ {
+     return submitWords(words,word_count,fence,false);
+diff --git a/iokit/Kernel/arm/unixnu/NativeAdrenoRing.h b/iokit/Kernel/arm/unixnu/NativeAdrenoRing.h
+index 80e8b00..4b8f15e 100644
+--- a/iokit/Kernel/arm/unixnu/NativeAdrenoRing.h
++++ b/iokit/Kernel/arm/unixnu/NativeAdrenoRing.h
+@@ -113,5 +113,9 @@ public:
+     uint32_t completedFence() const {return completed_;}
+     uint32_t submissions() const {return submissions_;}
+     uint32_t readPointer() const {return rptr_shadow_;}
++    /* Sweet 2002: slow-fence snapshot under the caller's gate. out: [0] last fence issued, [1] completed (bookkept),
++     * [2] next WPTR, [3] fence word in memory, [4] RPTR shadow in memory, [5] CP_RB_RPTR, [6] CP_RB_WPTR,
++     * [7] RBBM_STATUS. kick rewrites CP_RB_WPTR with the committed value (same AHB-fenced write as a submit). */
++    IOReturn diagnose(uint32_t out[8],bool kick);
+ };
+ #endif
