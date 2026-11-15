@@ -1459,6 +1459,16 @@ ensure_function_encoder(void)
         '\t\t\t    work->buffers, work->bufferOffsets, work->count);\n'
         '\t}\n'
         '\tif (mesa.render_draw([work->render render], &draw, why, size) != 0) {')
+    # iOS 26 (26b6e): backboardd aborted 4x "Metal failed to build compute pipeline" with nothing in the log,
+    # because a refused pipeline's reason only went into the NSError. Say it (first 64 per process).
+    s=replace(s,'- (id)fail:(NSError **)error with:(NSString *)reason\n{\n',
+        '- (id)fail:(NSError **)error with:(NSString *)reason\n{\n'
+        '\tstatic unsigned told;\n'
+        '\tif (told++ < 64)\n'
+        '\t\trw_print("pipeline refused: %s\\n", reason != nil ? [reason UTF8String] : "(no reason)");\n')
+    s=replace(s,'\tstruct rwa_compute *compute = mesa.compute_create(_mesa, [air bytes], [air length],\n',
+        '\trw_print("compute pipeline for %s\\n", [[function name] UTF8String]);\n'
+        '\tstruct rwa_compute *compute = mesa.compute_create(_mesa, [air bytes], [air length],\n')
     # DRAWTIME (frontend/SweetNativeDrawLog.inc, iOS 26 slow frames): a timed draw log flushes and waits per draw.
     s=replace(s,'\t\trw_print("the draw failed: %s\\n", why);\n\t\t[self failWith:why];\n\t\treturn NO;\n\t}\n\treturn YES;\n}\n',
         '\t\trw_print("the draw failed: %s\\n", why);\n\t\t[self failWith:why];\n\t\treturn NO;\n\t}\n'
