@@ -557,7 +557,10 @@ plan_static_constants(struct air_ctx *c)
    for (unsigned i = 0; i < ng; i++) {
       struct air_global_plan *pl = &c->global_plan[i];
       const struct air_global *g = c->m->globals[i];
-      if (pl->skip || pl->class != AIR_PTR_SCRATCH || tainted[i] || !g->init)
+      /* An LLVM `constant` is never written, so an address of it handed to a call
+       * (iOS 26 uber shaders pass unused_color_params_cph to apply_color_opcode)
+       * cannot change its bytes: it keeps its shadow whatever else names it. */
+      if (pl->skip || pl->class != AIR_PTR_SCRATCH || (tainted[i] && !g->is_const) || !g->init)
          continue;
       uint64_t size = air_type_alloc_size(c->m, g->value_type);
       if (!size || size > 4096)
@@ -686,32 +689,93 @@ store_initializers(struct air_ctx *c)
    }
 }
 
-/* Scratch nothing reads is dead: after the shadows answer every load of the
+/* The bytes [*lo, *hi) a scratch access touches, when its offset is a constant. */
+static bool
+scratch_access_range(nir_intrinsic_instr *intr, bool store, uint32_t *lo, uint32_t *hi)
+{
+   nir_src *off = store ? &intr->src[1] : &intr->src[0];
+   if (!nir_src_is_const(*off))
+      return false;
+   const nir_def *d = store ? intr->src[0].ssa : &intr->def;
+   const unsigned elem = d->bit_size < 8 ? 1 : d->bit_size / 8;
+   *lo = (uint32_t)nir_src_as_uint(*off);
+   *hi = *lo + elem * d->num_components;
+   return true;
+}
+
+/* Scratch nothing reads is dead: after the shadows answer the loads of the
  * function-constant state, the initializers' stores need not run per pixel.
+ *
+ * Per byte range, not all or nothing (iOS 26, 26b6b ir3 dump: every specialised
+ * fixed_frag_lph_cph kept ~230 stp/ldp and ran 66-600 ms per full-screen draw
+ * because ONE other scratch load survived). A store is dropped when no load
+ * can read any of its bytes; a load at an offset that is not a constant keeps
+ * every store, as before.
  */
 static void
 drop_unread_scratch(nir_shader *nir)
 {
+   nir_opt_constant_folding(nir);
+   unsigned loads = 0;
    nir_foreach_function_impl(impl, nir) {
       nir_foreach_block(block, impl) {
          nir_foreach_instr(instr, block) {
             if (instr->type == nir_instr_type_intrinsic &&
                 nir_instr_as_intrinsic(instr)->intrinsic == nir_intrinsic_load_scratch)
-               return;
+               loads++;
          }
       }
    }
+   uint32_t *ranges = loads ? ralloc_array(nir, uint32_t, 2 * loads) : NULL;
+   unsigned n = 0;
+   if (loads && !ranges)
+      return;
+   nir_foreach_function_impl(impl, nir) {
+      nir_foreach_block(block, impl) {
+         nir_foreach_instr(instr, block) {
+            if (instr->type != nir_instr_type_intrinsic)
+               continue;
+            nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
+            if (intr->intrinsic != nir_intrinsic_load_scratch)
+               continue;
+            if (!scratch_access_range(intr, false, &ranges[2 * n], &ranges[2 * n + 1])) {
+               ralloc_free(ranges);
+               return;   /* a load anywhere: every store stays */
+            }
+            n++;
+         }
+      }
+   }
+   unsigned dropped = 0, kept = 0;
    nir_foreach_function_impl(impl, nir) {
       nir_foreach_block(block, impl) {
          nir_foreach_instr_safe(instr, block) {
-            if (instr->type == nir_instr_type_intrinsic &&
-                nir_instr_as_intrinsic(instr)->intrinsic == nir_intrinsic_store_scratch)
-               nir_instr_remove(instr);
+            if (instr->type != nir_instr_type_intrinsic)
+               continue;
+            nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
+            if (intr->intrinsic != nir_intrinsic_store_scratch)
+               continue;
+            uint32_t lo, hi;
+            bool read = !scratch_access_range(intr, true, &lo, &hi);
+            for (unsigned i = 0; !read && i < n; i++)
+               read = lo < ranges[2 * i + 1] && ranges[2 * i] < hi;
+            if (read) {
+               kept++;
+               continue;
+            }
+            nir_instr_remove(instr);
+            dropped++;
          }
       }
       nir_metadata_preserve(impl, nir_metadata_control_flow);
    }
-   nir->scratch_size = 0;
+   ralloc_free(ranges);
+   if (!n)
+      nir->scratch_size = 0;
+   static unsigned told;
+   if (n && told++ < 16)
+      fprintf(stderr, "SweetNativeMetal: scratch: %u loads stay; %u initializer stores dropped, %u kept\n",
+              n, dropped, kept);
 }
 
 /* -- constant globals --------------------------------------------------- */
