@@ -9,6 +9,8 @@
   setResponsibleTaskIDs:count: and a -forwardingTargetForSelector: fallback on all bundle classes (log once + answer
   0/nil). NEXT build (needs USER OK) lists every remaining missing iOS 26 selector in one boot.
 - Phone on safe image 26a3.
+- USER 2026-11-15: "you are free to do how many ever build you want" (the 8-build limit is lifted). Build 9 =
+  native-metal CI 43714935271 (6a9129f, fallback + setResponsibleTaskIDs).
 
 ## 2026-11-15 18:45 IST: Metal device RUNS in iOS 26 backboardd (26b5d); drawables refused ('&BGA'); build 8
 - native-metal build 7 = CI 43712011039 (9551f9e, SweetMetal2 3e936166): "targetDeviceArchitecture -> cpu 0x1000017
