@@ -86,6 +86,40 @@ air_specialization_check = executable(
 air2nir = executable(""")
     p.write_text(s)
     p=air/'air_to_nir.c';s=p.read_text()
+    # iOS 26 (metalfe-32023) writes an inline sampler's state as a [2 x i64] data constant: word 0 is the
+    # state word iOS 16 wrote as a single i64, word 1 is new (zero in every QuartzCore 23G90 sampler). 26b5f:
+    # "an inline sampler whose state is not a constant" -> "Metal failed to build render pipeline".
+    s=replace(s,'''         uint64_t word = 0;
+         if (g->init && !air_const_uint(g->init, &word)) {
+            air_error(c, "interface: an inline sampler whose state is not a constant");
+            return;
+         }''','''         uint64_t word = 0;
+         if (g->init && !air_const_uint(g->init, &word)) {
+            const struct air_constant *k = g->init->kind == AIR_VALUE_CONSTANT ?
+               (const struct air_constant *)g->init : NULL;
+            uint64_t extra = 0;
+            bool ok = false;
+            if (k && k->ckind == AIR_CONST_DATA && k->num_elems >= 1) {
+               word = k->data[0];
+               extra = k->num_elems > 1 ? k->data[1] : 0;
+               ok = true;
+            } else if (k && k->ckind == AIR_CONST_AGGREGATE && k->num_elems >= 1 &&
+                       air_const_uint(k->elems[0], &word)) {
+               if (k->num_elems > 1)
+                  (void)air_const_uint(k->elems[1], &extra);
+               ok = true;
+            }
+            if (!ok) {
+               air_error(c, "interface: an inline sampler whose state is not a constant");
+               return;
+            }
+            if (extra) {
+               static unsigned told;
+               if (told++ < 8)
+                  fprintf(stderr, "SweetNativeMetal: inline sampler %s second state word %#llx ignored (iOS 26 layout)\\n",
+                          name, (unsigned long long)extra);
+            }
+         }''')
     s=replace(s,'               (*out)[num++].index = idx;',
         '               const char *constant_name = md_str(node, 2);\n               (*out)[num].name = constant_name ? ralloc_strdup(mem_ctx, constant_name) : NULL;\n               (*out)[num++].index = idx;')
     s=replace(s,'   return v && (v->kind == AIR_VAL_PTR || v->kind == AIR_VAL_PTR_SELECT);',
