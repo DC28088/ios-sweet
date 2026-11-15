@@ -1,3 +1,13 @@
+## 2026-11-15 19:30 IST: build 9: no missing selectors; pipelines refused (iOS 26 inline sampler layout); build 10
+- native-metal build 9 = CI 43714935271 (6a9129f, SweetMetal2 ccb460d4; previous kept as SweetMetal2.bundle.35ec3ed):
+  "iOS 26 fallbacks on 16 of 19 classes", ZERO "unimplemented -[...]" lines; backboardd aborted "Metal failed to build
+  render pipeline" after "this render pipeline is refused: interface: an inline sampler whose state is not a constant"
+  (donor air_to_nir.c plan_globals). USER: "it crashed again".
+- Offline (research/ios26/metal/airtest/samp): all 79 __air_sampler_state* globals in iOS 26 QuartzCore are data[2]
+  {state word, 0} (iOS 16: one i64). Fix in tools/prepare-sweet-native-metal.py (replace in air_to_nir.c): word 0,
+  log a nonzero word 1. native-metal build 10 = CI 43715967873.
+- Phone on 26a3.
+
 ## 2026-11-15 19:05 IST: build 8 '&BGA' import WORKS; next: setResponsibleTaskIDs:count: (fix ready, NOT built)
 - native-metal build 8 = CI 43713138586 (35ec3ed, SweetMetal2 01c38531; previous kept as SweetMetal2.bundle.9551f9e):
   "IOSurface 21/22/23 0x26424741 planes 1: plane0 offset 0 bpr 3328 828x1792" -> drawables accepted; backboardd then
