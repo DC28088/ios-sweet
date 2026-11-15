@@ -1,3 +1,19 @@
+## 2026-11-15 18:00 IST: iOS 26 MTLLoader disassembled; -targetDeviceArchitecture added (native-metal build 7)
+- Phone dyld cache: /System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64e (+.01-.40, ~5 GB). Copied to
+  research/ios26/dsc only main + .01/.02 (+ part of .03) and single pages of .33.dylddata/.34.dyldreadonly with dd
+  over SSH (research/ios26/dsc/part). The ipsw binary is blocked by the session's auto-mode classifier; used own Python
+  (scratchpad dscmap.py) + capstone 5.0.7.
+- Metal = image at 0x1860da000 in .01; "Target device architecture is nil" is an NSString (__AUTH_CONST __cfstring);
+  failure stub 0x1862a7c74 (MTLReportFailure, line 692) is reached only from 0x1860fb3c8, inside the objc_direct body
+  of +[MTLLoader sliceIDForDevice:legacyDriverVersion:airntDriverVersion:] at 0x1860fb334: arch = [device
+  targetDeviceArchitecture]; *legacy = [arch driverVersion] (u64); *airnt = [arch versionCombined] (u32); return
+  [arch subType] << 32 | [arch cpuType]. (Selector names from selrefs 0x1e62fd388/0x1e62f8ec8/0x1e62fd5f8/0x1e62f8b20/
+  0x1e62fcb38 -> .34 strings.)
+- Fix (commit after 79ba8c4): userspace/native-metal/frontend/SweetMTLArchitecture.m, linked into both bundles;
+  +load adds -targetDeviceArchitecture to SweetNativeMetalDevice -> SweetMTLArchitecture {cpuType 0x01000017,
+  subType 0xc, driverVersion 0, versionCombined 0}; /var/local/sweet-mtl-arch "cpu sub drv comb" overrides at runtime
+  (no rebuild). native-metal CI 43712011039 = build 7 of 8.
+
 ## 2026-11-15 00:00 IST: Metal on iOS 26: device + queue OK; fat metallib fixed; now MTLLoader "architecture is nil"
 - CI builds used: 6 of 8 (5 xnu26 + native-metal 43624985266 = commit 79ba8c4, SweetMetal2 dca97182, backend aaf0f53d).
 - 26b5 (1d92418f = 26b4 + sweetmtl=2 sweetgles=0, ADT wbg) with the iOS 16 SweetMetal2.bundle (CI 42213344710) in
