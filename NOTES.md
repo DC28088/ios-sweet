@@ -1,3 +1,27 @@
+## 2026-11-15 22:30 IST: slow frames = per-pixel scratch stores in uber shader; fix = native-metal build 15
+- 26b6a (xnu 2002, kernel CI 43730710146, image shim-boot-26b6.img cea2da0f = kernel + wbg ADT + 26b5 cmdline +
+  sweetwptrkick=1): slow fences show CP_RB_RPTR == CP_RB_WPTR == next_wptr (all commands consumed) and
+  RBBM_STATUS 0xe715f5 (SP/HLSQ/UCHE/RB/CCU busy); 28 WPTR kicks changed nothing -> real GPU work, not a lost kick.
+  waitUntilCompleted's own 2 s finish limit (RWA_FENCE_TIMEOUT_NS) marked the device lost -> "Metal failed to build
+  compute pipeline" abort. Build 14 = CI 43734051108 (51016d1; build 13 kept as SweetMetal2.bundle.bdc856c): 20 s
+  finish limit + timed draw log (/var/local/sweet-native-drawtime + drawlog -> "DRAWTIME seq us").
+- DRAWTIME: luma_boost 0.2 ms; fixed_frag_lph_cph full-screen variants fixed per label at ~600 ms (TimgBvcmA2Xhfn_Isrc,
+  A2S1Xhfu, Tc3sA2S1Xhfu_Idst...) or ~66 ms (TimgBdso..., Tc4p..., TmuaA2Xhf_Isrc_IsrcM1...), plain ones 2-3 ms.
+- Ruled out (observed): colour-program loops (captured constants via /private/var/tmp/sweet-native-capture ->
+  research/ios26/metal/capture-26b6, all 60 named, fc_color_inputs0=0, fc_generic=0; name->index lookup correct).
+- IR3_SHADER_DEBUG=disasm (in /var/local/sweet-native-env) on 26b6b: fixed_frag variants ~740 instr, ~230 cat6,
+  dump total 1947 stp / 355 ldp, systall ~2600, 0 loops; vertex shaders 79 cat6. Cause (from f0004 IR): the static
+  initializer copies all function constants into program-scope globals (scratch); shadows fold their loads, but
+  unused_color_params_cph (LLVM constant, address passed to apply_color_opcode via select) was tainted and kept a
+  load_scratch, and drop_unread_scratch was all-or-nothing -> every initializer store ran per pixel.
+- Fix 2c27672 (air_pointer_cells.inc): constant globals keep their shadow despite escaping into calls;
+  drop_unread_scratch drops each store no load can read (after nir_opt_constant_folding), logs
+  "scratch: N loads stay; D initializer stores dropped, K kept". Native-metal build 15 = CI 43736265140.
+- Gotcha: killing backboardd during a slow draw -> kernel clientClose 0xe00002ca -> "GPU LOST" for the rest of the
+  boot ("no msm device to open", CA falls back to OGL and hits push_surface assert). Reboot (26b6) to recover.
+- Phone: 26b6 boot logs/boot-26b6b.txt, bundle build 14, env FD_MESA_DEBUG=sysmem + IR3_SHADER_DEBUG=disasm,
+  /var/local/sweet-native-drawtime present (remove both debug settings after verifying build 15).
+
 ## 2026-11-15 21:10 IST (phone clock; log mtime 21:04:09): 26b5i vanished -> fastboot, no panic; xnu 2002 building
 - USER: "still just the bar flickering. go ahead with the kernel build", then "it crashed". USB log
   logs/boot-26b5i.txt stops at 21:04:09 with ordinary daemon lines (no panic, no launchd critical line); phone then
