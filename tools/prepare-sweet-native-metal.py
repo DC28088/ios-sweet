@@ -139,6 +139,147 @@ air2nir = executable(""")
             }
          }
          return v;''')
+    # iOS 26 QuartzCore passes a struct's tail padding to a helper by value: variable_blur_downsample_frag_lpf/_lph
+    # and the clamp variants call variable_blur_downsample_base(..., [8 x i8] undef, ...) (26b5h: "an array where a
+    # number belongs, which has no single NIR width (block 0, instruction 0, opcode 7) (block 0, instruction 0,
+    # opcode 17)" -> "Metal failed to build render pipeline"; the refusal was raised while declaring the callee's
+    # parameters and pinned on its first instruction). UberShader<...>::set_lum_clip_on_format (f0004/f0005) also
+    # takes [2 x FragmentShaderConfig::Image] and [3 x i8] WITH values. An array/struct argument takes no NIR
+    # parameter of its own: one that carries nothing binds the caller's empty aggregate (as pointer arguments
+    # already do); one with values is flattened, one NIR parameter per SSA leaf, and rebuilt in the callee.
+    # Either specialises the callee to its call site (the leaf shape comes from the caller's value).
+    s=replace(s,'''      is_param[i] = !ptr;
+      specialised |= ptr;
+   }''','''      const struct air_type *at = f->args[i].type;
+      if (!ptr && at && (at->kind == AIR_TYPE_ARRAY || at->kind == AIR_TYPE_STRUCT)) {
+         if (!argv || !argv[i] ||
+             (argv[i]->kind != AIR_VAL_AGG && !val_carries_nothing(argv[i]))) {
+            air_error(c, "intrinsic: a call passing %s by value as argument %u that is not "
+                         "an aggregate here",
+                      at->kind == AIR_TYPE_ARRAY ? "an array" : "a struct", i);
+            return NULL;
+         }
+         is_param[i] = false;
+         specialised = true;
+         continue;
+      }
+      is_param[i] = !ptr;
+      specialised |= ptr;
+   }''')
+    s=replace(s,'''/* A function of the module, translated as a nir_function so that''','''/* Sweet: an aggregate with no value anywhere in it (undef/poison padding). */
+static bool
+val_carries_nothing(const struct air_val *v)
+{
+   if (!v || v->kind == AIR_VAL_NONE)
+      return true;
+   if (v->kind != AIR_VAL_AGG)
+      return false;
+   for (unsigned i = 0; i < v->num_elems; i++)
+      if (!val_carries_nothing(v->elems[i]))
+         return false;
+   return true;
+}
+
+/* Sweet: an array/struct argument passed with values, one NIR parameter per
+ * SSA leaf (translate_callee decided it is no parameter of its own). */
+static bool
+arg_is_flat(const struct air_function *f, struct air_val **argv, const bool *is_param,
+            unsigned i)
+{
+   const struct air_type *at = f->args[i].type;
+   return argv && argv[i] && !is_param[i] && at &&
+          (at->kind == AIR_TYPE_ARRAY || at->kind == AIR_TYPE_STRUCT) &&
+          argv[i]->kind == AIR_VAL_AGG && !val_holds_ptr(argv[i]) &&
+          !val_carries_nothing(argv[i]);
+}
+
+static unsigned
+val_count_leaves(const struct air_val *v)
+{
+   if (!v)
+      return 0;
+   if (v->kind == AIR_VAL_SSA)
+      return 1;
+   if (v->kind != AIR_VAL_AGG)
+      return 0;
+   unsigned n = 0;
+   for (unsigned i = 0; i < v->num_elems; i++)
+      n += val_count_leaves(v->elems[i]);
+   return n;
+}
+
+static void
+declare_leaves(nir_function *fn, unsigned *idx, const struct air_val *v)
+{
+   if (!v)
+      return;
+   if (v->kind == AIR_VAL_SSA) {
+      fn->params[(*idx)++] = (nir_parameter){
+         .num_components = (uint8_t)v->def->num_components,
+         .bit_size = (uint8_t)v->def->bit_size,
+      };
+      return;
+   }
+   if (v->kind != AIR_VAL_AGG)
+      return;
+   for (unsigned i = 0; i < v->num_elems; i++)
+      declare_leaves(fn, idx, v->elems[i]);
+}
+
+static struct air_val *
+load_leaves(struct air_ctx *c, struct air_val *v, unsigned *pidx)
+{
+   if (!v)
+      return NULL;
+   if (v->kind == AIR_VAL_SSA)
+      return air_val_ssa(c, nir_load_param(&c->b, (*pidx)++));
+   if (v->kind != AIR_VAL_AGG)
+      return v;   /* NONE: no def of the caller in it */
+   struct air_val *r = air_val_agg(c, v->num_elems);
+   for (unsigned i = 0; i < v->num_elems; i++)
+      r->elems[i] = load_leaves(c, v->elems[i], pidx);
+   return r;
+}
+
+static void
+pass_leaves(nir_call_instr *call, unsigned *idx, const struct air_val *v)
+{
+   if (!v)
+      return;
+   if (v->kind == AIR_VAL_SSA) {
+      call->params[(*idx)++] = nir_src_for_ssa(v->def);
+      return;
+   }
+   if (v->kind != AIR_VAL_AGG)
+      return;
+   for (unsigned i = 0; i < v->num_elems; i++)
+      pass_leaves(call, idx, v->elems[i]);
+}
+
+/* A function of the module, translated as a nir_function so that''')
+    s=replace(s,'   unsigned nparams = f->num_args + nret;\n','''   unsigned nparams = f->num_args + nret;
+   for (unsigned i = 0; i < f->num_args; i++)
+      if (arg_is_flat(f, argv, is_param, i))
+         nparams += val_count_leaves(argv[i]);
+''')
+    s=replace(s,'''      if (!is_param[i])
+         continue;
+      const struct air_type *at = f->args[i].type;
+      fn->params[idx++] = (nir_parameter){''','''      if (!is_param[i]) {
+         if (arg_is_flat(f, argv, is_param, i))
+            declare_leaves(fn, &idx, argv[i]);
+         continue;
+      }
+      const struct air_type *at = f->args[i].type;
+      fn->params[idx++] = (nir_parameter){''')
+    s=replace(s,'''      if (!is_param[i])
+         continue;
+      nir_def *a = air_get_ssa(c, in->operands[i + 1]);''','''      if (!is_param[i]) {
+         if (arg_is_flat(f, argv, is_param, i))
+            pass_leaves(call, &idx, argv[i]);
+         continue;
+      }
+      nir_def *a = air_get_ssa(c, in->operands[i + 1]);''')
     s=replace(s,'               (*out)[num++].index = idx;',
         '               const char *constant_name = md_str(node, 2);\n               (*out)[num].name = constant_name ? ralloc_strdup(mem_ctx, constant_name) : NULL;\n               (*out)[num++].index = idx;')
     s=replace(s,'   return v && (v->kind == AIR_VAL_PTR || v->kind == AIR_VAL_PTR_SELECT);',
@@ -353,6 +494,14 @@ air2nir = executable(""")
             a = air_val_ptr(c, rp);
          }
          air_set(c, &f->args[i], a);   /* the caller's own resolution */''')
+    # flattened aggregate arguments (see set_lum_clip_on_format above): rebuilt from their parameters
+    s=replace(s,'''         struct air_val *a = argv[i];
+         if (a->kind == AIR_VAL_PTR && a->ptr.offset) {''','''         if (arg_is_flat(f, argv, is_param, i)) {
+            air_set(c, &f->args[i], load_leaves(c, argv[i], &pidx));
+            continue;
+         }
+         struct air_val *a = argv[i];
+         if (a->kind == AIR_VAL_PTR && a->ptr.offset) {''')
     s=replace(s,'         add_varying(c, name, slot, air_nir_components(t), node);',
                 '         add_varying(c, md_key_str(node, "air.fragment_input"), slot, air_nir_components(t), node);')
     p.write_text(s)
