@@ -590,6 +590,43 @@ pass_leaves(nir_call_instr *call, unsigned *idx, const struct air_val *v)
     shutil.copy2(NATIVE/'backend/air_vertex_exports.inc',air/'air_vertex_exports.inc')
     for name in ('sweet_native_ext.h','sweet_native_ext.c'):shutil.copy2(NATIVE/'backend'/name,air/name)
     p=air/'air_metal.h';s=p.read_text()
+    # iOS 26 (26b6g): compute_average_luma's tg_mem is a [[threadgroup(0)]] buffer sized by
+    # -setThreadgroupMemoryLength:atIndex:; every dispatch was refused (73x "the dispatch failed ... has no
+    # argument for it"). The frontend's copy of this struct gets the same field (adapt_frontend).
+    s=replace(s,'\tstruct rwa_sampler *const *samplers;\n\tunsigned sampler_count;\n};',
+                '\tstruct rwa_sampler *const *samplers;\n\tunsigned sampler_count;\n'
+                '\tunsigned threadgroup_bytes;   /* Sweet: -setThreadgroupMemoryLength:atIndex:0 */\n};')
+    p.write_text(s)
+    p=air/'air_metal.c';s=p.read_text()
+    s=replace(s,'''   if (compute->dynamic_threadgroup) {
+      say(why, why_size, "%s takes a threadgroup buffer whose size only the dispatch can "
+                         "give (Metal's -setThreadgroupMemoryLength:atIndex:), and this "
+                         "call has no argument for it", name);
+      return -1;
+   }
+''','''   if (compute->dynamic_threadgroup && !bindings->threadgroup_bytes) {
+      say(why, why_size, "%s takes a threadgroup buffer whose size only the dispatch can "
+                         "give (Metal's -setThreadgroupMemoryLength:atIndex:), and none "
+                         "was set", name);
+      return -1;
+   }
+''')
+    s=replace(s,'''   struct pipe_grid_info grid = {
+      .work_dim = 3,
+      .block = { group_size[0], group_size[1], group_size[2] },
+      .grid = { groups[0], groups[1], groups[2] },
+   };
+''','''   struct pipe_grid_info grid = {
+      .work_dim = 3,
+      .block = { group_size[0], group_size[1], group_size[2] },
+      .grid = { groups[0], groups[1], groups[2] },
+      /* the dispatch-sized threadgroup buffer, after the shader's own (its base is 0
+       * when it has none, which is what the translator assumes) */
+      .variable_shared_mem = compute->dynamic_threadgroup ? bindings->threadgroup_bytes : 0,
+   };
+''')
+    p.write_text(s)
+    p=air/'air_metal.h';s=p.read_text()
     s=replace(s,'\tunsigned fragment_buffer_table_count;\n};', '''\tunsigned fragment_buffer_table_count;
     /* Native ABI extension, shared by frontend and backend in this build. */
     float native_viewport[4];  /* x,y,width,height */
@@ -1521,6 +1558,22 @@ ensure_function_encoder(void)
         '\t\t\t    work->buffers, work->bufferOffsets, work->count);\n'
         '\t}\n'
         '\tif (mesa.render_draw([work->render render], &draw, why, size) != 0) {')
+    # iOS 26 (26b6g): -setThreadgroupMemoryLength:atIndex: reaches the dispatch (air_metal.h rwa_bindings
+    # threadgroup_bytes; this file uses the shared header by now).
+    s=replace(s,'\tunsigned groups[3], size[3];\n}\n@end',
+                '\tunsigned groups[3], size[3];\n\tunsigned threadgroupBytes;\n}\n@end')
+    s=replace(s,'@implementation SweetNativeMetalComputeEncoder {\n',
+                '@implementation SweetNativeMetalComputeEncoder {\n\tNSUInteger _threadgroupLength;\n')
+    s=replace(s,'\t(void)length; (void)index;   /* only what the shader declares is given, for now */\n',
+                '\tif (index == 0)\n'
+                '\t\t_threadgroupLength = length;\n'
+                '\telse\n'
+                '\t\trw_print("threadgroup memory at index %lu is not supported (only 0)\\n", (unsigned long)index);\n')
+    s=replace(s,'\twork->size[2] = (unsigned)size.depth;\n',
+                '\twork->size[2] = (unsigned)size.depth;\n\twork->threadgroupBytes = (unsigned)_threadgroupLength;\n')
+    s=replace(s,'\t\t\t.samplers = samplers, .sampler_count = work->samplerCount,\n\t\t};\n',
+                '\t\t\t.samplers = samplers, .sampler_count = work->samplerCount,\n'
+                '\t\t\t.threadgroup_bytes = work->threadgroupBytes,\n\t\t};\n')
     # iOS 26 (26b6e): backboardd aborted 4x "Metal failed to build compute pipeline" with nothing in the log,
     # because a refused pipeline's reason only went into the NSError. Say it (first 64 per process).
     s=replace(s,'- (id)fail:(NSError **)error with:(NSString *)reason\n{\n',

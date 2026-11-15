@@ -25,6 +25,33 @@ struct rwa_texture *rwd_texture_for_surface(struct rwa_device *device,void *surf
     uint32_t surface_format=IOSurfaceGetPixelFormat(s);
     size_t surface_planes=IOSurfaceGetPlaneCount(s);
     uintptr_t plane0_base=0;    /* nonzero: the pixels are plane 0's, at this address */
+    /*
+     * iOS 26 wallpapers and photos (26b6g: "planar IOSurface textures are not implemented (0x34323066, 2 planes)"):
+     * 8-bit bi-planar YCbCr, '420f'/'420v' -- plane 0 luma, one byte per texel (Metal R8Unorm), plane 1 CbCr at
+     * half size, two bytes per texel (RG8Unorm). Both planes are linear in the surface's one allocation, so a
+     * plane is imported like any other surface whose rows start at that plane's base, with that plane's pitch.
+     */
+    size_t plane_width=0,plane_height=0,plane_pitch=0;
+    if(surface_planes==2 && (surface_format==0x34323066u || surface_format==0x34323076u)) {
+        if(plane>1)REFUSE("interface: plane %lu of a 2-plane IOSurface",plane);
+        uintptr_t pb=(uintptr_t)IOSurfaceGetBaseAddressOfPlane(s,plane),b0=(uintptr_t)IOSurfaceGetBaseAddress(s);
+        size_t bpe=IOSurfaceGetBytesPerElementOfPlane(s,plane);
+        plane_width=IOSurfaceGetWidthOfPlane(s,plane);plane_height=IOSurfaceGetHeightOfPlane(s,plane);
+        plane_pitch=IOSurfaceGetBytesPerRowOfPlane(s,plane);
+        static unsigned told_yuv;
+        if(told_yuv++<8)fprintf(stderr,"SweetNativeMetal: YCbCr IOSurface %u %#x plane %lu: offset %ld bpe %zu bpr %zu %zux%zu\n",
+            IOSurfaceGetID(s),surface_format,plane,(long)(pb-b0),bpe,plane_pitch,plane_width,plane_height);
+        if(!pb || pb<b0 || (bpe!=1 && bpe!=2) || bpe!=(plane?2u:1u))
+            REFUSE("interface: YCbCr IOSurface plane %lu is not an 8-bit linear plane (bpe %zu)",plane,bpe);
+        if(plane_pitch&63)
+            REFUSE("interface: YCbCr IOSurface plane %lu pitch %zu is not 64-byte aligned",plane,plane_pitch);
+        if(want->usage&(2|4))
+            REFUSE("interface: a written YCbCr IOSurface plane (usage %#x)",want->usage);
+        surface_format=plane?'LA08':'A008';   /* compared with the Metal format below: RG8 / R8 */
+        plane0_base=pb;
+        surface_planes=0;
+        plane=0;
+    }
     if(plane)REFUSE("interface: planar IOSurface textures are not implemented (plane %lu asked)",plane);
     if(surface_planes) {
         uintptr_t p0=(uintptr_t)IOSurfaceGetBaseAddressOfPlane(s,0),b0=(uintptr_t)IOSurfaceGetBaseAddress(s);
@@ -40,6 +67,7 @@ struct rwa_texture *rwd_texture_for_surface(struct rwa_device *device,void *surf
         plane0_base=p0;            /* metadata may precede the pixels: rows start at plane 0 */
     }
     size_t width=IOSurfaceGetWidth(s),height=IOSurfaceGetHeight(s),pitch=IOSurfaceGetBytesPerRow(s);
+    if(plane_width) {width=plane_width;height=plane_height;pitch=plane_pitch;}   /* a YCbCr plane */
     unsigned bpp=0;uint32_t fourcc=0;
     switch(want->pixel_format) {
     case 1:case 10:fourcc='A008';bpp=1;break;

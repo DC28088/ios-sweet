@@ -283,6 +283,15 @@ int surface_description(uint32_t id, struct redwood_drm_surface *out, IOSurfaceR
         IOSurfaceGetWidthOfPlane(s,0)==IOSurfaceGetWidth(s) && IOSurfaceGetHeightOfPlane(s,0)==IOSurfaceGetHeight(s)) {
         planes=0; format='BGRA'; pixel=p0;
     }
+    // iOS 26 wallpapers/photos: 8-bit bi-planar YCbCr ('420f'/'420v'). The whole allocation is one BO; the
+    // frontend lays each plane over it at that plane's offset and pitch (SweetNativeDrawable.m), so the
+    // description is the allocation itself. Planes whose pitch is not 64-byte aligned are refused there.
+    if (planes==2 && (format==0x34323066u || format==0x34323076u) &&
+        !(IOSurfaceGetBytesPerRowOfPlane(s,0)&63) && !(IOSurfaceGetBytesPerRowOfPlane(s,1)&63)) {
+        planes=0;
+        pitch=IOSurfaceGetBytesPerRowOfPlane(s,0);
+        width=IOSurfaceGetWidthOfPlane(s,0); height=IOSurfaceGetHeightOfPlane(s,0);
+    }
     int e=0;
     if (!base || !bytes || bytes>state.params.max_bo_bytes || planes ||
         width>UINT32_MAX || height>UINT32_MAX || pitch>UINT32_MAX ||
@@ -796,7 +805,9 @@ extern "C" int drmPrimeFDToHandle(int,int surface,uint32_t *handle) {
         state.buffers[i].shadow_id==uint32_t(surface)){*handle=i+1;return 0;}
     struct redwood_drm_surface info{};IOSurfaceRef s=nullptr;
     int e=surface_description(surface,&info,&s);
-    const size_t src_pitch=s?IOSurfaceGetBytesPerRow(s):0;
+    // a bi-planar YCbCr surface has no single row pitch: plane 0's (64-byte aligned, surface_description)
+    const size_t src_pitch=!s?0:IOSurfaceGetPlaneCount(s)==2?IOSurfaceGetBytesPerRowOfPlane(s,0):
+                              IOSurfaceGetBytesPerRow(s);
     if(!e && (src_pitch&63)) {
         // Owned BO; the surface stays retained as the shadow's source.
         e=allocate(info.size,MSM_BO_WC,nullptr,handle);
