@@ -1,3 +1,26 @@
+## 2026-11-16 00:30 IST: apps open (build 19); panel copy 10 -> 60 Hz (26b7); build 20 = threadgroup mem + YCbCr
+- Build 17 26b6e: 4x "Metal failed to build compute pipeline" -> launchd "rebooting due to critical process crashes:
+  backboardd" -> fastboot. Build 18 (CI 43740401180, f04d94c) logs "pipeline refused: ..." + "compute pipeline for":
+  compute_average_luma "intrinsic: air.get_read_sampler". Build 19 (CI 43741804496, f7a15ea): iOS 26 texture reads =
+  read_texture_*(tex, air.get_read_sampler(), coord, <int offset>, lod, ...). 26b6g: USER "app opens.. but takes a
+  long time. no animation"; no crash.
+- 10 fps cause (observed): Bergamota's SweetFramebuffer copies to the panel every fFlushTicks vsync ticks,
+  sweetfb_hz default 10 (flushticks=6), CPU copy (mode=copy hw=0 flip=0). Bergamota's hw/flip/zc paths exist but are
+  gated on sweet_board_beryllium() (Poco F1 MDP); our iOS 16 0244-0246 (flip, flush guard, GPU present copy) were
+  NOT merged into 2001 (2001 kept Bergamota's framebuffer). Image 26b7 = 26b6 + sweetfb_hz=60 (shim-boot-26b7.img
+  d963150f): flushticks=1, copy_s 20-35 (CPU copy now the cap). USER (26b6g): "many tearing and disappearing UI
+  elements while opening and closing apps", wants GPU at full clock and the wallpaper fixed.
+- GPU clock (observed): DCVS perf index 6 = 800 MHz voted at bring-up, GPU PLL0 after DCVS L=83 (vco ~1594 MHz);
+  GX clock meter reads 0 (not working). No down-scaling governor exists in our GMU path.
+- 26b6g failures: compute_average_luma every dispatch "takes a threadgroup buffer whose size only the dispatch can
+  give"; "no drawable: planar IOSurface textures are not implemented (0x34323066 '420f', 2 planes)" (likely the
+  wallpaper: PosterBoard/CollectionsPoster/PhotosPosterProvider; only backboardd has a Metal device).
+- Build 20 (CI 43743221717, a72adb7): setThreadgroupMemoryLength -> rwa_bindings.threadgroup_bytes ->
+  pipe_grid_info.variable_shared_mem; '420f'/'420v' planes imported as R8/RG8 at plane base/pitch (frontend
+  SweetNativeDrawable.m + transport sweet_drm.cpp). NOT yet booted.
+- NEXT: install build 20 (26b7); then port 0244-0246 (page flip + GPU present copy) onto Bergamota's
+  SweetFramebuffer for the sweet board (tearing + >35 fps).
+
 ## 2026-11-15 23:30 IST: build 17 = uber-shader static initializer evaluated at translation time; frames 5-9 ms
 - Build 15 (CI 43736265140, 2c27672): per-range drop_unread_scratch + constant globals keep shadows -> 26b6c: frag
   variants 740 -> ~250 instr, cat6 230 -> ~50; slow draws 600 -> 200-270 ms; USER: home screen reached, "extremely
