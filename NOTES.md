@@ -1,3 +1,18 @@
+## 2026-11-16 IST: build 21 (YCbCr as Metal format 500); xnu 2003 (MDP paths on sweet); image 26b8 = page flip
+- 26b7b (build 20): the YCbCr planes are asked as Metal pixel format 500 (CA's private 4:2:0 bi-planar format), so
+  "not a supported linear import"; USER: smoother (<20 fps) but many black flickers; Control Centre only allows two
+  icons (not investigated; NOTES says iOS 16 had it too); wallpaper still missing.
+- Build 21 (CI 43744207346, ac6a662; build 20 kept as SweetMetal2.bundle.a72adb7): plane views of format 500 are
+  R8 (plane 0) / RG8 (plane 1). 26b7c (log logs/boot-26b7c.txt, local only): 0 refusals/dispatch failures/backboardd
+  crashes in 44k lines, but NO "YCbCr IOSurface" line either (phone idle, swaps_s ~0) -> wallpaper path untested.
+  Phone dropped off USB after up_s ~3875 (the unexplained "vanishes" issue; no panic text in the log).
+- xnu 2003 (0fee3e8, kernel CI 43744622200): sweetfb_mdp=1 opens Bergamota's beryllium-only MDP gates (hw QSEED3,
+  direct, zc, flip, scancopy) on sweet; register layout checked against our iOS 16 0181/0244.
+- Image 26b8 (shim-boot-26b8.img 59f6acea, ramdisk == payload; recipe re-verified: rebuild of 26b7 byte-identical) =
+  kernel 43744622200 + sweet-n104-2x-wbg.adt + 26b7 cmdline + sweetbuild=2658 sweetfb_mdp=1 sweetfb_flip=1.
+- NEXT: boot 26b8; check "SWEET MDP:"/"SWEET FB:" flip lines + stats flip=1; ask USER about tearing/flicker and the
+  wallpaper; then sweetfb_hw=1 / scancopy.
+
 ## 2026-11-16 00:30 IST: apps open (build 19); panel copy 10 -> 60 Hz (26b7); build 20 = threadgroup mem + YCbCr
 - Build 17 26b6e: 4x "Metal failed to build compute pipeline" -> launchd "rebooting due to critical process crashes:
   backboardd" -> fastboot. Build 18 (CI 43740401180, f04d94c) logs "pipeline refused: ..." + "compute pipeline for":
