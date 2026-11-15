@@ -1,0 +1,46 @@
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index 68d9292..d44800f 100644
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -62,6 +62,23 @@ extern "C" vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
+ extern "C" void sweet_busy_init(void);          /* iokit/Kernel/arm/SweetBusy.cpp (boot-arg sweetbusy=N) */
+ #include "../../../bsd/dev/sweet_board.h"
+ #include "../../../bsd/dev/sweet_spmi.h"
++/*
++ * Sweet 2003: Bergamota's display-controller paths (page flip, QSEED3 scaling, zero-copy, scan-out copy) were
++ * written for beryllium's SDM845 MDP and are gated on that board. Sweet's SM7150 MDP has the same DPU layout
++ * where these paths touch it (VIG0 0x5000, SSPP SRC0 +0x14, CTL0 0x2000 flush +0x18 VIG0|LM0|CTL, LM0 0x45000,
++ * INTF1 0x6b800 -- our iOS 16 0181/0244). Opt-in only: boot-arg sweetfb_mdp=1 opens the same gates on sweet.
++ */
++static inline bool
++sweet_fb_mdp_board(void)
++{
++	static int cached = -1;
++	if (cached < 0) {
++		int mdp = 0;
++		PE_parse_boot_argn("sweetfb_mdp", &mdp, sizeof(mdp));
++		cached = sweet_board_beryllium() || mdp != 0 ? 1 : 0;
++	}
++	return cached == 1;
++}
+ extern "C" int sweet_smmu_probe_sid(unsigned sid, unsigned level); /* bsd/dev/sweet_smmu.c, read only */
+ extern "C" void sweet_fb_stats_publish(const char *text);       /* bsd/dev/sweet_fb.c: sysctl kern.sweet_fb */
+ extern "C" int sweet_fb_hud;
+@@ -613,7 +630,7 @@ AppleCLCD::start(IOService *provider)
+ 	}
+ 	int hwReq = 0;
+ 	int directReq = 0;
+-	if (sweet_board_beryllium()) {
++	if (sweet_fb_mdp_board()) {
+ 		PE_parse_boot_argn("sweetfb_hw", &hwReq, sizeof(hwReq));
+ 		PE_parse_boot_argn("sweetfb_direct", &directReq, sizeof(directReq));
+ 		if (directReq) {
+@@ -681,7 +698,7 @@ AppleCLCD::start(IOService *provider)
+ 			IOLog("SWEET FB: sweetfb_hud=%d: performance HUD %s (sysctl kern.sweet_fb_hud)\n", hud, hud ? "on" : "off");
+ 		}
+ 	}
+-	if (sweet_board_beryllium()) {
++	if (sweet_fb_mdp_board()) {
+ 		mdpProbe();
+ 		int flip = 0;
+ 		PE_parse_boot_argn("sweetfb_flip", &flip, sizeof(flip));
