@@ -1,3 +1,15 @@
+## 2026-11-15 21:10 IST (phone clock; log mtime 21:04:09): 26b5i vanished -> fastboot, no panic; xnu 2002 building
+- USER: "still just the bar flickering. go ahead with the kernel build", then "it crashed". USB log
+  logs/boot-26b5i.txt stops at 21:04:09 with ordinary daemon lines (no panic, no launchd critical line); phone then
+  in fastboot (battery-soc-ok: yes). Same "vanished after 10-60 min" pattern as 26b4/26b5 earlier (not investigated).
+- xnu/patches-12377/2002-sweet-slow-fence-diag.patch (commit 8625130): WaitFence poll pending >= 20 ms after the
+  first poll of that fence logs once "SWEET RENDER: slow fence N pending ..." (issued/completed/next_wptr/mem_fence/
+  mem_rptr/CP_RB_RPTR/CP_RB_WPTR/RBBM_STATUS) and "slow fence N done after X us (kicks k)"; boot-arg
+  sweetwptrkick=1 rewrites CP_RB_WPTR every 20 ms while pending. Not compiled locally (scratch tree = 2001's new files
+  only). Kernel CI 43730710146. Image plan 26b6 = that kernel + sweet-n104-2x-wbg.adt + 26b5 cmdline +
+  sweetwptrkick=1 (payload-26b5 reproduced byte-identically from kernel-43568108762 + wbg ADT + its cmdline).
+- Risk noted: diagnose() reads GX registers (CP_RB_RPTR/WPTR, RBBM_STATUS) while the GPU may be collapsed.
+
 ## 2026-11-15 22:10 IST: build 12 blur OK, no refusals; slow last-frame fences froze UI; build 13 waits 20 s
 - Build 12 = CI 43727478082 (b7cf321, backend d7e3fbfa; build 11 kept as SweetMetal2.bundle.fc265e2). 26b5 boot
   logs/boot-26b5i.txt: ZERO pipeline refusals, no backboardd crash, bursts to 47 fps. USER: "homescreen doesn't load.
