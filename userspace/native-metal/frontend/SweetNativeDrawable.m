@@ -149,3 +149,17 @@ struct rwa_texture *rwd_texture_for_surface(struct rwa_device *device,void *surf
     return texture;
 #undef REFUSE
 }
+
+/* 26b9b: CoreAnimation reaches a YCbCr plane through a texture view of the Metal format 500 texture it made from
+ * the surface ("a texture view is not implemented" -> chroma missing, wallpaper and app snapshots wrong). The
+ * device frontend asks this for the plane's size and imports that plane again as its own texture. */
+int rwd_ycbcr_plane_size(void *surface,unsigned long plane,unsigned *width,unsigned *height)
+{
+    IOSurfaceRef s=(IOSurfaceRef)surface;
+    if(!s || IOSurfaceGetPlaneCount(s)!=2 || plane>1)return 0;
+    uint32_t f=IOSurfaceGetPixelFormat(s);
+    if(f!=0x34323066u && f!=0x34323076u)return 0;
+    *width=(unsigned)IOSurfaceGetWidthOfPlane(s,plane);
+    *height=(unsigned)IOSurfaceGetHeightOfPlane(s,plane);
+    return 1;
+}

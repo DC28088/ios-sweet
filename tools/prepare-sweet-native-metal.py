@@ -1556,6 +1556,35 @@ static _Atomic unsigned long long native_wait_until_completed;
     # Errors encountered during encoding must survive commit.
     s=replace(s,'    if(_status>=RW_CB_COMMITTED){[self failWith:"command buffer committed twice"];return;}',
                 '    if(_status==RW_CB_ERROR){[self redwoodReturnSlot];[self redwoodDeliverHandlers];return;}\n    if(_status>=RW_CB_COMMITTED){[self failWith:"command buffer committed twice"];return;}')
+    # 26b9b: YCbCr plane views (wallpaper, app snapshots): a view of a format-500 IOSurface texture is that plane
+    # imported again from the same surface -- R8 is plane 0, RG8 plane 1, format 500 itself the slice's plane.
+    s=replace(s,'''{
+	(void)format; (void)type; (void)levels; (void)slices;
+	RW_ONCE("a texture view is not implemented (the compiler library has no "
+		"call that makes a second texture over the same memory); nil\\n");
+	return nil;
+}''','''{
+	extern int rwd_ycbcr_plane_size(void *, unsigned long, unsigned *, unsigned *);
+	unsigned long plane = format == 10 ? 0 : format == 30 ? 1 : (unsigned long)slices.location;
+	unsigned pw = 0, ph = 0;
+	if (_nativeSurface && _shape.pixel_format == 500 && (format == 10 || format == 30 || format == 500) &&
+	    levels.location == 0 && levels.length <= 1 && slices.length <= 1 && slices.location <= 1 &&
+	    rwd_ycbcr_plane_size((void *)_nativeSurface, plane, &pw, &ph)) {
+		MTLTextureDescriptor *d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:(MTLPixelFormat)format
+		                                                                             width:pw height:ph mipmapped:NO];
+		d.usage = (MTLTextureUsage)_shape.usage;
+		static unsigned told;
+		if (told++ < 8)
+			rw_print("YCbCr plane view: format %lu type %lu slices %lu+%lu -> plane %lu %ux%u\\n",
+			         (unsigned long)format, (unsigned long)type, (unsigned long)slices.location,
+			         (unsigned long)slices.length, plane, pw, ph);
+		return [(id)_owner newTextureWithDescriptor:d iosurface:(void *)_nativeSurface plane:plane];
+	}
+	RW_ONCE("a texture view is not implemented (the compiler library has no "
+		"call that makes a second texture over the same memory); nil (format %lu type %lu shape format %u)\\n",
+		(unsigned long)format, (unsigned long)type, _shape.pixel_format);
+	return nil;
+}''')
     s=replace(s,'- (id)iosurface                    { return nil; }',
                 '- (id)iosurface                    { return (id)_nativeSurface; }')
     s=replace(s,'\tstruct rwa_texture_shape _shape;','\tstruct rwa_texture_shape _shape;\n    CFTypeRef _nativeSurface;')
