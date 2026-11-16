@@ -33,6 +33,7 @@ struct rwa_texture *rwd_texture_for_surface(struct rwa_device *device,void *surf
      */
     size_t plane_width=0,plane_height=0,plane_pitch=0;
     struct rwd_texture_shape ycbcr_shape;   /* the caller's descriptor with a YCbCr plane's own format */
+    size_t ycbcr_shadow_offset=0,ycbcr_shadow_bytes=0;   /* nonzero bytes: the planes live in a shadow BO */
     if(surface_planes==2 && (surface_format==0x34323066u || surface_format==0x34323076u)) {
         if(plane>1)REFUSE("interface: plane %lu of a 2-plane IOSurface",plane);
         uintptr_t pb=(uintptr_t)IOSurfaceGetBaseAddressOfPlane(s,plane),b0=(uintptr_t)IOSurfaceGetBaseAddress(s);
@@ -44,8 +45,19 @@ struct rwa_texture *rwd_texture_for_surface(struct rwa_device *device,void *surf
             IOSurfaceGetID(s),surface_format,plane,(long)(pb-b0),bpe,plane_pitch,plane_width,plane_height);
         if(!pb || pb<b0 || (bpe!=1 && bpe!=2) || bpe!=(plane?2u:1u))
             REFUSE("interface: YCbCr IOSurface plane %lu is not an 8-bit linear plane (bpe %zu)",plane,bpe);
-        if(plane_pitch&63)
-            REFUSE("interface: YCbCr IOSurface plane %lu pitch %zu is not 64-byte aligned",plane,plane_pitch);
+        /* 26b8: the wallpaper's planes have 592-byte rows. A618 samples linear rows at 64-byte pitches only, so
+         * such a surface is read through one shadow BO holding both planes, laid out by transport/sweet_drm.cpp
+         * ycbcr_shadow_layout(): plane 0 at its in-page offset from the allocation's first 16 KiB page, plane 1
+         * at the next 4 KiB after plane 0's rounded rows, every row rounded to 64 bytes. */
+        size_t r0=IOSurfaceGetBytesPerRowOfPlane(s,0),r1=IOSurfaceGetBytesPerRowOfPlane(s,1);
+        if((r0|r1)&63) {
+            uintptr_t first=(uintptr_t)IOSurfaceGetBaseAddress(s)&~(uintptr_t)16383;
+            size_t a0=(r0+63)&~(size_t)63,a1=(r1+63)&~(size_t)63;
+            size_t off0=(uintptr_t)IOSurfaceGetBaseAddressOfPlane(s,0)-first;
+            size_t off1=(off0+a0*IOSurfaceGetHeightOfPlane(s,0)+4095)&~(size_t)4095;
+            ycbcr_shadow_offset=plane?off1:off0;
+            ycbcr_shadow_bytes=(off1+a1*IOSurfaceGetHeightOfPlane(s,1)+16383)&~(size_t)16383;
+        }
         if(want->usage&(2|4))
             REFUSE("interface: a written YCbCr IOSurface plane (usage %#x)",want->usage);
         surface_format=plane?'LA08':'A008';   /* compared with the Metal format below: RG8 / R8 */
@@ -110,7 +122,8 @@ struct rwa_texture *rwd_texture_for_surface(struct rwa_device *device,void *surf
     uintptr_t pixels=plane0_base?plane0_base:(uintptr_t)IOSurfaceGetBaseAddress(s),
               base=(uintptr_t)IOSurfaceGetBaseAddress(s)&~(uintptr_t)16383;
     size_t bytes=IOSurfaceGetAllocSize(s),offset=pixels-base;
-    if(!base || offset>=bytes || (height && pitch>(bytes-offset)/height))
+    if(ycbcr_shadow_bytes){bytes=ycbcr_shadow_bytes;offset=ycbcr_shadow_offset;}
+    if(!base || offset>=bytes || (height && gpu_pitch>(bytes-offset)/height))
         REFUSE("interface: IOSurface rows extend beyond its mapped allocation");
     unsigned id=IOSurfaceGetID(s);
     if(!id)REFUSE("IOSurface has no shareable ID");

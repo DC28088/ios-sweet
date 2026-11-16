@@ -41,9 +41,11 @@ struct Buffer {
     // Shadow of an IOSurface whose rows are not 64-byte aligned (A618 linear
     // sampling needs that): an owned BO at the rounded pitch, refilled from
     // the surface on the CPU when its seed changes (see shadow_refill()).
+    // A bi-planar YCbCr surface has one shadow BO holding both planes (ycbcr_shadow_layout()).
+    struct ShadowPlane { uint32_t src_offset = 0, src_pitch = 0, offset = 0, pitch = 0, rows = 0, row_bytes = 0; };
     IOSurfaceRef shadow_src = nullptr;
-    uint32_t shadow_id = 0, shadow_src_pitch = 0, shadow_pitch = 0, shadow_offset = 0;
-    uint32_t shadow_rows = 0, shadow_row_bytes = 0, shadow_seed = 0;
+    ShadowPlane shadow_plane[2];
+    uint32_t shadow_id = 0, shadow_planes = 0, shadow_seed = 0;
     bool shadow_valid = false;
 };
 struct Fence { uint32_t number; uint64_t kernel, queue; };
@@ -266,6 +268,27 @@ int destroy(Buffer &b) {
 // IOSurfaceAddress on Sweet can begin inside its VM allocation. The allocation
 // size includes that prefix. Verify the entire pinned range, rather than import
 // unrelated pages beyond a nominal row length.
+// Shadow layout of an 8-bit bi-planar YCbCr IOSurface ('420f'/'420v') whose plane rows are not 64-byte aligned
+// (26b8: wallpaper planes 579x1254 with 592-byte rows). Both planes go into one owned BO: plane 0 at its own
+// in-page offset from the allocation's first page, plane 1 after it at the next 4 KiB, each plane's rows rounded
+// to 64 bytes. frontend/SweetNativeDrawable.m computes the same offsets for the textures it lays over this BO.
+bool ycbcr_shadow_layout(IOSurfaceRef s, Buffer::ShadowPlane plane[2], uint64_t *bytes) {
+    const uint64_t surface=(uintptr_t)IOSurfaceGetBaseAddress(s), base=surface&~(HostPage-1);
+    uint64_t at=0;
+    for(unsigned i=0;i<2;++i) {
+        const uint64_t pb=(uintptr_t)IOSurfaceGetBaseAddressOfPlane(s,i), pitch=IOSurfaceGetBytesPerRowOfPlane(s,i);
+        const uint64_t rows=IOSurfaceGetHeightOfPlane(s,i), bpe=IOSurfaceGetBytesPerElementOfPlane(s,i);
+        const uint64_t row_bytes=IOSurfaceGetWidthOfPlane(s,i)*bpe, aligned=(pitch+63)&~uint64_t(63);
+        if(!surface || pb<surface || bpe!=(i?2u:1u) || row_bytes>pitch || pb-surface>UINT32_MAX || aligned>UINT32_MAX)
+            return false;
+        const uint64_t offset=i?rounded(at,4096):pb-base;
+        plane[i]={uint32_t(pb-surface),uint32_t(pitch),uint32_t(offset),uint32_t(aligned),uint32_t(rows),uint32_t(row_bytes)};
+        at=offset+aligned*rows;
+        if(at>UINT32_MAX)return false;
+    }
+    *bytes=rounded(at);
+    return true;
+}
 int surface_description(uint32_t id, struct redwood_drm_surface *out, IOSurfaceRef *keep=nullptr) {
     IOSurfaceRef s=IOSurfaceLookup(id);
     if (!s) return ENOENT;
@@ -285,12 +308,14 @@ int surface_description(uint32_t id, struct redwood_drm_surface *out, IOSurfaceR
     }
     // iOS 26 wallpapers/photos: 8-bit bi-planar YCbCr ('420f'/'420v'). The whole allocation is one BO; the
     // frontend lays each plane over it at that plane's offset and pitch (SweetNativeDrawable.m), so the
-    // description is the allocation itself. Planes whose pitch is not 64-byte aligned are refused there.
-    if (planes==2 && (format==0x34323066u || format==0x34323076u) &&
-        !(IOSurfaceGetBytesPerRowOfPlane(s,0)&63) && !(IOSurfaceGetBytesPerRowOfPlane(s,1)&63)) {
+    // description is the allocation itself. Planes whose rows are not 64-byte aligned are read through one
+    // shadow BO holding both planes (ycbcr_shadow_layout(), drmPrimeFDToHandle()).
+    bool ycbcr_shadow=false;
+    if (planes==2 && (format==0x34323066u || format==0x34323076u)) {
         planes=0;
         pitch=IOSurfaceGetBytesPerRowOfPlane(s,0);
         width=IOSurfaceGetWidthOfPlane(s,0); height=IOSurfaceGetHeightOfPlane(s,0);
+        ycbcr_shadow=((IOSurfaceGetBytesPerRowOfPlane(s,0)|IOSurfaceGetBytesPerRowOfPlane(s,1))&63)!=0;
     }
     int e=0;
     if (!base || !bytes || bytes>state.params.max_bo_bytes || planes ||
@@ -307,7 +332,11 @@ int surface_description(uint32_t id, struct redwood_drm_surface *out, IOSurfaceR
         if (kr || region>base || length<base-region || bytes>length-(base-region) ||
             !(info.protection&VM_PROT_READ) || !(info.protection&VM_PROT_WRITE)) e=EINVAL;
     }
-    if (!e && (pitch&63)) {
+    if (!e && ycbcr_shadow) {
+        Buffer::ShadowPlane plane[2]; uint64_t need=0;
+        if(!ycbcr_shadow_layout(s,plane,&need) || !need || need>state.params.max_bo_bytes)e=EINVAL;
+        else {pixel=base+plane[0].offset;pitch=plane[0].pitch;bytes=need;}
+    } else if (!e && (pitch&63)) {
         // Shadow layout (frontend SweetNativeDrawable.m uses the same rule):
         // same in-page offset, rows rounded to 64 bytes, owned storage.
         const uint64_t aligned=(uint64_t(pitch)+63)&~uint64_t(63);
@@ -477,15 +506,25 @@ int shadow_refill(Buffer &b) {
     // Best effort: a refused lock still copies (the seed check repeats it).
     const bool locked=IOSurfaceLock(b.shadow_src,kIOSurfaceLockReadOnly,nullptr)==kIOReturnSuccess;
     const uint8_t *src=(const uint8_t*)IOSurfaceGetBaseAddress(b.shadow_src);
-    uint8_t *dst=(uint8_t*)(uintptr_t)b.cpu+b.shadow_offset;
-    const bool fits=uint64_t(b.shadow_offset)+uint64_t(b.shadow_pitch)*b.shadow_rows<=b.size;
+    bool fits=b.shadow_planes>0;
+    for(uint32_t i=0;i<b.shadow_planes;++i) {
+        const Buffer::ShadowPlane &p=b.shadow_plane[i];
+        fits=fits && uint64_t(p.offset)+uint64_t(p.pitch)*p.rows<=b.size;
+    }
+    uint64_t copied=0;
     if(src && b.cpu && fits)
-        for(uint32_t y=0;y<b.shadow_rows;++y)
-            memcpy(dst+uint64_t(y)*b.shadow_pitch,src+uint64_t(y)*b.shadow_src_pitch,b.shadow_row_bytes);
+        for(uint32_t i=0;i<b.shadow_planes;++i) {
+            const Buffer::ShadowPlane &p=b.shadow_plane[i];
+            uint8_t *dst=(uint8_t*)(uintptr_t)b.cpu+p.offset;
+            const uint8_t *from=src+p.src_offset;
+            for(uint32_t y=0;y<p.rows;++y)
+                memcpy(dst+uint64_t(y)*p.pitch,from+uint64_t(y)*p.src_pitch,p.row_bytes);
+            copied+=uint64_t(p.row_bytes)*p.rows;
+        }
     if(locked)IOSurfaceUnlock(b.shadow_src,kIOSurfaceLockReadOnly,nullptr);
     if(!src || !b.cpu || !fits)return 0;    // keeps the old contents; never fails the frame
     b.shadow_seed=seed;b.shadow_valid=true;
-    ++state.shadow_fills;state.shadow_fill_bytes+=uint64_t(b.shadow_row_bytes)*b.shadow_rows;
+    ++state.shadow_fills;state.shadow_fill_bytes+=copied;
     return 0;
 }
 int submit(drm_msm_gem_submit *s) {
@@ -805,19 +844,32 @@ extern "C" int drmPrimeFDToHandle(int,int surface,uint32_t *handle) {
         state.buffers[i].shadow_id==uint32_t(surface)){*handle=i+1;return 0;}
     struct redwood_drm_surface info{};IOSurfaceRef s=nullptr;
     int e=surface_description(surface,&info,&s);
-    // a bi-planar YCbCr surface has no single row pitch: plane 0's (64-byte aligned, surface_description)
-    const size_t src_pitch=!s?0:IOSurfaceGetPlaneCount(s)==2?IOSurfaceGetBytesPerRowOfPlane(s,0):
+    // a bi-planar YCbCr surface (the only 2-plane kind surface_description accepts) has a row pitch per plane
+    const bool ycbcr=s && IOSurfaceGetPlaneCount(s)==2;
+    const size_t src_pitch=!s?0:ycbcr?(IOSurfaceGetBytesPerRowOfPlane(s,0)|IOSurfaceGetBytesPerRowOfPlane(s,1)):
                               IOSurfaceGetBytesPerRow(s);
-    if(!e && (src_pitch&63)) {
+    if(!e && ycbcr && (src_pitch&63)) {
+        Buffer::ShadowPlane plane[2]; uint64_t need=0;
+        e=ycbcr_shadow_layout(s,plane,&need) && need==info.size?0:EINVAL;
+        if(!e)e=allocate(info.size,MSM_BO_WC,nullptr,handle);
+        Buffer *b=e?nullptr:buffer(*handle);
+        if(b) {
+            b->shadow_src=s;CFRetain(s);b->shadow_id=uint32_t(surface);
+            b->shadow_plane[0]=plane[0];b->shadow_plane[1]=plane[1];b->shadow_planes=2;b->shadow_valid=false;
+            static unsigned logged;
+            if(logged++<8)fprintf(stderr,"SweetNativeMetal: YCbCr shadow BO %u for IOSurface %u: planes at %u/%u, rows %u/%u -> %u/%u bytes\n",
+                *handle,uint32_t(surface),plane[0].offset,plane[1].offset,plane[0].src_pitch,plane[1].src_pitch,
+                plane[0].pitch,plane[1].pitch);
+        }
+    } else if(!e && (src_pitch&63)) {
         // Owned BO; the surface stays retained as the shadow's source.
         e=allocate(info.size,MSM_BO_WC,nullptr,handle);
         Buffer *b=e?nullptr:buffer(*handle);
         const size_t bpe=IOSurfaceGetBytesPerElement(s);
         if(b && bpe && info.width<=src_pitch/bpe) {
             b->shadow_src=s;CFRetain(s);b->shadow_id=uint32_t(surface);
-            b->shadow_src_pitch=uint32_t(src_pitch);b->shadow_pitch=info.row_bytes;
-            b->shadow_offset=info.offset;b->shadow_rows=info.height;
-            b->shadow_row_bytes=uint32_t(info.width*bpe);b->shadow_valid=false;
+            b->shadow_plane[0]={0,uint32_t(src_pitch),info.offset,info.row_bytes,info.height,uint32_t(info.width*bpe)};
+            b->shadow_planes=1;b->shadow_valid=false;
             static unsigned logged;
             if(logged++<16)fprintf(stderr,"SweetNativeMetal: shadow BO %u for IOSurface %u %ux%u rows %zu -> %u bytes\n",
                 *handle,uint32_t(surface),info.width,info.height,src_pitch,info.row_bytes);
