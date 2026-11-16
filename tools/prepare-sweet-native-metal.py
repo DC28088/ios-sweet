@@ -1126,18 +1126,36 @@ static void native_completion_finish(struct native_completion *item)
         if(!native_completion_stats.window)native_completion_stats.window=done;
         if(done-native_completion_stats.window>=5000000000ull) {
             const uint64_t n=native_completion_stats.count;
-            fprintf(stderr,"SweetNativeMetal: async completion window_ms=%llu completed=%llu latency_avg_us=%llu latency_max_us=%llu polls=%llu handlers=%llu failures=%llu wait_until_completed=%llu\n",
+            fprintf(stderr,"SweetNativeMetal: async completion window_ms=%llu completed=%llu latency_avg_us=%llu latency_max_us=%llu polls=%llu handlers=%llu failures=%llu wait_until_completed=%llu late_scheduled=%llu\n",
                 (unsigned long long)((done-native_completion_stats.window)/1000000),(unsigned long long)n,
                 (unsigned long long)(n?native_completion_stats.latency/n/1000:0),
                 (unsigned long long)(native_completion_stats.latency_max/1000),
                 (unsigned long long)native_completion_stats.polls,(unsigned long long)native_completion_stats.handlers,
                 (unsigned long long)native_completion_stats.failures,
-                (unsigned long long)atomic_exchange(&native_wait_until_completed,0));
+                (unsigned long long)atomic_exchange(&native_wait_until_completed,0),native_late_scheduled_handlers);
             memset(&native_completion_stats,0,sizeof native_completion_stats);
             native_completion_stats.window=done;
         }
         [commandBuffer release];
     }
+}
+/*
+ * 26b8 black flicker (guess under test): CoreAnimation hands a frame to the display from the command buffer's
+ * scheduled handler, as Apple's display engine waits for the GPU itself. Sweet's framebuffer copies (or flips to)
+ * the surface at the next vsync without waiting, so a frame still being drawn reaches the panel half-rendered
+ * (black). Scheduled handlers of an asynchronous commit are therefore delivered by the completion thread, just
+ * before the completed handlers, once the fence has retired. /var/local/sweet-native-early-scheduled restores
+ * delivery at submission.
+ */
+static bool native_late_scheduled(void)
+{
+    static int on=-1;
+    if(on<0) {
+        on=access("/var/local/sweet-native-early-scheduled",F_OK)!=0;
+        fprintf(stderr,"SweetNativeMetal: scheduled handlers delivered %s\n",
+                on?"after the GPU fence (late; /var/local/sweet-native-early-scheduled restores early)":"at submission (early)");
+    }
+    return on==1;
 }
 static void *native_completion_main(void *unused)
 {
@@ -1212,6 +1230,8 @@ def adapt_frontend(donor):
 #include <math.h>
 
 static bool native_async_commits(void);
+static bool native_late_scheduled(void);
+static unsigned long long native_late_scheduled_handlers;
 static void native_completion_enqueue(id commandBuffer,struct rwa_device *device,uint64_t fence);
 static _Atomic unsigned long long native_wait_until_completed;
 
@@ -1364,10 +1384,21 @@ static _Atomic unsigned long long native_wait_until_completed;
     s=replace(s,'\tNSMutableArray *_scheduled, *_completed;   /* handler blocks, copied to the heap */',
                 '\tNSMutableArray *_scheduled, *_completed;   /* handler blocks, copied to the heap */\n\tBOOL _nativePending;   /* submitted asynchronously, fence not yet retired */')
     s=replace(s,'\tNSArray *completed = _completed;\n\n\t_scheduled = nil;\n\t_completed = nil;',
-                '\tNSArray *completed = _nativePending ? nil : _completed;\n\n\t_scheduled = nil;\n\tif (!_nativePending)\n\t\t_completed = nil;')
+                '\tNSArray *completed = _nativePending ? nil : _completed;\n'
+                '    /* 26b8 flicker: kept for the completion thread, which delivers them after the fence (native_late_scheduled) */\n'
+                '    if (_nativePending && native_late_scheduled()) scheduled = nil;\n'
+                '    else _scheduled = nil;\n'
+                '\tif (!_nativePending)\n\t\t_completed = nil;')
     s=replace(s,'- (void)redwoodDeliverHandlers\n{','''- (NSArray *)nativeTakeCompleted:(int)rc why:(const char *)why queue:(dispatch_queue_t *)queue
 {
     NSArray *completed=_completed;
+    if(_scheduled) {   /* late scheduled handlers first: Metal's order is scheduled, then completed */
+        NSMutableArray *all=[_scheduled mutableCopy];
+        if(completed)[all addObjectsFromArray:completed];
+        native_late_scheduled_handlers+=[_scheduled count];
+        [_scheduled release];[completed release];
+        _scheduled=nil;completed=all;
+    }
     _completed=nil;_nativePending=NO;
     if(rc)[self failWith:why];
     else if(_status!=RW_CB_ERROR)_status=RW_CB_COMPLETED;
