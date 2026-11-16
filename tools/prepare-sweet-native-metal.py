@@ -509,6 +509,45 @@ pass_leaves(nir_call_instr *call, unsigned *idx, const struct air_val *v)
                 '         add_varying(c, md_key_str(node, "air.fragment_input"), slot, air_nir_components(t), node);')
     p.write_text(s)
     p=air/'air_intrinsics.c';s=p.read_text()
+    # iOS 26 (26b9b, setting a wallpaper): UberShader::apply_color_opcode samples a texture3d colour LUT that its
+    # caller phis with air.get_null_texture_3d() under a function constant; the opcode choosing the LUT branch is a
+    # runtime value, so the branch is translated with the null handle -> "argument 0 is not a texture" -> backboardd
+    # abort. Metal answers zero for a null texture: a sample/read/gather/query of one is zero, a write does nothing.
+    s=replace(s,'   struct air_ptr tex;\n   if (!tex_handle(c, in, 1, AIR_PTR_TEXTURE, &tex))\n      return false;\n',
+        '   {\n'
+        '      struct air_val *tv = air_get(c, in->operands[1]);\n'
+        '      if (tv && tv->kind == AIR_VAL_PTR && tv->ptr.class == AIR_PTR_NONE) {\n'
+        '         const struct air_type *rt = in->base.type;\n'
+        '         if (!rt || rt->kind == AIR_TYPE_VOID)\n'
+        '            return true;   /* a write to no texture */\n'
+        '         if (rt->kind == AIR_TYPE_STRUCT || rt->kind == AIR_TYPE_ARRAY || rt->kind == AIR_TYPE_POINTER)\n'
+        '            return air_error(c, "intrinsic: air.%s of a null texture with an aggregate result", n->part[0]);\n'
+        '         air_set(c, &in->base, air_val_ssa(c, nir_imm_zero(&c->b, air_nir_components(rt),\n'
+        '                                                           air_nir_bit_size(c, rt))));\n'
+        '         return true;\n'
+        '      }\n'
+        '   }\n'
+        '   struct air_ptr tex;\n   if (!tex_handle(c, in, 1, AIR_PTR_TEXTURE, &tex))\n      return false;\n')
+    # iOS 26 (26b9b): the uber shader's other branches call air.fmax3.f16 ("pipeline refused: intrinsic:
+    # air.fmax3.f16" -> backboardd abort); fmin3/median3 are the same family. Metal: max/min/median of three.
+    s=replace(s,'   } else if (!strcmp(op, "fast_fmin") || !strcmp(op, "fmin") || !strcmp(op, "min")) {\n',
+        '   } else if (!strcmp(op, "fast_fmax3") || !strcmp(op, "fmax3") || !strcmp(op, "max3")) {\n'
+        '      r = is_float ? nir_fmax(&c->b, nir_fmax(&c->b, a[0], a[1]), a[2])\n'
+        '                   : (is_signed ? nir_imax(&c->b, nir_imax(&c->b, a[0], a[1]), a[2])\n'
+        '                                : nir_umax(&c->b, nir_umax(&c->b, a[0], a[1]), a[2]));\n'
+        '   } else if (!strcmp(op, "fast_fmin3") || !strcmp(op, "fmin3") || !strcmp(op, "min3")) {\n'
+        '      r = is_float ? nir_fmin(&c->b, nir_fmin(&c->b, a[0], a[1]), a[2])\n'
+        '                   : (is_signed ? nir_imin(&c->b, nir_imin(&c->b, a[0], a[1]), a[2])\n'
+        '                                : nir_umin(&c->b, nir_umin(&c->b, a[0], a[1]), a[2]));\n'
+        '   } else if (!strcmp(op, "fast_fmedian3") || !strcmp(op, "fmedian3") || !strcmp(op, "median3")) {\n'
+        '      /* median(a, b, c) = max(min(a, b), min(max(a, b), c)) */\n'
+        '      if (is_float)\n'
+        '         r = nir_fmax(&c->b, nir_fmin(&c->b, a[0], a[1]), nir_fmin(&c->b, nir_fmax(&c->b, a[0], a[1]), a[2]));\n'
+        '      else if (is_signed)\n'
+        '         r = nir_imax(&c->b, nir_imin(&c->b, a[0], a[1]), nir_imin(&c->b, nir_imax(&c->b, a[0], a[1]), a[2]));\n'
+        '      else\n'
+        '         r = nir_umax(&c->b, nir_umin(&c->b, a[0], a[1]), nir_umin(&c->b, nir_umax(&c->b, a[0], a[1]), a[2]));\n'
+        '   } else if (!strcmp(op, "fast_fmin") || !strcmp(op, "fmin") || !strcmp(op, "min")) {\n')
     # iOS 26 (26b6f): texture.read() compiles to air.read_texture_*(tex, air.get_read_sampler(), coord, <int offset>,
     # lod, ...): a placeholder sampler after the texture and an integer offset after the coordinate, neither in the
     # iOS 16 form. compute_average_luma was refused "intrinsic: air.get_read_sampler" -> backboardd abort on app open.
