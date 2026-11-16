@@ -15,6 +15,12 @@ struct rwa_texture *rwd_texture_for_surface(struct rwa_device *device,void *surf
     if(took)memset(took,0,sizeof(*took));
 #define REFUSE(...) do {snprintf(why,n,__VA_ARGS__);return NULL;} while(0)
     if(!device || !s || !want)REFUSE("IOSurface import requires a device, surface and descriptor");
+    {   /* 26b9c: every IOSurface texture request, first 48 per process (wallpaper / snapshot formats unknown) */
+        static unsigned told_req;
+        if(told_req++<48)fprintf(stderr,"SweetNativeMetal: IOSurface texture request: surface %u %#x planes %zu plane %lu Metal format %u %ux%u type %u usage %#x\n",
+            IOSurfaceGetID(s),IOSurfaceGetPixelFormat(s),IOSurfaceGetPlaneCount(s),plane,want->pixel_format,
+            want->width,want->height,want->type,want->usage);
+    }
     /*
      * iOS 26 backboardd asks for its 828x1792 render targets as '&BGA' (lossless-compressed BGRA, 0x26424741),
      * one plane plus 16 KiB of compression metadata (26b5d: "planar IOSurface textures are not implemented" on

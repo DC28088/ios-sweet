@@ -520,10 +520,11 @@ pass_leaves(nir_call_instr *call, unsigned *idx, const struct air_val *v)
         '         const struct air_type *rt = in->base.type;\n'
         '         if (!rt || rt->kind == AIR_TYPE_VOID)\n'
         '            return true;   /* a write to no texture */\n'
-        '         if (rt->kind == AIR_TYPE_STRUCT || rt->kind == AIR_TYPE_ARRAY || rt->kind == AIR_TYPE_POINTER)\n'
+        '         /* { value, residency } (26b9c: sample_texture_3d) or a bare value */\n'
+        '         const struct air_type *vt = rt->kind == AIR_TYPE_STRUCT && rt->num_members ? rt->members[0] : rt;\n'
+        '         if (vt->kind == AIR_TYPE_STRUCT || vt->kind == AIR_TYPE_ARRAY || vt->kind == AIR_TYPE_POINTER || rt->kind == AIR_TYPE_ARRAY)\n'
         '            return air_error(c, "intrinsic: air.%s of a null texture with an aggregate result", n->part[0]);\n'
-        '         air_set(c, &in->base, air_val_ssa(c, nir_imm_zero(&c->b, air_nir_components(rt),\n'
-        '                                                           air_nir_bit_size(c, rt))));\n'
+        '         set_tex_result(c, in, nir_imm_zero(&c->b, air_nir_components(vt), air_nir_bit_size(c, vt)));\n'
         '         return true;\n'
         '      }\n'
         '   }\n'
@@ -1567,7 +1568,14 @@ static _Atomic unsigned long long native_wait_until_completed;
 	extern int rwd_ycbcr_plane_size(void *, unsigned long, unsigned *, unsigned *);
 	unsigned long plane = format == 10 ? 0 : format == 30 ? 1 : (unsigned long)slices.location;
 	unsigned pw = 0, ph = 0;
-	if (_nativeSurface && _shape.pixel_format == 500 && (format == 10 || format == 30 || format == 500) &&
+	static unsigned views_told;
+	if (views_told++ < 48)
+		rw_print("texture view: format %lu type %lu levels %lu+%lu slices %lu+%lu of shape format %u %ux%u%s\\n",
+		         (unsigned long)format, (unsigned long)type, (unsigned long)levels.location,
+		         (unsigned long)levels.length, (unsigned long)slices.location, (unsigned long)slices.length,
+		         _shape.pixel_format, _shape.width, _shape.height, _nativeSurface ? " (IOSurface)" : "");
+	/* 26b9c: a view of any texture of a YCbCr surface, whatever format it was made with */
+	if (_nativeSurface && (format == 10 || format == 30 || format == 500) &&
 	    levels.location == 0 && levels.length <= 1 && slices.length <= 1 && slices.location <= 1 &&
 	    rwd_ycbcr_plane_size((void *)_nativeSurface, plane, &pw, &ph)) {
 		MTLTextureDescriptor *d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:(MTLPixelFormat)format
@@ -1580,9 +1588,29 @@ static _Atomic unsigned long long native_wait_until_completed;
 			         (unsigned long)slices.length, plane, pw, ph);
 		return [(id)_owner newTextureWithDescriptor:d iosurface:(void *)_nativeSurface plane:plane];
 	}
-	RW_ONCE("a texture view is not implemented (the compiler library has no "
-		"call that makes a second texture over the same memory); nil (format %lu type %lu shape format %u)\\n",
-		(unsigned long)format, (unsigned long)type, _shape.pixel_format);
+	/* 26b9c: a whole-texture view in the same format or its sRGB/linear twin (refused before: "format 80 type 2
+	 * shape format 80"): an IOSurface texture is imported again in that format; another texture in its own
+	 * format is the texture itself. */
+	const unsigned sf = _shape.pixel_format;
+	const bool twin = format == sf || (sf == 80 && format == 81) || (sf == 81 && format == 80) ||
+	                  (sf == 70 && format == 71) || (sf == 71 && format == 70);
+	if (twin && levels.location == 0 && levels.length == (_shape.mip_levels ? _shape.mip_levels : 1) &&
+	    slices.location == 0 && slices.length <= 1 && type == _shape.type) {
+		if (_nativeSurface) {
+			MTLTextureDescriptor *d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:(MTLPixelFormat)format
+			                                                                             width:_shape.width height:_shape.height mipmapped:NO];
+			d.usage = (MTLTextureUsage)_shape.usage;
+			return [(id)_owner newTextureWithDescriptor:d iosurface:(void *)_nativeSurface plane:0];
+		}
+		if (format == sf)
+			return [self retain];
+	}
+	static unsigned refused;
+	if (refused++ < 16)
+		rw_print("a texture view is not implemented; nil (format %lu type %lu levels %lu+%lu slices %lu+%lu, "
+		         "shape format %u type %u)\\n", (unsigned long)format, (unsigned long)type,
+		         (unsigned long)levels.location, (unsigned long)levels.length, (unsigned long)slices.location,
+		         (unsigned long)slices.length, sf, _shape.type);
 	return nil;
 }''')
     s=replace(s,'- (id)iosurface                    { return nil; }',
