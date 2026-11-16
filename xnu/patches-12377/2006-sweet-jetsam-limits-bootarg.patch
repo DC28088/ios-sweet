@@ -1,0 +1,25 @@
+diff --git a/bsd/kern/kern_memorystatus.c b/bsd/kern/kern_memorystatus.c
+index 6f8a417..68aeeb3 100644
+--- a/bsd/kern/kern_memorystatus.c
++++ b/bsd/kern/kern_memorystatus.c
+@@ -1994,6 +1994,20 @@ memorystatus_init(void)
+ 	kern_return_t result;
+ 	int i;
+ 
++	/*
++	 * Sweet 2006: boot-arg sweetjetsamlimits=0 starts with per-process high-water limits off, as the DEVELOPMENT
++	 * sysctl kern.memorystatus_highwater_enabled=0 would (system-wide jetsam still runs). 26b9d: every process
++	 * logs a DYLD shared-region unnest, which inflates footprints, and daemons with 6-8 MB limits (gamepolicyd,
++	 * liveactivitiesd, nehelper, usernotification...) are killed and relaunched in a loop that keeps ReportCrash busy.
++	 */
++	{
++		int limits = 1;
++		if (PE_parse_boot_argn("sweetjetsamlimits", &limits, sizeof(limits)) && limits == 0) {
++			memorystatus_highwater_enabled = 0;
++			printf("SWEET JETSAM: per-process memory limits off (sweetjetsamlimits=0)\n");
++		}
++	}
++
+ #if CONFIG_FREEZE
+ 	memorystatus_frozen_processes_max = FREEZE_PROCESSES_MAX_DEFAULT;
+ 	memorystatus_frozen_shared_mb_max = ((MAX_FROZEN_SHARED_MB_PERCENT * max_task_footprint_mb) / 100); /* 10% of the system wide task limit */
