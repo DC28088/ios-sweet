@@ -1,0 +1,69 @@
+diff --git a/phone/wifi/wland.c b/phone/wifi/wland.c
+index fd6f24a..cfb39c5 100644
+--- a/phone/wifi/wland.c
++++ b/phone/wifi/wland.c
+@@ -20,6 +20,7 @@
+  * While joined, SIGUSR1 drops the link (tests the rejoin).
+  */
+ #include <stdio.h>
++#include <sys/stat.h>
+ #include <stdlib.h>
+ #include <string.h>
+ #include <unistd.h>
+@@ -838,11 +839,56 @@ static void adsp_qrtr(const struct qrtr_hdr *h, const uint8_t *d, uint32_t n)
+ 
+ /* 0010: once fastrpcglink-apps-dsp is open both ways, attach and serve its files (fastrpc.c). */
+ static int adsp_rpc_started;
++/*
++ * 0023 (iOS 26 root, 2026-11-16): the fresh root has no /var/local/sensors-persist and no /var/local/fw/soc0, so
++ * the sensors PD's registry init fails ("EF:sensor_process:0x1:SNS_REG_INIT:0xab:sns_registry_sensor.c:94") and
++ * ERR-FATAL takes the whole ADSP down -- apr_audio_svc with it, so no sound. Create what fastrpc.c maps the PD's
++ * paths to: the writable persist dir (and its registry dir) and the soc0 files of iOS 16's 0237 fix
++ * (hw_platform SWEET, soc_id 365; platform_version 65536 is a guess). Never overwrites an existing file.
++ * WLAND_SNS_PROVISION=0 skips it.
++ */
++static void adsp_sns_provision_file(const char *path, const char *text)
++{
++	int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0644);
++	if (fd < 0)
++		return;
++	ssize_t n = write(fd, text, strlen(text));
++	close(fd);
++	printf("adsp: provisioned %s (%zd bytes)\n", path, n);
++}
++
++static void adsp_sns_provision(void)
++{
++	const char *e = getenv("WLAND_SNS_PROVISION");
++	if (e && !strcmp(e, "0"))
++		return;
++	static const char *const dirs[] = {
++		"/var/local/sensors-persist", "/var/local/sensors-persist/registry",
++		"/var/local/sensors-persist/registry/registry", "/var/local/fw", "/var/local/fw/soc0",
++		"/var/local/fw/sensors", "/var/local/fw/sensors/config",
++	};
++	for (unsigned i = 0; i < sizeof(dirs) / sizeof(dirs[0]); i++)
++		if (mkdir(dirs[i], 0755) == 0)
++			printf("adsp: provisioned %s/\n", dirs[i]);
++	static const char *const soc0[][2] = {
++		{"hw_platform", "SWEET\n"}, {"g_hw_platform", "SWEET\n"},
++		{"platform_subtype_id", "0\n"}, {"g_platform_subtype_id", "0\n"},
++		{"platform_version", "65536\n"}, {"g_platform_version", "65536\n"},
++		{"platform_subtype", "Unknown\n"}, {"soc_id", "365\n"}, {"revision", "1.0\n"},
++	};
++	char path[128];
++	for (unsigned i = 0; i < sizeof(soc0) / sizeof(soc0[0]); i++) {
++		snprintf(path, sizeof(path), "/var/local/fw/soc0/%s", soc0[i][0]);
++		adsp_sns_provision_file(path, soc0[i][1]);
++	}
++}
++
+ static void adsp_rpc_poll(void)
+ {
+ 	if (adsp_rpc_started || !adsp_rpc_pa || !adspedge_rpc_up() || getenv("WLAND_NO_RPC"))
+ 		return;
+ 	adsp_rpc_started = 1;
++	adsp_sns_provision();
+ 	printf("adsp: FastRPC channel up: attaching to the root and sensors PDs\n");
+ 	fastrpc_buffer(adsp_rpc_pa, adsp_rpc_dsp);
+ 	fastrpc_root(1);
