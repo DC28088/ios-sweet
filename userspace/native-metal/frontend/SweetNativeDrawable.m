@@ -17,7 +17,7 @@ struct rwa_texture *rwd_texture_for_surface(struct rwa_device *device,void *surf
     if(!device || !s || !want)REFUSE("IOSurface import requires a device, surface and descriptor");
     {   /* 26b9c: every IOSurface texture request, first 48 per process (wallpaper / snapshot formats unknown) */
         static unsigned told_req;
-        if(told_req++<48)fprintf(stderr,"SweetNativeMetal: IOSurface texture request: surface %u %#x planes %zu plane %lu Metal format %u %ux%u type %u usage %#x\n",
+        if(IOSurfaceGetPixelFormat(s)!=0x26424741u && told_req++<48)fprintf(stderr,"SweetNativeMetal: IOSurface texture request: surface %u %#x planes %zu plane %lu Metal format %u %ux%u type %u usage %#x\n",
             IOSurfaceGetID(s),IOSurfaceGetPixelFormat(s),IOSurfaceGetPlaneCount(s),plane,want->pixel_format,
             want->width,want->height,want->type,want->usage);
     }
@@ -47,8 +47,21 @@ struct rwa_texture *rwd_texture_for_surface(struct rwa_device *device,void *surf
         plane_width=IOSurfaceGetWidthOfPlane(s,plane);plane_height=IOSurfaceGetHeightOfPlane(s,plane);
         plane_pitch=IOSurfaceGetBytesPerRowOfPlane(s,plane);
         static unsigned told_yuv;
-        if(told_yuv++<8)fprintf(stderr,"SweetNativeMetal: YCbCr IOSurface %u %#x plane %lu: offset %ld bpe %zu bpr %zu %zux%zu\n",
-            IOSurfaceGetID(s),surface_format,plane,(long)(pb-b0),bpe,plane_pitch,plane_width,plane_height);
+        if(told_yuv++<32) {
+            /* 26b9d: is there a picture in it? Mean of a sparse sample of this plane's bytes (luma ~16 or chroma
+             * ~128 everywhere = an empty/black decode upstream, not a GPU problem). */
+            unsigned long long sum=0,n=0;unsigned lo=255,hi=0;
+            const uint8_t *px=(const uint8_t *)pb;
+            if(px && plane_width && plane_height && IOSurfaceLock(s,kIOSurfaceLockReadOnly,NULL)==0) {
+                for(size_t y=0;y<plane_height;y+=17)for(size_t x=0;x<plane_width*bpe;x+=13) {
+                    unsigned v=px[y*plane_pitch+x];sum+=v;n++;if(v<lo)lo=v;if(v>hi)hi=v;
+                }
+                IOSurfaceUnlock(s,kIOSurfaceLockReadOnly,NULL);
+            }
+            fprintf(stderr,"SweetNativeMetal: YCbCr IOSurface %u %#x plane %lu: offset %ld bpe %zu bpr %zu %zux%zu Metal format %u usage %#x; bytes mean %llu min %u max %u (%llu samples)\n",
+                IOSurfaceGetID(s),surface_format,plane,(long)(pb-b0),bpe,plane_pitch,plane_width,plane_height,
+                want->pixel_format,want->usage,n?sum/n:0,lo,hi,n);
+        }
         if(!pb || pb<b0 || (bpe!=1 && bpe!=2) || bpe!=(plane?2u:1u))
             REFUSE("interface: YCbCr IOSurface plane %lu is not an 8-bit linear plane (bpe %zu)",plane,bpe);
         /* 26b8: the wallpaper's planes have 592-byte rows. A618 samples linear rows at 64-byte pitches only, so
