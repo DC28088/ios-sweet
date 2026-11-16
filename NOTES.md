@@ -1,3 +1,31 @@
+## 2026-11-16 IST (evening): 26b9 + native-metal 22-28 + wland 0023/0024; sensors live; wallpaper still missing
+- Images (local, research/ios26/boot): 26b9 = kernel CI 43795093912 (xnu 2004 GPU gate + quiesce 5 s, 2005 DCS
+  brightness) + 26b8 cmdline, sweetbuild=2659 (shim 64933b08); 26bA = 26b9 + sweetfb_blsvc=1 (1c803aad).
+- 26bA: backboardd SIGSEGV x4 (same bt, pc 0x1fa566924) -> launchd reboot -> fastboot. Only difference to 26b9 is
+  sweetfb_blsvc=1 (AppleARMBacklight published) -> CoreBrightness crash as Bergamota saw on beryllium. Brightness OPEN.
+  Also 26bA reached launchd only at up_s ~300 (26b9: ~65); not explained.
+- 26b9 (USER): "major tearing and visual bugs are gone, some here and there"; still hangs, apps slow to load, app
+  switcher previews red, wallpaper not shown; setting a wallpaper crashed SpringBoard (backboardd abort).
+- native-metal builds: 22 e51ee49 (YCbCr two-plane shadow), 23 cb56a25 (late scheduled handlers), 24 b8fbe43
+  (allocation check uses own pitch; 22 refused glyph shadows "rows extend beyond its mapped allocation"), 25 7f1d523
+  (air.fmax3/fmin3/median3; null-texture ops = 0), 26 b8fe97c (YCbCr plane views), 27 6d661a3 (null-texture
+  { value, residency } results via set_tex_result; same-format/sRGB-twin views; view + request logging),
+  28 c633c1d CI 43860278711 (YCbCr import logs format/usage + byte mean/min/max; request log skips '&BGA').
+  Installed now: 27 (fallbacks on phone: .b8fe97c=26, .cb56a25=23, .ac6a662=21, ...).
+- Findings: the wallpaper crash = air.sample_texture_3d in UberShader::apply_color_opcode on a texture3d LUT the
+  caller phis with air.get_null_texture_3d() (function constant) while the opcode is runtime (offline:
+  research/ios26/metal/airtest/notex.c, git-ignored). Views seen are BGRA8->BGRA8 (format 80, small sizes); NO YCbCr
+  views and NO plane-1 requests seen: the uber shader takes luma and chroma from two texture arguments, but CA only
+  ever imported plane 0 of the '420f' surfaces (579x1254 wallpaper, 828x1792 snapshot). Unknown how chroma is bound.
+- Sound: wland 0023 (provision soc0 + persist dirs) -> sensors PD still ERR-FATAL SNS_REG_INIT; wland 0024 (no
+  FastRPC without configs) -> "USER-PD DOG detects stalled initialization". FIX: copied research/sensors-0207/vendor
+  (154 files, verified against device-SHA256SUMS) to /var/local/fw/sensors (119) and /var/local/fw/dsp (35):
+  26b9d registry rebuilt (399 persist writes), accel/gyro/als/compass streaming, 0 ERR-FATAL, PRI_MI2S_RX running.
+  Remaining: "speaker: missing private vendor profile" -> copied research/vendor-0190/firmware/awinic (8 files) to
+  /var/local/fw/awinic (effective next boot). wland on phone = 0024 (ad6cad9e; .0023 and .0238 kept).
+- NEXT: install build 28, reboot 26b9; read "YCbCr IOSurface ... bytes mean" (empty decode vs GPU), test sound
+  (amps should load "service profiles loaded"); brightness without CoreBrightness crash (investigate pc 0x1fa566924).
+
 ## 2026-11-16 IST: USER away ~1 h -> 5 builds (3 GPU, brightness, sound); nothing installed or rebooted meanwhile
 - 26b8 (logs/boot-26b8a.txt): page flip active (stats flip=1, swaps_s ~26, copy_s ~18); USER: "lockscreen is up,
   there are still many flickers". Wallpaper surface now asked: '420f' 579x1254 plane pitch 592 -> refused every frame
