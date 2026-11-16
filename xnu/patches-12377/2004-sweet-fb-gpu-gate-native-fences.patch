@@ -1,0 +1,95 @@
+diff --git a/bsd/dev/sweet_a630.c b/bsd/dev/sweet_a630.c
+index 80d8b31..c648696 100644
+--- a/bsd/dev/sweet_a630.c
++++ b/bsd/dev/sweet_a630.c
+@@ -2823,18 +2823,45 @@ uint32_t sweet_gpu_fence_snapshot(void);
+ bool sweet_gpu_fence_passed(uint32_t fence);
+ bool sweet_gpu_fence_done(uint32_t fence);
+ 
++/*
++ * Sweet 2004: on sweet the GPU is driven by NativeAdreno (sweetgpu=9), not this A630 driver, so these answered
++ * "no fence" / "passed" and the framebuffer copied or flipped to a surface the GPU was still drawing (26b8: black
++ * flicker). Without a ready A630 they now use NativeAdreno's ring fences. Boot-arg sweetfb_gpugate=0 restores the
++ * old answers.
++ */
++extern uint32_t sweet_native_adreno_last_fence(void);
++extern bool sweet_native_adreno_fence_passed(uint32_t fence);
++static int
++sweet_gpu_native_gate(void)
++{
++	static int on = -1;
++	if (on < 0) {
++		int arg = 1;
++		PE_parse_boot_argn("sweetfb_gpugate", &arg, sizeof(arg));
++		on = arg != 0;
++		printf("SWEET FB: GPU gate %s (NativeAdreno fences; sweetfb_gpugate=0 disables)\n", on ? "on" : "off");
++	}
++	return on;
++}
++
+ uint32_t
+ sweet_gpu_fence_snapshot(void)
+ {
+-	return a630_dev.ready && cp_memory ? a630_dev.seqno : 0;
++	if (a630_dev.ready && cp_memory) {
++		return a630_dev.seqno;
++	}
++	return sweet_gpu_native_gate() ? sweet_native_adreno_last_fence() : 0;
+ }
+ 
+ bool
+ sweet_gpu_fence_passed(uint32_t fence)
+ {
+-	if (fence == 0 || !a630_dev.ready || !cp_memory) {
++	if (fence == 0) {
+ 		return true;
+ 	}
++	if (!a630_dev.ready || !cp_memory) {
++		return !sweet_gpu_native_gate() || sweet_native_adreno_fence_passed(fence);
++	}
+ 	return sweet_gpu_fence_done(fence);
+ }
+ 
+diff --git a/iokit/Kernel/arm/SweetNativeAdrenoClient.cpp b/iokit/Kernel/arm/SweetNativeAdrenoClient.cpp
+index 3ed17f3..b1ab1e2 100644
+--- a/iokit/Kernel/arm/SweetNativeAdrenoClient.cpp
++++ b/iokit/Kernel/arm/SweetNativeAdrenoClient.cpp
+@@ -82,8 +82,18 @@ bool healthy()
+ IOReturn quiesce()
+ {
+  if(!healthy())return kIOReturnIOError;
+- IOReturn result=backend.submit->waitAll(&backend.clock,1000000);
+- if(!result)result=backend.ring->drainA6xx(&backend.clock,1000000);
++ /* Sweet 2004: 1 s was too short for iOS 26's slow first frames (26b6: "GPU LOST (quiesce 0xe00002d6 ...)" for the
++  * rest of the boot). Boot-arg sweetquiesce_ms, default 5000 (100..20000). */
++ static uint32_t limit_us=0;
++ if(!limit_us) {
++  uint32_t ms=5000;PE_parse_boot_argn("sweetquiesce_ms",&ms,sizeof(ms));
++  if(ms<100)ms=100;
++  if(ms>20000)ms=20000;
++  limit_us=ms*1000;
++  IOLog("SWEET RENDER: quiesce limit %u ms\n",ms);
++ }
++ IOReturn result=backend.submit->waitAll(&backend.clock,limit_us);
++ if(!result)result=backend.ring->drainA6xx(&backend.clock,limit_us);
+  if(result) {
+   // 0130 hardware: the backend was lost here (no faulted() term) right after
+   // an AegirPoster instance was killed; say so with the CP state.
+@@ -114,6 +124,17 @@ extern "C" uint32_t sweet_native_adreno_last_fence(void)
+  if(!__atomic_load_n(&presentation_ready,__ATOMIC_ACQUIRE) || !backend.ring)return 0;
+  return backend.ring->lastSubmitted();
+ }
++/* Sweet 2004: whether a fence from sweet_native_adreno_last_fence() has retired, for the framebuffer's GPU gate
++ * (bsd/dev/sweet_a630.c sweet_gpu_fence_passed). Never waits: a busy lock answers "not yet" and the framebuffer
++ * asks again (every 250 us, at most 50 ms per swap). A lost or unhealthy GPU answers "passed". */
++extern "C" bool sweet_native_adreno_fence_passed(uint32_t fence)
++{
++ if(!fence || !__atomic_load_n(&presentation_ready,__ATOMIC_ACQUIRE) || !backend.ring)return true;
++ if(!IOLockTryLock(backend.lock))return false;
++ const bool passed=!healthy() || backend.submit->observeFence(fence,&backend.clock,0)!=kIOReturnTimeout;
++ IOLockUnlock(backend.lock);
++ return passed;
++}
+ /* swap_fence: sweet_native_adreno_last_fence() when SwapEnd recorded the frame.
+  * sweetpresentfence=1 waits for that one (the frame being shown) instead of
+  * the newest fence, which may belong to CoreAnimation's next frame. */
