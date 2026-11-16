@@ -1769,11 +1769,105 @@ static void nativeUnlock(int *unused){(void)unused;pthread_mutex_unlock(&nativeO
     for at in reversed(insert):s=s[:at]+' NATIVE_OBJECT_LOCK; '+s[at:]
     p.write_text(s)
 
+def adapt_ssbo_offsets(donor):
+    # 26b9e: compute_average_luma / compute_sum_luma (CA's luminance analysis, e.g. lock-screen legibility) bind a
+    # `device` buffer at offsets such as 144; A6xx fetches SSBOs at multiples of 64, so every dispatch was refused
+    # (~830 per boot). Such a binding is now served through an aligned shadow: the region is copied into a fresh
+    # buffer on the GPU before the dispatch/draw and, when the shader may write it, copied back after it, both on
+    # the same context so they are ordered with the work.
+    p=donor/'tools/mesa/air'/'air_metal.c';s=p.read_text()
+    s=replace(s,"""   if (r->kind == AIR_RESOURCE_DEVICE_BUFFER &&
+       offset % device->ssbo_offset_align != 0) {""","""   if (r->kind == AIR_RESOURCE_DEVICE_BUFFER &&
+       offset % device->ssbo_offset_align != 0 && offset % 4 != 0) {   /* aligned shadow below (26b9e) */""")
+    s=replace(s,"""struct rwa_bound {
+   unsigned num_ssbo, num_views, num_images, num_samplers;
+};""","""struct rwa_bound {
+   unsigned num_ssbo, num_views, num_images, num_samplers;
+   /* `device` buffers bound at an offset this GPU cannot fetch from: served from an aligned copy */
+   unsigned num_shadow;
+   struct { struct pipe_resource *tmp, *dst; unsigned offset, size; bool write; } shadow[PIPE_MAX_SHADER_BUFFERS];
+};""")
+    s=replace(s,"""         sb[r->index].buffer_offset = (unsigned)boffset;
+         sb[r->index].buffer_size = b->size - MIN2(b->size, boffset);
+""","""         sb[r->index].buffer_offset = (unsigned)boffset;
+         sb[r->index].buffer_size = b->size - MIN2(b->size, boffset);
+         if (boffset % device->ssbo_offset_align && bound->num_shadow < ARRAY_SIZE(bound->shadow) &&
+             sb[r->index].buffer_size) {
+            const unsigned size = sb[r->index].buffer_size;
+            struct pipe_resource *tmp = pipe_buffer_create(device->screen, PIPE_BIND_SHADER_BUFFER,
+                                                           PIPE_USAGE_DEFAULT, size);
+            if (!tmp) {
+               say(why, why_size, "%s: no memory for an aligned copy of buffer %u (%u bytes)", name,
+                   r->index, size);
+               return -1;
+            }
+            struct pipe_box box;
+            u_box_1d((int)boffset, (int)size, &box);
+            pipe->resource_copy_region(pipe, tmp, 0, 0, 0, 0, b->res, 0, &box);
+            const unsigned k = bound->num_shadow++;
+            bound->shadow[k].tmp = tmp;
+            bound->shadow[k].dst = b->res;
+            bound->shadow[k].offset = (unsigned)boffset;
+            bound->shadow[k].size = size;
+            bound->shadow[k].write = r->write;
+            sb[r->index].buffer = tmp;
+            sb[r->index].buffer_offset = 0;
+            static unsigned told;
+            if (told++ < 8)
+               fprintf(stderr, "SweetNativeMetal: %s: buffer %u at offset %zu served from an aligned copy (%u bytes%s)\\n",
+                       name, r->index, boffset, size, r->write ? ", copied back" : "");
+         }
+""")
+    s=replace(s,"""             const struct rwa_bound *bound)
+{
+   if (device->in_command) {""","""             const struct rwa_bound *bound)
+{
+   /* the aligned copies first, whatever else waits: the writes go back to where Metal bound them */
+   for (unsigned k = 0; k < bound->num_shadow; k++) {
+      struct pipe_resource *tmp = bound->shadow[k].tmp;
+      if (bound->shadow[k].write) {
+         struct pipe_box box;
+         u_box_1d(0, (int)bound->shadow[k].size, &box);
+         device->pipe->resource_copy_region(device->pipe, bound->shadow[k].dst, 0, bound->shadow[k].offset,
+                                            0, 0, tmp, 0, &box);
+      }
+      pipe_resource_reference(&tmp, NULL);
+   }
+   if (device->in_command) {""")
+    if '#include "util/u_box.h"' not in s:
+        s=replace(s,'#include "util/u_inlines.h"\n','#include "util/u_inlines.h"\n#include "util/u_box.h"\n')
+    p.write_text(s)
+    # 26b9e (setting a wallpaper): apply_color_opcode also reads its GammaLUTs `device` pointer on a runtime opcode
+    # branch while the caller passes a null one under a function constant -> "a load through a null pointer" ->
+    # backboardd abort. As with a null texture: a load through a null pointer is zero, a store through one nothing.
+    p=donor/'tools/mesa/air'/'air_to_nir.c';s=p.read_text()
+    s=replace(s,"""   default:
+      return air_error(c, "instruction: a load through a %s pointer",
+                       ptr.class == AIR_PTR_NONE ? "null" : "texture or sampler"), NULL;
+   }""","""   case AIR_PTR_NONE:
+      res = nir_imm_zero(&c->b, comps, bits);
+      break;
+   default:
+      return air_error(c, "instruction: a load through a %s pointer",
+                       ptr.class == AIR_PTR_NONE ? "null" : "texture or sampler"), NULL;
+   }""")
+    s=replace(s,"""   default:
+      return air_error(c, "instruction: a store through a %s pointer",
+                       ptr.class == AIR_PTR_NONE ? "null" : "texture or sampler");
+   }""","""   case AIR_PTR_NONE:
+      return true;   /* a store through a null pointer (26b9e: CA's runtime-dead branches) */
+   default:
+      return air_error(c, "instruction: a store through a %s pointer",
+                       ptr.class == AIR_PTR_NONE ? "null" : "texture or sampler");
+   }""")
+    p.write_text(s)
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('donor',type=Path,help='disposable export of the pinned donor')
     args=parser.parse_args()
     adapt_backend(args.donor)
+    adapt_ssbo_offsets(args.donor)
     frontend=adapt_frontend(args.donor)
     serialize_methods(frontend)
     print('Prepared native Sweet Metal sources:',args.donor)
