@@ -1,3 +1,34 @@
+## 2026-11-16 IST: USER away ~1 h -> 5 builds (3 GPU, brightness, sound); nothing installed or rebooted meanwhile
+- 26b8 (logs/boot-26b8a.txt): page flip active (stats flip=1, swaps_s ~26, copy_s ~18); USER: "lockscreen is up,
+  there are still many flickers". Wallpaper surface now asked: '420f' 579x1254 plane pitch 592 -> refused every frame
+  ("YCbCr IOSurface plane 0 pitch 592 is not 64-byte aligned"; RW_AGAIN prints at powers of two).
+- Finding (code read): Bergamota's framebuffer GPU gate (gpuGateOpen/sweet_gpu_fence_passed, 0229) only knows the
+  A630 driver; on sweet (NativeAdreno) snapshot=0 / passed=true, so copy+flip never wait for the GPU. Also the
+  donor's scheduled handlers run at submission (CA presents from them; Apple's display engine waits on the GPU).
+- Sound (observed, /var/local/adsp-speaker.log): ADSP ERR-FATAL "EF:sensor_process:0x1:SNS_REG_INIT:0xab:
+  sns_registry_sensor.c:94" -> all 6 edge channels closed (apr_audio_svc too). iOS 26 /var/local has no
+  sensors-persist, fw/soc0, fw/sensors, fw/dsp (only fw/adsp, modem, rmtfs, rw). Phone shell tools are in
+  /usr/local/bin (toybox); do not override PATH without it.
+- Brightness (observed): backboardd matches backlight-control -> 0 found. Bergamota publishes AppleARMBacklight
+  only with sweetfb_blsvc=1 and writes a WLED; sweet has none (AMOLED, DCS 0x51).
+- Builds (all on DC28088/ios-sweet main):
+  1. native-metal build 22 = CI 43793827584 SUCCESS (e51ee49): YCbCr planes with unaligned rows read through one
+     two-plane shadow BO (transport ycbcr_shadow_layout + frontend same offsets). Wallpaper fix.
+  2. native-metal build 23 = CI 43794109961 SUCCESS (cb56a25) = 22 + scheduled handlers delivered after the GPU
+     fence (flicker test; /var/local/sweet-native-early-scheduled restores; stats late_scheduled=).
+  3. xnu 2004 (1cff407): GPU gate on NativeAdreno fences (sweetfb_gpugate=0 off) + quiesce limit sweetquiesce_ms
+     (default 5000, was 1000). Its own CI 43794601120 was CANCELLED by the next xnu26 run (concurrency);
+  4. xnu 2005 (2ec7176): DCS 0x51 brightness from AppleARMBacklight requests when no WLED (sweetfb_dcsbl=0 off;
+     needs sweetfb_blsvc=1 to publish the service). Kernel CI 43795093912 = 2004 + 2005.
+  5. wland 0023 (d3caec1, wifi CI 43795224785): creates /var/local/sensors-persist{,/registry{,/registry}},
+     fw/soc0 (iOS 16 0237 values), fw/sensors/config before the sensors PD attaches (WLAND_SNS_PROVISION=0 off).
+     Install = replace /var/local/bin/wland-0225 (speaker job binary; keep the old one as wland-0225.0238).
+     Guess: PD may still ERR-FATAL without the 41 vendor sensor configs (iOS 16 copied them from Android vendor).
+- NEXT (needs USER at the phone): images 26b9 = kernel 43795093912 + 26b8 cmdline (gate on), 26bA = 26b9 +
+  sweetfb_blsvc=1 (brightness; Bergamota notes blsvc once crashed backboardd on beryllium -> watch for it);
+  install build 23 (22 kept implicitly: 23 contains it), wland 0023; boot 26bA; check "SWEET FB: GPU gate on",
+  "SWEET BL: DCS brightness ready", "YCbCr shadow BO", adsp-speaker.log "provisioned". Fallback image 26b8/26b7.
+
 ## 2026-11-16 IST: build 21 (YCbCr as Metal format 500); xnu 2003 (MDP paths on sweet); image 26b8 = page flip
 - 26b7b (build 20): the YCbCr planes are asked as Metal pixel format 500 (CA's private 4:2:0 bi-planar format), so
   "not a supported linear import"; USER: smoother (<20 fps) but many black flickers; Control Centre only allows two
