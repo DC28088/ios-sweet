@@ -1801,8 +1801,7 @@ def adapt_ssbo_offsets(donor):
                    r->index, size);
                return -1;
             }
-            struct pipe_box box;
-            u_box_1d((int)boffset, (int)size, &box);
+            struct pipe_box box = { .x = (int)boffset, .width = (int)size, .height = 1, .depth = 1 };
             pipe->resource_copy_region(pipe, tmp, 0, 0, 0, 0, b->res, 0, &box);
             const unsigned k = bound->num_shadow++;
             bound->shadow[k].tmp = tmp;
@@ -1826,16 +1825,13 @@ def adapt_ssbo_offsets(donor):
    for (unsigned k = 0; k < bound->num_shadow; k++) {
       struct pipe_resource *tmp = bound->shadow[k].tmp;
       if (bound->shadow[k].write) {
-         struct pipe_box box;
-         u_box_1d(0, (int)bound->shadow[k].size, &box);
+         struct pipe_box box = { .x = 0, .width = (int)bound->shadow[k].size, .height = 1, .depth = 1 };
          device->pipe->resource_copy_region(device->pipe, bound->shadow[k].dst, 0, bound->shadow[k].offset,
                                             0, 0, tmp, 0, &box);
       }
       pipe_resource_reference(&tmp, NULL);
    }
    if (device->in_command) {""")
-    if '#include "util/u_box.h"' not in s:
-        s=replace(s,'#include "util/u_inlines.h"\n','#include "util/u_inlines.h"\n#include "util/u_box.h"\n')
     p.write_text(s)
     # 26b9e (setting a wallpaper): apply_color_opcode also reads its GammaLUTs `device` pointer on a runtime opcode
     # branch while the caller passes a null one under a function constant -> "a load through a null pointer" ->
