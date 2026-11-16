@@ -1,0 +1,40 @@
+diff --git a/phone/wifi/wland.c b/phone/wifi/wland.c
+index cfb39c5..b9f874e 100644
+--- a/phone/wifi/wland.c
++++ b/phone/wifi/wland.c
+@@ -20,6 +20,7 @@
+  * While joined, SIGUSR1 drops the link (tests the rejoin).
+  */
+ #include <stdio.h>
++#include <dirent.h>
+ #include <sys/stat.h>
+ #include <stdlib.h>
+ #include <string.h>
+@@ -889,6 +890,27 @@ static void adsp_rpc_poll(void)
+ 		return;
+ 	adsp_rpc_started = 1;
+ 	adsp_sns_provision();
++	/*
++	 * 0024 (26b9b): with the persist dir and soc0 files in place the sensors PD still ERR-FATALs in SNS_REG_INIT
++	 * (sns_registry_sensor.c:94) when /var/local/fw/sensors/config holds none of the vendor sensor configs (iOS 16
++	 * copied 41 from Android's vendor partition), and the ADSP takes apr_audio_svc down with it. Without configs,
++	 * FastRPC is not started at all -- the iOS 16 0225 speaker line, which played sound, never served it either.
++	 * WLAND_RPC_FORCE=1 starts it anyway.
++	 */
++	if (!getenv("WLAND_RPC_FORCE") || strcmp(getenv("WLAND_RPC_FORCE"), "1")) {
++		unsigned configs = 0;
++		DIR *d = opendir("/var/local/fw/sensors/config");
++		for (struct dirent *de; d && (de = readdir(d)) != NULL;)
++			if (de->d_name[0] != '.')
++				configs++;
++		if (d)
++			closedir(d);
++		if (!configs) {
++			printf("adsp: no sensor configs in /var/local/fw/sensors/config: FastRPC (root + sensors PDs) not "
++			       "started, so the sensors PD cannot take the ADSP and audio down (WLAND_RPC_FORCE=1 starts it)\n");
++			return;
++		}
++	}
+ 	printf("adsp: FastRPC channel up: attaching to the root and sensors PDs\n");
+ 	fastrpc_buffer(adsp_rpc_pa, adsp_rpc_dsp);
+ 	fastrpc_root(1);

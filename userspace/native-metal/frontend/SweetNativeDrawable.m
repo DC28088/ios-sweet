@@ -123,7 +123,10 @@ struct rwa_texture *rwd_texture_for_surface(struct rwa_device *device,void *surf
               base=(uintptr_t)IOSurfaceGetBaseAddress(s)&~(uintptr_t)16383;
     size_t bytes=IOSurfaceGetAllocSize(s),offset=pixels-base;
     if(ycbcr_shadow_bytes){bytes=ycbcr_shadow_bytes;offset=ycbcr_shadow_offset;}
-    if(!base || offset>=bytes || (height && gpu_pitch>(bytes-offset)/height))
+    /* the shadow BO of a YCbCr surface holds rows at gpu_pitch; any other surface's own rows are at pitch (a
+     * glyph shadow is sized by the transport, not by this allocation: 26b9b refused those with gpu_pitch here) */
+    const size_t row_span=ycbcr_shadow_bytes?gpu_pitch:pitch;
+    if(!base || offset>=bytes || (height && row_span>(bytes-offset)/height))
         REFUSE("interface: IOSurface rows extend beyond its mapped allocation");
     unsigned id=IOSurfaceGetID(s);
     if(!id)REFUSE("IOSurface has no shareable ID");
