@@ -1,3 +1,34 @@
+## 2026-11-17 17:10 IST: real stutter cause = framebuffer GPU gate (7 of 48 frames shown); green = RGB expected
+- USER on 26bC: "everything is exactly the same" (green overlay, Settings black bars, slow, audio stutters) ->
+  the kernel spinner was real but not the felt bottleneck (8 cores).
+- 26bC stats: SWEET FB swaps_s 48.17, coalesced_s 42.27, copy_s 6.88 -> ~7 frames/s reach the panel while CA
+  swaps ~48/s. Build 34 (a1e7369) prints the truncated half of kern.sweet_fb: copy_us avg 6.6-10.4 ms (max 12 ms,
+  CPU copy of GPU-written memory), gpu_holds=2699, gpu_hold_timeouts=8, latch_waits=0. Async completion
+  latency per command buffer avg 23-33 ms (max 124 ms); frontend ~100 draws/command buffer, encode 17-28 % of cpu7.
+- Cause (code read, tree-berg + our 2001/2003/2005 = scratch k2007): AppleCLCD::swap() set fPendFence =
+  newest NativeAdreno fence AND fPendAbs = now on EVERY swap; gpuGateOpen() caps at 50 ms from fPendAbs ->
+  with swaps every ~20 ms and newer GPU work always queued the gate never opened until swaps paused.
+- xnu 2007 (60d5a64): fPendAbs only when !fDirty (oldest unshown swap) -> frame within 50 ms under load.
+  xnu 2008: register_serial_functions ignores an already-registered struct (the uart_getc cycle).
+  Kernel CI 44006429744 SUCCESS (15 min); downloaded research/ios26/boot/kernel-44006429744 (network flaky).
+- Images (ADT = sweet-n104-2x-wbg.adt: verified, 26bC rebuilds byte-identical with wbg, NOT -final; pkg26.sh
+  defaults to -final -> pass ADT=sweet-n104-2x-wbg.adt): 26bD (shim-boot-26bD.img ed6d922e) = 26bC cmdline
+  (serial=1) + sweetbuild=2663; 26bDd (d3285e04) = + sweetbuild=2664 sweetdtlog=SpringBoard,MobileSafari
+  (os_log of those to the console: Control Center empty layout + Safari abort reason).
+- Green overlay: with build 34 no pipeline with fc_has_ycbcr_matrix=1 was created while USER used the app
+  switcher -> CA samples Metal-500 textures with its plain RGB image path (Apple's sampler converts). (Cr,Y,Cb) as
+  RGB ~ (0.5,1,0.5) = green; earlier (Y,0,0) = red. Build 35 (932c914, CI 44007973181 SUCCESS, local build-35):
+  shadow holds RGB (BT.709 if IOSurfaceYCbCrMatrix says 709 else BT.601; '420v' video range; host-tested).
+  NOT installed: the phone stopped answering (log ends 08:50, no panic; probably battery on the 500 mA port).
+- Converted fills (build 33 logs): snapshot planes mean Y 225-253, Cb 128-129, Cr 127 (mostly white UI).
+- Control Center: ControlsIconState.plist held only AirplaneMode + PersonalHotspot controls; moved aside ->
+  SpringBoard regenerated an EMPTY layout -> restored original (backups /var/local/cc-backup/). ModuleConfiguration
+  lists Flashlight/Timer/Calculator/Camera/AirPlay/QR but none are shown -> needs SpringBoard os_log (26bDd).
+- Files app (SIGTRAP x2) and fileproviderd (abort) crash; "On My iPhone" never lists. Phone has
+  /usr/local/bin/sweetposterset (Bergamota wallpaper tool?) - not yet looked at.
+- NEXT: USER charges (wall charger), fastboot; receiver; boot 26bD; install build 35; check copy_s vs swaps_s,
+  gpu_hold_timeouts, snapshots' colours; then 26bDd for CC/Safari; then GPU present copy (copy_us 10 ms on CPU).
+
 ## 2026-11-17 08:20 IST: PERF ROOT CAUSE: kernel serial keyboard poller spun a full core at prio 95 -> serial=1 (26bC)
 - spindump of 60 s Settings scrolling on 26bBc (scratchpad prof/bb26bBc.txt): kernel_task 76.4 s CPU / 60 s;
   ONE kernel thread (0xd8, priority 95) 59.99 s = 100 % of a core the whole time. Symbolized against kernel CI
