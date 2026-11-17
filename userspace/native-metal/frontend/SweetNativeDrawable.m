@@ -3,6 +3,7 @@
 #include <IOSurface/IOSurfaceRef.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 #include "redwood_drawable.h"
 #include "sweet_native_ext.h"
 
@@ -40,6 +41,7 @@ struct rwa_texture *rwd_texture_for_surface(struct rwa_device *device,void *surf
     size_t plane_width=0,plane_height=0,plane_pitch=0;
     struct rwd_texture_shape ycbcr_shape;   /* the caller's descriptor with a YCbCr plane's own format */
     size_t ycbcr_shadow_offset=0,ycbcr_shadow_bytes=0;   /* nonzero bytes: the planes live in a shadow BO */
+    bool ycbcr_convert=false;   /* 26bB: format 500 read through a (Cr, Y, Cb, 1) RGBA8 shadow */
     if(surface_planes==2 && (surface_format==0x34323066u || surface_format==0x34323076u)) {
         if(plane>1)REFUSE("interface: plane %lu of a 2-plane IOSurface",plane);
         uintptr_t pb=(uintptr_t)IOSurfaceGetBaseAddressOfPlane(s,plane),b0=(uintptr_t)IOSurfaceGetBaseAddress(s);
@@ -79,14 +81,34 @@ struct rwa_texture *rwd_texture_for_surface(struct rwa_device *device,void *surf
         }
         if(want->usage&(2|4))
             REFUSE("interface: a written YCbCr IOSurface plane (usage %#x)",want->usage);
-        surface_format=plane?'LA08':'A008';   /* compared with the Metal format below: RG8 / R8 */
-        /* 26b7b: CoreAnimation asks for each plane as Metal format 500 (its private YCbCr 4:2:0 bi-planar
-         * format) and samples luma from the plane-0 texture's .r and CbCr from the plane-1 texture's .rg
-         * (UberShader ycbcr_to_rgb): a plane view of 500 is R8 (plane 0) or RG8 (plane 1). */
-        if(want->pixel_format==500) {
-            ycbcr_shape=*want;
-            ycbcr_shape.pixel_format=plane?30:10;
-            want=&ycbcr_shape;
+        /* 26bB: format 500 is ONE texture over both planes. The uber shader's single-texture YCbCr path (image
+         * function 36) calls ycbcr_to_rgb(s.g, s.b, s.r): a sample must answer R=Cr, G=Y, B=Cb (the Vulkan
+         * order). Plane 0 alone as R8 answered (Y, 0, 0) -> red app switcher snapshots and app-open
+         * animations. Such a texture is an RGBA8 shadow the transport fills with (Cr, Y, Cb, 255) per luma texel
+         * (transport/sweet_drm.cpp ycbcr_convert_layout); /var/local/sweet-native-ycbcr-raw restores R8. */
+        static int convert_on=-1;
+        if(convert_on<0) {
+            convert_on=access("/var/local/sweet-native-ycbcr-raw",F_OK)!=0;
+            fprintf(stderr,"SweetNativeMetal: Metal format 500 textures %s\n",convert_on?
+                "read through a (Cr, Y, Cb) RGBA8 shadow (/var/local/sweet-native-ycbcr-raw restores plane 0 as R8)":
+                "are plane 0 as R8 (raw)");
+        }
+        if(convert_on && want->pixel_format==500 && plane==0) {
+            ycbcr_convert=true;
+            ycbcr_shape=*want;ycbcr_shape.pixel_format=70;want=&ycbcr_shape;   /* RGBA8Unorm */
+            plane_pitch=(plane_width*4+63)&~(size_t)63;
+            ycbcr_shadow_offset=0;
+            ycbcr_shadow_bytes=(plane_pitch*plane_height+16383)&~(size_t)16383;
+            surface_format='RGBA';
+        } else {
+            surface_format=plane?'LA08':'A008';   /* compared with the Metal format below: RG8 / R8 */
+            /* 26b7b: a plane view of format 500 is R8 (plane 0) or RG8 (plane 1), the uber shader's two-texture
+             * YCbCr path (image function 26: luma .r of one texture, CbCr .rg of another). */
+            if(want->pixel_format==500) {
+                ycbcr_shape=*want;
+                ycbcr_shape.pixel_format=plane?30:10;
+                want=&ycbcr_shape;
+            }
         }
         plane0_base=pb;
         surface_planes=0;
@@ -149,6 +171,10 @@ struct rwa_texture *rwd_texture_for_surface(struct rwa_device *device,void *surf
         REFUSE("interface: IOSurface rows extend beyond its mapped allocation");
     unsigned id=IOSurfaceGetID(s);
     if(!id)REFUSE("IOSurface has no shareable ID");
+    if(ycbcr_convert) {
+        if(id&0x40000000u)REFUSE("interface: IOSurface ID %u collides with the YCbCr conversion flag",id);
+        id|=0x40000000u;   /* transport/sweet_drm.cpp YCbCrConvertFlag */
+    }
     // The winsys looks up this ID only inside this process, pins its actual CPU
     // mapping through ABI selector16 and retains the surface through GEM_CLOSE.
     struct rwa_texture *texture=rwa_texture_from_surface(device,(const struct rwa_texture_shape*)want,

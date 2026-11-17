@@ -47,6 +47,9 @@ struct Buffer {
     ShadowPlane shadow_plane[2];
     uint32_t shadow_id = 0, shadow_planes = 0, shadow_seed = 0;
     bool shadow_valid = false;
+    // 26bB: a converted shadow (ycbcr_convert_layout()): plane 0 = luma source + the RGBA destination rows,
+    // plane 1 = CbCr source; shadow_refill() writes one (Cr, Y, Cb, 255) texel per luma texel.
+    bool shadow_convert = false;
 };
 struct Fence { uint32_t number; uint64_t kernel, queue; };
 struct State {
@@ -228,6 +231,7 @@ int release(Buffer &b) {
     if (e) { b.closing=true; return e; } // retained/quarantined; no use-after-free
     if(b.shadow_src) {
         CFRelease(b.shadow_src);b.shadow_src=nullptr;b.shadow_id=0;b.shadow_valid=false;
+        b.shadow_convert=false;b.shadow_planes=0;
     }
     if(b.gpu_dirty) {cache_clean_invalidate(b);b.gpu_dirty=false;}
     if(!b.surface && b.cpu_mapped && b.cpu_lease && b.iova && !b.closing && b.size<=PoolMaxBuffer && !state.lost) {
@@ -289,7 +293,42 @@ bool ycbcr_shadow_layout(IOSurfaceRef s, Buffer::ShadowPlane plane[2], uint64_t 
     *bytes=rounded(at);
     return true;
 }
+// 26bB: CoreAnimation imports a '420f'/'420v' surface as ONE texture of its private Metal format 500 and the
+// uber shader (image function 36) samples it as (Cr, Y, Cb) = (.r, .g, .b) -- the Vulkan YCbCr channel order,
+// one sample reading both planes. Importing plane 0 alone as R8 gave (Y, 0, 0) -> Cr=Y, Y=0, Cb=0 -> red app
+// switcher snapshots. The frontend asks for such a texture as surface ID | YCbCrConvertFlag: an owned RGBA8 BO
+// at a 64-byte-aligned pitch that shadow_refill() fills with (Cr, Y, Cb, 255) per luma texel (chroma nearest)
+// whenever the surface's seed changes. IOSurface IDs are small; the flag keeps the "fd" positive.
+constexpr uint32_t YCbCrConvertFlag = 0x40000000u;
+bool ycbcr_convert_layout(IOSurfaceRef s, Buffer::ShadowPlane plane[2], uint64_t *bytes) {
+    const uint32_t f=IOSurfaceGetPixelFormat(s);
+    const uint64_t surface=(uintptr_t)IOSurfaceGetBaseAddress(s);
+    if(IOSurfaceGetPlaneCount(s)!=2 || (f!=0x34323066u && f!=0x34323076u) || !surface)return false;
+    const uint64_t p0=(uintptr_t)IOSurfaceGetBaseAddressOfPlane(s,0), p1=(uintptr_t)IOSurfaceGetBaseAddressOfPlane(s,1);
+    const uint64_t w0=IOSurfaceGetWidthOfPlane(s,0), h0=IOSurfaceGetHeightOfPlane(s,0);
+    const uint64_t w1=IOSurfaceGetWidthOfPlane(s,1), h1=IOSurfaceGetHeightOfPlane(s,1);
+    const uint64_t r0=IOSurfaceGetBytesPerRowOfPlane(s,0), r1=IOSurfaceGetBytesPerRowOfPlane(s,1);
+    if(p0<surface || p1<surface || p0-surface>UINT32_MAX || p1-surface>UINT32_MAX ||
+       IOSurfaceGetBytesPerElementOfPlane(s,0)!=1 || IOSurfaceGetBytesPerElementOfPlane(s,1)!=2 ||
+       !w0 || !h0 || !w1 || !h1 || w1*2<w0 || h1*2<h0 || w0>r0 || w1*2>r1 || r0>UINT32_MAX || r1>UINT32_MAX)
+        return false;
+    const uint64_t pitch=(w0*4+63)&~uint64_t(63);
+    if(pitch>UINT32_MAX || pitch*h0>UINT32_MAX)return false;
+    plane[0]={uint32_t(p0-surface),uint32_t(r0),0,uint32_t(pitch),uint32_t(h0),uint32_t(w0)};
+    plane[1]={uint32_t(p1-surface),uint32_t(r1),0,0,uint32_t(h1),uint32_t(w1*2)};
+    *bytes=rounded(pitch*h0);
+    return true;
+}
 int surface_description(uint32_t id, struct redwood_drm_surface *out, IOSurfaceRef *keep=nullptr) {
+    if(id&YCbCrConvertFlag) {
+        IOSurfaceRef s=IOSurfaceLookup(id&~YCbCrConvertFlag);
+        if(!s)return ENOENT;
+        Buffer::ShadowPlane plane[2]; uint64_t bytes=0;
+        if(!ycbcr_convert_layout(s,plane,&bytes) || bytes>state.params.max_bo_bytes){CFRelease(s);return EINVAL;}
+        *out={id,0,bytes,0,plane[0].pitch,plane[0].row_bytes,plane[0].rows,'RGBA',0};
+        if(keep){*keep=s;return 0;}
+        CFRelease(s);return 0;
+    }
     IOSurfaceRef s=IOSurfaceLookup(id);
     if (!s) return ENOENT;
     uint64_t pixel=(uintptr_t)IOSurfaceGetBaseAddress(s);
@@ -512,7 +551,19 @@ int shadow_refill(Buffer &b) {
         fits=fits && uint64_t(p.offset)+uint64_t(p.pitch)*p.rows<=b.size;
     }
     uint64_t copied=0;
-    if(src && b.cpu && fits)
+    if(src && b.cpu && fits && b.shadow_convert && b.shadow_planes==2) {
+        const Buffer::ShadowPlane &l=b.shadow_plane[0], &c=b.shadow_plane[1];
+        for(uint32_t y=0;y<l.rows;++y) {
+            const uint8_t *luma=src+l.src_offset+uint64_t(y)*l.src_pitch;
+            const uint8_t *cbcr=src+c.src_offset+uint64_t(y>>1)*c.src_pitch;
+            uint32_t *dst=(uint32_t*)((uint8_t*)(uintptr_t)b.cpu+uint64_t(y)*l.pitch);
+            for(uint32_t x=0;x<l.row_bytes;++x) {
+                const uint8_t *cc=cbcr+(x&~1u);   // NV12 order: Cb, Cr
+                dst[x]=uint32_t(cc[1])|uint32_t(luma[x])<<8|uint32_t(cc[0])<<16|0xff000000u;
+            }
+        }
+        copied=uint64_t(l.row_bytes)*4*l.rows;
+    } else if(src && b.cpu && fits)
         for(uint32_t i=0;i<b.shadow_planes;++i) {
             const Buffer::ShadowPlane &p=b.shadow_plane[i];
             uint8_t *dst=(uint8_t*)(uintptr_t)b.cpu+p.offset;
@@ -844,6 +895,22 @@ extern "C" int drmPrimeFDToHandle(int,int surface,uint32_t *handle) {
         state.buffers[i].shadow_id==uint32_t(surface)){*handle=i+1;return 0;}
     struct redwood_drm_surface info{};IOSurfaceRef s=nullptr;
     int e=surface_description(surface,&info,&s);
+    if(!e && (uint32_t(surface)&YCbCrConvertFlag)) {
+        Buffer::ShadowPlane plane[2]; uint64_t need=0;
+        e=ycbcr_convert_layout(s,plane,&need) && need==info.size?0:EINVAL;
+        if(!e)e=allocate(info.size,MSM_BO_WC,nullptr,handle);
+        Buffer *b=e?nullptr:buffer(*handle);
+        if(b) {
+            b->shadow_src=s;CFRetain(s);b->shadow_id=uint32_t(surface);
+            b->shadow_plane[0]=plane[0];b->shadow_plane[1]=plane[1];b->shadow_planes=2;
+            b->shadow_convert=true;b->shadow_valid=false;
+            static unsigned logged;
+            if(logged++<8)fprintf(stderr,"SweetNativeMetal: YCbCr IOSurface %u converted to (Cr, Y, Cb) RGBA8 shadow BO %u: %ux%u rows %u -> %u bytes\n",
+                uint32_t(surface)&~YCbCrConvertFlag,*handle,plane[0].row_bytes,plane[0].rows,plane[0].src_pitch,plane[0].pitch);
+        }
+        CFRelease(s);
+        if(e){errno=e;return -1;}return 0;
+    }
     // a bi-planar YCbCr surface (the only 2-plane kind surface_description accepts) has a row pitch per plane
     const bool ycbcr=s && IOSurfaceGetPlaneCount(s)==2;
     const size_t src_pitch=!s?0:ycbcr?(IOSurfaceGetBytesPerRowOfPlane(s,0)|IOSurfaceGetBytesPerRowOfPlane(s,1)):
