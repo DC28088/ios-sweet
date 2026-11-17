@@ -186,5 +186,25 @@ static BOOL native_specialize(struct rwa_device *device,id function,unsigned sta
         if([key isKindOfClass:[NSString class]])packed[i].name=[key UTF8String];
         else packed[i].index=[key unsignedIntValue];i++;
     }
+    {   /* 26bC: green app snapshots although the (Cr, Y, Cb) shadows hold neutral chroma -> which uber-shader
+         * YCbCr path does CA pick? Image functions, planes and the matrix flag of every YCbCr pipeline. */
+        int fn0=-1,fn1=-1,pc0=-1,pc1=-1,has0b=-1,has1b=-1,mtx=-1;
+        for(NSDictionary *value in values) {
+            id key=value[@"key"];NSData *bytes=value[@"bytes"];
+            if(![key isKindOfClass:[NSString class]] || [bytes length]<1)continue;
+            int v=((const uint8_t *)[bytes bytes])[0];
+            if([key isEqualToString:@"fc_image_function0"])fn0=v;
+            else if([key isEqualToString:@"fc_image_function1"])fn1=v;
+            else if([key isEqualToString:@"fc_plane_count0"])pc0=v;
+            else if([key isEqualToString:@"fc_plane_count1"])pc1=v;
+            else if([key isEqualToString:@"fc_has_image_0B"])has0b=v;
+            else if([key isEqualToString:@"fc_has_image_1B"])has1b=v;
+            else if([key isEqualToString:@"fc_has_ycbcr_matrix"])mtx=v;
+        }
+        static unsigned told;
+        if(mtx==1 && told++<64)
+            rw_print("YCbCr pipeline %s stage %u: image_function0 %d image_function1 %d plane_count %d/%d has_image_B %d/%d\n",
+                     [((SweetNativeFunction *)function)->_nativeName UTF8String],stage,fn0,fn1,pc0,pc1,has0b,has1b);
+    }
     return rwa_set_constants(device,stage,packed,i,why,n)==0;
 }
