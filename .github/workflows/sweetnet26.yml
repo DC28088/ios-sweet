@@ -1,0 +1,44 @@
+name: sweetnet26
+# Bergamota's iOS 26 wallpaper tools at the pinned commit (tools/sweetnet/build.sh b18 recipe: arm64e, ad hoc
+# signed with posterset.entitlements, then renegade pacstrip --sign). sweetlegacywall IMAGE writes the legacy
+# lock/home wallpaper that PosterBoard's LegacyPoster draws; sweetposterset selects that poster.
+on:
+  workflow_dispatch:
+    inputs:
+      bergamota_sha:
+        description: ry-diffusion/Bergamota commit
+        default: 37a7a7a917fc09945ed2f7d1ae68b84d4525b4cb
+env:
+  BERGAMOTA_REPO: https://github.com/ry-diffusion/Bergamota
+  BERGAMOTA_SHA: ${{ inputs.bergamota_sha || '37a7a7a917fc09945ed2f7d1ae68b84d4525b4cb' }}
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: Fetch Bergamota
+        run: |
+          git init -q berg
+          git -C berg fetch -q --depth 1 "$BERGAMOTA_REPO" "$BERGAMOTA_SHA"
+          git -C berg checkout -q FETCH_HEAD
+          test "$(git -C berg rev-parse HEAD)" = "$BERGAMOTA_SHA"
+      - name: Build wallpaper tools
+        run: |
+          here=berg/tools/sweetnet
+          out=out/sweetnet26
+          mkdir -p "$out"
+          b18() {
+            n=$1; src=$2; ents=$3; shift 3
+            xcrun -sdk iphoneos clang -arch arm64e -mios-version-min=18.0 -O2 -fobjc-arc -framework Foundation "$@" \
+              "$here/$src" -o "$out/$n"
+            codesign -s - -f --entitlements "$here/$ents" "$out/$n"
+            python3 -I berg/tools/renegade/pacstrip.py --sign "$out/$n"
+          }
+          b18 sweetlegacywall sweetlegacywall.m posterset.entitlements -framework UIKit
+          b18 sweetwallpaper sweetwallpaper.m posterset.entitlements
+          b18 sweetposterset sweetposterset.m posterset.entitlements
+          (cd "$out" && shasum -a 256 * > SHA256SUMS && cat SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sweetnet26
+          path: out/sweetnet26/
