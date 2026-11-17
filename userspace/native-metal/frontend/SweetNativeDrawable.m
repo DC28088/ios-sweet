@@ -41,7 +41,7 @@ struct rwa_texture *rwd_texture_for_surface(struct rwa_device *device,void *surf
     size_t plane_width=0,plane_height=0,plane_pitch=0;
     struct rwd_texture_shape ycbcr_shape;   /* the caller's descriptor with a YCbCr plane's own format */
     size_t ycbcr_shadow_offset=0,ycbcr_shadow_bytes=0;   /* nonzero bytes: the planes live in a shadow BO */
-    bool ycbcr_convert=false;   /* 26bB: format 500 read through a (Cr, Y, Cb, 1) RGBA8 shadow */
+    bool ycbcr_convert=false;   /* 26bB/26bC: format 500 read through an RGB RGBA8 shadow */
     if(surface_planes==2 && (surface_format==0x34323066u || surface_format==0x34323076u)) {
         if(plane>1)REFUSE("interface: plane %lu of a 2-plane IOSurface",plane);
         uintptr_t pb=(uintptr_t)IOSurfaceGetBaseAddressOfPlane(s,plane),b0=(uintptr_t)IOSurfaceGetBaseAddress(s);
@@ -81,16 +81,16 @@ struct rwa_texture *rwd_texture_for_surface(struct rwa_device *device,void *surf
         }
         if(want->usage&(2|4))
             REFUSE("interface: a written YCbCr IOSurface plane (usage %#x)",want->usage);
-        /* 26bB: format 500 is ONE texture over both planes. The uber shader's single-texture YCbCr path (image
-         * function 36) calls ycbcr_to_rgb(s.g, s.b, s.r): a sample must answer R=Cr, G=Y, B=Cb (the Vulkan
-         * order). Plane 0 alone as R8 answered (Y, 0, 0) -> red app switcher snapshots and app-open
-         * animations. Such a texture is an RGBA8 shadow the transport fills with (Cr, Y, Cb, 255) per luma texel
-         * (transport/sweet_drm.cpp ycbcr_convert_layout); /var/local/sweet-native-ycbcr-raw restores R8. */
+        /* 26bB/26bC: format 500 is ONE texture over both planes, and CoreAnimation draws it with its plain RGB image
+         * path (no pipeline has fc_has_ycbcr_matrix=1): a sample must be RGB, as Apple's sampler converts. Plane 0
+         * alone as R8 answered (Y, 0, 0) -> red snapshots; (Cr, Y, Cb) -> green. Such a texture is an RGBA8 shadow the
+         * transport fills with RGB (transport/sweet_drm.cpp ycbcr_convert_layout, shadow_refill);
+         * /var/local/sweet-native-ycbcr-raw restores R8. */
         static int convert_on=-1;
         if(convert_on<0) {
             convert_on=access("/var/local/sweet-native-ycbcr-raw",F_OK)!=0;
             fprintf(stderr,"SweetNativeMetal: Metal format 500 textures %s\n",convert_on?
-                "read through a (Cr, Y, Cb) RGBA8 shadow (/var/local/sweet-native-ycbcr-raw restores plane 0 as R8)":
+                "read through an RGB RGBA8 shadow (/var/local/sweet-native-ycbcr-raw restores plane 0 as R8)":
                 "are plane 0 as R8 (raw)");
         }
         if(convert_on && want->pixel_format==500 && plane==0) {

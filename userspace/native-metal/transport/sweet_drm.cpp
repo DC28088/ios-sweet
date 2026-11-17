@@ -49,8 +49,9 @@ struct Buffer {
     uint32_t shadow_id = 0, shadow_planes = 0, shadow_seed = 0;
     bool shadow_valid = false;
     // 26bB: a converted shadow (ycbcr_convert_layout()): plane 0 = luma source + the RGBA destination rows,
-    // plane 1 = CbCr source; shadow_refill() writes one (Cr, Y, Cb, 255) texel per luma texel.
+    // plane 1 = CbCr source; shadow_refill() writes one RGB(A=255) texel per luma texel.
     bool shadow_convert = false;
+    uint8_t shadow_matrix = 0;   // converted shadow: bit 0 = BT.709 (else BT.601), bit 1 = video range ('420v')
 };
 struct Fence { uint32_t number; uint64_t kernel, queue; };
 struct State {
@@ -245,7 +246,7 @@ int release(Buffer &b) {
     if (e) { b.closing=true; return e; } // retained/quarantined; no use-after-free
     if(b.shadow_src) {
         CFRelease(b.shadow_src);b.shadow_src=nullptr;b.shadow_id=0;b.shadow_valid=false;
-        b.shadow_convert=false;b.shadow_planes=0;
+        b.shadow_convert=false;b.shadow_planes=0;b.shadow_matrix=0;
     }
     if(b.gpu_dirty) {cache_clean_invalidate(b);b.gpu_dirty=false;}
     if(!b.surface && b.cpu_mapped && b.cpu_lease && b.iova && !b.closing && b.size<=PoolMaxBuffer && !state.lost) {
@@ -307,11 +308,11 @@ bool ycbcr_shadow_layout(IOSurfaceRef s, Buffer::ShadowPlane plane[2], uint64_t 
     *bytes=rounded(at);
     return true;
 }
-// 26bB: CoreAnimation imports a '420f'/'420v' surface as ONE texture of its private Metal format 500 and the
-// uber shader (image function 36) samples it as (Cr, Y, Cb) = (.r, .g, .b) -- the Vulkan YCbCr channel order,
-// one sample reading both planes. Importing plane 0 alone as R8 gave (Y, 0, 0) -> Cr=Y, Y=0, Cb=0 -> red app
-// switcher snapshots. The frontend asks for such a texture as surface ID | YCbCrConvertFlag: an owned RGBA8 BO
-// at a 64-byte-aligned pitch that shadow_refill() fills with (Cr, Y, Cb, 255) per luma texel (chroma nearest)
+// 26bB/26bC: CoreAnimation imports a '420f'/'420v' surface as ONE texture of its private Metal format 500 and
+// draws it with its plain RGB image path (no pipeline has fc_has_ycbcr_matrix=1): Apple's sampler converts, so a
+// sample must be RGB. Plane 0 alone as R8 gave (Y, 0, 0) = red app snapshots; (Cr, Y, Cb) gave green. The frontend
+// asks for such a texture as surface ID | YCbCrConvertFlag: an owned RGBA8 BO at a 64-byte-aligned pitch that
+// shadow_refill() fills with RGB (BT.601/709 from IOSurfaceYCbCrMatrix, full or video range, chroma nearest)
 // whenever the surface's seed changes. IOSurface IDs are small; the flag keeps the "fd" positive.
 constexpr uint32_t YCbCrConvertFlag = 0x40000000u;
 bool ycbcr_convert_layout(IOSurfaceRef s, Buffer::ShadowPlane plane[2], uint64_t *bytes) {
@@ -568,13 +569,27 @@ int shadow_refill(Buffer &b) {
     if(src && b.cpu && fits && b.shadow_convert && b.shadow_planes==2) {
         const Buffer::ShadowPlane &l=b.shadow_plane[0], &c=b.shadow_plane[1];
         timespec t0{};clock_gettime(CLOCK_MONOTONIC_RAW,&t0);
+        /* 26bC: no pipeline that samples these textures has fc_has_ycbcr_matrix=1, so CoreAnimation draws them with
+         * its plain RGB image path: a format-500 sample must already be RGB (Apple's sampler converts). (Cr, Y, Cb)
+         * read as RGB was the green overlay. Converted here, matrix and range from the surface; 16.16 fixed point,
+         * chroma nearest. */
+        const bool bt709=b.shadow_matrix&1, video=b.shadow_matrix&2;
+        const double ys=video?255.0/219.0:1.0, cs=video?255.0/224.0:1.0;
+        const double kr=bt709?1.5748:1.402, kgb=bt709?0.187324:0.344136, kgr=bt709?0.468124:0.714136, kb=bt709?1.8556:1.772;
+        const int32_t fy=int32_t(ys*65536+0.5), fr=int32_t(kr*cs*65536+0.5), fgb=int32_t(kgb*cs*65536+0.5),
+                      fgr=int32_t(kgr*cs*65536+0.5), fb=int32_t(kb*cs*65536+0.5), yoff=video?16:0;
+        auto clamp8=[](int32_t v)->uint32_t{v=(v+32768)>>16;return v<0?0u:v>255?255u:uint32_t(v);};
         for(uint32_t y=0;y<l.rows;++y) {
             const uint8_t *luma=src+l.src_offset+uint64_t(y)*l.src_pitch;
             const uint8_t *cbcr=src+c.src_offset+uint64_t(y>>1)*c.src_pitch;
             uint32_t *dst=(uint32_t*)((uint8_t*)(uintptr_t)b.cpu+uint64_t(y)*l.pitch);
-            for(uint32_t x=0;x<l.row_bytes;++x) {
-                const uint8_t *cc=cbcr+(x&~1u);   // NV12 order: Cb, Cr
-                dst[x]=uint32_t(cc[1])|uint32_t(luma[x])<<8|uint32_t(cc[0])<<16|0xff000000u;
+            for(uint32_t x=0;x<l.row_bytes;x+=2) {
+                const int32_t cb=int32_t(cbcr[x])-128, cr=int32_t(cbcr[x+1])-128;   // NV12 order: Cb, Cr
+                const int32_t dr=fr*cr, dg=-fgb*cb-fgr*cr, db=fb*cb;
+                for(uint32_t k=0;k<2 && x+k<l.row_bytes;++k) {
+                    const int32_t yv=(int32_t(luma[x+k])-yoff)*fy;
+                    dst[x+k]=clamp8(yv+dr)|clamp8(yv+dg)<<8|clamp8(yv+db)<<16|0xff000000u;
+                }
             }
         }
         copied=uint64_t(l.row_bytes)*4*l.rows;
@@ -582,16 +597,17 @@ int shadow_refill(Buffer &b) {
         timespec t1{};clock_gettime(CLOCK_MONOTONIC_RAW,&t1);
         static unsigned told;
         if(told++<32) {
-            unsigned long long sum_y=0,sum_cb=0,sum_cr=0,n=0;
+            unsigned long long sum_r=0,sum_g=0,sum_b=0,n=0;
             for(uint32_t y=0;y<l.rows;y+=37)for(uint32_t x=0;x<l.row_bytes;x+=29) {
                 const uint8_t *px=(const uint8_t*)(uintptr_t)b.cpu+uint64_t(y)*l.pitch+uint64_t(x)*4;
-                sum_cr+=px[0];sum_y+=px[1];sum_cb+=px[2];++n;
+                sum_r+=px[0];sum_g+=px[1];sum_b+=px[2];++n;
             }
-            fprintf(stderr,"SweetNativeMetal: YCbCr IOSurface %u converted into BO %ld (seed %u, %s, locked %d): %llu us, "
-                    "mean Y %llu Cb %llu Cr %llu (%llu samples)\n",b.shadow_id&~YCbCrConvertFlag,long(&b-state.buffers)+1,seed,
+            fprintf(stderr,"SweetNativeMetal: YCbCr IOSurface %u converted to RGB (%s %s range) into BO %ld (seed %u, %s, "
+                    "locked %d): %llu us, mean R %llu G %llu B %llu (%llu samples)\n",b.shadow_id&~YCbCrConvertFlag,
+                    bt709?"BT.709":"BT.601",video?"video":"full",long(&b-state.buffers)+1,seed,
                     b.shadow_valid?"surface changed":"first fill",int(locked),
                     (unsigned long long)((t1.tv_sec-t0.tv_sec)*1000000ll+(t1.tv_nsec-t0.tv_nsec)/1000),
-                    n?sum_y/n:0,n?sum_cb/n:0,n?sum_cr/n:0,n);
+                    n?sum_r/n:0,n?sum_g/n:0,n?sum_b/n:0,n);
         }
     } else if(src && b.cpu && fits)
         for(uint32_t i=0;i<b.shadow_planes;++i) {
@@ -943,9 +959,16 @@ extern "C" int drmPrimeFDToHandle(int,int surface,uint32_t *handle) {
             b->shadow_src=s;CFRetain(s);b->shadow_id=uint32_t(surface);
             b->shadow_plane[0]=plane[0];b->shadow_plane[1]=plane[1];b->shadow_planes=2;
             b->shadow_convert=true;b->shadow_valid=false;
+            b->shadow_matrix=IOSurfaceGetPixelFormat(s)==0x34323076u?2:0;   // '420v' = video range
+            if(CFTypeRef m=IOSurfaceCopyValue(s,CFSTR("IOSurfaceYCbCrMatrix"))) {
+                char name[64]={0};
+                if(CFGetTypeID(m)==CFStringGetTypeID())CFStringGetCString((CFStringRef)m,name,sizeof name,kCFStringEncodingUTF8);
+                if(strstr(name,"709"))b->shadow_matrix|=1;
+                CFRelease(m);
+            }
             shadow_refill(*b);   // 26bBc: filled at import, never sampled empty (submit refills on seed change)
             static unsigned logged;
-            if(logged++<8)fprintf(stderr,"SweetNativeMetal: YCbCr IOSurface %u converted to (Cr, Y, Cb) RGBA8 shadow BO %u: %ux%u rows %u -> %u bytes\n",
+            if(logged++<8)fprintf(stderr,"SweetNativeMetal: YCbCr IOSurface %u imported as an RGB RGBA8 shadow BO %u: %ux%u rows %u -> %u bytes\n",
                 uint32_t(surface)&~YCbCrConvertFlag,*handle,plane[0].row_bytes,plane[0].rows,plane[0].src_pitch,plane[0].pitch);
         }
         CFRelease(s);
