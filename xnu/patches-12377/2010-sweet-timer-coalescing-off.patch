@@ -1,0 +1,20 @@
+diff --git a/osfmk/kern/timer_call.c b/osfmk/kern/timer_call.c
+index ef29922..72a54a3 100644
+--- a/osfmk/kern/timer_call.c
++++ b/osfmk/kern/timer_call.c
+@@ -266,6 +266,15 @@ timer_call_init(void)
+ {
+ 	timer_longterm_init();
+ 	timer_call_init_abstime();
++	/*
++	 * Sweet 2010: timer coalescing off by default (boot-arg sweetcoal=1 restores it). With it on, 1 ms sleeps of
++	 * ordinary threads woke ~19 ms late on iOS 26 (26bE: `usleep 1000` ~45 ms vs 26 ms for `true`), as on iOS 16
++	 * (0221: 17-33 ms on, 1.0 ms off): the audio HAL's I/O cycles and the speaker sender missed their 10 ms periods.
++	 * kern.timer.coalescing_enabled still switches it at run time.
++	 */
++	uint32_t sweetcoal = 0;
++	(void)PE_parse_boot_argn("sweetcoal", &sweetcoal, sizeof(sweetcoal));
++	mach_timer_coalescing_enabled = sweetcoal ? TRUE : FALSE;
+ }
+ 
+ 
