@@ -10,6 +10,7 @@
 #include <mach/mach.h>
 #include <pthread.h>
 #include <sys/mman.h>
+#include <sys/sysctl.h>
 #include <time.h>
 #include <unistd.h>
 #include <algorithm>
@@ -105,6 +106,15 @@ struct SubmitTiming {
             fprintf(stderr,"SweetNativeMetal: shadow surfaces refilled=%llu bytes=%llu gpu_waits=%llu\n",
                 (unsigned long long)state.shadow_fills,(unsigned long long)state.shadow_fill_bytes,
                 (unsigned long long)state.shadow_waits);
+        {   /* 26bC: IOLog truncates "SWEET FB: stats" after scan_replaced_s; copy_us, latch waits and vsync_s are
+             * in kern.sweet_fb (Bergamota 0210). Print that part with the transport window. */
+            char fb[1024];size_t len=sizeof fb-1;
+            if(sysctlbyname("kern.sweet_fb",fb,&len,nullptr,0)==0) {
+                fb[len<sizeof fb?len:sizeof fb-1]=0;
+                const char *tail=strstr(fb,"copy_us=");
+                if(tail)fprintf(stderr,"SweetNativeMetal: sweet_fb %s",tail);
+            }
+        }
         if(state.busy_backoffs)
             fprintf(stderr,"SweetNativeMetal: submit backed off %llu x 500 us (job slots held by other clients)\n",
                 (unsigned long long)state.busy_backoffs);
