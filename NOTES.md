@@ -1,3 +1,20 @@
+## 2026-11-17 IST: catch-up (11-16 late work was not recorded); booting 26bB now
+- Committed after the 11-16 evening entry: xnu 2006 (4e3682c, boot-arg sweetjetsamlimits=0 = per-process jetsam
+  high-water limits off; 26b9d had ~200 crashes in 8 min, mostly sig-9 high-watermark kills of 6-8 MB daemons) ->
+  kernel CI 43860793622 SUCCESS; native-metal f895f63 (unaligned device-buffer bindings via aligned GPU copies =
+  compute_average_luma/compute_sum_luma refusals; loads through null pointers = 0, stores dropped = wallpaper abort
+  in UberShader::apply_color_opcode GammaLUTs) -> build 29 CI 43863748598 FAILED (util/u_box.h); 22232df -> build 30
+  CI 43866435204 SUCCESS (local research/ios26/metal/build-30).
+- Image 26bB (research/ios26/boot/shim-boot-26bB.img, sha256 ce081354) = kernel 43860793622 + sweetbuild=2661
+  sweetjetsamlimits=0 (rest = 26b9 cmdline). Boot 26bBa (logs/boot-26bBa.txt, 11-16 18:10) stops early: backboardd
+  restarted for Metal discovery (normal), SpringBoard exec; no panic seen. Observed: "Could not opt into 50 MB Jetsam
+  high watermark: 22". UNKNOWN whether build 30 was installed on the phone; no USER result recorded.
+- Observed in 26b9e: wallpaper '420f' plane 0 bytes mean 240 min 0 max 255 -> the decode is not empty; missing
+  wallpaper is GPU-side (chroma binding still unknown).
+- Untracked leftovers: xnu/patches/0224-sweet-present-gate-sleep.patch (Nov 8, iOS 16 era), stray file `--help`.
+- NEXT: boot 26bB (receiver -> logs/boot-26bBb.txt), confirm/install build 30, then check crash count, luma refusals,
+  wallpaper set, speaker "service profiles loaded"; open: chroma binding, brightness crash pc 0x1fa566924.
+
 ## 2026-11-16 IST (evening): 26b9 + native-metal 22-28 + wland 0023/0024; sensors live; wallpaper still missing
 - Images (local, research/ios26/boot): 26b9 = kernel CI 43795093912 (xnu 2004 GPU gate + quiesce 5 s, 2005 DCS
   brightness) + 26b8 cmdline, sweetbuild=2659 (shim 64933b08); 26bA = 26b9 + sweetfb_blsvc=1 (1c803aad).
