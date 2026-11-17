@@ -1,0 +1,262 @@
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index 00f5299..625c005 100644
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -394,7 +394,19 @@ public:
+ 	uint32_t      fSwapNewest, fSwapScanID, fSwapPrevScan, fSwapDone, fCurSwapID;
+ 	uint32_t      fPendFence;       /* 0229: newest GPU fence submitted when the pending swap arrived */
+ 	uint64_t      fPendAbs;         /* 0229: when it arrived */
+-	bool          gpuGateOpen(uint64_t now);
++	/*
++	 * Sweet 2009: the oldest swap not yet shown, kept (with its holds and fence) when a newer swap arrives while the
++	 * GPU is still drawing. The gate shows the newest frame whose GPU work has completed, so a GPU that is always a
++	 * frame behind no longer forces the 50 ms cap (2007), which put half-drawn frames on the panel (26bD: flicker,
++	 * ~8 gpu_hold_timeouts/s).
++	 */
++	uint8_t       fOldRec[SWEET_FB_SWAP_REC_SIZE];
++	SweetSurface *fOldHold[4];
++	uint32_t      fOldFence;
++	uint64_t      fOldAbs;
++	bool          fOldValid;
++	bool          takeFrame(uint8_t *rec, SweetSurface **taken, SweetSurface **dropped, uint64_t now, bool ungated);
++	void          putBack(const uint8_t *rec, SweetSurface **taken, SweetSurface **dropped);
+ 	uint32_t      fSwapDepth;       /* sweetfb_swapdepth: 1 = SwapWait(N) waits until N latched, 2 (default) = until N-1 latched */
+ 	bool          fWatching;        /* a frame is queued: the swap timer polls for its latch every 500 us */
+ 	void          latchWatch(void);
+@@ -422,6 +434,7 @@ public:
+ 		uint64_t cleanAbs, cleans, cleanSkips;
+ 		uint64_t swapWaits, swapWaitAbs, swapWaitTimeouts;      /* SwapWait calls that had to wait, their time, those that gave up */
+ 		uint64_t gpuHolds, gpuHoldTimeouts;                     /* 0229: pending swaps held for the GPU, held past 50 ms */
++		uint64_t gpuOld;                                        /* sweet 2009: frames shown from the older slot */
+ 		uint64_t replaceWaits, replaceTimeouts;                 /* 0220: frames that waited for the previous one's latch / gave up */
+ 		uint64_t emptySwaps, emptyKept;                         /* 0233: swaps with no layer / of those, the ones that kept the frame */
+ 		uint64_t scanCopies, scanCopyAbs, scanCopyMaxAbs;       /* 0235: frames copied to a scan-out buffer, their time */
+@@ -1154,16 +1167,14 @@ AppleCLCD::vsyncFired(OSObject *owner, IOTimerEventSource *sender)
+ 		sender->setTimeoutUS(nextUS);
+ 		return;
+ 	}
+-	bool flush = fb->fDirty && (count % fb->fFlushTicks) == 0 && fb->gpuGateOpen(mach_absolute_time());
++	bool flush = fb->fDirty && (count % fb->fFlushTicks) == 0;
+ 	uint8_t *rec = NULL;
+-	SweetSurface *taken[4] = {};
++	SweetSurface *taken[4] = {}, *vdropped[4] = {};
+ 	if (flush) {
+ 		rec = (uint8_t *)IOMallocData(SWEET_FB_SWAP_REC_SIZE);
+-		if (rec != NULL) {
+-			memcpy(rec, fb->fPending, SWEET_FB_SWAP_REC_SIZE);
+-			fb->fDirty = false;
+-			memcpy(taken, fb->fPendHold, sizeof(taken));
+-			bzero(fb->fPendHold, sizeof(fb->fPendHold));
++		if (rec != NULL && !fb->takeFrame(rec, taken, vdropped, mach_absolute_time(), false)) {
++			IOFreeData(rec, SWEET_FB_SWAP_REC_SIZE);
++			rec = NULL;
+ 		}
+ 	}
+ 	bool dirty = fb->fDirty;        /* still unshown: not yet worth lighting the panel */
+@@ -1199,6 +1210,7 @@ AppleCLCD::vsyncFired(OSObject *owner, IOTimerEventSource *sender)
+ 		}
+ 	}
+ 	sweet_hold_release(taken);      /* copied: CA may render into them again */
++	sweet_hold_release(vdropped);
+ 	fb->statsTick(now);
+ 	fb->hudTick(now);
+ 	sender->setTimeoutUS(nextUS);
+@@ -1214,21 +1226,81 @@ AppleCLCD::vsyncFired(OSObject *owner, IOTimerEventSource *sender)
+  * 0229: the pending swap is taken only once the GPU work submitted before it has completed (it may be drawing that very
+  * framebuffer), or after 50 ms (a stuck GPU must not stop the display). Called with fLock held.
+  */
++/*
++ * Sweet 2009: takes the frame to show, with fLock held. The newest swap when its GPU work has completed (ungated: the
++ * GPU scan-out copy queues behind it anyway), dropping the older one; else the older one once its work has completed,
++ * leaving the newest pending. Only when the frame waiting longest is still unfinished after 100 ms (a stuck or very
++ * slow GPU must not stop the display) is it shown as it is. taken gets the shown frame's holds, dropped those of a
++ * frame that will never be shown; the caller releases both after unlocking.
++ */
+ bool
+-AppleCLCD::gpuGateOpen(uint64_t now)
++AppleCLCD::takeFrame(uint8_t *rec, SweetSurface **taken, SweetSurface **dropped, uint64_t now, bool ungated)
+ {
+-	if (sweet_gpu_fence_passed(fPendFence)) {
+-		return true;
++	if (!fDirty) {
++		return false;
+ 	}
+-	uint64_t cap;
+-	nanoseconds_to_absolutetime(50 * NSEC_PER_MSEC, &cap);
+-	if (now - fPendAbs > cap) {
++	bool newest = ungated || sweet_gpu_fence_passed(fPendFence);
++	bool old = !newest && fOldValid && sweet_gpu_fence_passed(fOldFence);
++	if (!newest && !old) {
++		uint64_t cap;
++		nanoseconds_to_absolutetime(100 * NSEC_PER_MSEC, &cap);
++		if (now - (fOldValid ? fOldAbs : fPendAbs) <= cap) {
++			fSt.gpuHolds++;
++			return false;
++		}
+ 		fSt.gpuHoldTimeouts++;
+-		fPendFence = 0;
++		if (fOldValid) {
++			old = true;
++		} else {
++			newest = true;
++			fPendFence = 0;
++		}
++	}
++	if (old) {
++		memcpy(rec, fOldRec, SWEET_FB_SWAP_REC_SIZE);
++		memcpy(taken, fOldHold, sizeof(fOldHold));
++		bzero(fOldHold, sizeof(fOldHold));
++		fOldValid = false;
++		fSt.gpuOld++;
+ 		return true;
+ 	}
+-	fSt.gpuHolds++;
+-	return false;
++	memcpy(rec, fPending, SWEET_FB_SWAP_REC_SIZE);
++	memcpy(taken, fPendHold, sizeof(fPendHold));
++	bzero(fPendHold, sizeof(fPendHold));
++	fDirty = false;
++	if (fOldValid) {
++		memcpy(dropped, fOldHold, sizeof(fOldHold));
++		bzero(fOldHold, sizeof(fOldHold));
++		fOldValid = false;
++		fSt.coalesced++;        /* the older frame never reached the panel */
++	}
++	return true;
++}
++
++/*
++ * Sweet 2009: a frame swapFired took but could not scan goes back for the vsync tick's copy path: as the pending frame
++ * if nothing is pending, as the older one if a newer swap arrived meanwhile, else (two newer frames wait) it is dropped.
++ * Its GPU work has completed. fLock held.
++ */
++void
++AppleCLCD::putBack(const uint8_t *rec, SweetSurface **taken, SweetSurface **dropped)
++{
++	if (!fDirty) {
++		memcpy(fPending, rec, SWEET_FB_SWAP_REC_SIZE);
++		memcpy(fPendHold, taken, sizeof(fPendHold));
++		fPendFence = 0;
++		fPendAbs = mach_absolute_time();
++		fDirty = true;
++	} else if (!fOldValid) {
++		memcpy(fOldRec, rec, SWEET_FB_SWAP_REC_SIZE);
++		memcpy(fOldHold, taken, sizeof(fOldHold));
++		fOldFence = 0;
++		fOldAbs = mach_absolute_time();
++		fOldValid = true;
++	} else {
++		memcpy(dropped, taken, 4 * sizeof(SweetSurface *));
++		fSt.coalesced++;        /* newer frames replaced it while we looked */
++	}
+ }
+ 
+ void
+@@ -1243,22 +1315,20 @@ AppleCLCD::swapFired(OSObject *owner, IOTimerEventSource *)
+ 	fb->zcPoll();           /* 0216: also kicked by SwapWait when it saw the latch, so the frame it waited for is released now */
+ 	fb->scanBlitPoll();     /* 0241: a GPU scan-out copy whose fence passed is scanned now */
+ 	fb->latchWatch();       /* 0217: while a frame is queued this timer comes back every 500 us */
++	SweetSurface *dropped[4] = {};
+ 	IOLockLock(fb->fLock);
+ 	if (!fb->fDirty) {
+ 		IOLockUnlock(fb->fLock);
+ 		return;
+ 	}
+ 	/* 0241: the GPU scan-out copy needs no hold: it is queued behind the frame's own GPU work on the same ring */
+-	if (!fb->scanGpuActive() && !fb->gpuGateOpen(mach_absolute_time())) {
++	if (!fb->takeFrame(fb->fEarlyRec, taken, dropped, mach_absolute_time(), fb->scanGpuActive())) {
+ 		IOLockUnlock(fb->fLock);
+ 		fb->fSwapTimer->setTimeoutUS(250);      /* 0229: the GPU is still drawing what was submitted before this swap */
+ 		return;
+ 	}
+-	memcpy(fb->fEarlyRec, fb->fPending, SWEET_FB_SWAP_REC_SIZE);
+-	fb->fDirty = false;
+-	memcpy(taken, fb->fPendHold, sizeof(taken));
+-	bzero(fb->fPendHold, sizeof(fb->fPendHold));
+ 	IOLockUnlock(fb->fLock);
++	sweet_hold_release(dropped);
+ 
+ 	fb->quietConsole();
+ 	if (!sweet_bootlog_keep() && fb->zcPresent(fb->fEarlyRec, get32(fb->fEarlyRec, 0x104))) {
+@@ -1266,16 +1336,8 @@ AppleCLCD::swapFired(OSObject *owner, IOTimerEventSource *)
+ 		fb->latchWatch();
+ 		return;
+ 	}
+-	SweetSurface *dropped[4] = {};
+ 	IOLockLock(fb->fLock);
+-	if (!fb->fDirty) {
+-		memcpy(fb->fPending, fb->fEarlyRec, SWEET_FB_SWAP_REC_SIZE);
+-		fb->fDirty = true;
+-		memcpy(fb->fPendHold, taken, sizeof(taken));
+-	} else {
+-		memcpy(dropped, taken, sizeof(dropped));        /* a newer swap replaced it while we looked */
+-		fb->fSt.coalesced++;
+-	}
++	fb->putBack(fb->fEarlyRec, taken, dropped);
+ 	IOLockUnlock(fb->fLock);
+ 	sweet_hold_release(dropped);
+ }
+@@ -1344,7 +1406,7 @@ AppleCLCD::statsTick(uint64_t now)
+ 	    "latch_waits=%llu latch_wait_us=%u.%02u latch_timeouts=%llu vsync_s=%u.%02u "
+ 	    "pool_used=%u pool_total=%u pool_surfaces=%llu pool_fallbacks=%llu "
+ 	    "swapsync=%d swap_waits=%llu swap_wait_us=%u.%02u swap_wait_timeouts=%llu replace_waits=%llu replace_timeouts=%llu "
+-	    "gpu_holds=%llu gpu_hold_timeouts=%llu empty_swaps=%llu empty_kept=%llu "
++	    "gpu_holds=%llu gpu_hold_timeouts=%llu gpu_old=%llu empty_swaps=%llu empty_kept=%llu "
+ 	    "scancopy=%d scan_copies=%llu scan_copy_us=%u.%02u scan_copy_us_max=%llu scan_gpu=%d scan_gpu_copies=%llu scan_gpu_fallbacks=%llu "
+ 	    "scan_gpu_submit_fails=%llu scan_gpu_late=%llu scan_gpu_wait_us_max=%llu\n",
+ 	    mode, hz, fFlushTicks, fHw ? 1 : 0, fFlip ? 1 : 0, smmu, fZcCleanMode == 0 ? "never" : (fZcCleanMode == 1 ? "always" : (fZcCleanMode == 2 ? "auto" : "tracked")),
+@@ -1355,7 +1417,7 @@ AppleCLCD::statsTick(uint64_t now)
+ 	    c.latchWaits, SW_F2(lwAvg), c.latchTimeouts, SW_F2(PER_S(dTicks)),
+ 	    used, total, pallocs, pfails,
+ 	    fSwapSync ? 1 : 0, c.swapWaits, SW_F2(swAvg), c.swapWaitTimeouts, c.replaceWaits, c.replaceTimeouts,
+-	    c.gpuHolds, c.gpuHoldTimeouts, c.emptySwaps, c.emptyKept,
++	    c.gpuHolds, c.gpuHoldTimeouts, c.gpuOld, c.emptySwaps, c.emptyKept,
+ 	    fScanCopy && !fScanFailed ? 1 : 0, c.scanCopies, SW_F2(scAvg), sweet_abs_us(c.scanCopyMaxAbs),
+ 	    fScanGpu && !fScanGpuOff ? (fScanGpuRest ? 2 : 1) : 0, c.scanGpuCopies, c.scanGpuFallbacks,
+ 	    c.scanGpuSubmitFails, c.scanGpuLate, sweet_abs_us(c.scanGpuWaitMaxAbs));
+@@ -1453,16 +1515,15 @@ AppleCLCD::swap(const uint8_t *rec)
+ 	}
+ 	IOLockLock(fLock);
+ 	fSt.swaps++;
+-	fPendFence = sweet_gpu_fence_snapshot();
+ 	/*
+-	 * Sweet 2007: the 50 ms cap counts from the OLDEST swap that has not reached the panel. Restarting it on every
+-	 * swap (0229) let a steady stream of swaps (CoreAnimation every ~20 ms) with a GPU that always has newer work
+-	 * queued (sweet 2004: the gate waits for the newest NativeAdreno fence) hold the display indefinitely: 26bC showed
+-	 * 48 swaps/s of which 42 coalesced and ~7 copied (scrolling and app animations at ~7 fps).
++	 * Sweet 2009: a swap replacing an unshown frame moves that frame to the older slot (unless one is already there:
++	 * then the replaced one, newer than it, is dropped), so the gate can show it as soon as its GPU work completes
++	 * instead of waiting on the newest fence forever (0229) or giving up after the cap (2007).
+ 	 */
+-	if (!fDirty) {
+-		fPendAbs = mach_absolute_time();
+-	}
++	uint32_t prevFence = fPendFence;
++	uint64_t prevAbs = fPendAbs;
++	fPendFence = sweet_gpu_fence_snapshot();
++	fPendAbs = mach_absolute_time();
+ 	__atomic_store_n(&fSwapNewest, get32(rec, 0x50), __ATOMIC_RELEASE);
+ 	{
+ 		struct sweet_fb_trace_rec *tr = &sweet_fb_trace[get32(rec, 0x50) & (SWEET_FB_TRACE_N - 1)];
+@@ -1470,12 +1531,19 @@ AppleCLCD::swap(const uint8_t *rec)
+ 		tr->id = get32(rec, 0x50);
+ 		tr->swap = mach_absolute_time();
+ 	}
+-	if (fDirty) {
++	bzero(dropped, sizeof(dropped));
++	if (fDirty && !fOldValid) {
++		memcpy(fOldRec, fPending, SWEET_FB_SWAP_REC_SIZE);
++		memcpy(fOldHold, fPendHold, sizeof(fOldHold));
++		fOldFence = prevFence;
++		fOldAbs = prevAbs;
++		fOldValid = true;
++	} else if (fDirty) {
+ 		fSt.coalesced++;        /* the previous swap never reached the panel */
++		memcpy(dropped, fPendHold, sizeof(dropped));     /* replaced before it was copied */
+ 	}
+ 	memcpy(fPending, rec, SWEET_FB_SWAP_REC_SIZE);
+ 	fDirty = true;
+-	memcpy(dropped, fPendHold, sizeof(dropped));     /* replaced before it was copied */
+ 	memcpy(fPendHold, held, sizeof(held));
+ 	IOLockUnlock(fLock);
+ 	sweet_hold_release(dropped);
