@@ -1,3 +1,24 @@
+## 2026-11-17 19:30 IST: 26bE (xnu 2009): timeouts 0 but flicker remains; speaker prebuffer was never applied
+- Kernel CI 44086957152 SUCCESS -> research/ios26/boot/kernel-44086957152; images (ADT wbg, 26bD cmdline):
+  26bE (shim-boot-26bE.img 06ad09a2, sweetbuild=2665), 26bEd (499a257f, sweetbuild=2666 + sweetdtlog=
+  SpringBoard,MobileSafari). Booted 26bE 19:05 via `sweetreboot fastboot` (log logs/boot-26bE.txt).
+- USER: app switcher real colours; "flicker is still there"; "smoothness is kinda better"; sound still stutters.
+- Stats: gpu_hold_timeouts=0 the whole boot, gpu_old 161->253 (older slot used), copy_us ~12 ms, vsync_s 43-54,
+  no submit failures. => flicker is NOT the gate any more (scheduled handlers are already delivered after the
+  fence, so the swap follows GPU completion). Open guesses: surface hold (+0x18 use count is the iOS 16.7 layout)
+  not honoured by iOS 26 CA -> CA redraws a buffer during our 12 ms copy; or CPU cache staleness (clean=always but
+  cleans=0: only pooled surfaces are cleaned). Asked USER what the flicker looks like.
+- AUDIO ROOT CAUSE #1: launchd reads jobs from /System/Library/xpc/launchd.plist (launchd_unsecure_cache=1), NOT
+  /System/Library/LaunchDaemons/*.plist -> WLAND_PCM_PREBUF_MS=120 was never applied (adsp-speaker.log
+  "prebuffer=1440 frames" = 30 ms). Fixed in the xpc cache (plistlib, everything else identical; backup
+  launchd.plist.pre-prebuf; sha 118e40a2): effective next boot.
+- Audio stats during play (adsp-speaker.log 661-671 s): starts 4->32 (rebuffers ~5/s), padded +5920, bytes ~34k
+  frames/s (< 48k: producer late or bursty); coalescing hold only switched on at 691 s (amps "playing" late).
+  Shell test: `usleep 1000` costs ~45 ms vs 26 ms for `true` -> 1 ms sleeps wake ~19 ms late (timer coalescing
+  on; the iOS 16 fix 0235 timer_call_slop=0 while lit was never ported to 12377).
+- NEXT: reboot -> check "prebuffer=5760 frames"; port 0235 (no timer coalescing while lit) as xnu 2010; flicker
+  per USER description.
+
 ## 2026-11-17 18:25 IST: 26bD + build 35: green gone, faster, but FLICKER = 2007 cap shows half-drawn frames -> xnu 2009
 - Boot 26bD 18:05 (logs/boot-26bD.txt), build 35 installed live (SweetMetal2 6fd868a0, backend 76860e91; build 34
   in research/ios26/metal/build-35/backup-build34), backboardd restarted.
