@@ -1,3 +1,34 @@
+## 2026-11-17 07:45 IST: build 32 ready (YCbCr (Cr,Y,Cb) shadow + EBUSY backoff); phone died (battery); sound worked
+- USER on 26bB + build 30: "most of the visual bugs are gone"; red still covers the app switcher and app-open
+  animation; open/close animations stutter a lot. SOUND WORKS (USER: "the sound actually works", stutters a lot),
+  then "sound died after a while" (cause not read: /var/local/adsp-speaker.log next boot). Phone then died: battery
+  empty. Charger log: "usb 1 apsd 0x11/0x1 SDP ... chg pre err 0x40/0" = PC port (500 mA), pre-charge stage.
+- RED cause (offline, research/ios26/metal/airtest/f0004.ll = ogl_metal_uber): image function 26 = two textures
+  (luma img_tex_0A .x, chroma img_tex_0B .xy); function 36 = ONE texture, ycbcr_to_rgb(s.g, s.b, s.r) = Vulkan
+  order R=Cr G=Y B=Cb. CA imports '420f' as one Metal-500 texture of plane 0 (never plane 1) -> function 36; our
+  R8 import answered (Y,0,0) -> Cr=Y,Y=0,Cb=0 -> red (computed R~0.68,G 0,B 0).
+- Fix 0e36d32: format 500 plane 0 -> owned RGBA8 BO (surface id | 0x40000000) that shadow_refill() fills with
+  (Cr,Y,Cb,255), chroma nearest, on seed change; /var/local/sweet-native-ycbcr-raw restores R8. Log lines
+  "Metal format 500 textures read through a (Cr, Y, Cb) RGBA8 shadow", "YCbCr IOSurface N converted ...".
+  Alternative not taken: freedreno FMT6_R8_G8B8_2PLANE_420_UNORM (hardware NV12; needs chained plane resources).
+- Fix b599af2: 10 "submit failed: -16" per boot = kernel job slots held by other clients, no own fence -> loop gave
+  up at once (frame lost). Now 500 us backoff, up to 100 ms; stats "submit backed off N x 500 us".
+- Build 32 = CI 44000538824 SUCCESS (b599af2; build 31 44000384080 cancelled), local research/ios26/metal/build-32
+  (SweetMetal2 3b61b8d7, backend 79e79c2e). NOT installed. tools/sweet-install-metal2.sh now uses
+  research/ssh/known_hosts.ios26 (SWEET_KNOWN_HOSTS overrides). An on-phone `cp -a SweetMetal2.bundle
+  SweetMetal2.bundle.22232df` (build 30 backup) was running when SSH timed out / phone died: check it is complete.
+- GPU (USER asked "full speed?"): fixed at HFI perf index 6 = 800 MHz (max of the GMU table; PLL0 L=83 ~1594 MHz
+  /2), no DCVS scaling; gpu_busy_pct=0 samples=0 (busy metric broken). Bottleneck observed = CPU: busiest 5 s
+  frontend windows encode_us=2.2 s, 17.6k draws, draw_us 1.48 s (~84 us CPU per draw), all on cpu7; transport
+  ~1 ms CPU per submit (half ioctl). 59 slow fences 21-34 ms (avg 27 ms) in ~13 min.
+- Wallpaper: USER image copied to /var/mobile/Media/DCIM/100APPLE/IMG_0001.JPG (sha256 1ee8af65, mobile:mobile);
+  the empty library's Photos.sqlite{,-shm,-wal} MOVED to /var/mobile/Media/PhotoData-backup-empty (not deleted)
+  so assetsd rebuilds from DCIM; assetsd + Photos killed; rebuild not yet observed (assetsd is on-demand).
+- NEXT: charge the phone (wall charger); boot 26bB; verify the build-30 backup copy, install build 32
+  (tools/sweet-install-metal2.sh research/ios26/metal/build-32/native-legacy/SweetMetal2.bundle BAK);
+  USER opens Photos (library rebuild) and sets the wallpaper; check red gone; read adsp-speaker.log for the sound
+  death; then CPU cost per draw (stutter) and audio stutter.
+
 ## 2026-11-17 07:18 IST: 26bB booted (logs/boot-26bBb.txt) with native-metal build 30; jetsam kills gone
 - USER: phone was in fastboot; `fastboot boot shim-boot-26bB.img` OKAY 07:18:15. Phone SSH host key = research/ssh/
   known_hosts.ios26 (known_hosts is the iOS 16 key). Installed bundle verified by hash = build 30 (SweetMetal2

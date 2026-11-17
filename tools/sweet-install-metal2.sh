@@ -12,7 +12,8 @@ SRC=${1:?usage: tools/sweet-install-metal2.sh BUNDLE-DIR BACKUP-DIR}
 BAK=${2:?usage: tools/sweet-install-metal2.sh BUNDLE-DIR BACKUP-DIR}
 F="python3 -I tools/sweet-files.py"
 DST=/System/Library/Extensions/SweetMetal2.bundle
-SSH="ssh -i research/ssh/id_ed25519 -o UserKnownHostsFile=research/ssh/known_hosts root@192.168.7.2"
+# the iOS 26 root has its own host key (NOTES 26b5); SWEET_KNOWN_HOSTS=research/ssh/known_hosts for iOS 16
+SSH="ssh -i research/ssh/id_ed25519 -o UserKnownHostsFile=${SWEET_KNOWN_HOSTS:-research/ssh/known_hosts.ios26} root@192.168.7.2"
 mkdir -p "$BAK"
 changed=0
 for rel in SweetMetal2 libvulkan_freedreno.dylib Info.plist _CodeSignature/CodeResources; do
