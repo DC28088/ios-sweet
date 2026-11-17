@@ -71,6 +71,14 @@ struct State {
     uint64_t cleans = 0, clean_skips = 0;
     uint64_t shadow_fills = 0, shadow_fill_bytes = 0, shadow_waits = 0;
     uint64_t busy_backoffs = 0;   // submit retries while other clients hold every kernel job slot
+    // 26bE flicker: IOSurfaces the GPU is writing, marked in use (IOSurfaceIncrementUseCount) until the
+    // submission's kernel fence retires. Apple's GPU driver marks them so; CoreAnimation picks its next
+    // render target with IOSurfaceIsInUse, and without the mark it began frame N+1 in the surface whose
+    // frame N was still being drawn / about to be shown (black, half-drawn frames; gone with sync commit).
+    struct GpuUse { uint64_t kernel; IOSurfaceRef surface; };
+    std::vector<GpuUse> gpu_uses;
+    bool gpu_inuse = true;         // /var/local/sweet-native-no-gpu-inuse turns it off
+    uint64_t gpu_use_marks = 0;
 };
 // Kept for process lifetime: closing one Gallium fd must not invalidate another
 // screen or IOSurface. In-flight storage is never freed after an unknown timeout.
@@ -95,14 +103,15 @@ struct SubmitTiming {
         const uint64_t now=clock_ns();
         timings.total+=now-began;++timings.submits;
         if(now-timings.began<5000000000ull)return;
-        fprintf(stderr,"SweetNativeMetal: transport window_ms=%llu submits=%llu ibs=%llu submit_cpu_us=%llu fence_us=%llu cache_us=%llu cache_MiB=%llu submit_ioctl_us=%llu bo_pool_hits=%llu bo_pool_misses=%llu bo_pool_MiB=%llu surface_cleans=%llu surface_clean_skips=%llu\n",
+        fprintf(stderr,"SweetNativeMetal: transport window_ms=%llu submits=%llu ibs=%llu submit_cpu_us=%llu fence_us=%llu cache_us=%llu cache_MiB=%llu submit_ioctl_us=%llu bo_pool_hits=%llu bo_pool_misses=%llu bo_pool_MiB=%llu surface_cleans=%llu surface_clean_skips=%llu gpu_inuse_marks=%llu gpu_inuse_now=%zu\n",
             (unsigned long long)((now-timings.began)/1000000),
             (unsigned long long)timings.submits,(unsigned long long)timings.ibs,
             (unsigned long long)(timings.total/1000),(unsigned long long)(timings.wait/1000),
             (unsigned long long)(timings.cache/1000),(unsigned long long)(timings.cache_bytes>>20),
             (unsigned long long)(timings.ioctl/1000),
             (unsigned long long)pool_hits,(unsigned long long)pool_misses,(unsigned long long)(pool_bytes>>20),
-            (unsigned long long)state.cleans,(unsigned long long)state.clean_skips);
+            (unsigned long long)state.cleans,(unsigned long long)state.clean_skips,
+            (unsigned long long)state.gpu_use_marks,state.gpu_uses.size());
         if(state.shadow_fills || state.shadow_waits)
             fprintf(stderr,"SweetNativeMetal: shadow surfaces refilled=%llu bytes=%llu gpu_waits=%llu\n",
                 (unsigned long long)state.shadow_fills,(unsigned long long)state.shadow_fill_bytes,
@@ -173,7 +182,17 @@ void cache_clean_invalidate(const Buffer &b) {
 // Return GPU-written imported pages to the CPU once their last use retired.
 // Another handle of the same IOSurface may still be in flight under an
 // asynchronous commit; its pages stay untouched until that use retires too.
+void retire_gpu_uses(uint64_t fence) {
+    if(state.gpu_uses.empty())return;
+    size_t keep=0;
+    for(auto &u:state.gpu_uses) {
+        if(u.kernel<=fence) {IOSurfaceDecrementUseCount(u.surface);CFRelease(u.surface);}
+        else state.gpu_uses[keep++]=u;
+    }
+    state.gpu_uses.resize(keep);
+}
 void retire_dirty(uint64_t fence) {
+    retire_gpu_uses(fence);
     // Lazy by default: a GPU-written IOSurface keeps gpu_dirty and is cleaned
     // when the CPU asks for it through this driver (CPU_PREP) or when it is
     // freed; the kernel's present acquire cleans the swap surface itself.
@@ -498,6 +517,11 @@ int open_gpu() {
     state.strict_publish=!access("/var/local/sweet-native-strict-publish",F_OK);
     state.always_clean=!access("/var/local/sweet-native-always-clean",F_OK);
     state.eager_retire=!access("/var/local/sweet-native-eager-retire",F_OK);
+    state.gpu_inuse=access("/var/local/sweet-native-no-gpu-inuse",F_OK)!=0;
+    fprintf(stderr,state.gpu_inuse
+        ?"SweetNativeMetal: IOSurfaces the GPU writes are marked in use until their fence retires "
+         "(touch /var/local/sweet-native-no-gpu-inuse to stop)\n"
+        :"SweetNativeMetal: GPU-written IOSurfaces are NOT marked in use (sweet-native-no-gpu-inuse)\n");
     fprintf(stderr,state.eager_retire
         ?"SweetNativeMetal: GPU-written IOSurfaces are cache-cleaned as soon as they retire (eager-retire)\n"
         :"SweetNativeMetal: GPU-written IOSurfaces are cache-cleaned on CPU access or free, not on retire "
@@ -748,6 +772,20 @@ int submit(drm_msm_gem_submit *s) {
     state.submitted=std::max(state.submitted,last);
     s->fence=state.next++;s->fence_fd=-1;
     state.fences.push_back({s->fence,last,s->queueid});
+    if(state.gpu_inuse && last>state.completed) {
+        // One mark per written surface per submission (aliases share the IOSurface).
+        IOSurfaceRef marked[64];unsigned n=0;
+        for(unsigned i=0;i<s->nr_bos;++i) {
+            Buffer *b=buffer(bos[i].handle);
+            if(!b || !b->surface || !(bos[i].flags&MSM_SUBMIT_BO_WRITE))continue;
+            bool seen=false;
+            for(unsigned j=0;j<n;++j)if(marked[j]==b->surface){seen=true;break;}
+            if(seen || n==64)continue;
+            marked[n++]=b->surface;
+            CFRetain(b->surface);IOSurfaceIncrementUseCount(b->surface);
+            state.gpu_uses.push_back({last,b->surface});++state.gpu_use_marks;
+        }
+    }
     return 0;
 }
 int dispatch(unsigned n,void *data,size_t bytes) {
