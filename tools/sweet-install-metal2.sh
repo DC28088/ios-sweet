@@ -16,7 +16,7 @@ DST=/System/Library/Extensions/SweetMetal2.bundle
 SSH="ssh -i research/ssh/id_ed25519 -o UserKnownHostsFile=${SWEET_KNOWN_HOSTS:-research/ssh/known_hosts.ios26} root@192.168.7.2"
 mkdir -p "$BAK"
 changed=0
-for rel in SweetMetal2 libvulkan_freedreno.dylib Info.plist _CodeSignature/CodeResources; do
+for rel in SweetMetal2 libSweetNativeBackend.dylib libvulkan_freedreno.dylib Info.plist _CodeSignature/CodeResources; do
 	[ -f "$SRC/$rel" ] || continue
 	mkdir -p "$BAK/$(dirname "$rel")"
 	$F get "$DST/$rel" "$BAK/$rel" >/dev/null

@@ -1,3 +1,27 @@
+## 2026-11-17 08:20 IST: 26bBc with build 32: red -> GREEN overlays; Photos/Safari blocked; audio stutter = late PCM
+- Boot 26bBc (logs/boot-26bBc.txt) 07:56. Build 32 installed live: tools/sweet-install-metal2.sh never copied
+  libSweetNativeBackend.dylib (list had only SweetMetal2/libvulkan_freedreno) -> fixed; both binaries now = build
+  32 (3b61b8d7 / 79e79c2e). Build 30 kept on phone as SweetMetal2.bundle.22232df. Earlier "installed" builds may
+  have run an older backend (unverified).
+- USER: "now its green overlays"; Settings scrolling "extremely slow"; sound still stutters a lot.
+- Observed: 7 "YCbCr IOSurface N converted to (Cr, Y, Cb) RGBA8 shadow BO" (579x1254 wallpaper-size and 828x1792
+  snapshots) but only ONE conversion refill in the transport stats (refilled=1 bytes=5935104 = 828*4*1792). A
+  never-filled BO samples as (0,0,0) -> ycbcr_to_rgb -> ~(0, 0.53, 0) = green. Not yet known why most converted
+  BOs are never refilled (one, handle 498, was in a failed EBUSY submit). Asked USER: solid green or tinted image.
+  2 "submit failed: -16" remain (was 10). New: 33x "compute_average_luma reads texture 0 and 1 texture was
+  bound" + 16x "a texture view is not implemented; nil (format 80 type 2 levels 1+1 ...)" = mip-level views.
+- Photos: iOS 26 created a NEW empty Photos.sqlite at boot and did NOT import DCIM/100APPLE/IMG_0001.JPG. Safari
+  aborts on launch (9x, ObjC exception -> abort, message not logged). Wallpaper image now in Files "On My iPhone":
+  /var/mobile/Containers/Shared/AppGroup/CC0CBB90-.../File Provider Storage/Wallpaper.jpg (group
+  .FileProvider.LocalStorage) -> USER: Files -> Share -> Save Image.
+- Audio (adsp-speaker.log, ~430 s): DSP underflows=0; fifo=0 most of the time, padded=17088 frames, starts=89,
+  trimmed=41984; sender period gaps over10ms=12068 of ~40k, over40ms=184, max 654 ms -> producer (HAL ->
+  /dev/sweet-pcm) and sender both late under CPU load; 30 ms prebuffer too small. Speaker plist now
+  WLAND_PCM_PREBUF_MS=120 (effective NEXT boot; original /var/local/org.ios-sweet.speaker.plist.prebuf30). Note:
+  the job moves the previous boot's log to adsp-speaker.log.prev only when started; the died boot's log is gone.
+- NEXT: find why converted BOs are not refilled (submit BO lists vs shadow_refill; pooled BO `last`?);
+  mip-level texture views; per-draw CPU cost; Safari abort reason.
+
 ## 2026-11-17 07:45 IST: build 32 ready (YCbCr (Cr,Y,Cb) shadow + EBUSY backoff); phone died (battery); sound worked
 - USER on 26bB + build 30: "most of the visual bugs are gone"; red still covers the app switcher and app-open
   animation; open/close animations stutter a lot. SOUND WORKS (USER: "the sound actually works", stutters a lot),
