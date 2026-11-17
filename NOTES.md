@@ -1,3 +1,22 @@
+## 2026-11-17 08:20 IST: PERF ROOT CAUSE: kernel serial keyboard poller spun a full core at prio 95 -> serial=1 (26bC)
+- spindump of 60 s Settings scrolling on 26bBc (scratchpad prof/bb26bBc.txt): kernel_task 76.4 s CPU / 60 s;
+  ONE kernel thread (0xd8, priority 95) 59.99 s = 100 % of a core the whole time. Symbolized against kernel CI
+  43860793622 (spindump addresses are absolute/unslid): Call_continuation -> serial_keyboard_poll ->
+  _serial_getc -> uart_getc+0x20 (1735/1736 samples). backboardd only 6.6 s, SpringBoard 10 s, Preferences < 0.4 s.
+- Cause (code read): serial=3 sets SERIALMODE_INPUT -> serial_keyboard_init starts serial_keyboard_poll at
+  MAXPRI_KERNEL. sweet's only serial driver (0003 fbcon) has receive_ready()=0, so uart_getc should return -1
+  at once; it never returns -> the gPESF list must be cyclic (register_serial_functions pushes fns->next=gPESF;
+  registering the same struct twice makes fns->next==fns). GUESS: the second serial_init/registration comes from
+  0012 keep-debug-console-after-ttbr0; not yet verified. Has existed in every serial=3 image (iOS 16 too?).
+- Fix now (no kernel build): image 26bC = 26bB payload with serial=1 sweetbuild=2662 (shim-boot-26bC.img
+  d7177036, cmdline 559/607 B; "Serial keyboard started" absent). 10 s spindump on 26bC: kernel_task 3.0 s
+  (busiest kernel thread 1.0 s), no poller. pkg26.sh builds from 26r8's cmdline (serial=3): pass serial=1 for
+  every new image. TODO kernel: make register_serial_functions idempotent.
+- native-metal build 33 = CI 44004282477 (bd6e66b: converted YCbCr shadows filled at import + fill logging)
+  installed live before the reboot (SweetMetal2 d23af899, backend 756892ed; build 32 in research/ios26/metal/
+  build-33/backup-build32). Speaker prebuffer 120 ms active from this boot.
+- `sweetreboot fastboot` over SSH used again (08:15) -> fastboot boot 26bC 08:16, log logs/boot-26bCa.txt.
+
 ## 2026-11-17 08:20 IST: 26bBc with build 32: red -> GREEN overlays; Photos/Safari blocked; audio stutter = late PCM
 - Boot 26bBc (logs/boot-26bBc.txt) 07:56. Build 32 installed live: tools/sweet-install-metal2.sh never copied
   libSweetNativeBackend.dylib (list had only SweetMetal2/libvulkan_freedreno) -> fixed; both binaries now = build
