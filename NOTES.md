@@ -1,3 +1,17 @@
+## 2026-11-17 07:18 IST: 26bB booted (logs/boot-26bBb.txt) with native-metal build 30; jetsam kills gone
+- USER: phone was in fastboot; `fastboot boot shim-boot-26bB.img` OKAY 07:18:15. Phone SSH host key = research/ssh/
+  known_hosts.ios26 (known_hosts is the iOS 16 key). Installed bundle verified by hash = build 30 (SweetMetal2
+  bf331465, backend be1159ca); build 28 kept as SweetMetal2.bundle.c633c1d.
+- Observed (~8 min up): 95 crashes, sig 9 = 0 (26b9d: 224 / 91; 26b9e: 847 / 689) -> sweetjetsamlimits=0 works.
+  Remaining crash loops, all SIGABRT: SiriAUSP/MauiAUSP/MacinTalkAUSP/KonaSynthesizer x18 each (abort(), no reason),
+  bluetoothd x16 ("Bluetooth fatal error - crashing { reason=1201 }", also in 26b9d/e), MessagesBlastDoorService x7.
+  No backboardd/SpringBoard crash; only the planned Metal-discovery backboardd restart.
+- GPU: compute_sum_luma "buffer 2 at offset 16/48/80 served from an aligned copy (copied back)"; no Metal refusals
+  (the 8 "refused" lines are VMPROT). YCbCr plane 0 imports 579x1254 and 828x1792, bytes mean 252.
+- Sound: adsp-speaker.log "speaker: service profiles loaded"; PRI_MI2S_RX running; app PCM active, attenuation 0 dB.
+- NEXT (USER at the phone): does the speaker make sound; wallpaper visible / set a wallpaper (null-pointer fix);
+  app switcher previews; hangs. Then: bluetoothd reason 1201, AUSP aborts.
+
 ## 2026-11-17 IST: catch-up (11-16 late work was not recorded); booting 26bB now
 - Committed after the 11-16 evening entry: xnu 2006 (4e3682c, boot-arg sweetjetsamlimits=0 = per-process jetsam
   high-water limits off; 26b9d had ~200 crashes in 8 min, mostly sig-9 high-watermark kills of 6-8 MB daemons) ->
