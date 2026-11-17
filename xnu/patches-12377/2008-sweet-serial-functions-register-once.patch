@@ -1,0 +1,21 @@
+diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
+index a9e3171..efbea3a 100644
+--- a/pexpert/arm/pe_serial.c
++++ b/pexpert/arm/pe_serial.c
+@@ -119,6 +119,16 @@ static bool disable_uart_irq = 0;
+ static void
+ register_serial_functions(struct pe_serial_functions *fns)
+ {
++	/*
++	 * Sweet 2008: registering the same functions twice made fns->next == fns, and uart_getc() then walked that
++	 * one-entry cycle forever: with serial=3 the serial keyboard poller (MAXPRI_KERNEL) spun a whole CPU in it
++	 * from boot (26bBc spindump: 60.0 s CPU in 60 s, serial_keyboard_poll -> _serial_getc -> uart_getc).
++	 */
++	for (struct pe_serial_functions *f = gPESF; f != NULL; f = f->next) {
++		if (f == fns) {
++			return;
++		}
++	}
+ 	fns->next = gPESF;
+ 	gPESF = fns;
+ }

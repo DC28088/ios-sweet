@@ -1,0 +1,21 @@
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index c00d1ac..00f5299 100644
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -1454,7 +1454,15 @@ AppleCLCD::swap(const uint8_t *rec)
+ 	IOLockLock(fLock);
+ 	fSt.swaps++;
+ 	fPendFence = sweet_gpu_fence_snapshot();
+-	fPendAbs = mach_absolute_time();
++	/*
++	 * Sweet 2007: the 50 ms cap counts from the OLDEST swap that has not reached the panel. Restarting it on every
++	 * swap (0229) let a steady stream of swaps (CoreAnimation every ~20 ms) with a GPU that always has newer work
++	 * queued (sweet 2004: the gate waits for the newest NativeAdreno fence) hold the display indefinitely: 26bC showed
++	 * 48 swaps/s of which 42 coalesced and ~7 copied (scrolling and app animations at ~7 fps).
++	 */
++	if (!fDirty) {
++		fPendAbs = mach_absolute_time();
++	}
+ 	__atomic_store_n(&fSwapNewest, get32(rec, 0x50), __ATOMIC_RELEASE);
+ 	{
+ 		struct sweet_fb_trace_rec *tr = &sweet_fb_trace[get32(rec, 0x50) & (SWEET_FB_TRACE_N - 1)];
