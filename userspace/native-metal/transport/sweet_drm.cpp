@@ -68,6 +68,7 @@ struct State {
     bool eager_retire = false;     // /var/local/sweet-native-eager-retire
     uint64_t cleans = 0, clean_skips = 0;
     uint64_t shadow_fills = 0, shadow_fill_bytes = 0, shadow_waits = 0;
+    uint64_t busy_backoffs = 0;   // submit retries while other clients hold every kernel job slot
 };
 // Kept for process lifetime: closing one Gallium fd must not invalidate another
 // screen or IOSurface. In-flight storage is never freed after an unknown timeout.
@@ -104,7 +105,10 @@ struct SubmitTiming {
             fprintf(stderr,"SweetNativeMetal: shadow surfaces refilled=%llu bytes=%llu gpu_waits=%llu\n",
                 (unsigned long long)state.shadow_fills,(unsigned long long)state.shadow_fill_bytes,
                 (unsigned long long)state.shadow_waits);
-        state.shadow_fills=state.shadow_fill_bytes=state.shadow_waits=0;
+        if(state.busy_backoffs)
+            fprintf(stderr,"SweetNativeMetal: submit backed off %llu x 500 us (job slots held by other clients)\n",
+                (unsigned long long)state.busy_backoffs);
+        state.shadow_fills=state.shadow_fill_bytes=state.shadow_waits=state.busy_backoffs=0;
         pool_hits=pool_misses=0;state.cleans=state.clean_skips=0;
         timings=Timings{};timings.began=now;
     }
@@ -663,11 +667,20 @@ int submit(drm_msm_gem_submit *s) {
         e=call(NativeAdrenoMethodSubmitResources,req,sizeof *req,&reply,sizeof reply);
         // Kernel job slots are full: retire the oldest outstanding job, not
         // the whole queue, so asynchronous commits keep the GPU fed.
-        for(unsigned tries=0;e==EBUSY && tries<8;++tries) {
+        // 26bB: 10 backboardd command buffers per boot failed with EBUSY (lost frames): the slots were held by
+        // another client's jobs (extra Metal slots: SpringBoard, PosterBoard), so there was no own fence to
+        // wait for and the loop gave up at once. Without an own fence it now backs off 500 us and retries,
+        // up to 200 times (100 ms), before the command buffer fails.
+        for(unsigned tries=0,foreign=0;e==EBUSY && tries<8 && foreign<200;) {
             uint64_t oldest=0;
             for(auto &f:state.fences)if(f.kernel>state.completed && (!oldest || f.kernel<oldest))oldest=f.kernel;
             if(!oldest && last>state.completed)oldest=last;
-            if(!oldest)break;
+            if(!oldest) {
+                ++foreign;++state.busy_backoffs;usleep(500);
+                e=call(NativeAdrenoMethodSubmitResources,req,sizeof *req,&reply,sizeof reply);
+                continue;
+            }
+            ++tries;
             e=wait(oldest,WaitNS);
             if(!e)e=call(NativeAdrenoMethodSubmitResources,req,sizeof *req,&reply,sizeof reply);
         }
