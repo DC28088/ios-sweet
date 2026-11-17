@@ -1,0 +1,72 @@
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index 625c005..04e008a 100644
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -392,6 +392,7 @@ public:
+ 	 */
+ 	bool          fSwapSync;
+ 	uint32_t      fSwapNewest, fSwapScanID, fSwapPrevScan, fSwapDone, fCurSwapID;
++	uint32_t      fCopyDone;        /* sweet 2011: newest swap id whose frame the copy path has finished reading */
+ 	uint32_t      fPendFence;       /* 0229: newest GPU fence submitted when the pending swap arrived */
+ 	uint64_t      fPendAbs;         /* 0229: when it arrived */
+ 	/*
+@@ -1181,6 +1182,7 @@ AppleCLCD::vsyncFired(OSObject *owner, IOTimerEventSource *sender)
+ 	IOLockUnlock(fb->fLock);
+ 	if (rec != NULL) {
+ 		fb->present(rec);
++		__atomic_store_n(&fb->fCopyDone, fb->fCurSwapID, __ATOMIC_RELEASE);     /* 2011: its surfaces are read */
+ 		IOFreeData(rec, SWEET_FB_SWAP_REC_SIZE);
+ 	}
+ 	if (fb->fZc) {
+@@ -2292,7 +2294,50 @@ AppleCLCD::swapWait(uint32_t id)
+ IOReturn
+ AppleCLCD::swapWaitInner(uint32_t id)
+ {
+-	if (!fSwapSync || !fEarly || fPowerOff || id == 0 || fSwapTimer == NULL) {
++	if (!fEarly) {
++		/*
++		 * Sweet 2011: copy mode answered SwapWait at once, so CoreAnimation (CA::WindowServer::IOMFBDisplay::
++		 * can_update_ treats 0 as "that swap's surface is free") rendered its next frames into a surface whose frame
++		 * the vsync tick had not copied yet (it waits up to 100 ms for the GPU gate, then copies for ~12 ms): black,
++		 * half-drawn frames (26bE video). /var/local/sweet-native-sync-commit hid it by slowing CA down; marking the
++		 * surfaces in use (state page +0x18, native-metal build 36) did not. Now swap N is complete once the copy path
++		 * has read a frame at least as new as N (frames are shown in order; a dropped frame is free once a newer one
++		 * was copied). kIOReturnBusy after 1.5 frames: CA polls again. sweetfb_copysync=0 answers at once again.
++		 */
++		static int copysync = -1;
++		if (copysync < 0) {
++			int v = 1;
++			PE_parse_boot_argn("sweetfb_copysync", &v, sizeof(v));
++			copysync = v != 0;
++			IOLog("SWEET FB: copy-mode swap completion %s (sweetfb_copysync)\n", copysync ? "after the copy" : "immediate");
++		}
++		if (!copysync || fPowerOff || id == 0) {
++			return kIOReturnSuccess;
++		}
++		if ((int32_t)(id - __atomic_load_n(&fSwapNewest, __ATOMIC_ACQUIRE)) > 0) {
++			return kIOReturnSuccess;        /* not a swap we know */
++		}
++		uint64_t t0 = mach_absolute_time(), limit;
++		nanoseconds_to_absolutetime((uint64_t)fVsyncUS * 1500, &limit);
++		for (bool waited = false;; waited = true) {
++			if ((int32_t)(__atomic_load_n(&fCopyDone, __ATOMIC_ACQUIRE) - id) >= 0) {
++				if (waited) {
++					fSt.swapWaits++;
++					fSt.swapWaitAbs += mach_absolute_time() - t0;
++				}
++				return kIOReturnSuccess;
++			}
++			uint64_t now = mach_absolute_time();
++			if (now - t0 > limit) {
++				fSt.swapWaits++;
++				fSt.swapWaitAbs += now - t0;
++				fSt.swapWaitTimeouts++;
++				return kIOReturnBusy;
++			}
++			delay_for_interval(250, NSEC_PER_USEC);
++		}
++	}
++	if (!fSwapSync || fPowerOff || id == 0 || fSwapTimer == NULL) {
+ 		return kIOReturnSuccess;
+ 	}
+ 	if ((int32_t)(id - __atomic_load_n(&fSwapNewest, __ATOMIC_ACQUIRE)) > 0) {
