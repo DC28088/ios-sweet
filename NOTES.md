@@ -1,3 +1,18 @@
+## 2026-11-17 18:25 IST: 26bD + build 35: green gone, faster, but FLICKER = 2007 cap shows half-drawn frames -> xnu 2009
+- Boot 26bD 18:05 (logs/boot-26bD.txt), build 35 installed live (SweetMetal2 6fd868a0, backend 76860e91; build 34
+  in research/ios26/metal/build-35/backup-build34), backboardd restarted.
+- USER: "many flickers happening.. tho the green overlay is gone.. performance feels better as well".
+- Stats (5 s windows while USER used it): gpu_hold_timeouts +30..+46 per window (~6-9/s), gpu_holds +80..+140,
+  copy_us 8-12 ms, vsync_s 44-53, async completion latency avg 10-41 ms (max 150 ms).
+- Cause (code read): 2007's 50 ms cap from the oldest unshown swap expires whenever the GPU runs a frame behind,
+  and then the NEWEST swap (fence not passed) is shown -> half-drawn frames = flicker.
+- xnu 2009 (6501b1a, xnu/patches-12377/2009-sweet-fb-gpu-gate-older-slot.patch): a swap replacing an unshown
+  frame moves it to an older slot (fOldRec/fOldHold/fOldFence); takeFrame() shows the newest frame whose fence
+  passed (newest, else older), cap 100 ms only for a stuck GPU; putBack() for swapFired's scan fallback.
+  New stat gpu_old (frames shown from the older slot). Kernel CI 44086957152 (DC28088/ios-sweet) running.
+- NEXT: image 26bE = 26bD cmdline + sweetbuild=2665 with the 2009 kernel (ADT wbg); expect gpu_hold_timeouts ~0,
+  gpu_old > 0, no flicker. Then 26bDd-style SpringBoard log for CC/Safari; GPU present copy.
+
 ## 2026-11-17 17:10 IST: real stutter cause = framebuffer GPU gate (7 of 48 frames shown); green = RGB expected
 - USER on 26bC: "everything is exactly the same" (green overlay, Settings black bars, slow, audio stutters) ->
   the kernel spinner was real but not the felt bottleneck (8 cores).
