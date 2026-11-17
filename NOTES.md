@@ -1,3 +1,24 @@
+## 2026-11-17 19:50 IST: FLICKER = CA reuses a surface the GPU is still writing (no GPU in-use marks) -> build 36
+- USER video (local only, /home/dan/Videos/VID_20261117_192558349.mp4): single frames with wide BLACK bands
+  whose edges step in GPU-tile blocks (home screen, Contacts) = half-drawn frames on the panel. Fixed vertical
+  white line ~40% from the left + cracks bottom-right = physical panel damage (same place in every frame).
+- 26bE phone hung at 19:27 (log ends after "scoped submit ... result=0xe00002d5" = kIOReturnBusy); USER
+  fastboot -> 26bE again (logs/boot-26bEb.txt), launchd cache now gives WLAND_PCM_PREBUF_MS=120.
+- Checked and ruled out: iOS 26 IOSurfaceClientIsInUse = client+0x78 state page, u64 +0x18 != 0 (same as the
+  kernel hold; disassembled from dsc .15, fetched from the phone, git-ignored); Mesa fd_pipe_fence_finish(0)
+  does flush deferred submits (fence_flush -> fd_fence_flush -> fd_pipe_flush); A6xx fence = CACHE_FLUSH_TS
+  like msm.
+- EXPERIMENT: touch /var/local/sweet-native-sync-commit + restart backboardd -> USER: "flickers are gone
+  mostly.. some still exist inside the settings app"; closing animation: icons disappear near its end.
+  (Sync commit is STILL ON on the phone; rm the file to return to async.)
+- Cause (code read): CA picks its next target with IOSurfaceIsInUse; Apple's GPU driver marks surfaces in use
+  while command buffers write them; ours never did (NOTES 2445 "known risk"). Async commit -> CA started N+1
+  in the surface of frame N. Build 36 (commit after 8a63ef0, CI 44101448882): transport marks every written
+  IOSurface of a submission (IOSurfaceIncrementUseCount, CFRetain) until its kernel fence retires
+  (retire_gpu_uses in retire_dirty); stats gpu_inuse_marks/gpu_inuse_now; off: /var/local/sweet-native-no-gpu-inuse.
+- Kernel 2010 CI 44097763381 still running (slow). NEXT: install build 36, rm sync-commit, restart backboardd,
+  USER checks flicker; then image 26bF (2010) for audio; closing-animation icons; Settings flicker.
+
 ## 2026-11-17 19:30 IST: 26bE (xnu 2009): timeouts 0 but flicker remains; speaker prebuffer was never applied
 - Kernel CI 44086957152 SUCCESS -> research/ios26/boot/kernel-44086957152; images (ADT wbg, 26bD cmdline):
   26bE (shim-boot-26bE.img 06ad09a2, sweetbuild=2665), 26bEd (499a257f, sweetbuild=2666 + sweetdtlog=
