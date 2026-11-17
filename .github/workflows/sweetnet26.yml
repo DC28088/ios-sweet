@@ -37,6 +37,14 @@ jobs:
           b18 sweetlegacywall sweetlegacywall.m posterset.entitlements -framework UIKit
           b18 sweetwallpaper sweetwallpaper.m posterset.entitlements
           b18 sweetposterset sweetposterset.m posterset.entitlements
+          # PosterBoard helper for iOS 26 on HFS (sweetpb26.m) together with the iOS 18 one PosterBoard already links
+          # (sweetfp.m, LC_LOAD_DYLIB /usr/local/lib/sweetfp.dylib): one dylib under that install name, so the
+          # PosterBoard binary stays as it is.
+          xcrun -sdk iphoneos clang -arch arm64e -mios-version-min=18.0 -O2 -fobjc-arc -dynamiclib \
+            -install_name /usr/local/lib/sweetfp.dylib -framework Foundation \
+            "$here/sweetfp.m" "$here/sweetpb26.m" -o "$out/sweetfp26.dylib"
+          codesign -s - -f "$out/sweetfp26.dylib"
+          python3 -I berg/tools/renegade/pacstrip.py --sign "$out/sweetfp26.dylib"
           (cd "$out" && shasum -a 256 * > SHA256SUMS && cat SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
