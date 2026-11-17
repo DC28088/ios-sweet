@@ -1,3 +1,29 @@
+## 2026-11-17 20:20 IST: build 36 did NOT stop the flicker -> real cause = copy-mode SwapWait (xnu 2011); CC; wallpaper
+- 26bE again (logs/boot-26bEc.txt, 19:55); sync-commit file removed; build 36 installed (SweetMetal2 df6ee466,
+  backend 9a312554; build 35 in research/ios26/metal/build-36/backup-build35). USER: flickers still present.
+  => GPU in-use marks are not what CA checks (keep them; harmless).
+- Cause (code read, SweetFramebuffer.cpp swapWaitInner): copy mode (fEarly=false, fZc off) returns SwapWait at
+  once; CA::WindowServer::IOMFBDisplay::can_update_ treats 0 as "surface free" -> CA renders into a surface the
+  vsync tick has not copied yet. xnu 2011 (patch 2011-sweet-fb-copy-mode-swap-completion): fCopyDone = newest
+  copied swap id (set after present() in vsyncFired); SwapWait(N) waits until fCopyDone >= N, kIOReturnBusy after
+  1.5 frames; sweetfb_copysync=0 = old. Kernel CI 44104472780 (contains 2009+2010+2011) running.
+- Kernel 2010 CI 44097763381 SUCCESS (research/ios26/boot/kernel-44097763381), superseded by 44104472780.
+- Control Center: ControlsIconState.plist only had AirplaneMode + PersonalHotspot controls (Preferences-embedded
+  control extensions = the only ones in the LS database). Wrote a full layout (12 modules: elementType=module,
+  moduleIdentifier, containerBundleIdentifier from ControlCenterUI DefaultModuleSettings.plist; keys confirmed in
+  dsc .42 strings) + the 2 controls -> /var/local/cc-backup/ControlsIconState.full.plist installed, SpringBoard
+  kill -9'd; the file survived the restart. USER result pending.
+- Wallpaper: CI sweetnet26 (new workflow, macos-15-intel; the macos-15 run was cancelled unstarted) run
+  44105311190 -> research/ios26/sweetnet26/run-44105311190 (sweetlegacywall/sweetwallpaper/sweetposterset,
+  Bergamota 37a7a7a). /usr/local/bin/sweetlegacywall IMG_0001.JPG (4000x2250) -> "setWallpaperImage (lock+home):
+  ok". But PosterBoard has 0 poster configurations and every provider's descriptors fail -2218 (LegacyPoster,
+  Gradient, Photos). LS csstore (/private/var/mobile/Containers/Data/InternalDaemon/2F736323-.../Library/Caches/
+  com.apple.LaunchServices-20971545-v2.csstore, 8.4 MB) has LegacyPoster but not GradientPoster/CalculatorWidget/
+  WorldClockWidget -> partially seeded DB (Bergamota docs/EXTENSION_POINTS_2.md: seeded while appex failed
+  validation, never re-seeds). First-boot poster job failed (/private/var/tmp/renegade-poster.rc = 1).
+- NEXT: image 26bF (kernel 44104472780); move the csstore aside (backup, not delete) before that boot so lsd
+  re-seeds -> CC default layout + poster extensions; then sweetposterset LegacyPoster; flicker check.
+
 ## 2026-11-17 19:50 IST: FLICKER = CA reuses a surface the GPU is still writing (no GPU in-use marks) -> build 36
 - USER video (local only, /home/dan/Videos/VID_20261117_192558349.mp4): single frames with wide BLACK bands
   whose edges step in GPU-tile blocks (home screen, Contacts) = half-drawn frames on the panel. Fixed vertical
