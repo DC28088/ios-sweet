@@ -557,6 +557,7 @@ int shadow_refill(Buffer &b) {
     uint64_t copied=0;
     if(src && b.cpu && fits && b.shadow_convert && b.shadow_planes==2) {
         const Buffer::ShadowPlane &l=b.shadow_plane[0], &c=b.shadow_plane[1];
+        timespec t0{};clock_gettime(CLOCK_MONOTONIC_RAW,&t0);
         for(uint32_t y=0;y<l.rows;++y) {
             const uint8_t *luma=src+l.src_offset+uint64_t(y)*l.src_pitch;
             const uint8_t *cbcr=src+c.src_offset+uint64_t(y>>1)*c.src_pitch;
@@ -567,6 +568,21 @@ int shadow_refill(Buffer &b) {
             }
         }
         copied=uint64_t(l.row_bytes)*4*l.rows;
+        /* 26bBc: 7 converted BOs, one refill seen, green overlays -> log each conversion fill (first 32) */
+        timespec t1{};clock_gettime(CLOCK_MONOTONIC_RAW,&t1);
+        static unsigned told;
+        if(told++<32) {
+            unsigned long long sum_y=0,sum_cb=0,sum_cr=0,n=0;
+            for(uint32_t y=0;y<l.rows;y+=37)for(uint32_t x=0;x<l.row_bytes;x+=29) {
+                const uint8_t *px=(const uint8_t*)(uintptr_t)b.cpu+uint64_t(y)*l.pitch+uint64_t(x)*4;
+                sum_cr+=px[0];sum_y+=px[1];sum_cb+=px[2];++n;
+            }
+            fprintf(stderr,"SweetNativeMetal: YCbCr IOSurface %u converted into BO %ld (seed %u, %s, locked %d): %llu us, "
+                    "mean Y %llu Cb %llu Cr %llu (%llu samples)\n",b.shadow_id&~YCbCrConvertFlag,long(&b-state.buffers)+1,seed,
+                    b.shadow_valid?"surface changed":"first fill",int(locked),
+                    (unsigned long long)((t1.tv_sec-t0.tv_sec)*1000000ll+(t1.tv_nsec-t0.tv_nsec)/1000),
+                    n?sum_y/n:0,n?sum_cb/n:0,n?sum_cr/n:0,n);
+        }
     } else if(src && b.cpu && fits)
         for(uint32_t i=0;i<b.shadow_planes;++i) {
             const Buffer::ShadowPlane &p=b.shadow_plane[i];
@@ -917,6 +933,7 @@ extern "C" int drmPrimeFDToHandle(int,int surface,uint32_t *handle) {
             b->shadow_src=s;CFRetain(s);b->shadow_id=uint32_t(surface);
             b->shadow_plane[0]=plane[0];b->shadow_plane[1]=plane[1];b->shadow_planes=2;
             b->shadow_convert=true;b->shadow_valid=false;
+            shadow_refill(*b);   // 26bBc: filled at import, never sampled empty (submit refills on seed change)
             static unsigned logged;
             if(logged++<8)fprintf(stderr,"SweetNativeMetal: YCbCr IOSurface %u converted to (Cr, Y, Cb) RGBA8 shadow BO %u: %ux%u rows %u -> %u bytes\n",
                 uint32_t(surface)&~YCbCrConvertFlag,*handle,plane[0].row_bytes,plane[0].rows,plane[0].src_pitch,plane[0].pitch);
