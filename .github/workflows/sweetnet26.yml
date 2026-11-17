@@ -13,7 +13,7 @@ env:
   BERGAMOTA_SHA: ${{ inputs.bergamota_sha || '37a7a7a917fc09945ed2f7d1ae68b84d4525b4cb' }}
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: macos-15-intel
     timeout-minutes: 20
     steps:
       - name: Fetch Bergamota
