@@ -1,3 +1,31 @@
+## 2026-11-18 IST: CONTROL CENTER FIXED (MobileGestalt arm64e); WALLPAPER WORKS (sweetpb26); audio producer at ~42k/s
+- 26bF (kernel CI 44104472780 = 2009+2010+2011; shim-boot-26bF.img 5f2d84d4, sweetbuild=2667): "SWEET FB: copy-mode
+  swap completion after the copy"; `usleep 1000` loop 50x = 1.48 s (was 2.25 s) -> timer coalescing off works.
+- LS csstore moved to /var/local/ls-backup/ (ORIGIN file = its dir) before 26bF: lsd re-seeded
+  (SystemDataOnly-...csstore) with the SAME extensions (674 .appex strings) -> not the cause; backup kept.
+  Calculator/MobileTimer/GradientPoster are /System/Library/AppPlaceholders (their appex are not registered).
+- WALLPAPER (USER: "wallpapers works now"): sweetposterset/descriptors failed -2218 for every provider until
+  /usr/local/lib/sweetfp.dylib (the dylib PosterBoard LC_LOAD_DYLIBs) was replaced by sweetfp26.dylib = sweetfp.m +
+  Bergamota sweetpb26.m (CI sweetnet26 44138852441; old one in /var/local/pb-backup/sweetfp.dylib.ios18). Then
+  LegacyPoster 9BD471E5-... exists + selected for the lock role; image = sweetlegacywall IMG_0001.JPG
+  (/usr/local/bin/sweetlegacywall, CI 44105311190).
+- CONTROL CENTER root cause (26bFd = 26bF + sweetdtlog=SpringBoard,audiomxd, shim-boot-26bFd.img 4c023973,
+  logs/boot-26bFd.txt): SpringBoard builds the default layout, then "Remove invalid module X for module not
+  loadable"; CCSModuleRepository logged NO "Loadable module:" line. Every module Info.plist has
+  UIRequiredDeviceCapabilities [arm64e] (Flashlight + camera-flash); MobileGestalt answered no. Fix: MG cache
+  (/private/var/containers/Shared/SystemGroup/systemgroup.com.apple.mobilegestaltcache/Library/Caches/
+  com.apple.MobileGestalt.plist) CacheExtra += li+w2foswFu0srn5UxdOug (arm64e) = true, jdLgKT+0BZmGrzd9J0cuPA
+  (camera-flash) = true (key = base64(md5("MGCopyAnswer"+name))[:22]; backup /var/local/mg-backup/). Then
+  ControlsIconState + ControlsMigrationSettings moved aside (/var/local/cc-backup/try3) + SpringBoard kill -9 ->
+  ~40 "Loadable module:" lines, ControlsIconState.plist 3739 B (was 289). USER check pending. NOTE: the MG cache
+  holds device identifiers: never copy it into git.
+- AUDIO: sender now on time (over10ms ~0), but the HAL delivers ~42,000 frames/s (in=, adsp-speaker.log 5 s
+  windows) vs 48,000 consumed -> FIFO runs dry ~1/s (starts +4..5 per 5 s) = the stutter. Earlier also trims/drops
+  from bursts. Not yet known why (HAL get_zero_time_stamp math looks right; coreaudiod/audiomxd IO overloads?
+  audiomxd os_log now mirrored in logs/boot-26bFd.txt).
+- USER also: black bars in Settings; app-close animation loses the icon near its end; Liquid Glass areas (search
+  keyboard, dock, App Library) take a while to appear. Suspects: mip-level texture views (nil) + compute_average_luma.
+
 ## 2026-11-17 20:20 IST: build 36 did NOT stop the flicker -> real cause = copy-mode SwapWait (xnu 2011); CC; wallpaper
 - 26bE again (logs/boot-26bEc.txt, 19:55); sync-commit file removed; build 36 installed (SweetMetal2 df6ee466,
   backend 9a312554; build 35 in research/ios26/metal/build-36/backup-build35). USER: flickers still present.
