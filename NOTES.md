@@ -1,3 +1,10 @@
+## 2026-11-19 21:10 IST: USER parked Wi-Fi ("3"); next: cellular (Qualcomm personality on iOS 26)
+- Wi-Fi PARKED at: modem root PD never spawns msm/modem/wlan_pd (UNINIT) on iOS 26; see the 20:45 / 21:00 entries.
+  The phone's own modemuw.jsn/modemr.jsn = what wland answers (elf_loader -> wlan_pd 180, service data 0).
+  Untried: iOS 16 kernel + wland (needs a read-only root plan), modem-side trace. wland 0009 stays installed
+  (doorbell repeat helps the modem/cell; servreg check is harmless).
+- Phone now: 26bI booted with wland-0225 held off for that boot (restored on disk; sound returns on the next boot).
+
 ## 2026-11-19 21:00 IST: Wi-Fi still UNINIT after a COLD boot and with the ADSP off
 - USER cold boot (power off, then fastboot) -> 26bI (logs/boot-26bIc.txt): modem ready after 100 ms, wlan_pd UNINIT,
   RESTART_PD error 0x9. => not warm-reboot leftovers.
