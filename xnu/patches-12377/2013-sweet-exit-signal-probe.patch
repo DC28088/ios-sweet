@@ -1,0 +1,61 @@
+diff --git a/bsd/kern/kern_exit.c b/bsd/kern/kern_exit.c
+index 79c3da6..31af5dc 100644
+--- a/bsd/kern/kern_exit.c
++++ b/bsd/kern/kern_exit.c
+@@ -1658,6 +1658,27 @@ exit_with_reason(proc_t p, int rv, int *retval, boolean_t thread_can_terminate,
+ 	}
+ #endif
+ 
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++	/*
++	 * Sweet 2013: every exit of a process named in boot-arg sweetdtlog: status, signal, exit reason and (when it is
++	 * the exiting process's own thread) the user backtrace, so an exit()/abort_with_reason path shows its caller.
++	 */
++	{
++		extern bool sweet_dtlog_listed(const char *name);
++		if (sweet_dtlog_listed(p->p_comm)) {
++			char *desc = exit_reason != OS_REASON_NULL ? exit_reason_get_string_desc(exit_reason) : NULL;
++			printf("SWEET EXIT: %s[%d] rv %#x (status %d, signal %d) jetsam %#x reason ns %u code %#llx: %s\n",
++			    p->p_comm, proc_getpid(p), rv, WEXITSTATUS(rv), WTERMSIG(rv), jetsam_flags,
++			    exit_reason != OS_REASON_NULL ? exit_reason->osr_namespace : 0,
++			    exit_reason != OS_REASON_NULL ? exit_reason->osr_code : 0, desc != NULL ? desc : "(none)");
++			if (p == current_proc()) {
++				extern void sweet_crash_log(const char *, int, int, uint64_t, uint64_t);
++				sweet_crash_log(p->p_comm, proc_getpid(p), WTERMSIG(rv), (uint64_t)WEXITSTATUS(rv), 0);
++			}
++		}
++	}
++#endif
++
+ 	/*
+ 	 * If a thread in this task has already
+ 	 * called exit(), then halt any others
+diff --git a/bsd/kern/kern_sig.c b/bsd/kern/kern_sig.c
+index c25ed3f..4a105db 100644
+--- a/bsd/kern/kern_sig.c
++++ b/bsd/kern/kern_sig.c
+@@ -2122,6 +2122,24 @@ psignal_internal(proc_t p, task_t task, thread_t thread, int flavor, int signum,
+ 		return;
+ 	}
+ 
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++	/*
++	 * Sweet 2013: who signals a process named in boot-arg sweetdtlog (fatal signals only). iOS 26 CommCenter on the
++	 * Mav20 path disappears ~1 s after start with no crash line (exit, or a kill from launchd/watchdogd/RBS?).
++	 */
++	if (sig_proc != PROC_NULL && (signum == SIGKILL || signum == SIGTERM || signum == SIGABRT || signum == SIGQUIT ||
++	    signum == SIGSEGV || signum == SIGBUS || signum == SIGTRAP)) {
++		extern bool sweet_dtlog_listed(const char *name);
++		if (sweet_dtlog_listed(sig_proc->p_comm)) {
++			proc_t cp = current_proc();
++			printf("SWEET SIGNAL: %s[%d] -> %s[%d] sig %d flavor %#x reason ns %u code %#llx\n",
++			    cp != PROC_NULL ? cp->p_comm : "?", cp != PROC_NULL ? proc_getpid(cp) : -1, sig_proc->p_comm,
++			    proc_getpid(sig_proc), signum, flavor, signal_reason ? signal_reason->osr_namespace : 0,
++			    signal_reason ? signal_reason->osr_code : 0);
++		}
++	}
++#endif
++
+ 	if ((flavor & (PSIG_VFORK | PSIG_THREAD)) == 0) {
+ 		proc_knote(sig_proc, NOTE_SIGNAL | signum);
+ 	}
