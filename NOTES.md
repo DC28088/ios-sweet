@@ -1,3 +1,18 @@
+## 2026-11-19 21:00 IST: Wi-Fi still UNINIT after a COLD boot and with the ADSP off
+- USER cold boot (power off, then fastboot) -> 26bI (logs/boot-26bIc.txt): modem ready after 100 ms, wlan_pd UNINIT,
+  RESTART_PD error 0x9. => not warm-reboot leftovers.
+- The ADSP daemon (speaker job, wland-0225 pid 91) brings the ADSP up interleaved with wland's modem boot (ADSP SMMU
+  SMRs, lcx/lmx votes between wland's rail votes and cx/mss). Test: /var/local/bin/wland-0225 renamed to .hold for one
+  boot (no "SWEET SMMU: ADSP" lines, no lcx vote): still UNINIT. RESTORED (wland-0225 back; sound on next boot).
+- Kernel side checked: no iOS 16 patch writes SMEM (only reads in 0154/0155); no iOS 26 code writes apps SMMU sCR0
+  (reads only); sCR0 is 0x250406 on this boot (0x2d0406 on 26bI earlier) -> boot-to-boot variance, not a cause.
+  WLAN rails: wland's ldoa9/ldoc1/ldoc2/ldoc10/rfclka2 votes complete; only the kernel BT driver re-votes
+  ldoa10/ldoc1/ldoc2/ldoc10 (and sweetbt=0 failed too). 0239 pd-mapper table = the one iOS 16 served.
+- Still identical to iOS 16 at every observable point; the root PD never spawns msm/modem/wlan_pd.
+- Ideas left (not tried): (1) the decisive kernel-vs-userland split: an iOS 16 kernel boot running wland (needs a
+  safe read-only root plan, ask USER); (2) modem-side visibility (QDSS/diag); (3) service_data_valid=1/data=1 in
+  the elf_loader answer (Android modemuw.jsn style; iOS 16 worked with 0/0, so a long shot).
+
 ## 2026-11-19 20:45 IST: USER: Bluetooth connects + sound works. Wi-Fi: modem says msm/modem/wlan_pd = UNINIT
 - USER: "bluetooth works, and connects to devices.. sound also works. lets do wifi now".
 - wland 0009 (userspace/wifi/wland-0239/0009-sweet-wlan-pd-servreg-doorbell.patch, commit with CI sweet-wifi-0239
