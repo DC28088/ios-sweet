@@ -1,3 +1,33 @@
+## 2026-11-19 19:20 IST: BLUETOOTH UP (xnu 2012 v3, PoweredOn, no aborts); doorbell confirmed slow path; cellular = Intel personality
+- CORRECTION to the 19:00 entry: the 26bHr phone did NOT hang. ring.sh finished (/var/local/ring.out "4727 rings"),
+  wland logged to 283 s; only the USB link died (console flood from the dd execs). USER then forced fastboot.
+- DOORBELL (OBSERVED, wland.log of 26bHr with the ring loop): first glink VERSION 602 ms (2770 without), rmtfs reads
+  12-23 ms apart (~900 without), kernel/elf_loader answered at 3.2 s (16.4 s without) -> the modem misses wland's
+  own APCS IPC rings and only polls on a slow timer. WHY is open (wland rings after every glink_send: same pmem path
+  as dd). Stall size varies per boot (26bHb: one ~1 s gap). BUT: even with the ring loop the modem never asked for
+  wlanmdsp.mbn -> the doorbell is not (only) the Wi-Fi blocker. Request sequence (pd-mapper/tftp/rmtfs) identical
+  to iOS 16 0143 up to elf_loader; iOS 16 then reads wlanmdsp, iOS 26 goes on to avs/audio + mcfg. Phone wland =
+  0239 5eb59683 (same as iOS 16), /var/local/fw/modem 321 files. smp2p in: smp2p=0, slave-kernel=6; out: master-kernel=0.
+- 26bHb (kernel 2012 v2 + ADT sweet-n104-2x-wbgb.adt (= wbg + /baseband, verified by rebuild) + sweetbb=1,
+  shim-boot-26bHb.img cd994f42, sweetbuild=2673; log logs/boot-26bHb.txt, partial: the 26bHr receiver held UDP 5140):
+  "SWEET BB: N of N services published", /dev/sweet-bb opened by wland, "cell: bb READY (34 modem services known)".
+- 26bI = BT + cellular image: kernel CI 44531273643 (2012 v3, research/ios26/boot/kernel-44531273643),
+  ADT wbgb, 26bHb cmdline + sweetbuild=2674, sweetdtlog=bluetoothd,CommCenter; shim-boot-26bI.img cecd0ce5;
+  logs/boot-26bI.txt. BLUETOOTH: 4x "0xfe3b ... answered as success with 212 parameter bytes", 0 AssertFail,
+  bluetoothd "Power state changed: PoweredOn", BlSt PoweredOn, FrmV v702; bluetoothd pid 323 unchanged for 12+ min.
+  USER check pending (Settings > Bluetooth, scan for a device).
+- CELLULAR on iOS 26 (OBSERVED): CommCenter "Detected an unsupported non-baseband device" -> kNoBaseband. The check
+  (dsc .13 0x1aaf12f48, dlsym MGCopyAnswer from libMobileGestalt) asks MobileGestalt; a false answer -> that path.
+  EXPERIMENT: CacheExtra += HasBaseband / cellular-data / contains-cellular-radio = true (keys
+  AJFQheZDyUbvI6RmBMT9Cg, L5al7b+7JATD/izSJeH0aQ, yRZv0s7Dpj8ZBk0S+0+nMA) + kill CommCenter -> it took the baseband
+  path ("Using Baseband Command Driver", [BasebandSettingsDriver.ibi], IBISimCommandDriver = Intel) and crash-looped
+  (sig 5, 5+ restarts). REVERTED (cache back to cac8d156 from /var/local/mg-backup/...pre-bb; edited copy
+  /var/local/mg.bb.plist). Cause: N104 = iPhone 11 = Intel baseband (MG BasebandChipset "ice19"), our bridge is
+  Qualcomm QMI (iOS 16 worked with the D22 identity + Mav17 bbfw). NEXT for cellular: Qualcomm personality on N104
+  (BasebandChipset override to a Mav name + Mav bbfw folder, as iOS 16 0189) -- research first, then one test.
+- Wi-Fi NEXT: a wland build that (a) rings the doorbell on each poll while traffic is outstanding (WLAND_RING) and
+  (b) dumps the raw pd-mapper elf_loader reply + all modem smp2p/SMEM item ids, to compare with Linux pd-mapper.
+
 ## 2026-11-19 19:00 IST: BT parser = 205 B (48 u32 + 8 u16) -> xnu 2012 v3 212 B (CI 44531273643); Wi-Fi: modem stalls
 - 26bH (kernel CI 44448603020 = 2012 v2, 200 B; research/ios26/boot/shim-boot-26bH.img a5850370, 26bG cmdline +
   sweetbuild=2672, ADT wbg; logs/boot-26bH.txt): bluetoothd assertion moved bcm_vsc.c:1036 -> :1075 (4 aborts).
