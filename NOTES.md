@@ -1,3 +1,22 @@
+## 2026-11-19 22:40 IST: cellular step 2: cellular mach services + Mav20 bbfw -> ABM bootstraps, then CommCenter exits ~1 s in
+- xpc cache: the CommCenter job (key ...CommCenter-noncellular.plist, label com.apple.CommCenter) got the 3 mach services
+  of Apple's missing cellular job (com.apple.commcenter.carrierspace.xpc, com.apple.aps.CommCenter.webpush,
+  com.apple.CellularPlanDaemon.xpc); all other jobs identical (checked). Phone /System/Library/xpc/launchd.plist 71da4cc3,
+  backup launchd.plist.pre-cellular (118e40a2). Effective since boot 26bM.
+- Mav20 bbfw: iPhone13,2 26.6.2 23G90 IPSW (updates.cdn-apple.com, via api.ipsw.me), only Firmware/
+  Mav20-6.51.04.Release.bbfw range-fetched from the remote zip (session tool rzip.py) -> research/ios26/bbfw/ (git-ignored;
+  800ac2b3..., 79224639 B; Info.plist ChipId 0x000E50E1, Version 6.51.04). Unzipped (16 files, 116 MB) on the phone at
+  /usr/standalone/firmware/Baseband/Mav20/ (root:wheel). Nothing from it runs on the AP; ABM only reads it.
+- 26bM (= 26bI image, logs/boot-26bM.txt) + CommCenter-only D53gAP test (45 s, then cache reverted): ABM now logs
+  "Bootstrap 3 global services" (logtracker.mod, net.mod, cpms.mod) and calls our AppleIPAppender (selectors 4, 6),
+  "Selected model: TrekC2K", Mav20QMIAttachApnCommandDriver, EurekaCallCommandDriver. BUT each Mav20 CommCenter lives
+  ~1 s and exits (pids 406, 427, 432, 443, 459; launchd relaunches every ~10 s); no CRASH line, no jetsam, no error
+  in the mirrored log (it ends mid-line), only "triggered unnest of range ... DYLD shared region" per instance.
+  After the revert CommCenter (468) runs normally in non-baseband mode.
+- NEXT: find why the Mav20 CommCenter exits (exit/abort path after ABM bootstrap: e.g. ProductType/ADT vs HWModelStr
+  mismatch, a missing ABM resource); a CommCenter with the exit traced (kernel exit log for CommCenter, or dtrace-like
+  kernel printf of exit status) is the cheapest next probe.
+
 ## 2026-11-19 22:10 IST: cellular step 2 (in progress): ABM server never bootstraps on the Mav20 path
 - ABM (AppleBasebandManager) is hosted only by CommCenter (job com.apple.CommCenter, mach com.apple.basebandd.xpc).
   In both Mav20 runs (HWModelStr D53gAP, CommCenter-only restart) the ABM client logs "Started with name
