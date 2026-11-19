@@ -1,3 +1,26 @@
+## 2026-11-19 22:10 IST: cellular step 2 (in progress): ABM server never bootstraps on the Mav20 path
+- ABM (AppleBasebandManager) is hosted only by CommCenter (job com.apple.CommCenter, mach com.apple.basebandd.xpc).
+  In both Mav20 runs (HWModelStr D53gAP, CommCenter-only restart) the ABM client logs "Started with name
+  'com.apple.basebandd.xpc'" + "Changing check-in state from NotCheckedIn to CheckingIn", CommCenter "BB mode kIdle ->
+  kInit", "Booted baseband assertion required ... grabbing now!", then waits forever. None of libBasebandManager's own
+  messages ("Bootstrap %zd global services", "Listening for PCI events", "opening transport", "boot state changing")
+  appear (789 ABM "#X" strings extracted from dsc .75 0x2a18e8000; only generic Initializing/Registering matched).
+  ABM workspace /private/var/wireless/Library/Logs/abm.workspace/uncompressed was created at 16:28 (empty).
+- Debug logging: /Library/Preferences/Logging/Subsystems/com.apple.telephony.{abm,bb}.plist (Level Debug) installed;
+  no extra ABM lines even after a reboot. CAUTION: killing logd + repeated CommCenter kill -9 left CommCenter NOT
+  relaunched by launchd (> 1 min) -> rebooted (26bI, logs/boot-26bL.txt): normal again.
+- iOS 26 IOKit names (libIOABP / libPCITransport in dsc .75): AppleBasebandPCIControl, AppleBasebandPCIInterface,
+  AppleBasebandPCIPDPManagerBase (+ AirshipDaleBasebandControl) = what our bridge publishes (iOS 16 ABI names).
+- Apple's original launchd cache (IPSW 094-95954-090.dmg via research/apfs-fuse-current/build/apfs-fuse, mounted
+  read-only from a comma-free symlink path) has com.apple.CommCenter.plist (_LimitLoadToDeviceTree baseband): it is
+  MISSING on the phone (Bergamota cache has only -noncellular, its _Limit key removed). Cellular job = noncellular +
+  mach services CellularPlanDaemon.xpc, aps.CommCenter.webpush, commcenter.carrierspace.xpc. AppleBasebandManager
+  .framework ships only cpms budget plists. Neither the IPSW root nor the phone has any .bbfw
+  (/usr/standalone/firmware: nfrestore, Rose, SLAM, SmartIO); the host IPSW dir is partial (no bbfw files).
+- NEXT: (1) restore the cellular CommCenter job in the xpc cache (as iOS 16 did; prepared with plistlib, backup first);
+  (2) Mav20 bbfw from an iPhone 12 (iPhone13,2) iOS 26.6.2 IPSW, range-fetched, into
+  /usr/local/standalone/firmware/Baseband/Mav20 (string seen in dsc .25 for Mav25); (3) find ABM's bootstrap trigger.
+
 ## 2026-11-19 21:50 IST: CELLULAR STEP 1 DONE: the radio vendor comes from MobileGestalt HWModelStr; D53gAP -> kMav20 QMI
 - Decision path (static, iOS 26.6.2 dsc; tools in the session scratchpad: dscmain.py image list, dylibhdr.py,
   trie.py export trie, xref.py, callers.py): CommCenter imports _TelephonyRadiosGetRadioVendor
