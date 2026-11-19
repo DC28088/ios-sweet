@@ -1,3 +1,21 @@
+## 2026-11-20 00:00 IST: EXIT PROBE (xnu 2013): Mav20 CommCenter = ABM ASSERT fCPMSAgent (no ApplePPM) -> xnu 2014 stub
+- xnu 2013 (8f6c5c5, CI 44576280203, research/ios26/boot/kernel-44576280203): "SWEET EXIT:" (status/signal/exit reason
+  + user bt) and "SWEET SIGNAL:" (sender) for sweetdtlog processes. Image 26bN = 26bI cmdline + sweetbuild=2677
+  (shim-boot-26bN.img 9d879653). Address tools (session scratchpad): a2img.py (unslid address -> dsc image +off).
+- 26bN boot 1 (logs/boot-26bN.txt): the MODEM ERR-FATAL at 55 ms (intermittent, as on iOS 16; wland "replaying 2
+  service(s)") -> no bridge publish -> Mav20 CommCenter SIGSEGV far 0x8: libsystem_pthread mutex_lock <- libc++ <-
+  ApplePDPHelper+0xaa8 (ApplePDPHelperInterface::callStructMethod, this = NULL) <- CommCenter+0x1410118;
+  "Could not find AppleIPAppender service" (ApplePDPHelperInterface::init: IOServiceMatching AppleIPAppender,
+  IOServiceOpen 0, IOGeneralInterest; create() deletes the object when init fails -> getInstance NULL).
+- 26bN boot 2 (logs/boot-26bNb.txt, modem fine, 22/22 published): AppleIPAppender selectors 6, 4 answered, then
+  "Could not find PPM service" and SIGTRAP at libBasebandManager +0x71a88 = "ABM ASSERT" fCPMSAgent (line 123) after
+  "Failed to initialization of CPMS power config." -> every Mav20 CommCenter dies ~1 s in.
+  CPMS.framework -> libPPM.dylib (.75 +0x6278000): IOServiceGetMatchingServices("ApplePPM"), IOServiceOpen(clientNumber),
+  IOGeneralInterest, methods admissionCheck / activityStarted / activityStopped / pushTelemetry.
+- xnu 2014 (e84931d, xnu/patches-12377/2014-sweet-ppm-stub.patch): ApplePPM + ApplePPMUserClient in SweetBaseband.inc,
+  published with the bridge (23 services), all methods success + zeroed outputs, "SWEET PPM:" logs each selector once.
+  Kernel CI 44582763096 running. NEXT: image 26bO (2014) + the same CommCenter-only D53gAP test.
+
 ## 2026-11-19 22:40 IST: cellular step 2: cellular mach services + Mav20 bbfw -> ABM bootstraps, then CommCenter exits ~1 s in
 - xpc cache: the CommCenter job (key ...CommCenter-noncellular.plist, label com.apple.CommCenter) got the 3 mach services
   of Apple's missing cellular job (com.apple.commcenter.carrierspace.xpc, com.apple.aps.CommCenter.webpush,
