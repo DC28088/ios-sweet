@@ -1,0 +1,61 @@
+diff --git a/iokit/Kernel/arm/SweetBaseband.inc b/iokit/Kernel/arm/SweetBaseband.inc
+index a9dc2a2..37416c7 100644
+--- a/iokit/Kernel/arm/SweetBaseband.inc
++++ b/iokit/Kernel/arm/SweetBaseband.inc
+@@ -1257,6 +1257,45 @@ public:
+ };
+ OSDefineMetaClassAndStructors(AppleIPAppender, IOService)
+ 
++// Sweet 2014: ApplePPM (peak power manager). iOS 26 ABM's cpms.mod gets its agent from CPMS.framework, which opens
++// "ApplePPM" through libPPM (IOServiceGetMatchingServices + IOServiceOpen(clientNumber) + IOGeneralInterest); without it
++// "Could not find PPM service" -> "Failed to initialization of CPMS power config." -> ABM ASSERT fCPMSAgent -> SIGTRAP
++// (libBasebandManager +0x71a88, 26bNb). Every method succeeds with zeroed outputs; each selector is logged once.
++class ApplePPMUserClient : public IOUserClient {
++  OSDeclareDefaultStructors(ApplePPMUserClient)
++public:
++  IOReturn clientClose() override
++  {
++    terminate();
++    return kIOReturnSuccess;
++  }
++  IOReturn externalMethod(uint32_t selector, IOExternalMethodArguments *args, IOExternalMethodDispatch *, OSObject *, void *) override
++  {
++    if (!args) return kIOReturnBadArgument;
++    static uint32_t seen;
++    if (selector < 32 && !(__atomic_fetch_or(&seen, 1u << selector, __ATOMIC_RELAXED) & (1u << selector)))
++      printf("SWEET PPM: selector %u (in %u scalars %u bytes, out %u scalars %u bytes) answered with zeros\n", selector,
++             args->scalarInputCount, args->structureInputSize, args->scalarOutputCount, args->structureOutputSize);
++    for (uint32_t i = 0; i < args->scalarOutputCount; i++) args->scalarOutput[i] = 0;
++    if (args->structureOutput && args->structureOutputSize) bzero(args->structureOutput, args->structureOutputSize);
++    if (args->structureOutputDescriptor) args->structureOutputDescriptorSize = 0;
++    return kIOReturnSuccess;
++  }
++};
++OSDefineMetaClassAndStructors(ApplePPMUserClient, IOUserClient)
++
++class ApplePPM : public IOService {
++  OSDeclareDefaultStructors(ApplePPM)
++public:
++  IOReturn newUserClient(task_t t, void *s, UInt32 type, OSDictionary *p, IOUserClient **out) override
++  {
++    printf("SWEET PPM: user client type %u opened\n", (unsigned)type);
++    return bb_open<ApplePPMUserClient>(this, t, s, type, p, out);
++  }
++  IOReturn newUserClient(task_t t, void *s, UInt32 type, IOUserClient **out) override { return newUserClient(t, s, type, nullptr, out); }
++};
++OSDefineMetaClassAndStructors(ApplePPM, IOService)
++
+ // libPCITransport's pci::event::PDPListener matches the base class, ApplePDPHelper the leaf and AppleBasebandPCIPDPManager.
+ class AppleBasebandPCIPDPManagerBase : public IOService {
+   OSDeclareDefaultStructors(AppleBasebandPCIPDPManagerBase)
+@@ -1313,8 +1352,9 @@ extern "C" void coachz_baseband_configure(void (*send)(uint32_t, uint32_t, uint3
+   for (uint32_t c = 0; c < CBH_PUBLISHED; c++) made += provider && bb_publish<AppleBasebandPCIInterface>(provider, c);
+   made += provider && bb_publish<AppleBasebandPCIMAVPDPManager>(provider);
+   made += provider && bb_publish<AppleIPAppender>(provider);
++  made += provider && bb_publish<ApplePPM>(provider);
+   bb_published = 1;
+-  printf("SWEET BB: %d of %u services published (AppleBaseband, AppleBasebandPCIControl, %u channels, the PDP manager, AppleIPAppender)\n", made, 4u + CBH_PUBLISHED, CBH_PUBLISHED);
++  printf("SWEET BB: %d of %u services published (AppleBaseband, AppleBasebandPCIControl, %u channels, the PDP manager, AppleIPAppender, ApplePPM)\n", made, 5u + CBH_PUBLISHED, CBH_PUBLISHED);
+ }
+ 
+ extern "C" void coachz_baseband_new_server(uint32_t service, uint32_t version_instance, uint32_t node, uint32_t port)
