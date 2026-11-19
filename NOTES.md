@@ -1,3 +1,12 @@
+## 2026-11-19 19:35 IST: Bluetooth hidden in Settings/CC = MobileGestalt "bluetooth" false -> CacheExtra override
+- USER (26bI): "bluetooth settings doesn't even show up, not even the icon in control centre".
+- sweet-mgquery (research/tools-41758213153, now /var/local/bin/sweet-mgquery on the phone): bluetooth = false,
+  bluetooth-le = true, wifi = true, arm64e/camera-flash = true (our overrides), HasBaseband = false.
+- Fix (same mechanism as arm64e for CC): MG cache CacheExtra XSLlJd/8sMyXO0qtvvUTBQ (= "bluetooth") = true. Backup
+  /var/local/mg-backup/com.apple.MobileGestalt.plist.pre-bt (cac8d156), new copy /var/local/mg.bt.plist; a fresh
+  process answers bluetooth = true. Preferences + SpringBoard kill -9'd (SpringBoard 389 -> 2358). CC layout already
+  has com.apple.control-center.ConnectivityModule. USER check pending. (MG cache = device identifiers: never in git.)
+
 ## 2026-11-19 19:20 IST: BLUETOOTH UP (xnu 2012 v3, PoweredOn, no aborts); doorbell confirmed slow path; cellular = Intel personality
 - CORRECTION to the 19:00 entry: the 26bHr phone did NOT hang. ring.sh finished (/var/local/ring.out "4727 rings"),
   wland logged to 283 s; only the USB link died (console flood from the dd execs). USER then forced fastboot.
