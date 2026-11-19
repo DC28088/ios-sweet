@@ -1,3 +1,22 @@
+## 2026-11-19 21:30 IST: cellular on iOS 26: CommCenter personality kKaroo (Intel) regardless of chipset answers
+- USER: Settings has no Cellular section, but the status bar shows "Searching" (CommCenter in kNoBaseband mode logs
+  "Pretending that NoBB Radio is on"; matches).
+- iOS 26 root has no baseband firmware (/usr/standalone/firmware has no Baseband dir). Shared cache knows Qualcomm:
+  .50 has DATA.QMIFactory + DATA.IBIFactory and Mav20QMICDMASettingsCommandDriver; .25 has the platform enum names
+  kMav7, kMav20, kKaroo, kSinope, kDale and /usr/local/standalone/firmware/Baseband/Mav25, kEURMav20_MDMDDR.
+- tools/adt-set-bbchip.py (new): /product baseband-chipset ice19 -> mav20 -> research/ios26/boot/sweet-n104-2x-wbgbm.adt;
+  image 26bK = 26bI cmdline + that ADT, sweetbuild=2676 (shim-boot-26bK.img 250c07a6; logs/boot-26bK.txt; phone is
+  on it now; harmless with the restored cache).
+- EXPERIMENTS (MG CacheExtra, each reverted): (a) BasebandChipset 'mav20' + HasBaseband/cellular-data/
+  contains-cellular-radio true (/var/local/mg.mav.plist): CommCenter "Creating models with personality kKaroo",
+  IBI drivers, crash loop (4 CRASHes); (b) + BasebandClass int 2 (/var/local/mg.mav2.plist): MG returned a garbage
+  number, still kKaroo. => the personality is NOT taken from BasebandChipset. Code: CommCenter 0x10131db28 logs it;
+  the value comes from a virtual call on [obj+0x40] (model factory), then a dsc stub turns it into the name.
+  Restored cache = /var/local/mg-backup/com.apple.MobileGestalt.plist.pre-mav (sha b5778fa3.., bluetooth override kept).
+- Guess (not checked): the personality follows ProductType (iPhone12,1 = Intel). Then Qualcomm on iOS 26 means
+  overriding where the radio model is chosen (find the source of kKaroo in dsc .25), plus Mav20/25 bbfw and an iOS 26
+  ABI check of the kernel bridge (sweet_bb was built for iOS 16's Mav17 ABM). Multi-session work.
+
 ## 2026-11-19 21:10 IST: USER parked Wi-Fi ("3"); next: cellular (Qualcomm personality on iOS 26)
 - Wi-Fi PARKED at: modem root PD never spawns msm/modem/wlan_pd (UNINIT) on iOS 26; see the 20:45 / 21:00 entries.
   The phone's own modemuw.jsn/modemr.jsn = what wland answers (elf_loader -> wlan_pd 180, service data 0).
