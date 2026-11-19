@@ -1,3 +1,26 @@
+## 2026-11-19 21:50 IST: CELLULAR STEP 1 DONE: the radio vendor comes from MobileGestalt HWModelStr; D53gAP -> kMav20 QMI
+- Decision path (static, iOS 26.6.2 dsc; tools in the session scratchpad: dscmain.py image list, dylibhdr.py,
+  trie.py export trie, xref.py, callers.py): CommCenter imports _TelephonyRadiosGetRadioVendor
+  (libTelephonyUtilDynamic.dylib, dsc .13, 0x1aaee6df0) = dispatch_once of 0x1aaf12f48: dlopen libMobileGestalt,
+  MGCopyAnswer IsVirtualDevice, HasBaseband (false -> DeviceName vs "iPad"/"Apple Watch" -> "Detected an unsupported
+  non-baseband device"), then HWModelStr -> 0x1aaef28b0 parses "N104AP" (prefix/number/suffix) -> built-in table ->
+  12-byte radio info (global 0x1eccb61f0; vendor 0x1eccb6120). BasebandChipset/BasebandClass are NOT used.
+  (CFString keys at 0x1f1508430.. in .33.dylddata, file offset via that subcache's mapping table.)
+- EXPERIMENT (26bK, MG CacheExtra HWModelStr = 'D53gAP' (iPhone 12, Qualcomm X55) + HasBaseband/cellular-data/
+  contains-cellular-radio true + BasebandChipset mav20, /var/local/mg.d53.plist; only CommCenter restarted, cache
+  reverted 25 s later): "Creating models with personality kMav20", QMIDriver, DATA.QMIContext 0-5,
+  Mav20QMIAttachApnCommandDriver, Mav13 command driver, QMI client pool (voice VS, audio, settings), 0 crashes in
+  minutes. Then "BB mode transitioning from kIdle to kInit", "Booted baseband assertion required ... grabbing now!",
+  "Baseband not booted in correct state for kOnline; waiting" forever; it never opened our AppleBaseband
+  control/channels (only locationd opened gnss). ABM runs inside CommCenter (mach service com.apple.basebandd.xpc;
+  the xpc cache job "CommCenter-noncellular" is labelled com.apple.CommCenter and has all baseband services).
+  Restored: cache = .pre-mav (HWModelStr N104AP, bluetooth true), CommCenter restarted -> non-baseband mode.
+- NEXT (step 2/3): why ABM does not start the Mav20 boot: (a) no bbfw (/usr/local/standalone/firmware/Baseband/
+  Mav20 or /usr/standalone/firmware/Baseband missing on the iOS 26 root), (b) ABM's IOKit matching for Mav20 PCI
+  (our bridge = iOS 16 Mav17 ABI). ABM's own os_log is not in the mirror yet (find its subsystem). Long-term the
+  HWModelStr override must be CommCenter-only (system-wide D53gAP would change other daemons' behaviour): e.g. patch
+  the N104 row of the radio table (dsc .13 0x1aaef28b0 table) or answer HWModelStr per process.
+
 ## 2026-11-19 21:30 IST: cellular on iOS 26: CommCenter personality kKaroo (Intel) regardless of chipset answers
 - USER: Settings has no Cellular section, but the status bar shows "Searching" (CommCenter in kNoBaseband mode logs
   "Pretending that NoBB Radio is on"; matches).
