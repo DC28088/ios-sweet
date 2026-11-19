@@ -1,0 +1,277 @@
+diff --git a/phone/wifi/glink.c b/phone/wifi/glink.c
+index f2e49ab..e8b1fcf 100644
+--- a/phone/wifi/glink.c
++++ b/phone/wifi/glink.c
+@@ -1,6 +1,7 @@
+ #include <stdio.h>
+ #include <string.h>
+ #include "glink.h"
++#include "link.h"
+ #include "pmem.h"
+ #include "smem.h"
+ 
+@@ -56,6 +57,17 @@ static uint32_t tx_write(uint32_t head, const uint8_t *data, size_t n)
+ 	return head;
+ }
+ 
++/*
++ * Sweet (iOS 26, 2026-11-19): the modem misses some of our doorbells (26bHr: a shell loop ringing APCS IPC bit 12
++ * every ~30 ms cut its first VERSION from 2770 to 602 ms and rmtfs round trips from ~900 to 12-23 ms). link_poll
++ * rings again (at most every 5 ms) for 3 s after each send. WLAND_NORING=1: off.
++ */
++uint64_t glink_last_tx;
++void glink_kick(void)
++{
++	wr32(APCS_IPC, 1u << IPC_GLINK);
++}
++
+ int glink_send(uint16_t cmd, uint16_t p1, uint32_t p2, const void *data, size_t len)
+ {
+ 	uint8_t buf[8 + 8 + 8192 + 8] = { 0 };
+@@ -75,6 +87,7 @@ int glink_send(uint16_t cmd, uint16_t p1, uint32_t p2, const void *data, size_t
+ 	__asm__ volatile("dsb sy" ::: "memory");
+ 	wr32(TX_HEAD, head);
+ 	wr32(APCS_IPC, 1u << IPC_GLINK);
++	glink_last_tx = link_ms();
+ 	return 0;
+ }
+ 
+diff --git a/phone/wifi/link.c b/phone/wifi/link.c
+index cddf66e..ed30556 100644
+--- a/phone/wifi/link.c
++++ b/phone/wifi/link.c
+@@ -224,6 +224,27 @@ static int rx_one(void)
+ 	return 1;
+ }
+ 
++/* Sweet (iOS 26): ring the modem's doorbell again for 3 s after each send, at most every 5 ms (glink.c) */
++static void link_kick(void)
++{
++	extern uint64_t glink_last_tx;
++	extern void glink_kick(void);
++	static int ring = -1;
++	static uint64_t last_kick;
++	static unsigned kicks;
++	if (ring < 0) {
++		ring = getenv("WLAND_NORING") == NULL;
++		printf("glink: doorbell repeat %s (WLAND_NORING)\n", ring ? "on" : "off");
++	}
++	uint64_t now = link_ms();
++	if (ring && glink_last_tx && now - glink_last_tx < 3000 && now - last_kick >= 5) {
++		glink_kick();
++		last_kick = now;
++		if (++kicks == 1000 || kicks == 100000)
++			printf("[%6llu] glink: %u doorbell repeats so far\n", (unsigned long long)now, kicks);
++	}
++}
++
+ int link_poll(unsigned ms)
+ {
+ 	uint64_t end = now_ms() + ms;
+@@ -233,6 +254,7 @@ int link_poll(unsigned ms)
+ 			n++;
+ 		if (link_idle)
+ 			link_idle();
++		link_kick();
+ 		if (ms)
+ 			delay_ms(1);
+ 	} while (now_ms() < end);
+diff --git a/phone/wifi/servreg.c b/phone/wifi/servreg.c
+new file mode 100644
+index 0000000..95b3003
+--- /dev/null
++++ b/phone/wifi/servreg.c
+@@ -0,0 +1,139 @@
++/*
++ * Sweet (iOS 26, 2026-11-19): a SERVREG_NOTIFIER client for the modem's WLAN protection domain.
++ *
++ * On iOS 26 the modem asks our pd-mapper for "kernel/elf_loader", gets msm/modem/wlan_pd (as on iOS 16), and then
++ * never reads wlanmdsp.mbn: no WLFW (0x45). This asks the modem's root PD notifier (QMI service 0x42, instance 180)
++ * for the PD's state (REGISTER_LISTENER, as Linux pdr_interface.c) and, if it is not up, asks for a restart once
++ * (RESTART_PD). State indications are logged and acknowledged (SET_ACK). Wire format: Linux pdr_internal.h.
++ * Off: /var/local/servreg.off. WLAND_SERVREG_MS = when to ask (default 20000 ms after the link came up).
++ */
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <unistd.h>
++#include "link.h"
++#include "qmi.h"
++#include "servreg.h"
++
++#define SERVREG_REGISTER_LISTENER	0x20
++#define SERVREG_STATE_UPDATED_IND	0x22
++#define SERVREG_SET_ACK			0x23
++#define SERVREG_RESTART_PD		0x24
++
++#define STATE_DOWN	0x0fffffffu
++#define STATE_UP	0x1fffffffu
++#define STATE_UNINIT	0x7fffffffu
++
++static const char wlan_pd[] = "msm/modem/wlan_pd";
++static uint32_t nf_node, nf_port;
++static int nf_known, wlfw_seen, step;
++static uint64_t ask_at;
++
++static const char *state_name(uint32_t s)
++{
++	return s == STATE_UP ? "up" : s == STATE_DOWN ? "down" : s == STATE_UNINIT ? "uninit" : "?";
++}
++
++void servreg_new_server(uint32_t service, uint32_t instance, uint32_t node, uint32_t port)
++{
++	if (service == 0x45)
++		wlfw_seen = 1;
++	if (service != SERVREG_SERVICE || (instance >> 8) != 180 || nf_known)
++		return;
++	nf_known = 1;
++	nf_node = node;
++	nf_port = port;
++	const char *e = getenv("WLAND_SERVREG_MS");
++	ask_at = link_ms() + (e ? (uint64_t)atoi(e) : 20000);
++	printf("[%6llu] servreg: modem notifier at %u:%x (instance %#x); WLAN PD check at %llu ms\n",
++	       (unsigned long long)link_ms(), node, port, instance, (unsigned long long)ask_at);
++}
++
++static void send_req(uint16_t txn, uint16_t id, struct qmi_buf *q)
++{
++	size_t n = qmi_finish(q);
++	(void)txn;
++	(void)id;
++	qrtr_send(QRTR_TYPE_DATA, SERVREG_PORT, nf_node, nf_port, q->b, (uint32_t)n);
++}
++
++void servreg_poll(void)
++{
++	if (step || !nf_known || link_ms() < ask_at)
++		return;
++	step = 1;
++	if (!access("/var/local/servreg.off", F_OK)) {
++		printf("servreg: off (/var/local/servreg.off)\n");
++		return;
++	}
++	if (wlfw_seen) {
++		printf("[%6llu] servreg: WLFW already up; no WLAN PD check\n", (unsigned long long)link_ms());
++		return;
++	}
++	struct qmi_buf q;
++	qmi_start(&q, QMI_REQUEST, 1, SERVREG_REGISTER_LISTENER);
++	qmi_tlv_u8(&q, 0x01, 1);
++	qmi_tlv(&q, 0x02, wlan_pd, (uint16_t)strlen(wlan_pd));
++	printf("[%6llu] servreg: > REGISTER_LISTENER \"%s\"\n", (unsigned long long)link_ms(), wlan_pd);
++	send_req(1, SERVREG_REGISTER_LISTENER, &q);
++}
++
++static void result(const struct qmi_msg *m, uint16_t *res, uint16_t *err)
++{
++	uint16_t l = 0;
++	const uint8_t *r = qmi_get(m, 0x02, &l);
++	*res = *err = 0xffff;
++	if (r && l >= 4) {
++		memcpy(res, r, 2);
++		memcpy(err, r + 2, 2);
++	}
++}
++
++void servreg_handle(const struct qrtr_hdr *h, const uint8_t *d, uint32_t n)
++{
++	struct qmi_msg m;
++	if (qmi_parse(d, n, &m))
++		return;
++	uint16_t res, err, l = 0;
++	if (m.type == QMI_RESPONSE && m.id == SERVREG_REGISTER_LISTENER) {
++		uint32_t st = 0;
++		int have = !qmi_get_u32(&m, 0x10, &st);
++		result(&m, &res, &err);
++		printf("[%6llu] servreg: < REGISTER_LISTENER result %u error %#x, state %s%#x (%s)\n",
++		       (unsigned long long)link_ms(), res, err, have ? "" : "(none) ", st, have ? state_name(st) : "-");
++		if (res == 0 && have && st == STATE_UP)
++			return;
++		if (wlfw_seen || getenv("WLAND_NO_PDRESTART"))
++			return;
++		struct qmi_buf q;
++		qmi_start(&q, QMI_REQUEST, 2, SERVREG_RESTART_PD);
++		qmi_tlv(&q, 0x01, wlan_pd, (uint16_t)strlen(wlan_pd));
++		printf("[%6llu] servreg: > RESTART_PD \"%s\"\n", (unsigned long long)link_ms(), wlan_pd);
++		send_req(2, SERVREG_RESTART_PD, &q);
++	} else if (m.type == QMI_RESPONSE && m.id == SERVREG_RESTART_PD) {
++		result(&m, &res, &err);
++		printf("[%6llu] servreg: < RESTART_PD result %u error %#x\n", (unsigned long long)link_ms(), res, err);
++	} else if (m.type == QMI_INDICATION && m.id == SERVREG_STATE_UPDATED_IND) {
++		uint32_t st = 0;
++		qmi_get_u32(&m, 0x01, &st);
++		const uint8_t *path = qmi_get(&m, 0x02, &l);
++		uint16_t pl = path ? l : 0, txn = 0, tl = 0;
++		const uint8_t *t = qmi_get(&m, 0x03, &tl);
++		if (t && tl >= 2)
++			memcpy(&txn, t, 2);
++		printf("[%6llu] servreg: < STATE_UPDATED \"%.*s\" %#x (%s) txn %u\n", (unsigned long long)link_ms(), pl,
++		       path ? (const char *)path : "", st, state_name(st), txn);
++		struct qmi_buf q;
++		qmi_start(&q, QMI_REQUEST, 3, SERVREG_SET_ACK);
++		qmi_tlv(&q, 0x01, path ? path : (const uint8_t *)wlan_pd, path ? pl : (uint16_t)strlen(wlan_pd));
++		qmi_tlv(&q, 0x02, &txn, 2);
++		send_req(3, SERVREG_SET_ACK, &q);
++	} else if (m.type == QMI_RESPONSE && m.id == SERVREG_SET_ACK) {
++		result(&m, &res, &err);
++		printf("[%6llu] servreg: < SET_ACK result %u error %#x\n", (unsigned long long)link_ms(), res, err);
++	} else {
++		printf("[%6llu] servreg: < type %u msg %#x from %u:%x\n", (unsigned long long)link_ms(), m.type, m.id,
++		       h->src_node, h->src_port);
++		qmi_dump(&m);
++	}
++}
+diff --git a/phone/wifi/servreg.h b/phone/wifi/servreg.h
+new file mode 100644
+index 0000000..d77ffe9
+--- /dev/null
++++ b/phone/wifi/servreg.h
+@@ -0,0 +1,9 @@
++#ifndef SERVREG_H
++#define SERVREG_H
++#include "link.h"
++#define SERVREG_SERVICE	0x42	/* SERVREG_NOTIFIER (the modem's root PD) */
++#define SERVREG_PORT	0x21	/* our client port */
++void servreg_new_server(uint32_t service, uint32_t instance, uint32_t node, uint32_t port);
++void servreg_poll(void);
++void servreg_handle(const struct qrtr_hdr *h, const uint8_t *d, uint32_t n);
++#endif
+diff --git a/phone/wifi/wland.c b/phone/wifi/wland.c
+index 686f245..8f8018c 100644
+--- a/phone/wifi/wland.c
++++ b/phone/wifi/wland.c
+@@ -32,6 +32,7 @@
+ #include "link.h"
+ #include "rmtfs.h"
+ #include "pdmapper.h"
++#include "servreg.h"
+ #include "tftp.h"
+ #include "wlfw.h"
+ #include "radio.h"
+@@ -746,6 +747,10 @@ static void net_cb(const struct qrtr_hdr *h, const uint8_t *d, uint32_t n)
+ 			pdmapper_handle(h, d, n);
+ 			return;
+ 		}
++		if (h->dst_port == SERVREG_PORT) {
++			servreg_handle(h, d, n);
++			return;
++		}
+ 		if (h->dst_port == TFTP_PORT || (h->dst_port >= TFTP_XFER_PORT0 && h->dst_port < TFTP_XFER_PORT0 + TFTP_XFERS)) {
+ 			tftp_handle(h, d, n);
+ 			return;
+@@ -763,6 +768,7 @@ static void net_cb(const struct qrtr_hdr *h, const uint8_t *d, uint32_t n)
+ 		if (w[1] == WLFW_SERVICE)
+ 			wlfw_new_server(w[3], w[4]);
+ 		cell_new_server(w[1], w[2], w[3], w[4]);
++		servreg_new_server(w[1], w[2], w[3], w[4]);
+ 	} else if (w[0] == QRTR_TYPE_DEL_SERVER) {
+ 		cell_del_server(w[1], w[3], w[4]);
+ 	}
+@@ -858,6 +864,7 @@ static void net_idle(void)
+ 	bridge_poll();
+ 	join_poll();
+ 	cell_poll();
++	servreg_poll();
+ }
+ 
+ static int net(unsigned secs)

@@ -11,6 +11,10 @@ patch stack, not from `userspace/wifi/patches/`:
 - 0008 (= userspace/wifi/patches/0005, 2026-11-09): the IPA steps for the kernel's cellular data path (xnu 0192-0194):
   record 7 (votes, SMMU, ipa_config) -> PAS 15 `ipa_fws` -> record 8 (GSI/commands/LAN RX) -> SMP2P "ipa" -> record 9.
   Inactive unless the kernel has `sweetipa=1` ("ipa: no answer from the kernel for step 7", data path off).
+- 0009 (iOS 26, 2026-11-19): doorbell repeat (APCS IPC bit 12 again every <= 5 ms for 3 s after each glink send;
+  `WLAND_NORING=1` off) and a SERVREG_NOTIFIER client: 20 s after the modem's notifier appears, if no WLFW, ask the
+  state of `msm/modem/wlan_pd` (REGISTER_LISTENER) and request RESTART_PD once (`/var/local/servreg.off`,
+  `WLAND_NO_PDRESTART`, `WLAND_SERVREG_MS`).
 
 Build: workflow `sweet-wifi-0239` (`.github/workflows/wifi-0239.yml`, manual dispatch). Tested 2026-11-09: Wi-Fi
 list instant after the radio warms up, SIM works (binary sha256 5eb59683...).
