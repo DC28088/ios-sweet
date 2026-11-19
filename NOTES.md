@@ -1,3 +1,30 @@
+## 2026-11-19 20:45 IST: USER: Bluetooth connects + sound works. Wi-Fi: modem says msm/modem/wlan_pd = UNINIT
+- USER: "bluetooth works, and connects to devices.. sound also works. lets do wifi now".
+- wland 0009 (userspace/wifi/wland-0239/0009-sweet-wlan-pd-servreg-doorbell.patch, commit with CI sweet-wifi-0239
+  44548363039, research/wifi-44548363039, wland d24e9e7d; installed /var/local/bin/wland, old 0239 kept as
+  /var/local/bin/wland.0239 5eb59683): doorbell repeat (<= 5 ms for 3 s after sends; WLAND_NORING=1 off) +
+  SERVREG_NOTIFIER client (0x42 inst 0xb401 at 0:3): REGISTER_LISTENER "msm/modem/wlan_pd" -> result 0,
+  state 0x7fffffff = UNINIT (every boot below); RESTART_PD -> result 1 error 0x9. The root PD never starts it.
+- Boots (all 26bI kernel 2012 v3 unless noted; logs/boot-26bIw.txt has all of them):
+  1. 26bI + wland 0009: elf_loader at 3.2 s (doorbell repeat works), UNINIT.
+  2. + original Android EFS (/var/local/modemst{1,2}.img.orig = research/sweet-wifi-fw-0131 37701ec3/06bef927) and
+     empty /var/local/fw/rw (mcfg.tmp + server_check.txt moved to /var/local/fw/rmtfs-backup-26bI/ with the
+     previous modemst1/2): mcfg sequence now = iOS 16 0143 (mcfg.tmp not found -> written), still UNINIT.
+  3. 26bJw (shim-boot-26bJw.img 285e44cc: sweetbt=0, no sweetbb, ADT wbg, sweetbuild=2675) + /var/local/cell.off:
+     UNINIT. => BT, cell client, baseband bridge, EFS, mcfg ruled out WITH a responsive modem.
+  4. 26bJw, wland held off, 2 shell spin loops, then `WLAND_NORING=1 wland auto` by hand: modem ready after 100 ms,
+     VERSION at 37 ms, rmtfs reads 4 ms apart = exactly iOS 16 speed => the "slow modem" is apps-CPU idle depth
+     on iOS 26 (all apps CPUs idle -> the modem's wakeups by our doorbell are slow), NOT the Wi-Fi blocker:
+     still UNINIT. Spin loops killed; cell.off removed again.
+- Identical to iOS 16 0143/0144 (checked): firmware files (sha of modem.mdt/b00/b05/b13/wlanmdsp/bdwlan), pd-mapper
+  query order (pdr_enabled, pddump_disabled, avs/audio, kernel/elf_loader, avs/audio), QRTR ctrl message mix,
+  services offered (only diff 0x45/1 and 0x33/0x301 = the WLAN PD's own), tftp/rmtfs sequence. On iOS 16 the very
+  next modem client port after the elf_loader answer reads wlanmdsp.mbn; on iOS 26 that port is a normal service.
+  SMEM 421 = "SFR Init: wdog or kernel error suspected." (default, no crash). /dev/wlan exists (major 29).
+- Open (GUESSES): an input outside QRTR the root PD checks before spawning (hardware/rail state of the WCN3990,
+  an SMEM item written by the iOS 16 kernel or bootloader, warm-reboot leftovers: every iOS 26 boot here was a
+  warm `sweetreboot fastboot`). Next cheap test: a COLD boot (power off, then fastboot) with 26bI.
+
 ## 2026-11-19 19:35 IST: Bluetooth hidden in Settings/CC = MobileGestalt "bluetooth" false -> CacheExtra override
 - USER (26bI): "bluetooth settings doesn't even show up, not even the icon in control centre".
 - sweet-mgquery (research/tools-41758213153, now /var/local/bin/sweet-mgquery on the phone): bluetooth = false,
