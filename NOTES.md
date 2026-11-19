@@ -1,3 +1,23 @@
+## 2026-11-19 IST: USER: Control Center back (slow to load); Wi-Fi + BT first, then sound. Findings + xnu 2012
+- USER: "the control centre is back. tho it takes a while to load, and the liquid glass isn't fully functional.
+  lets first fix wifi and bluetooth, then we can fix sound."
+- WI-FI (logs: scratchpad wland-26bFd.log / wland-26bFe.log; iOS 16 reference research/logs-inspect-0143/files/
+  wland.log): modem boots, cell registers, pd-mapper answers "kernel/elf_loader" -> msm/modem/wlan_pd (1 domain)
+  exactly as on iOS 16, but the modem NEVER tftp-reads wlanmdsp.mbn afterwards (iOS 16: ~14 ms later), so WLFW
+  (0x45) never appears, radio state 0, no en0. Same rails/votes/PAS as iOS 16 (diff of first 30 lines = only
+  addresses).
+  Test 1 (26bFe): original Android modemst1/2 (research/sweet-wifi-fw-0131) + no stale /var/local/fw/rw/mcfg.tmp
+  (iOS 26 EFS + mcfg.tmp backed up in /var/local/fw/rmtfs-backup-26bF/) -> still no wlanmdsp read; cell now on
+  LTE; then "smp2p: modem state 7 ERR-FATAL" at 182 s. => not the EFS.
+  Next test: /var/local/cell.off (wland 0003 cell client off; on iOS 16 0143 there was no cell client) + iOS 26
+  EFS back.
+- BLUETOOTH (26bFe = 26bF + sweetdtlog=bluetoothd,audiomxd, shim-boot-26bFe.img 9865dc5a): (1) before ~72 s
+  (WCN3990 rampatch + NVM download) bluetoothd finds no com.apple.uart.bluetooth control (CTLIOCGINFO ENOENT) ->
+  "Transport layer initialization failed" -> reason 1201 crash (self-heals by restarts). (2) after 72 s the stack
+  starts, then the discovery scan sends VSC 0xfe3b; our compat reply (16 bytes) trips "AssertFail bcm_vsc.c:1021
+  ByteStream_NumReadBytesAvail(*pBs) >= 4" -> SIGABRT, every time. xnu 2012 (2012-sweet-bt-long-vsc-reply.patch):
+  64-byte compat reply for 0xfe3b. Kernel CI 44442636580 (2009-2012) running.
+
 ## 2026-11-18 IST: CONTROL CENTER FIXED (MobileGestalt arm64e); WALLPAPER WORKS (sweetpb26); audio producer at ~42k/s
 - 26bF (kernel CI 44104472780 = 2009+2010+2011; shim-boot-26bF.img 5f2d84d4, sweetbuild=2667): "SWEET FB: copy-mode
   swap completion after the copy"; `usleep 1000` loop 50x = 1.48 s (was 2.25 s) -> timer coalescing off works.
