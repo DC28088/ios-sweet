@@ -1,3 +1,12 @@
+## 2026-11-19 23:50 IST: kernel 2014 built; phone DIED (battery) before booting it
+- Kernel CI 44582763096 SUCCESS -> research/ios26/boot/kernel-44582763096 (2014 patch sha 3440109b matches the series).
+  Image 26bO = 26bN cmdline + sweetbuild=2678, ADT wbgb: research/ios26/boot/shim-boot-26bO.img 8ebe514e. NOT booted.
+- Last line of logs/boot-26bNb.txt (23:31): "SWEET BATTERY: 5% ... 3638mV ... -71mA external=1 charging=1" = draining on
+  USB; then no USB device at all (no fastboot, no usbnet). USER: charge, then power + vol-down -> fastboot.
+- NEXT: fastboot boot shim-boot-26bO.img; check wland "bb READY" + "23 of 23 services published" (no modem ERR-FATAL);
+  then the CommCenter-only D53gAP test (mg.d53.plist for 45 s, revert to .pre-mav) and look for "SWEET PPM:" lines,
+  "ABM ASSERT", "SWEET EXIT: CommCenter".
+
 ## 2026-11-20 00:00 IST: EXIT PROBE (xnu 2013): Mav20 CommCenter = ABM ASSERT fCPMSAgent (no ApplePPM) -> xnu 2014 stub
 - xnu 2013 (8f6c5c5, CI 44576280203, research/ios26/boot/kernel-44576280203): "SWEET EXIT:" (status/signal/exit reason
   + user bt) and "SWEET SIGNAL:" (sender) for sweetdtlog processes. Image 26bN = 26bI cmdline + sweetbuild=2677
