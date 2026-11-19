@@ -1,0 +1,47 @@
+diff --git a/bsd/dev/sweet_bt_hci.c b/bsd/dev/sweet_bt_hci.c
+index 54ac6bc..2fb7077 100644
+--- a/bsd/dev/sweet_bt_hci.c
++++ b/bsd/dev/sweet_bt_hci.c
+@@ -150,6 +150,17 @@ sweet_bt_hci_connected(void)
+  * next missing command shows up even after the packet trace budget is spent.
+  */
+ #define BT_COMPAT_PAD   16u             /* parameter bytes in a rewritten Command Complete */
++/*
++ * Sweet 2012: replies whose parser reads past 16 bytes. 0xfe3b (OCF 0x23b, sent when bluetoothd starts its discovery
++ * scan on iOS 26): "AssertFail bcm_vsc.c:1021 : ByteStream_NumReadBytesAvail(*pBs) >= 4" with 16 bytes, every
++ * bluetoothd start after the stack came up (26bFe, then SIGABRT). These get BT_COMPAT_PAD_LONG zero bytes.
++ */
++#define BT_COMPAT_PAD_LONG 64u
++static unsigned
++bt_compat_pad(unsigned op)
++{
++	return op == 0xfe3b ? BT_COMPAT_PAD_LONG : BT_COMPAT_PAD;
++}
+ 
+ /* First parameter byte of the last few commands sent, by opcode (for rewritten replies). */
+ static struct { uint16_t op; uint8_t p0; } bt_last_cmd[8];
+@@ -379,19 +390,19 @@ bt_hci_compat(uint8_t *p, unsigned len)
+ 		 * 0x32 instead of 0x01 for LE Meta Enable Features, its completion never ran and
+ 		 * bluetoothd restarted after 15 s ("timedout waiting for controller", reason 3602).
+ 		 */
+-		unsigned i, p0 = op == bt_pend.op ? bt_pend.p0 : bt_cmd_param0(op);
++		unsigned i, p0 = op == bt_pend.op ? bt_pend.p0 : bt_cmd_param0(op), pad = bt_compat_pad(op);
+ 
+-		p[2] = 4 + BT_COMPAT_PAD;
++		p[2] = (uint8_t)(4 + pad);
+ 		p[6] = 0;
+ 		p[7] = (uint8_t)p0;
+-		for (i = 1; i < BT_COMPAT_PAD; i++) {
++		for (i = 1; i < pad; i++) {
+ 			p[7 + i] = 0;
+ 		}
+ 		bt.compat_fixed++;
+ 		printf("SWEET BT: compat: opcode %#06x (OGF %#x OCF %#05x) status %#04x from the controller, answered as success "
+-		    "with %u parameter bytes (first %#04x) (%u so far)\n", op, op >> 10, op & 0x3ff, st, BT_COMPAT_PAD, p0,
++		    "with %u parameter bytes (first %#04x) (%u so far)\n", op, op >> 10, op & 0x3ff, st, pad, p0,
+ 		    bt.compat_fixed);
+-		return 7 + BT_COMPAT_PAD;
++		return 7 + pad;
+ 	}
+ 	if (bt.err_budget) {
+ 		bt.err_budget--;
