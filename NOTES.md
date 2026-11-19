@@ -1,3 +1,28 @@
+## 2026-11-19 19:00 IST: BT parser = 205 B (48 u32 + 8 u16) -> xnu 2012 v3 212 B (CI 44531273643); Wi-Fi: modem stalls
+- 26bH (kernel CI 44448603020 = 2012 v2, 200 B; research/ios26/boot/shim-boot-26bH.img a5850370, 26bG cmdline +
+  sweetbuild=2672, ADT wbg; logs/boot-26bH.txt): bluetoothd assertion moved bcm_vsc.c:1036 -> :1075 (4 aborts).
+  Disassembly of the cold assert blocks of _BCM_LowPowerCoreStatsEventParser (bluetoothd 26.6 0x1002602d4..0x100260840):
+  ">= 4" at lines 1018-1026, 1030-1038, 1040-1063, 1068-1069, 1074-1077 (48 u32) and ">= 2" at 1064-1067, 1070-1073
+  (8 u16, missed before) -> p0 + 192 + 16 = 205 bytes (failure lines with 16/64/200 B all fit p0 = 1..4 bytes).
+  xnu 2012 v3 (734b06a): BT_COMPAT_PAD_LONG 212 (ev[] is 258 B, length byte 216). Kernel CI 44531273643 running.
+- Wi-Fi timing (OBSERVED, wland.log 26bH vs iOS 16 research/logs-inspect-0143/files/wland.log, ms after modem ready):
+  first glink VERSION 2770 vs 20; first rmtfs open 10517 vs 148; rmtfs 1-sector reads ~900 ms apart vs 34-64 ms;
+  the 2 MB read 150 ms; tftp round trips during the service burst 2-7 ms on both. Shell `usleep 1000` = exec cost
+  (sleeps fine, xnu 2010). No "pmem:" errors in wland.log. Same wland binary (0239), firmware and votes as iOS 16.
+- GUESS (not confirmed): the modem does not get our glink doorbell (APCS IPC 0x17c0000c bit 12, pm_wr through
+  ml_io_map VM_WIMG_IO) and only sees our replies on its own slow timer -> late pd-mapper answer for kernel/elf_loader
+  -> no wlan PD. Checked and ruled out: cache flush no-op (SWEET.h has no __ARM_COHERENT_IO__, FlushPoC real),
+  DRAM map (ADT dram-base 0x1_00000000 as iOS 16). Not verifiable: early MC0/SH0/ACV DDR votes (USB log starts
+  after them; no dmesg on the phone).
+- EXPERIMENT 26bHr (same image, logs/boot-26bHr.txt): /var/local/wland.off for the boot, then by hand
+  /var/local/ring.sh 300 (dd of 0x1000 to /dev/pmem offset 0x17c0000c in a loop, ~30 ms per ring) + `wland auto`.
+  ~2 min later the phone dropped off USB (host usbnet gone, no panic text, log ends 18:53 with exec lines) = HUNG.
+  Unknown whether wland-by-hand, the ring flood or the console flood (every dd exec is logged) caused it.
+  wland.off is removed again (next boot = normal wland at boot); /var/local/ring.sh left on the phone (inert).
+- NEXT: USER forced restart into fastboot (power + vol-down) -> boot 26bH or the 2012 v3 kernel; read
+  /var/local/wland.log(.prev) of the hung run. Better doorbell test: a wland build that logs each pm_wr of APCS_IPC
+  and rings on every poll while waiting (WLAND_RING=1), instead of a shell loop.
+
 ## 2026-11-19 08:45 IST: BT 0xfe3b parser = 193 bytes (xnu 2012 v2 = 200 B); Wi-Fi: not EFS, not cell, not BT
 - 26bG (kernel CI 44442636580, 2012 v1 = 64 B; shim-boot-26bG.img 41631e42, sweetdtlog=bluetoothd,audiomxd):
   assertion moved bcm_vsc.c:1021 -> :1036. bluetoothd 26.6 (/usr/sbin/bluetoothd, scratchpad bt/): the parser is
