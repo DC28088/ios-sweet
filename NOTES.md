@@ -1,3 +1,16 @@
+## 2026-11-19 08:45 IST: BT 0xfe3b parser = 193 bytes (xnu 2012 v2 = 200 B); Wi-Fi: not EFS, not cell, not BT
+- 26bG (kernel CI 44442636580, 2012 v1 = 64 B; shim-boot-26bG.img 41631e42, sweetdtlog=bluetoothd,audiomxd):
+  assertion moved bcm_vsc.c:1021 -> :1036. bluetoothd 26.6 (/usr/sbin/bluetoothd, scratchpad bt/): the parser is
+  _BCM_LowPowerCoreStatsEventParser, 1 byte + 48 u32 reads (lines 1018-1077) = 193 bytes. 2012 v2: 200-byte reply
+  (BT_COMPAT_PAD_LONG), kernel CI 44448603020 running. (CI artifact downloads crawl at ~60 KB/s: download the
+  artifact zip's redirect URL in 8 parallel curl ranges -> seconds.)
+- Wi-Fi test 2 (26bG, /var/local/cell.off, iOS 26 EFS restored from rmtfs-backup-26bF): "cell: off", still no
+  wlanmdsp read. Test 3 (26bGw = 26bG + sweetbt=0, 242d5997, logs/boot-26bGw.txt): still none. => not EFS, not
+  the cell client, not the kernel BT bring-up. cell.off removed again (next boot has cellular).
+- Saved logs with WLFW up are all pre-cell iOS 16 wland (0143/0144/0145/0165); no saved log of the iOS 16 0239
+  boots (0236/0237) that had cell + WLFW. Modem-side decision still unexplained (ideas: SMEM items the iOS 16
+  kernel wrote, smp2p wlan bits, time service).
+
 ## 2026-11-19 IST: USER: Control Center back (slow to load); Wi-Fi + BT first, then sound. Findings + xnu 2012
 - USER: "the control centre is back. tho it takes a while to load, and the liquid glass isn't fully functional.
   lets first fix wifi and bluetooth, then we can fix sound."
