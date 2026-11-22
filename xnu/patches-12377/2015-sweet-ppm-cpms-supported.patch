@@ -1,0 +1,20 @@
+diff --git a/iokit/Kernel/arm/SweetBaseband.inc b/iokit/Kernel/arm/SweetBaseband.inc
+index 37416c7..3ae92c3 100644
+--- a/iokit/Kernel/arm/SweetBaseband.inc
++++ b/iokit/Kernel/arm/SweetBaseband.inc
+@@ -1287,6 +1287,15 @@ OSDefineMetaClassAndStructors(ApplePPMUserClient, IOUserClient)
+ class ApplePPM : public IOService {
+   OSDeclareDefaultStructors(ApplePPM)
+ public:
++  // Sweet 2015: CPMS.framework reads the service's "CPMSSupported" (a number: non-zero = every client, bitfield
++  // 0xffffffff; or an array of client indices 0-21). Without it "CPMS not supported on current platform",
++  // +[CPMSAgent sharedCPMSAgent] returns nil and ABM still asserts fCPMSAgent (26bO, CPMS.framework 0x2495d4320).
++  bool init(OSDictionary *dict = nullptr) override
++  {
++    if (!IOService::init(dict)) return false;
++    setProperty("CPMSSupported", 1ULL, 32);
++    return true;
++  }
+   IOReturn newUserClient(task_t t, void *s, UInt32 type, OSDictionary *p, IOUserClient **out) override
+   {
+     printf("SWEET PPM: user client type %u opened\n", (unsigned)type);
