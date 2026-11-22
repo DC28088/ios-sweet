@@ -1,3 +1,27 @@
+## 2026-11-22 22:10 IST: 26bO (xnu 2014) booted: ApplePPM found, but CPMS needs "CPMSSupported" -> xnu 2015; CI BLOCKED
+- 26bO booted from fastboot (logs/boot-26bO.txt, local only): SSH after ~50 s, modem up (no ERR-FATAL), SIM seen,
+  "SWEET BB: 23 of 23 services published (... AppleIPAppender, ApplePPM)". bluetoothd aborted twice early (reason 1201)
+  and then ran (not investigated; seen before?).
+- CommCenter-only D53gAP test (mg.d53.plist 45 s, then .pre-mav restored: cmp OK; CommCenter relaunched, N104 mode):
+  "Could not find PPM service" is GONE, but still "ABM ASSERT (fCPMSAgent)" (CPMSModule.mm:123) and no "SWEET PPM:"
+  line (no user client opened). Also "Failed to get property of supports-cpms-via-spmi" / "Kernel CPMS Supported: false"
+  (libTelephonyCapabilities +0x12364: IOService "baseband" node property, u32; false -> user-space CPMS, fine).
+  Later CommCenter exits were not printed by the 2013 probe (only pid 99's kill -9); unexplained.
+- Static (dsc .75 libBasebandManager 0x2a19598f4): fCPMSAgent = +[CPMSAgent sharedCPMSAgent] (selref 0x2ad2565e8,
+  classref 0x2ac7c1630); nil -> assert. CPMS.framework (dsc .54, 0x2495d4320): IOServiceMatching("ApplePPM") ->
+  IORegistryEntryCreateCFProperty "CPMSSupported": CFNumber != 0 -> bitfield 0xffffffff; CFArray of numbers <= 0x15 ->
+  1 << n each; other type -> "CPMSSupported property has unknown type"; missing/0 -> "CPMS not supported on current
+  platform" -> nil agent. Tool: session scratchpad tools/rdva.py reads unslid VAs from the phone's cache over SSH
+  (pointer = 0x180000000 + low 34 bits).
+- xnu 2015 (4eef774, xnu/patches-12377/2015-sweet-ppm-cpms-supported.patch, on 2014): ApplePPM::init sets
+  CPMSSupported = 1 (32-bit). Worktree k2013 now has 2014 committed (633d746) + 2015 as the diff.
+- CI BLOCKED: `gh workflow run xnu26 -R DC28088/ios-sweet` -> HTTP 422 "Actions has been disabled for this repository"
+  (twice), although GET actions/permissions says enabled and the workflow is active. Needs the USER (GitHub settings /
+  account). Kernel NOT built.
+- NEXT: once Actions works: dispatch xnu26, image 26bP = 26bO cmdline + sweetbuild=2679, boot, same D53gAP test; expect
+  "SWEET PPM: user client type ..." and selector lines; next failures likely in registerClient/requestBudget outputs
+  (zeros) -> "Register client call to PPM failed" / "Budget update period %d ms is out of bounds".
+
 ## 2026-11-19 23:50 IST: kernel 2014 built; phone DIED (battery) before booting it
 - Kernel CI 44582763096 SUCCESS -> research/ios26/boot/kernel-44582763096 (2014 patch sha 3440109b matches the series).
   Image 26bO = 26bN cmdline + sweetbuild=2678, ADT wbgb: research/ios26/boot/shim-boot-26bO.img 8ebe514e. NOT booted.
