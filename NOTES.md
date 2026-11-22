@@ -9,7 +9,7 @@
   laptop port (ICL 500 mA SDP). Phone not on USB at 22:45 (no usbnet, no fastboot). USER: charge (wall charger), then
   power + vol-down.
 - NEXT: receiver logs/boot-26bP.txt, fastboot boot shim-boot-26bP.img, then the D53gAP test; expect "SWEET PPM: user
-  client type" + selector lines. Then (USER agreed order) graphics: CoreAnimation on its OpenGL ES renderer vs Metal
+  client type" + selector lines. Then (proposed order; USER did not object) graphics: CoreAnimation on its OpenGL ES renderer vs Metal
   (idea from github.com/jesvi-eulah/Jesvi-iOS docs/devices/x1slte/display.md: backboardd CA::OGL::GLESContext on Mesa,
   Metal off system-wide; SpringBoard 20-30 fps animation caps raised; idle big-core wake-ups; ir3 correctness patches
   tools/mesa/ir3-*.patch (MIT: keep their notice if copied)). USER: no credit line needed.
