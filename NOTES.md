@@ -1,3 +1,18 @@
+## 2026-11-22 23:20 IST: 26bP (xnu 2015): NO ABM assert; ApplePPM opened; ABM now tries to BOOT the modem
+- 26bP booted (logs/boot-26bP.txt, local only), 23/23 published, SIM seen. Battery very low (5%, draining on USB).
+- D53gAP test 1: no "ABM ASSERT", CommCenter stays up (personality kMav20), cpms.drv starts, "Operating mode kOnline".
+  ABM boot.mod: "Failed to find the firmware in /private/preboot/<boot-manifest-hash>/usr/local/standalone/firmware/
+  Baseband/Mav20" -> "Baseband Firmware Path Not Found" -> Boot Error.
+- Phone change (reversible): mkdir -p /private/preboot/5CBE3601...5205/usr/local/standalone/firmware/Baseband and
+  symlink Mav20 -> /usr/standalone/firmware/Baseband/Mav20 (undo: rm -r /private/preboot/5CBE3601*).
+- D53gAP test 2: "SWEET PPM: user client type 0 opened"; boot Not Booted -> Booting; "SWEET BB: pbl register 4 read,
+  96 bytes"; then "modem boot up failure [output did not return done]" -> Boot Error -> Resetting -> Booting loop.
+  MG cache restored to .pre-mav both times (cmp OK).
+- NEXT: ABM's Mav20 boot path talks to the PBL (primary boot loader) over AppleBasebandPCIControl; our bridge answers
+  the register read but not the next step ("output did not return done"). Find the expected PBL/boot sequence in
+  libBasebandManager (boot.mod/BBUpdater for Mav20) and fake "already booted / done" in the bridge (the modem is
+  already up via wland). Log window: scratchpad d53-26bPb.txt (lost on reboot; re-run the test).
+
 ## 2026-11-22 22:45 IST: kernel 2015 built (CI 45044962680), image 26bP ready; phone off USB again (battery)
 - GitHub Actions on the fork had been disabled by GitHub ("workflows are not run on this fork"); USER re-enabled it.
   CI 45044962680 SUCCESS -> research/ios26/boot/kernel-45044962680 (SHA256SUMS OK, 2015 patch sha 6a02dfdd,
