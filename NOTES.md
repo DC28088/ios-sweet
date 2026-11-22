@@ -1,3 +1,20 @@
+## 2026-11-22 22:45 IST: kernel 2015 built (CI 45044962680), image 26bP ready; phone off USB again (battery)
+- GitHub Actions on the fork had been disabled by GitHub ("workflows are not run on this fork"); USER re-enabled it.
+  CI 45044962680 SUCCESS -> research/ios26/boot/kernel-45044962680 (SHA256SUMS OK, 2015 patch sha 6a02dfdd,
+  "CPMSSupported" string in the kernel).
+- Image 26bP = 26bO cmdline with sweetbuild=2679, ADT sweet-n104-2x-wbgb.adt: research/ios26/boot/shim-boot-26bP.img
+  af0149da (ramdisk == payload, cmdline checked). Recipe re-verified: mkpayload of kernel-44582763096 + wbgb ADT +
+  26bO cmdline reproduces payload-26bO.bin byte for byte. NOT booted.
+- logs/boot-26bO.txt ends 22:10 (no panic); last "SWEET BATTERY: 14% ... -44 mA / -402 mA external=1" = draining on the
+  laptop port (ICL 500 mA SDP). Phone not on USB at 22:45 (no usbnet, no fastboot). USER: charge (wall charger), then
+  power + vol-down.
+- NEXT: receiver logs/boot-26bP.txt, fastboot boot shim-boot-26bP.img, then the D53gAP test; expect "SWEET PPM: user
+  client type" + selector lines. Then (USER agreed order) graphics: CoreAnimation on its OpenGL ES renderer vs Metal
+  (idea from github.com/jesvi-eulah/Jesvi-iOS docs/devices/x1slte/display.md: backboardd CA::OGL::GLESContext on Mesa,
+  Metal off system-wide; SpringBoard 20-30 fps animation caps raised; idle big-core wake-ups; ir3 correctness patches
+  tools/mesa/ir3-*.patch (MIT: keep their notice if copied)). USER: no credit line needed.
+- Gotcha (again): `pgrep -f "<pattern>"` inside a bash -c matches that shell itself -> kill hit the tool shell (exit 144).
+
 ## 2026-11-22 22:10 IST: 26bO (xnu 2014) booted: ApplePPM found, but CPMS needs "CPMSSupported" -> xnu 2015; CI BLOCKED
 - 26bO booted from fastboot (logs/boot-26bO.txt, local only): SSH after ~50 s, modem up (no ERR-FATAL), SIM seen,
   "SWEET BB: 23 of 23 services published (... AppleIPAppender, ApplePPM)". bluetoothd aborted twice early (reason 1201)
