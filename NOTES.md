@@ -4,6 +4,7 @@
   on ordinary xpcproxy/wifip2pd execs at 22:23). 26bP (modem boot failed early) stayed up 1.5 h. GUESS: the Mav20
   boot/reset cycle (bridge resets, sahara replays, CommCenter HardReset) leaves something that kills the phone or its USB
   link. Avoid the D53gAP test until checked; ask the USER what the screen shows when it happens.
+  USER (26bR, 22:30): "Screen on, UI works" -> iOS keeps running; only the USB link (sweetusb ECM + console) died.
 - Wi-Fi restart (USER priority): iOS 16 (0236-0240, wland 0239) had WLFW; iOS 26 same wland/firmware never gets
   wlanmdsp read. iOS 16 kernel also logged "flame wlan: /dev/wlan ready"; iOS 26 shows no "flame wlan" line (notes say
   /dev/wlan exists, major 29) - check. Last iOS 16 image with Wi-Fi: USB stick build-0240/shim-boot-0240.img bb134af5.
