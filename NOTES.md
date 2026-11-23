@@ -1,3 +1,17 @@
+## 2026-11-23 22:25 IST: 26bR diag: bridge QMI client table FULL (64/64) -> xnu 2018 + wland 0010 built, NOT installed; USER: Wi-Fi first
+- Phone dropped off USB ~20:54 on 26bQ (no panic in the log tail; battery 98%); USER put it in fastboot; 26bR
+  (research/ios26/boot/shim-boot-26bR.img 00e274d4 = kernel-45206839161 (2017) + 26bQ cmdline, sweetbuild=2681) booted 22:14,
+  log logs/boot-26bR.txt.
+- D53gAP test (60 s, cache restored cmp OK): boots to Booted again; reports: tx queue peak 62 of 256, dropped 0/0, qmux
+  channel drops 0, "64 clients" = CBQ_MAX_CLIENTS; CommCenter "Baseband did not allocate client for svc type: DSD, error:
+  0x5 (QMI_ERR_CLIENT_IDS_EXHAUSTED)". The timed-out NAS request (client 11 msg 0x45) was never even queued by CommCenter
+  and never reached the bridge -> ATCS_TIMEOUT -> HardReset 'Transport Error'. After the reset 16 clients.
+- Fix (774c4dc): xnu 2018 CBQ_MAX_CLIENTS 64 -> 128 (ports 0x4100..0x417f) + wland 0010 CELL_BB_PORTS 64 -> 128 (wland
+  0239 series rebuilt from donor f09fdb58 + 0001-0009 in the session scratchpad). CI xnu26 45221216635, sweet-wifi-0239
+  45221247230 dispatched. Install order when resumed: wland 0010 on disk first (phone now runs 0009 d24e9e7d), then a kernel
+  2018 image. New kernel + old wland would silently lose clients in slots >= 64.
+- USER (22:25): "lets fix wifi first.. we are not getting much anywhere with cellular". Cellular PARKED here.
+
 ## 2026-11-23 21:10 IST: xnu 2017 diag (e05a5e6) building: CI 45206839161
 - xnu/patches-12377/2017-sweet-bb-report-nas-trace.patch (on 2016; scratch tree k/a in the session scratchpad, git repo of
   the reconstructed SweetBaseband.inc + coachz_bb_sahara.h with commits 2015/2016/2017): coachz_baseband_report now runs
