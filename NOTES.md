@@ -1,3 +1,10 @@
+## 2026-11-23 20:05 IST: USER plan after cellular: cellular + Wi-Fi with working data first, THEN glitches + Glass UI + GPU perf
+- USER asked: what % of the GPU is used, can animation be smoother. Answer given (from these notes, nothing new measured):
+  iOS 26 GPU busy is UNKNOWN (gpu_busy_pct=0 samples=0, GX clock meter 0); GPU fixed 800 MHz, no DCVS; iOS 26 evidence
+  = CPU-bound (~84 us CPU per draw, ~1 ms per submit, all on cpu7). iOS 16-era busy 27-83% is not comparable.
+- Proposed GPU order (after cellular/Wi-Fi): (1) working GPU busy counter (RBBM/GMU busy cycles), (2) per-draw/submit CPU cost
+  and spreading encode off cpu7, (3) CA OpenGL ES renderer via Mesa experiment, (4) Glass UI (blur-heavy) as GPU load.
+
 ## 2026-11-23 19:50 IST: Mav20 boot fails on "fused radio" (our PK hash = EUR13 default) -> xnu 2016; CI 45198061886
 - 26bP booted again from fastboot 19:14 (logs/boot-26bPc.txt, local only). D53gAP test rerun (45 s, MG cache restored to
   .pre-mav, cmp OK; CommCenter killed -> N104 mode). USER saw "there is an issue connecting to your cellular network" =
