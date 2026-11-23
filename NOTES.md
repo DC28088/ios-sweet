@@ -1,3 +1,17 @@
+## 2026-11-23 22:55 IST: Wi-Fi: iOS 26 modem asks kernel/elf_loader BEFORE announcing QMI 0x47 -> wland 0011 (hold) installed
+- 26bR rebooted clean (USER replug -> fastboot, 22:37; log logs/boot-26bRw.txt), no Mav20 test. wland.log (scratchpad
+  wland-26bRw.log) vs iOS 16 research/logs-inspect-0143/files/wland.log: same pd-mapper questions, same service set except
+  0x45/1 + 0x33/0x301 (WLAN PD's own), no "glink: cannot send". ORDER differs: iOS 16 = NEW_SERVER 0x47 at 0:48 ->
+  "kernel/elf_loader" -> tftp wlanmdsp.mbn (client 0:4b) 14 ms later; iOS 26 = elf_loader asked at 12.2 s right after 0x2f,
+  0x47 only at 12.35 s (0:5a, after the 2nd avs/audio), ports 0:48/0:4a never announced or deleted, no tftp read.
+  (pdmapper_handle ignores qrtr_send's result, but link_send logs failures and there were none.)
+- wland 0011 (userspace/wifi/wland-0239/0011-sweet-pdm-hold-elf-loader.patch, on 0010; CI sweet-wifi-0239 45225095254,
+  research/wifi-45225095254, wland 978b4b7c): hold the elf_loader answer until NEW_SERVER 0x47 (30 s cap;
+  WLAND_PDM_NOHOLD=1 off). Installed /var/local/bin/wland; rollback cp /var/local/bin/wland.0009 /var/local/bin/wland
+  (d24e9e7d). Includes 0010 (128 bridge ports; harmless with kernel 2017).
+- GUESS being tested: the elf loader needs 0x47 when it gets the answer. Expect "pd-mapper: ... held", "service 0x47 is up:
+  releasing", then tftp wlanmdsp.mbn reads and WLFW 0x45.
+
 ## 2026-11-23 22:30 IST: phone drops off USB ~6-9 min after a Mav20 test (26bQ 20:54, 26bR 22:23); Wi-Fi restarted
 - OBSERVED: 26bQ and 26bR both vanished from USB (no fastboot, no usbnet, no Qualcomm EDL device) some minutes after a
   D53gAP test in which the Mav20 baseband reached Booted and then reset-looped; no panic text at the log end (26bR ends
