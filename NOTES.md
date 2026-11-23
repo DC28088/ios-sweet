@@ -1,3 +1,11 @@
+## 2026-11-23 21:10 IST: xnu 2017 diag (e05a5e6) building: CI 45206839161
+- xnu/patches-12377/2017-sweet-bb-report-nas-trace.patch (on 2016; scratch tree k/a in the session scratchpad, git repo of
+  the reconstructed SweetBaseband.inc + coachz_bb_sahara.h with commits 2015/2016/2017): coachz_baseband_report now runs
+  from sweet_bb_wland_read every 5 s while counters move (adds "tx queue N (peak P of 256), wland records in/out"),
+  tx-queue drops are logged, NAS (3) + DMS (2) trace every message (budget 6000 -> 30000), BB_TX 64 -> 256.
+- NEXT: kernel-45206839161 -> image 26bR (26bQ cmdline, sweetbuild=2681), boot, D53gAP test (apticket placeholder stays),
+  compare host NAS requests vs to-host replies and the tx peak around the ATCS_TIMEOUTs.
+
 ## 2026-11-23 21:05 IST: MILESTONE: Mav20 ABM BOOTS the baseband ("Booting -> Booted", 26bQ / xnu 2016); NAS then times out
 - 26bQ = kernel CI 45198061886 (2016 strings present, SHA256SUMS OK) + 26bP cmdline with sweetbuild=2680, ADT wbgb:
   research/ios26/boot/shim-boot-26bQ.img 5050bd0e (ramdisk == payload; shim/dtb == 26bP's). `sweetreboot fastboot`
