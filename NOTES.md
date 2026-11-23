@@ -1,3 +1,27 @@
+## 2026-11-23 19:50 IST: Mav20 boot fails on "fused radio" (our PK hash = EUR13 default) -> xnu 2016; CI 45198061886
+- 26bP booted again from fastboot 19:14 (logs/boot-26bPc.txt, local only). D53gAP test rerun (45 s, MG cache restored to
+  .pre-mav, cmp OK; CommCenter killed -> N104 mode). USER saw "there is an issue connecting to your cellular network" =
+  the Mav20 reset loop of the test (harmless, expected on every rerun).
+- Real cause of "output did not return done" (observed, bbu log): BBUpdaterController "Querying first stage" -> pbl reads
+  -> "fusingState: 3" -> "Attempting to load an unpersonalized image on a fused radio", "hasManifestSource() = 0" ->
+  pushImagesInternal 34 = kBBUReturnUnPersonalizedImageError -> boot.ctrl output done = 0.
+- Static (libBBUpdaterDynamic.dylib, text in dsc .36 base 0x20dfa4000? image addr 8824770560; data in .70.dylddata; both
+  now in research/ios26/dsc, git-ignored): chip-info method 0x20e119598 reads pbl register 4 (0x60 bytes), memcmp with
+  vtable +0x50 (object +0x10) for vtable +0x48 (0x30) bytes: equal -> 1 (unfused) else 3 (fused). Object = BBUEUR20Loader
+  (vtable 0x282277fd0+0x10, typeinfo "14BBUEUR20Loader"), built at 0x20e10b268 for radio types 2 and 3 with the 48-byte
+  default hash at __TEXT,__const 0x20e14f7b0 (d40eee56...5015ac87). The other loader (0x20e08fa..) also reads 0x60 bytes,
+  so the read size cannot pick the answer.
+- xnu 2016 (4428f24, xnu/patches-12377/2016-sweet-bb-eur20-pk-hash.patch, on 2015; sources rebuilt byte-exact from the
+  series: blob hashes a9dc2a2/0593e63/3ae92c3 match): pbl register 4 answers the EUR20 hash; boot-arg sweetbbpk=13 = old
+  answer; bb_init logs "SWEET BB: pbl PK hash = EUR%u loader default". Host compile of the header OK, both answers checked.
+  CHIPID left at 0x9540e1 (Mav16 value; the Mav20 bbfw says 0x000E50E1; not changed, one variable at a time).
+- Session tools (scratchpad, lost on reboot): dsc.py (subcache maps, Mach-O sections, adrp+add xrefs, pointer = 0x180000000 +
+  low 34 bits), bbdis.py (capstone disasm with string annotation; do not name a script dis.py: shadows stdlib).
+- NEXT: CI 45198061886 -> research/ios26/boot/kernel-45198061886; image 26bQ = 26bP cmdline with sweetbuild=2680, ADT
+  sweet-n104-2x-wbgb.adt (recipe: "Build a phone image" line below); boot, D53gAP test; expect "fusingState: 1"/"Detect as
+  unfused", then pbl sendImage ("SWEET BB: pbl sendImage ... dropped") and sahara HELLO; next failures likely in the sahara
+  image list for Mav20 (bb_sahara_images is the iOS 16 Mav16 set) or a done/ack the BBU expects after SendImage.
+
 ## 2026-11-22 23:20 IST: 26bP (xnu 2015): NO ABM assert; ApplePPM opened; ABM now tries to BOOT the modem
 - 26bP booted (logs/boot-26bP.txt, local only), 23/23 published, SIM seen. Battery very low (5%, draining on USB).
 - D53gAP test 1: no "ABM ASSERT", CommCenter stays up (personality kMav20), cpms.drv starts, "Operating mode kOnline".
