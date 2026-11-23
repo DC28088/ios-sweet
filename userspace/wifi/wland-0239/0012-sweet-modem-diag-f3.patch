@@ -1,0 +1,482 @@
+diff --git a/phone/wifi/diag.c b/phone/wifi/diag.c
+new file mode 100644
+index 0000000..1521989
+--- /dev/null
++++ b/phone/wifi/diag.c
+@@ -0,0 +1,207 @@
++/*
++ * 0012: the modem's own debug (F3) messages over DIAG (Linux drivers/char/diag: diagfwd_cntl, diag_masks).
++ * Off unless /var/local/diag.on exists. Everything goes to /var/local/diag.log (on the phone only: it can hold
++ * identifiers, never copy it into a repo); lines about the PD/elf loader/WLAN are echoed to stdout (wland.log).
++ */
++#include <ctype.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <unistd.h>
++#include "diag.h"
++#include "link.h"
++
++#define DIAG_ON		"/var/local/diag.on"
++#define DIAG_LOG	"/var/local/diag.log"
++#define DIAG_CAP	(32L << 20)
++
++#define CTRL_REG	1
++#define CTRL_DIAGMODE	3
++#define CTRL_FEATURE	8
++#define CTRL_F3_MASK	11	/* DIAG_CTRL_MSG_F3_MASK(_V2) */
++#define MASK_ALL_ENABLED 2
++
++static FILE *out;
++static long out_bytes;
++static int want_masks;
++static unsigned n_msg, n_qsr, n_log, n_event, n_other, n_cntl, n_frames, n_dropped, masks_sent;
++static uint8_t frame[16384];
++static uint32_t flen;
++static int esc;
++
++static int interesting(const char *s)
++{
++	static const char *const k[] = { "loader", "Loader", "LOADER", "SPWAN", "spawn", "Spawn", "User PD", "user PD", "wlan", "WLAN",
++					 "RFS", "Respawn", "PD:", "pd_", "servreg", "SERVREG", NULL };
++	for (int i = 0; k[i]; i++)
++		if (strstr(s, k[i]))
++			return 1;
++	return 0;
++}
++
++static void emit(const char *line)
++{
++	if (out && out_bytes < DIAG_CAP) {
++		out_bytes += fprintf(out, "[%6llu] %s\n", (unsigned long long)link_ms(), line);
++		fflush(out);
++	} else
++		n_dropped++;
++	if (interesting(line))
++		printf("[%6llu] diag: %s\n", (unsigned long long)link_ms(), line);
++}
++
++static void send_masks(void)
++{
++	/* our features: only "feature mask supported" -> the modem HDLC-encodes its data as Linux expects by default */
++	struct __attribute__((packed)) { uint32_t id, len, mlen; uint8_t mask[4]; } fm = { CTRL_FEATURE, 8, 4, { 1, 0, 0, 0 } };
++	struct __attribute__((packed)) {
++		uint32_t id, len, version, sleep_vote, real_time, use_nrt, commit_thr, sleep_thr, sleep_time, drain, stale;
++	} dm = { CTRL_DIAGMODE, 36, 1, 0, 1, 0, 0, 0, 0, 0, 0 };
++	struct __attribute__((packed)) {
++		uint32_t id, len;
++		uint8_t stream, status, mode;
++		uint16_t first, last;
++		uint32_t size;
++	} mm = { CTRL_F3_MASK, 11, 1, MASK_ALL_ENABLED, 0, 0, 0, 0 };
++	int a = link_diag_send(0, &fm, sizeof(fm)), b = link_diag_send(0, &dm, sizeof(dm)), c = link_diag_send(0, &mm, sizeof(mm));
++	masks_sent++;
++	printf("[%6llu] diag: feature mask %d, real-time mode %d, all F3 messages on %d\n", (unsigned long long)link_ms(), a, b, c);
++}
++
++static uint32_t rd32(const uint8_t *p) { return p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24; }
++static uint16_t rd16(const uint8_t *p) { return (uint16_t)(p[0] | p[1] << 8); }
++
++/* one DIAG packet (HDLC removed, CRC stripped) */
++static void packet(const uint8_t *p, uint32_t n)
++{
++	char line[1024];
++	n_frames++;
++	if (!n)
++		return;
++	if (p[0] == 0x79 && n >= 20) {		/* DIAG_EXT_MSG_F: fmt + file follow the args */
++		uint32_t na = p[2], o = 20 + 4 * na;
++		if (o >= n)
++			return;
++		const char *fmt = (const char *)p + o;
++		size_t fl = strnlen(fmt, n - o);
++		const char *file = o + fl + 1 < n ? fmt + fl + 1 : "";
++		size_t filel = o + fl + 1 < n ? strnlen(file, n - o - fl - 1) : 0;
++		int w = snprintf(line, sizeof(line), "ssid %u %.*s:%u: %.*s |", rd16(p + 14), (int)filel, file, rd16(p + 12),
++				 (int)(fl < 600 ? fl : 600), fmt);
++		for (uint32_t i = 0; i < na && w > 0 && w < (int)sizeof(line) - 12; i++)
++			w += snprintf(line + w, sizeof(line) - (size_t)w, " %#x", rd32(p + 20 + 4 * i));
++		for (char *c = line; *c; c++)
++			if (*c == '\n' || *c == '\r')
++				*c = ' ';
++		n_msg++;
++		emit(line);
++	} else if ((p[0] == 0x92 || p[0] == 0x99 || p[0] == 0x9c) && n >= 24) {	/* QShrink: a hash for qdsp6m.qdb */
++		uint32_t na = p[2];
++		int w = snprintf(line, sizeof(line), "qsr %#x ssid %u line %u hash %#x |", p[0], rd16(p + 14), rd16(p + 12), rd32(p + 20));
++		for (uint32_t i = 0; i < na && 24 + 4 * i + 4 <= n && w < (int)sizeof(line) - 12; i++)
++			w += snprintf(line + w, sizeof(line) - (size_t)w, " %#x", rd32(p + 24 + 4 * i));
++		n_qsr++;
++		if (out && out_bytes < DIAG_CAP)
++			out_bytes += fprintf(out, "[%6llu] %s\n", (unsigned long long)link_ms(), line);
++	} else if (p[0] == 0x10)
++		n_log++;
++	else if (p[0] == 0x60)
++		n_event++;
++	else {
++		if (n_other++ < 20) {
++			int w = snprintf(line, sizeof(line), "packet cmd %#x len %u:", p[0], n);
++			for (uint32_t i = 0; i < n && i < 24; i++)
++				w += snprintf(line + w, sizeof(line) - (size_t)w, " %02x", p[i]);
++			emit(line);
++		}
++	}
++}
++
++static void data_rx(const uint8_t *d, uint32_t n)
++{
++	/* non-HDLC framing: 0x7e, version 1, u16 length, payload, 0x7e */
++	if (n >= 5 && d[0] == 0x7e && d[1] == 1 && !flen) {
++		for (uint32_t o = 0; o + 4 <= n && d[o] == 0x7e && d[o + 1] == 1;) {
++			uint32_t l = rd16(d + o + 2);
++			if (o + 4 + l + 1 > n)
++				break;
++			packet(d + o + 4, l);
++			o += 4 + l + 1;
++		}
++		return;
++	}
++	for (uint32_t i = 0; i < n; i++) {
++		uint8_t b = d[i];
++		if (b == 0x7e) {
++			if (flen >= 3)
++				packet(frame, flen - 2);
++			flen = 0;
++			esc = 0;
++		} else if (b == 0x7d)
++			esc = 1;
++		else if (flen < sizeof(frame)) {
++			frame[flen++] = esc ? b ^ 0x20 : b;
++			esc = 0;
++		}
++	}
++}
++
++static void rx(int ch, const uint8_t *d, uint32_t n)
++{
++	if (ch == 1) {
++		data_rx(d, n);
++		return;
++	}
++	for (uint32_t o = 0; o + 8 <= n;) {	/* control packets: u32 id, u32 len, data */
++		uint32_t id = rd32(d + o), l = rd32(d + o + 4);
++		n_cntl++;
++		if (n_cntl <= 40) {
++			char line[160];
++			snprintf(line, sizeof(line), "control packet %u, %u bytes", id, l);
++			emit(line);
++		}
++		if (id == CTRL_FEATURE && masks_sent < 2)
++			want_masks = 1;	/* again after the modem's feature mask (the first goes out when the channel opens) */
++		if (o + 8 + l > n)
++			break;
++		o += 8 + l;
++	}
++}
++
++static void ready(int ch)
++{
++	printf("[%6llu] diag: channel %s ready\n", (unsigned long long)link_ms(), ch ? "DIAG" : "DIAG_CNTL");
++	if (!ch && !masks_sent)
++		want_masks = 1;	/* sent from diag_poll: this runs inside the glink RX handler, before its FIFO advance */
++}
++
++void diag_start(void)
++{
++	if (access(DIAG_ON, F_OK))
++		return;
++	rename(DIAG_LOG, DIAG_LOG ".prev");
++	out = fopen(DIAG_LOG, "w");
++	diag_rx_cb = rx;
++	diag_ready_cb = ready;
++	link_diag_open();
++}
++
++void diag_poll(void)
++{
++	static uint64_t last;
++	static int busy;
++	if (!diag_rx_cb || busy)
++		return;
++	if (want_masks) {
++		want_masks = 0;
++		busy = 1;	/* link_diag_send polls the link, which calls us again */
++		send_masks();
++		busy = 0;
++	}
++	uint64_t now = link_ms();
++	if (now - last < 30000)
++		return;
++	last = now;
++	printf("[%6llu] diag: %u frames: %u messages, %u QShrink, %u log, %u event, %u other, %u control; %u lines over the cap\n",
++	       (unsigned long long)now, n_frames, n_msg, n_qsr, n_log, n_event, n_other, n_cntl, n_dropped);
++}
+diff --git a/phone/wifi/diag.h b/phone/wifi/diag.h
+new file mode 100644
+index 0000000..061991a
+--- /dev/null
++++ b/phone/wifi/diag.h
+@@ -0,0 +1,6 @@
++#ifndef DIAG_H
++#define DIAG_H
++/* 0012: modem DIAG F3 messages (/var/local/diag.on) */
++void diag_start(void);	/* after the glink link is up */
++void diag_poll(void);	/* every main-loop round */
++#endif
+diff --git a/phone/wifi/link.c b/phone/wifi/link.c
+index ed30556..749834e 100644
+--- a/phone/wifi/link.c
++++ b/phone/wifi/link.c
+@@ -29,6 +29,60 @@ static uint32_t rxoff;
+ 
+ static qrtr_cb_t qrtr_cb;
+ 
++/* 0012: the modem's DIAG channels next to IPCRTR ("DIAG_CNTL" control, "DIAG" data), own state, so IPCRTR is untouched */
++#define DIAG_INTENT 16384
++static struct dchan {
++	const char *name;
++	uint16_t lcid;
++	uint32_t rcid;
++	int open_tx, open_acked, remote_open, ready;
++	struct { uint32_t size, iid; int busy; } ri[64];
++	int nri;
++	uint8_t *rx;
++	uint32_t rxoff;
++} dch[2] = { { .name = "DIAG_CNTL", .lcid = 2 }, { .name = "DIAG", .lcid = 3 } };
++void (*diag_rx_cb)(int ch, const uint8_t *d, uint32_t n);
++void (*diag_ready_cb)(int ch);
++
++static struct dchan *dchan_rcid(uint32_t id)
++{
++	for (int i = 0; i < 2; i++)
++		if (dch[i].remote_open && dch[i].rcid == id)
++			return &dch[i];
++	return NULL;
++}
++
++static void dchan_check(struct dchan *c)
++{
++	if (c->ready || !c->open_acked || !c->remote_open)
++		return;
++	c->ready = 1;
++	uint32_t p[8 * 2];
++	for (int i = 0; i < 8; i++) {
++		p[2 * i] = DIAG_INTENT;
++		p[2 * i + 1] = i + 1;
++	}
++	glink_send(GLINK_CMD_INTENT, c->lcid, 8, p, sizeof(p));
++	printf("[%6llu] glink: %s open (lcid %u rcid %u)\n", (unsigned long long)link_ms(), c->name, c->lcid, c->rcid);
++	if (diag_ready_cb)
++		diag_ready_cb((int)(c - dch));
++}
++
++void link_diag_open(void)
++{
++	for (int i = 0; i < 2; i++) {
++		struct dchan *c = &dch[i];
++		if (c->open_tx)
++			continue;
++		if (!c->rx && !(c->rx = malloc(65536)))
++			return;
++		uint32_t nl = (uint32_t)strlen(c->name) + 1;
++		glink_send(GLINK_CMD_OPEN, c->lcid, nl, c->name, nl);
++		c->open_tx = 1;
++	}
++	printf("[%6llu] glink: DIAG_CNTL + DIAG open sent\n", (unsigned long long)link_ms());
++}
++
+ int verbose_link = 1;
+ unsigned link_stats[4];
+ void (*link_idle)(void);
+@@ -105,6 +159,12 @@ static int rx_one(void)
+ 		LOG("glink: < OPEN rcid %u \"%s\"\n", p1, name);
+ 		/* Linux acks every remote open; only IPCRTR gets opened from our side */
+ 		glink_send(GLINK_CMD_OPEN_ACK, p1, 0, NULL, 0);
++		for (int i = 0; i < 2; i++)
++			if (!strcmp(name, dch[i].name)) {
++				dch[i].rcid = p1;
++				dch[i].remote_open = 1;
++				dchan_check(&dch[i]);
++			}
+ 		if (!strcmp(name, "IPCRTR")) {
+ 			rcid = p1;
+ 			opened_by_remote = 1;
+@@ -119,6 +179,11 @@ static int rx_one(void)
+ 			open_acked = 1;
+ 			advertise_intents();
+ 		}
++		for (int i = 0; i < 2; i++)
++			if (p1 == dch[i].lcid && dch[i].open_tx && !dch[i].open_acked) {
++				dch[i].open_acked = 1;
++				dchan_check(&dch[i]);
++			}
+ 		break;
+ 	case GLINK_CMD_CLOSE:
+ 		LOG("glink: < CLOSE rcid %u\n", p1);
+@@ -136,7 +201,13 @@ static int rx_one(void)
+ 			glink_rx_peek(pr, 8 + i * 8, 8);
+ 			if (verbose_link > 1)
+ 				LOG("glink: < INTENT rcid %u size %u iid %u\n", p1, pr[0], pr[1]);
+-			if (p1 == rcid && opened_by_remote && nrintent < MAX_RINTENTS) {	/* intent ids are per channel */
++			struct dchan *dc = dchan_rcid(p1);
++			if (dc && dc->nri < 64) {
++				dc->ri[dc->nri].size = pr[0];
++				dc->ri[dc->nri].iid = pr[1];
++				dc->ri[dc->nri].busy = 0;
++				dc->nri++;
++			} else if (!dc && p1 == rcid && opened_by_remote && nrintent < MAX_RINTENTS) {	/* intent ids are per channel */
+ 				rintent[nrintent].size = pr[0];
+ 				rintent[nrintent].iid = pr[1];
+ 				rintent[nrintent].busy = 0;
+@@ -147,7 +218,19 @@ static int rx_one(void)
+ 		break;
+ 	}
+ 	case GLINK_CMD_RX_DONE:
+-	case GLINK_CMD_RX_DONE_W_REUSE:
++	case GLINK_CMD_RX_DONE_W_REUSE: {
++		struct dchan *dc = dchan_rcid(p1);
++		if (dc) {
++			for (int i = 0; i < dc->nri; i++)
++				if (dc->ri[i].iid == p2) {
++					if (cmd == GLINK_CMD_RX_DONE)
++						dc->ri[i] = dc->ri[--dc->nri];
++					else
++						dc->ri[i].busy = 0;
++					break;
++				}
++			break;
++		}
+ 		if (p1 != rcid)
+ 			break;
+ 		if (verbose_link > 1)
+@@ -163,6 +246,7 @@ static int rx_one(void)
+ 				break;
+ 			}
+ 		break;
++	}
+ 	case GLINK_CMD_RX_INTENT_REQ:
+ 		/* we take any data in place, so every request is granted with a fresh intent id */
+ 		if (p1 == rcid) {
+@@ -170,6 +254,12 @@ static int rx_one(void)
+ 			uint32_t p[2] = { p2 > INTENT_SIZE ? p2 : INTENT_SIZE, next_iid++ };
+ 			glink_send(GLINK_CMD_INTENT, LCID, 1, p, sizeof(p));
+ 			glink_send(GLINK_CMD_RX_INTENT_REQ_ACK, LCID, 1, NULL, 0);
++		} else if (dchan_rcid(p1)) {
++			struct dchan *dc = dchan_rcid(p1);
++			static uint32_t next_diid = 100;
++			uint32_t p[2] = { p2 > DIAG_INTENT ? p2 : DIAG_INTENT, next_diid++ };
++			glink_send(GLINK_CMD_INTENT, dc->lcid, 1, p, sizeof(p));
++			glink_send(GLINK_CMD_RX_INTENT_REQ_ACK, dc->lcid, 1, NULL, 0);
+ 		} else {
+ 			glink_send(GLINK_CMD_RX_INTENT_REQ_ACK, 0, 0, NULL, 0);
+ 		}
+@@ -190,6 +280,23 @@ static int rx_one(void)
+ 		size_t len = 16 + chunk;
+ 		if (avail < len)
+ 			return 0;
++		struct dchan *dc = dchan_rcid(p1);
++		if (dc) {
++			if (dc->rxoff + chunk <= 65536)
++				glink_rx_peek(dc->rx + dc->rxoff, 16, chunk);
++			dc->rxoff += chunk;
++			adv = (len + 7) & ~7u;
++			if (!left) {
++				glink_rx_advance(adv);
++				uint32_t n = dc->rxoff <= 65536 ? dc->rxoff : 65536;
++				dc->rxoff = 0;
++				glink_send(GLINK_CMD_RX_DONE_W_REUSE, dc->lcid, p2, NULL, 0);
++				if (diag_rx_cb)
++					diag_rx_cb((int)(dc - dch), dc->rx, n);
++				return 1;
++			}
++			break;
++		}
+ 		if (rxoff + chunk <= sizeof(rxbuf))
+ 			glink_rx_peek(rxbuf + rxoff, 16, chunk);
+ 		rxoff += chunk;
+@@ -288,6 +395,42 @@ static int find_intent(uint32_t len)
+ 	return best;
+ }
+ 
++/* 0012: one small packet on a DIAG channel (control packets only; waits <= 1 s for a modem intent) */
++int link_diag_send(int ch, const void *data, uint32_t len)
++{
++	struct dchan *c = &dch[ch];
++	if (!c->ready || len > 8192)
++		return -1;
++	uint64_t end = now_ms() + 1000;
++	int i, asked = 0;
++	for (;;) {
++		int best = -1;
++		for (int k = 0; k < c->nri; k++)
++			if (!c->ri[k].busy && c->ri[k].size >= len && (best < 0 || c->ri[k].size < c->ri[best].size))
++				best = k;
++		if ((i = best) >= 0)
++			break;
++		if (!asked++)
++			glink_send(GLINK_CMD_RX_INTENT_REQ, c->lcid, len, NULL, 0);
++		if (now_ms() > end) {
++			printf("glink: %s: no modem intent for %u bytes\n", c->name, len);
++			return -1;
++		}
++		link_poll(1);
++	}
++	c->ri[i].busy = 1;
++	uint8_t b[8 + 8192];
++	uint32_t hdr[2] = { len, 0 };
++	memcpy(b, hdr, 8);
++	memcpy(b + 8, data, len);
++	while (glink_send(GLINK_CMD_TX_DATA, c->lcid, c->ri[i].iid, b, 8 + len)) {
++		if (now_ms() > end)
++			return -1;
++		link_poll(1);
++	}
++	return 0;
++}
++
+ /* One packet into one of the modem's intents (requested if none fits), in chunks of 8K as Linux does. */
+ int link_send(const void *data, uint32_t len)
+ {
+diff --git a/phone/wifi/link.h b/phone/wifi/link.h
+index 0eab90a..4f217b4 100644
+--- a/phone/wifi/link.h
++++ b/phone/wifi/link.h
+@@ -30,5 +30,10 @@ int qrtr_send(uint32_t type, uint32_t src_port, uint32_t dst_node, uint32_t dst_
+ 	      const void *payload, uint32_t len);
+ int qrtr_new_server(uint32_t service, uint32_t version, uint32_t instance, uint32_t port);
+ int qrtr_resume_tx(const struct qrtr_hdr *h);
++/* 0012: DIAG channels (0 DIAG_CNTL, 1 DIAG) */
++extern void (*diag_rx_cb)(int ch, const uint8_t *d, uint32_t n);
++extern void (*diag_ready_cb)(int ch);
++void link_diag_open(void);
++int link_diag_send(int ch, const void *data, uint32_t len);
+ 
+ #endif
+diff --git a/phone/wifi/wland.c b/phone/wifi/wland.c
+index 5a06c20..f2e0a6a 100644
+--- a/phone/wifi/wland.c
++++ b/phone/wifi/wland.c
+@@ -32,6 +32,7 @@
+ #include "link.h"
+ #include "rmtfs.h"
+ #include "pdmapper.h"
++#include "diag.h"
+ #include "servreg.h"
+ #include "tftp.h"
+ #include "wlfw.h"
+@@ -867,6 +868,7 @@ static void net_idle(void)
+ 	cell_poll();
+ 	servreg_poll();
+ 	pdmapper_poll();
++	diag_poll();
+ }
+ 
+ static int net(unsigned secs)
+@@ -879,6 +881,7 @@ static int net(unsigned secs)
+ 	if (link_up(net_cb, 5000))
+ 		return -1;
+ 	cell_ipa_link_up();
++	diag_start();	/* 0012: modem F3 messages when /var/local/diag.on exists */
+ 	if (rmtfs_init())
+ 		printf("net: no rmtfs\n");
+ 	if (pdmapper_init() || tftp_init())
