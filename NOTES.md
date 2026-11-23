@@ -1,3 +1,13 @@
+## 2026-11-23 22:30 IST: phone drops off USB ~6-9 min after a Mav20 test (26bQ 20:54, 26bR 22:23); Wi-Fi restarted
+- OBSERVED: 26bQ and 26bR both vanished from USB (no fastboot, no usbnet, no Qualcomm EDL device) some minutes after a
+  D53gAP test in which the Mav20 baseband reached Booted and then reset-looped; no panic text at the log end (26bR ends
+  on ordinary xpcproxy/wifip2pd execs at 22:23). 26bP (modem boot failed early) stayed up 1.5 h. GUESS: the Mav20
+  boot/reset cycle (bridge resets, sahara replays, CommCenter HardReset) leaves something that kills the phone or its USB
+  link. Avoid the D53gAP test until checked; ask the USER what the screen shows when it happens.
+- Wi-Fi restart (USER priority): iOS 16 (0236-0240, wland 0239) had WLFW; iOS 26 same wland/firmware never gets
+  wlanmdsp read. iOS 16 kernel also logged "flame wlan: /dev/wlan ready"; iOS 26 shows no "flame wlan" line (notes say
+  /dev/wlan exists, major 29) - check. Last iOS 16 image with Wi-Fi: USB stick build-0240/shim-boot-0240.img bb134af5.
+
 ## 2026-11-23 22:25 IST: 26bR diag: bridge QMI client table FULL (64/64) -> xnu 2018 + wland 0010 built, NOT installed; USER: Wi-Fi first
 - Phone dropped off USB ~20:54 on 26bQ (no panic in the log tail; battery 98%); USER put it in fastboot; 26bR
   (research/ios26/boot/shim-boot-26bR.img 00e274d4 = kernel-45206839161 (2017) + 26bQ cmdline, sweetbuild=2681) booted 22:14,
