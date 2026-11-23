@@ -1,3 +1,25 @@
+## 2026-11-23 21:05 IST: MILESTONE: Mav20 ABM BOOTS the baseband ("Booting -> Booted", 26bQ / xnu 2016); NAS then times out
+- 26bQ = kernel CI 45198061886 (2016 strings present, SHA256SUMS OK) + 26bP cmdline with sweetbuild=2680, ADT wbgb:
+  research/ios26/boot/shim-boot-26bQ.img 5050bd0e (ramdisk == payload; shim/dtb == 26bP's). `sweetreboot fastboot`
+  over SSH, fastboot boot 20:48; log logs/boot-26bQ.txt (local only). "SWEET BB: pbl PK hash = EUR20 loader default",
+  23/23 published. (shim/build.sh is not executable: run `bash build.sh`.)
+- D53gAP test 1 (26bQ): "fusingState: 1" (unfused), "Loading second stage bootloader", pbl sendImage 513088 B dropped,
+  sahara hello; then END(kBBUReturnAPTicketFileInitFailed): BBU opens /private/preboot/<hash>/System/Library/Caches/
+  apticket.der (libBBUpdater 0x20e11351c "Using the APTicket in the FS to create the FDR option"; missing -> 0x6e).
+- Phone change (reversible): placeholder /private/preboot/5CBE3601*/System/Library/Caches/apticket.der = 2 bytes 30 00
+  (empty DER SEQUENCE; NOT a real/forged ticket). Undo: rm it (and the Caches dir).
+- D53gAP test 2: FDR "Unable to read AP Ticket" (AMFDR code 10, ignored when unfused), sahara SBL1 read (21 requests,
+  506800 B) + finished, "pushImagesInternal ret status is 0", "boot state changing Booting -> Booted". QMI flows to the
+  real modem (DMS/NAS/WDS/UIM replies), SIM state kSimStateNoSim first, then not settled. ~10 s after boot: ATCS_TIMEOUT
+  on NAS (svc 3: 0x4f, 0x45, 0x3, 0x5557) and "CommandSetBasebandOperatingMode failed: kInternalError (timeout)" ->
+  qmux1 reset -> reboot loop (Booted again each time). MG cache restored (cmp OK), CommCenter back to N104 mode.
+- NOT KNOWN: whether the bridge drops those requests (BB_TX 64 queue full? CommCenter showed rx-pending up to 97) or the
+  modem never answers. The bridge's per-second stats (coachz_baseband_report: dropped qmux/tx counters, per-channel
+  frames) never appear in the log, and the QMI trace budget hides repeats ("first 6 of a kind").
+- NEXT: kernel diag 2017: print coachz_baseband_report counters (bb_tx_dropped, qmux dropped, per-channel in/out) every
+  ~5 s while qmux1 is open and trace every NAS/DMS request+reply; if TX overflow, raise BB_TX / flow-control. Then
+  registration + data (WDS) on the Mav20 path. Long-term: HWModelStr D53gAP only for CommCenter.
+
 ## 2026-11-23 20:05 IST: USER plan after cellular: cellular + Wi-Fi with working data first, THEN glitches + Glass UI + GPU perf
 - USER asked: what % of the GPU is used, can animation be smoother. Answer given (from these notes, nothing new measured):
   iOS 26 GPU busy is UNKNOWN (gpu_busy_pct=0 samples=0, GX clock meter 0); GPU fixed 800 MHz, no DCVS; iOS 26 evidence
