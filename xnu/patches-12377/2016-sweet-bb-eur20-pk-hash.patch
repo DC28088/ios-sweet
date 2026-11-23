@@ -1,0 +1,43 @@
+diff --git a/iokit/Kernel/arm/SweetBaseband.inc b/iokit/Kernel/arm/SweetBaseband.inc
+index 3ae92c3..73af6b0 100644
+--- a/iokit/Kernel/arm/SweetBaseband.inc
++++ b/iokit/Kernel/arm/SweetBaseband.inc
+@@ -147,6 +147,11 @@ static void bb_init(void)
+   if (bb_lock) return;
+   bb_lock = IOLockAlloc();
+   bb_complete_call = thread_call_allocate(bb_complete, nullptr);
++  // Sweet 2016: which BBU loader's default (unfused) PK hash pbl register 4 answers (coachz_bb_sahara.h): 20 = Mav20 (default), 13 = old
++  uint32_t pk_loader = 20;
++  if (PE_parse_boot_argn("sweetbbpk", &pk_loader, sizeof(pk_loader)) && pk_loader != 13) pk_loader = 20;
++  cbs_pk_loader = pk_loader;
++  printf("SWEET BB: pbl PK hash = EUR%u loader default\n", cbs_pk_loader);
+   cbq_init(&bb_qmux);
+   bb_esim_in = static_cast<uint8_t *>(IOMallocData(BB_ESIM_BYTES));
+   bb_esim_resp = static_cast<uint8_t *>(IOMallocData(BB_ESIM_BYTES));
+diff --git a/iokit/Kernel/arm/coachz_bb_sahara.h b/iokit/Kernel/arm/coachz_bb_sahara.h
+index 0593e63..c92858c 100644
+--- a/iokit/Kernel/arm/coachz_bb_sahara.h
++++ b/iokit/Kernel/arm/coachz_bb_sahara.h
+@@ -95,13 +95,21 @@ static inline void cbs_hello(struct cbs_out *o, uint32_t mode)
+  * manifest (kBBUReturnUnPersonalizedImageError), so this answers the loader's default (BBULoader::create), which reads as unfused. Nothing here checks
+  * an image: this modem runs its own firmware. Other registers read as zero. `out` holds `size` bytes. */
+ static const uint8_t cbs_default_pk_hash[32] = { 0xcc, 0x31, 0x53, 0xa8, 0x02, 0x93, 0x93, 0x9b, 0x90, 0xd0, 0x2d, 0x3b, 0xf8, 0xb2, 0x3e, 0x02, 0x92, 0xe4, 0x52, 0xfe, 0xf6, 0x62, 0xc7, 0x49, 0x98, 0x42, 0x1a, 0xda, 0xd4, 0x2a, 0x38, 0x0f };
++/* Sweet 2016: iOS 26's Mav20 path (radio types 2/3) uses BBUEUR20Loader, whose default is this 48-byte hash (constructor in
++ * libBBUpdaterDynamic, 26.6.2 dsc 0x20e10b2b0 -> __TEXT,__const 0x20e14f7b0; getters vtable +0x48 = 0x30 bytes, +0x50 = object +0x10).
++ * The EUR13 answer reads as fused there ("fusingState: 3", kBBUReturnUnPersonalizedImageError, 26bP). Both loaders read 0x60 bytes,
++ * so the size cannot choose: cbs_pk_loader does (20 default, boot-arg sweetbbpk=13 for the old answer). */
++static const uint8_t cbs_eur20_pk_hash[48] = { 0xd4, 0x0e, 0xee, 0x56, 0xf3, 0x19, 0x46, 0x65, 0x57, 0x41, 0x09, 0xa3, 0x92, 0x67, 0x72, 0x4a, 0xe7, 0x94, 0x41, 0x34,
++    0xcd, 0x53, 0xcb, 0x76, 0x7e, 0x29, 0x3d, 0x3c, 0x40, 0x49, 0x79, 0x55, 0xbc, 0x8a, 0x45, 0x19, 0xff, 0x99, 0x2b, 0x03, 0x1f, 0xad, 0xc6, 0x35, 0x50, 0x15, 0xac, 0x87 };
++static uint32_t cbs_pk_loader = 20u;
+ 
+ static inline void cbs_read_register(uint32_t reg, uint8_t *out, uint32_t size)
+ {
+     __builtin_memset(out, 0, size);
+     if (reg == 0u && size >= 4u) cbs_put32(out, CBS_SERIAL);
+     else if (reg == 3u && size >= 8u) cbs_put32(out + 4, CBS_CHIP_ID);
+-    else if (reg == 4u) __builtin_memcpy(out, cbs_default_pk_hash, size < sizeof cbs_default_pk_hash ? size : sizeof cbs_default_pk_hash);
++    else if (reg == 4u && cbs_pk_loader == 13u) __builtin_memcpy(out, cbs_default_pk_hash, size < sizeof cbs_default_pk_hash ? size : sizeof cbs_default_pk_hash);
++    else if (reg == 4u) __builtin_memcpy(out, cbs_eur20_pk_hash, size < sizeof cbs_eur20_pk_hash ? size : sizeof cbs_eur20_pk_hash);
+ }
+ 
+ /* What an execute answers with; unknown commands answer empty. */
