@@ -1,0 +1,15 @@
+diff --git a/iokit/Kernel/arm/coachz_bb_qmux.h b/iokit/Kernel/arm/coachz_bb_qmux.h
+index 62ce84d..9c22451 100644
+--- a/iokit/Kernel/arm/coachz_bb_qmux.h
++++ b/iokit/Kernel/arm/coachz_bb_qmux.h
+@@ -53,8 +53,8 @@
+ #define CBQ_CHANNELS 2u                /* qmux1, qmux2 */
+ #define CBQ_INTERNAL CBQ_CHANNELS      /* clients the bridge itself holds */
+ #define CBQ_MAX_SERVERS 64u
+-#define CBQ_MAX_CLIENTS 64u
+-#define CBQ_PORT_BASE 0x4100u          /* local QRTR ports: base + client slot (Wi-Fi and IPA use 0x4000..0x4003) */
++#define CBQ_MAX_CLIENTS 128u           /* 2018: 64 -> 128; iOS 26 Mav20 CommCenter filled 64 (QMI_ERR_CLIENT_IDS_EXHAUSTED) */
++#define CBQ_PORT_BASE 0x4100u          /* local QRTR ports: base + client slot, 0x4100..0x417f; wland 0010 binds the same range (Wi-Fi and IPA use 0x4000..0x4003) */
+ 
+ static inline int cbq_private_service(uint32_t service) { return service >= 0xe1u && service <= 0xeau; }
+ 

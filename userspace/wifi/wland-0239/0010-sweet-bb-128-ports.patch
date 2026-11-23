@@ -1,0 +1,17 @@
+diff --git a/phone/wifi/cell.h b/phone/wifi/cell.h
+index 7b59a9d..54e1fc8 100644
+--- a/phone/wifi/cell.h
++++ b/phone/wifi/cell.h
+@@ -11,9 +11,10 @@ void cell_init(void);
+ /* QRTR NEW_SERVER / DEL_SERVER from the modem (ctrl words 1-4) */
+ void cell_new_server(uint32_t service, uint32_t version_instance, uint32_t node, uint32_t port);
+ void cell_del_server(uint32_t service, uint32_t node, uint32_t port);
+-/* ABM's QMI clients through the kernel's iOS baseband bridge (/dev/sweet-bb, xnu 0184): QRTR ports 0x4100..0x413f */
++/* ABM's QMI clients through the kernel's iOS baseband bridge (/dev/sweet-bb, xnu 0184): QRTR ports 0x4100..0x417f
++   (0010: 64 -> 128 with xnu 2018 CBQ_MAX_CLIENTS; the iOS 26 Mav20 CommCenter filled 64) */
+ #define CELL_BB_PORT0	0x4100
+-#define CELL_BB_PORTS	64
++#define CELL_BB_PORTS	128
+ /* 0005, the IPA data path (xnu 0192): our IPA QMI server (service 0x31 v1 instance 1) and our client of the modem's (instance 2) */
+ #define CELL_IPA_SRV_PORT	0x4002
+ #define CELL_IPA_CLI_PORT	0x4003

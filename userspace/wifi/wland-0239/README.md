@@ -16,6 +16,9 @@ patch stack, not from `userspace/wifi/patches/`:
   state of `msm/modem/wlan_pd` (REGISTER_LISTENER) and request RESTART_PD once (`/var/local/servreg.off`,
   `WLAND_NO_PDRESTART`, `WLAND_SERVREG_MS`).
 
+- 0010 (iOS 26, 2026-11-23): the kernel bridge's QRTR client ports 0x4100..0x417f (128, was 64), together with xnu 2018
+  (CBQ_MAX_CLIENTS 128): the Mav20 CommCenter filled 64 clients (QMI_ERR_CLIENT_IDS_EXHAUSTED -> NAS ATCS_TIMEOUT).
+
 Build: workflow `sweet-wifi-0239` (`.github/workflows/wifi-0239.yml`, manual dispatch). Tested 2026-11-09: Wi-Fi
 list instant after the radio warms up, SIM works (binary sha256 5eb59683...).
 
