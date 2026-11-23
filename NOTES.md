@@ -1,3 +1,17 @@
+## 2026-11-23 23:10 IST: wland 0011 boot: order now = iOS 16 (0x47 before elf_loader) and STILL no wlanmdsp -> ordering refuted
+- 26bR boot 22:44 (logs/boot-26bRx.txt) with wland 0011: modem fast (elf_loader asked at 1.3 s), NEW_SERVER 0x47 at 0:48
+  BEFORE the question (no hold needed), 0x4d at 0:4a, then 0:4b = service 0x5 (iOS 16: 0:4b = the tftp client reading
+  wlanmdsp.mbn). The elf loader never opens its tftp client. 0011 stays installed (no effect when 0x47 comes first).
+- Modem firmware strings (modem.b17 0x35dacc..): "Elf Loader thread creation failed! Malloc failed", "...User PD isn't
+  spawn", "Eloader Failed to get memory- NO PD is spwan!", "ELF_LOADER CAN SPWAN User PD:%s", "RFS_ENOENT - cannot
+  find Wlan image", "RFS SERVER isn't ready or RFS Read ERROR". No tftp attempt at all -> GUESS: a failure before the
+  RFS read (thread creation / memory), not the image lookup.
+- Ruled out: kernel RAM overlap (ADT dram-base 0x100000000, size 0xfcc00000: all modem/WLAN/MSA carveouts are below
+  4 GiB). Android DT memshare clients (ids 0/2 boot-time, id 1 0x500000 on request) are served by neither iOS 16 nor 26.
+- Options: (A) iOS 16 kernel 0240 (USB stick build-0240/shim-boot-0240.img) against the iOS 26 root READ-ONLY (no ufsrw/
+  rootrw) = kernel-vs-userland split, but iOS 26 launchd may not run on xnu 8792 -> wland may never start; (B) modem
+  visibility: open the glink DIAG channel in wland and enable F3 messages for the elf loader (bigger build).
+
 ## 2026-11-23 22:55 IST: Wi-Fi: iOS 26 modem asks kernel/elf_loader BEFORE announcing QMI 0x47 -> wland 0011 (hold) installed
 - 26bR rebooted clean (USER replug -> fastboot, 22:37; log logs/boot-26bRw.txt), no Mav20 test. wland.log (scratchpad
   wland-26bRw.log) vs iOS 16 research/logs-inspect-0143/files/wland.log: same pd-mapper questions, same service set except
