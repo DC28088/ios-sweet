@@ -1,0 +1,89 @@
+diff --git a/iokit/Kernel/arm/SweetBaseband.inc b/iokit/Kernel/arm/SweetBaseband.inc
+index 73af6b0..1f401bc 100644
+--- a/iokit/Kernel/arm/SweetBaseband.inc
++++ b/iokit/Kernel/arm/SweetBaseband.inc
+@@ -40,7 +40,7 @@
+ // NAS frames left the SIM and registration state stale until the SIM was reinserted. A dropped frame is a lost answer: keep room.
+ #define BB_QUEUE 1024u
+ #define BB_READS 8u                      // asynchronous reads waiting for a frame, per channel
+-#define BB_TX 64u                        // QMI messages waiting for the Wi-Fi thread
++#define BB_TX 256u                       // QMI messages waiting for the Wi-Fi thread (2017: 64 -> 256; Mav20 CommCenter keeps ~100 out)
+ #define BB_SYNC_READ_SECONDS 30u
+ 
+ // Which SAHARA images the device end asks for. SBL1 (Qualcomm image id 0x15) is the first image a boot loader requests; the rest of
+@@ -68,7 +68,8 @@ static struct cbs_device bb_sahara;
+ static struct cbc_state bb_control;
+ static bb_channel bb_ch[CBH_PUBLISHED];
+ static bb_tx bb_txq[BB_TX];
+-static uint32_t bb_tx_head, bb_tx_count, bb_tx_dropped;
++static uint32_t bb_tx_head, bb_tx_count, bb_tx_dropped, bb_tx_peak;   // 2017: peak queue depth for the report
++static uint32_t bb_wland_records_in, bb_wland_records_out;   // /dev/sweet-bb records (wland side, below)
+ static void (*bb_send)(uint32_t local_port, uint32_t node, uint32_t port, const void *message, uint32_t length);
+ static void (*bb_del_client)(uint32_t local_port);
+ static int bb_published;
+@@ -168,7 +169,7 @@ static void bb_init(void)
+ // ICCID, APDU or address reaches the log. UIM, VINYL and WDS print every message; other services the first 6 of a kind, then each
+ // power of two. A budget keeps the log ring from filling; the periodic report says how many lines it held back.
+ #define BB_TRACE_KINDS 512u
+-#define BB_TRACE_BUDGET 6000u
++#define BB_TRACE_BUDGET 30000u   // 2017: was 6000; NAS and DMS now print every message
+ static uint64_t bb_trace_key[BB_TRACE_KINDS];
+ static uint32_t bb_trace_count[BB_TRACE_KINDS], bb_trace_lines, bb_trace_held;
+ static void bb_trace(const char *dir, uint32_t channel, uint32_t service, uint32_t cid, const uint8_t *sdu, uint32_t n)
+@@ -185,7 +186,8 @@ static void bb_trace(const char *dir, uint32_t channel, uint32_t service, uint32
+     count = ++bb_trace_count[at];
+     break;
+   }
+-  const bool always = service == CBE_SVC_UIM || service == CBE_SVC_VINYL || service == CBD_SVC_WDS;
++  // 2017: NAS (3) and DMS (2) too: Mav20 CommCenter timed out on both (ATCS_TIMEOUT) and the budget hid whether they left
++  const bool always = service == CBE_SVC_UIM || service == CBE_SVC_VINYL || service == CBD_SVC_WDS || service == 2u || service == 3u;
+   if (!always && count > 6u && (count & (count - 1u))) return;
+   if (bb_trace_lines >= BB_TRACE_BUDGET) { bb_trace_held++; return; }
+   bb_trace_lines++;
+@@ -243,11 +245,15 @@ static void bb_queue_tx(uint32_t local_port, uint32_t node, uint32_t port, const
+   uint8_t *copy = len ? static_cast<uint8_t *>(IOMallocData(len)) : nullptr;
+   if (!copy || bb_tx_count == BB_TX) {
+     if (copy) IOFreeData(copy, len);
+-    bb_tx_dropped++;
++    // 2017: say which request was lost (header fields only, as bb_trace)
++    if (++bb_tx_dropped <= 16u || !(bb_tx_dropped & (bb_tx_dropped - 1u)))
++      printf("SWEET BB: tx queue %s: request for port %u (node %u) len %u dropped, %u dropped so far, queue %u of %u\n",
++             copy ? "full" : "no memory", port, node, len, bb_tx_dropped, bb_tx_count, BB_TX);
+     return;
+   }
+   memcpy(copy, data, len);
+   bb_txq[(bb_tx_head + bb_tx_count++) % BB_TX] = { local_port, node, port, len, copy };
++  if (bb_tx_count > bb_tx_peak) bb_tx_peak = bb_tx_count;
+   const uint32_t slot = local_port - CBQ_PORT_BASE;
+   if (slot < CBQ_MAX_CLIENTS && bb_qmux.client[slot].used && bb_qmux.client[slot].channel == CBQ_INTERNAL)
+     bb_trace("int-tx", 0, bb_qmux.client[slot].service, bb_qmux.client[slot].cid, data, len);
+@@ -1459,6 +1465,8 @@ extern "C" void coachz_baseband_report(unsigned second)
+          second, servers, clients, bb_qmux.dropped, bb_tx_dropped, bb_sahara.state, bb_sahara.executes, bb_sahara.requests, bb_control.calls, bb_control.unsupported,
+          bb_data.step, bb_endpoint_fixes, bb_activations);
+   printf("SWEET BB qmi: %u s: %u trace lines, %u held back by the budget\n", second, bb_trace_lines, bb_trace_held);
++  printf("SWEET BB: %u s: tx queue %u (peak %u of %u), wland records in %u out %u\n", second, bb_tx_count, bb_tx_peak, BB_TX,
++         bb_wland_records_in, bb_wland_records_out);
+   for (uint32_t c = 0; c < CBH_PUBLISHED; c++) {
+     const bb_channel *ch = &bb_ch[c];
+     if (ch->opens)
+@@ -1477,7 +1485,6 @@ extern "C" void coachz_baseband_report(unsigned second)
+ //   0192, the IPA data path (bsd/dev/sweet_ipa.c): from wland 7 configure, 8 GSI firmware loaded {a error}, 9 modem starting,
+ //               10 IPA QMI in {a 1 client port / 0 server port, b src node, c src port}; to wland 11 IPA QMI out {a port kind,
+ //               b node, c port}, 12 status {a step, b errno}
+-static uint32_t bb_wland_records_in, bb_wland_records_out;
+ 
+ extern "C" int sweet_bb_enabled(void) { return coachz_baseband_enabled(); }
+ 
+@@ -1535,6 +1542,12 @@ extern "C" uint32_t sweet_bb_wland_read(uint8_t *buf, uint32_t room)
+     at += bb_put(buf, room, at, 2, port, 0, 0, nullptr, 0);
+     bb_wland_records_out++;
+   }
++  // 2017: the report never ran on Sweet (coachz_baseband_report had no caller). Every 5 s while the counters move.
++  static uint32_t report_ms, report_sig;
++  const uint32_t now = bb_now_ms(), sig = bb_wland_records_in + bb_wland_records_out + bb_tx_dropped + bb_qmux.dropped;
++  const bool report = bb_published && now - report_ms >= 5000u && sig != report_sig;
++  if (report) { report_ms = now; report_sig = sig; }
+   IOLockUnlock(bb_lock);
++  if (report) coachz_baseband_report(now / 1000u);
+   return at;
+ }
