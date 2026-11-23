@@ -1,3 +1,12 @@
+## 2026-11-23 23:15 IST: USER chose modem logging; wland 0012 (modem DIAG F3 reader) installed with /var/local/diag.on
+- wland 0012 (userspace/wifi/wland-0239/0012-sweet-modem-diag-f3.patch, CI sweet-wifi-0239 45229189544,
+  research/wifi-45229189544, wland 34984a54): glink DIAG_CNTL (lcid 2) + DIAG (lcid 3) next to IPCRTR, feature mask +
+  real-time diag mode + F3 mask ALL_ENABLED (ctrl 8/3/11), HDLC/non-HDLC deframing, DIAG_EXT_MSG_F decode. Output
+  /var/local/diag.log (phone only, 32 MiB cap), loader/PD/WLAN/RFS lines echoed as "diag:" in wland.log, stats every 30 s.
+  Workflow wifi-0239 now compiles diag.c when present.
+- Phone: /var/local/bin/wland = 0012; rollbacks wland.0011 (978b4b7c), wland.0009 (d24e9e7d). Turn diag off: rm
+  /var/local/diag.on. Protocol constants are from memory of Linux diag (ctrl ids, mask layout): may need fixing.
+
 ## 2026-11-23 23:10 IST: wland 0011 boot: order now = iOS 16 (0x47 before elf_loader) and STILL no wlanmdsp -> ordering refuted
 - 26bR boot 22:44 (logs/boot-26bRx.txt) with wland 0011: modem fast (elf_loader asked at 1.3 s), NEW_SERVER 0x47 at 0:48
   BEFORE the question (no hold needed), 0x4d at 0:4a, then 0:4b = service 0x5 (iOS 16: 0:4b = the tftp client reading
