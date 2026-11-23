@@ -5,7 +5,7 @@
 - Real cause of "output did not return done" (observed, bbu log): BBUpdaterController "Querying first stage" -> pbl reads
   -> "fusingState: 3" -> "Attempting to load an unpersonalized image on a fused radio", "hasManifestSource() = 0" ->
   pushImagesInternal 34 = kBBUReturnUnPersonalizedImageError -> boot.ctrl output done = 0.
-- Static (libBBUpdaterDynamic.dylib, text in dsc .36 base 0x20dfa4000? image addr 8824770560; data in .70.dylddata; both
+- Static (libBBUpdaterDynamic.dylib, text in dsc .36, image base 0x20dff5000; data in .70.dylddata; both
   now in research/ios26/dsc, git-ignored): chip-info method 0x20e119598 reads pbl register 4 (0x60 bytes), memcmp with
   vtable +0x50 (object +0x10) for vtable +0x48 (0x30) bytes: equal -> 1 (unfused) else 3 (fused). Object = BBUEUR20Loader
   (vtable 0x282277fd0+0x10, typeinfo "14BBUEUR20Loader"), built at 0x20e10b268 for radio types 2 and 3 with the 48-byte
