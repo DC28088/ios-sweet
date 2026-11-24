@@ -245,16 +245,38 @@ native_drawlog_detail(unsigned seq, const void *render, id color0, unsigned star
 		id const *bufs = stage ? fbufs : vbufs;
 		const size_t *offs = stage ? foffs : voffs;
 		const unsigned n = stage ? nfb : nvb;
-		for (unsigned i = 0; i < n && i < 6; i++) {
+		/* 26c: glass draws get every fragment slot up to 7, the whole uniform block (as floats and as halves)
+		 * and tiny buffers (setFragmentBytes of a half, e.g. edr_scale) as raw bytes */
+		const bool glass = strstr(nm.ffn, "glass") != NULL;
+		for (unsigned i = 0; i < n && i < (glass ? 8u : 6u); i++) {
 			if (bufs[i] == nil)
 				continue;
 			const uint8_t *base = (const uint8_t *)[bufs[i] contents];
 			const size_t len = (size_t)[bufs[i] length];
-			if (!base || offs[i] + 32 > len)
+			if (!base || offs[i] >= len)
 				continue;
+			if (offs[i] + 32 > len) {
+				char raw[80] = "";
+				for (size_t k = 0; k < len - offs[i] && k < 16; k++)
+					snprintf(raw + strlen(raw), sizeof(raw) - strlen(raw), "%02x", base[offs[i] + k]);
+				fprintf(stderr, "SweetNativeMetal: DRAWB %u %s%u@%zu raw %s (%zu bytes)\n", seq, stage ? "f" : "v", i,
+				        offs[i], raw, len - offs[i]);
+				continue;
+			}
 			const float *f = (const float *)(base + offs[i]);
 			fprintf(stderr, "SweetNativeMetal: DRAWB %u %s%u@%zu %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f\n",
 			        seq, stage ? "f" : "v", i, offs[i], f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7]);
+			if (glass && stage && offs[i] + 272 <= len) {
+				for (unsigned row = 1; row < 9; row++)
+					fprintf(stderr, "SweetNativeMetal: DRAWB %u f%u+%u %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f\n", seq, i,
+					        row * 32, f[row * 8], f[row * 8 + 1], f[row * 8 + 2], f[row * 8 + 3], f[row * 8 + 4],
+					        f[row * 8 + 5], f[row * 8 + 6], f[row * 8 + 7]);
+				const __fp16 *hh = (const __fp16 *)(base + offs[i] + 128);
+				char hs[400] = "";
+				for (unsigned k = 0; k < 72; k++)
+					snprintf(hs + strlen(hs), sizeof(hs) - strlen(hs), " %.2f", (float)hh[k]);
+				fprintf(stderr, "SweetNativeMetal: DRAWB %u f%u+128 halves%s\n", seq, i, hs);
+			}
 		}
 	}
 }
