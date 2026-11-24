@@ -1,3 +1,15 @@
+## 2026-11-24 08:10 IST: native-metal 26c INSTALLED live: blit encoder used; CA generates the backdrop mip pyramid
+- CI sweet-native-metal 45309519515 (first try 45308658289 failed: no util/u_box.h on the air include path -> pipe_box
+  filled by hand). research/ios26/metal/build-45309519515; installed with tools/sweet-install-metal2.sh (SweetMetal2
+  5f8b2f18, backend 30d2e374; previous build 36 df6ee466/9a312554 saved in research/ios26/metal/build-45309519515/
+  backup-before; undo = run the script with that dir). backboardd restarted on 26bS.
+- OBSERVED: "blit encoder made (26c)" at once; "blit mipmaps 828x1792 b8g8r8a8_unorm, 11 levels" (= CA's full-screen
+  backdrop pyramid, never filled before); no blit failures, no backboardd crash. sweetshot of the app switcher: home
+  screen behind the card blurred, Phone tab bar glass pill visible. USER check of dock/CC pending.
+- Kernel 2019 CI 45307583851 OK (research/ios26/boot/kernel-45307583851, "sweetfb_qseedlite" present). Images:
+  26bU (shim-boot-26bU.img 8abcdda5, sweetbuild=2684, sweetfb_hw=1), 26bV (132e9538, 2685, + sweetfb_zc=1
+  sweetfb_zcforce=1). Both = 26bR cmdline - sweetdtlog - -noprogress. NOT booted yet.
+
 ## 2026-11-24 07:45 IST: GLASS: the Metal backend had NO blit encoder (-blitCommandEncoder -> nil) -> native-metal 26c
 - USER: "dock and control centre blur is missing, glass looks grey". sweetshot of the home screen: no dock glass platter.
 - Donor redwoodmetal.m (HakiOS a79ff077, prepared in the session scratchpad nm/donor): "What is NOT here ... blit
