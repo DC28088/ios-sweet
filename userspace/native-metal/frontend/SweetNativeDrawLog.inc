@@ -357,12 +357,34 @@ native_glass_draw(const void *render)
 }
 /* defined in SweetNativeBlit.inc (needs the mesa table, declared after this file) */
 static void native_glass_write(struct rwa_device *dev, id tex, unsigned n, const char *what);
+/* glass_background(_no_bleed): the variants that read the cached shape map (texture 4); the _sdf ones compute it */
+static bool
+native_glass_map_draw(const void *render)
+{
+	pthread_mutex_lock(&native_drawlog_lock);
+	struct native_drawlog_name *e = native_drawlog_slot(render, false);
+	const bool map = e && strstr(e->ffn, "glass_background") != NULL && strstr(e->ffn, "_sdf") == NULL;
+	pthread_mutex_unlock(&native_drawlog_lock);
+	return map;
+}
 static unsigned
-native_glass_dump_before(struct rwa_device *dev, const void *render, id const *textures, unsigned ntex)
+native_glass_dump_before(struct rwa_device *dev, const void *render, id const *textures, unsigned ntex, id color0)
 {
 	if (!native_glass_dump_on() || native_glass_dumps >= 3 || !native_glass_draw(render))
 		return 0;
+	/* the switch file may hold "WxH": only draws whose fragment texture 4 (the cached shape map) has that size */
+	unsigned fw = 0, fh = 0;
+	FILE *sf = fopen("/var/local/sweet-glass-dump", "r");
+	if (sf) {
+		if (fscanf(sf, "%ux%u", &fw, &fh) != 2)
+			fw = fh = 0;
+		fclose(sf);
+	}
+	if (fw && (ntex <= 4 || textures[4] == nil || [textures[4] width] != fw || [textures[4] height] != fh ||
+	           !native_glass_map_draw(render)))
+		return 0;
 	const unsigned n = ++native_glass_dumps;
+	native_glass_write(dev, color0, n, "rt-before");
 	if (ntex > 3) native_glass_write(dev, textures[3], n, "tex3");
 	if (ntex > 4) native_glass_write(dev, textures[4], n, "tex4");
 	return n;
@@ -375,7 +397,7 @@ native_glass_dump_after(struct rwa_device *dev, unsigned n, id color0)
 }
 
 /* A/B diagnosis (dock glass present vs missing at rest): for every logged draw, which colour target object/IOSurface it
- * goes to, the scissor, the clear mask and the attachment level; and one line per command-buffer commit. */
+ * goes to, the scissor, the clear mask and the attachment level (the cb pointer separates command buffers). */
 static void
 native_drawlog_where(unsigned seq, const void *cb, id color0, unsigned flags, const unsigned *scissor,
                      unsigned clear_mask, unsigned level)

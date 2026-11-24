@@ -1687,7 +1687,7 @@ ensure_function_encoder(void)
         '\t\tnative_drawlog_where(dl, (const void *)self, work->colorCount ? work->color[0] : nil, work->nativeFlags,\n'
         '\t\t    work->nativeScissor, work->nativeClearMask, work->colorCount ? work->nativeColorLevel[0] : 0);\n'
         '\t\tnative_glass_noinf([work->render render], work->buffers, work->bufferOffsets, work->count);\n'
-        '\t\tgdump = native_glass_dump_before([[_queue device] mesaDevice], [work->render render], work->textures, work->textureCount);\n'
+        '\t\tgdump = native_glass_dump_before([[_queue device] mesaDevice], [work->render render], work->textures, work->textureCount, work->colorCount ? work->color[0] : nil);\n'
         '\t}\n'
         '\tif (mesa.render_draw([work->render render], &draw, why, size) != 0) {')
     # iOS 26 (26b6g): -setThreadgroupMemoryLength:atIndex: reaches the dispatch (air_metal.h rwa_bindings

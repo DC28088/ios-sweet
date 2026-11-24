@@ -1,3 +1,20 @@
+## 2026-11-24 20:45 IST: DOCK GLASS A/B (USER's idea): working = analytic SDF shader, broken = cached-shape-map shader
+- CORRECTION of the 19:50 entry: partial redraws are NOT the cause. Scripted A/B on 26bU (sweettouch home/swipe +
+  sweetopen com.apple.Preferences drive the phone over SSH; native-metal CI 45411061851 logs DRAWW = cb/target/
+  surface/scissor/clear/level): at rest both states only redraw a small rectangle on two alternating surfaces and never
+  touch the dock rows. `sweettouch home` also wakes the display (black sweetshots = display off).
+- OBSERVED difference, dock clip 0,1402,828x390: GOOD (app close) = sdf_filter_vert|glass_background_sdf_no_bleed,
+  3 draws (24/96/30 idx), texture 3 only. BAD (swipe) = variable_blur_vert|glass_background_no_bleed, 1 draw (6 idx),
+  texture 3 + texture 4 = cached shape map RGBA16F 832x256. The Search pill (294,1416,240x144) switches the same way.
+- glass_background_no_bleed_lph (bc26/f0169): s = sample(map, texcoord1); coverage = saturate(-s.r/fwidth(s.r)+0.5) * s.a;
+  s.gb = gradient. Map alpha 0 or a wrong distance = invisible glass. The pill's 192x128 map dumped plausible
+  (distance + gradient). The dock's 832x256 map was NEVER dumped and its creation draws are not in the log (1215 lost
+  lines) -> "dock map empty" is UNPROVEN.
+- Dump now takes "WxH" in /var/local/sweet-glass-dump (texture 4 size filter) and writes rt-before as well.
+- Claude Code safety check blocked a local `rm -f $P/$f.raw`; not needed, dumps go to fresh directories instead.
+- USB link dropped again ~20:40 (26bU).
+- NEXT: install this build, echo 832x256 > /var/local/sweet-glass-dump, swipe, check the map's A and R + rt before/after.
+
 ## 2026-11-24 19:50 IST: dock glass missing AT REST after a home-screen swipe = CoreAnimation partial redraws (analysis)
 - sweetshots over a swipe: page 1 = dock glass platter present; at rest on page 2 = platter GONE (icons fine, still
   after 10 s). USER: comes back after an app open/close (= a full redraw).
