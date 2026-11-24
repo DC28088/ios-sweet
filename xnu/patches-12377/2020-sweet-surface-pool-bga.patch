@@ -1,0 +1,28 @@
+diff --git a/iokit/Kernel/arm/SweetSurface.cpp b/iokit/Kernel/arm/SweetSurface.cpp
+--- a/iokit/Kernel/arm/SweetSurface.cpp
++++ b/iokit/Kernel/arm/SweetSurface.cpp
+@@ -532,8 +532,22 @@
+ {
+ 	static uint32_t told, full_told;
+ 
+-	if (!sweet_lowpool.ready || s->pixelFormat != SWEET_FORMAT_BGRA || s->bytesPerElement != 4 ||
+-	    s->elementWidth != 1 || s->elementHeight != 1 || s->planeCount != 0 ||
++	/*
++	 * Sweet 2020: iOS 26 backboardd's display surfaces are '&BGA' (0x26424741, the Metal-compatible BGRA) with one
++	 * plane at offset 0 and the surface's own stride (+16 KiB trailing metadata the scan never reads): the same
++	 * pixels as plain BGRA. Without this every frame fell back to the copy (26bV: "surface 37 is not in the low
++	 * pool", 265 of 286 frames copied). sweetfb_zcbga=0 keeps them out.
++	 */
++	static int bga = -1;
++	if (bga < 0) {
++		int v = 1;
++		PE_parse_boot_argn("sweetfb_zcbga", &v, sizeof(v));
++		bga = v != 0;
++	}
++	const bool bga1 = bga && s->pixelFormat == 0x26424741 && s->planeCount == 1 && s->planes[0].offset == 0 &&
++	    s->planes[0].bytesPerRow == s->bytesPerRow;
++	if (!sweet_lowpool.ready || (s->pixelFormat != SWEET_FORMAT_BGRA && !bga1) || s->bytesPerElement != 4 ||
++	    s->elementWidth != 1 || s->elementHeight != 1 || (s->planeCount != 0 && !bga1) ||
+ 	    s->width < sweet_lowpool.minW || s->height < sweet_lowpool.minH ||
+ 	    (s->bytesPerRow & 63) != 0 || s->bytesPerRow > 0xffff || (s->offset & 63) != 0) {
+ 		return false;
