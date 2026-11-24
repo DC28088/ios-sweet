@@ -36,6 +36,18 @@ int rwa_command_submit(struct rwa_device *, uint64_t *, char *, size_t);
 int rwa_command_poll(struct rwa_device *, uint64_t, bool, char *, size_t);
 int rwa_clear(struct rwa_device *, struct rwa_texture *const *, unsigned, unsigned,
               const float [8][4], struct rwa_texture *, const float *, const unsigned *, char *, size_t);
+/* MTLBlitCommandEncoder primitives (26c: the donor had no blit encoder, so QuartzCore's copies were dropped).
+ * Origins/sizes are {x, y, z}; slice is the array layer (or cube face). Inside a command transaction they are
+ * recorded on the context; outside one they finish before returning. */
+int rwa_copy_texture(struct rwa_device *, struct rwa_texture *src, unsigned src_slice, unsigned src_level,
+                     const unsigned src_origin[3], const unsigned size[3], struct rwa_texture *dst,
+                     unsigned dst_slice, unsigned dst_level, const unsigned dst_origin[3], char *, size_t);
+int rwa_generate_mipmaps(struct rwa_device *, struct rwa_texture *, char *, size_t);
+int rwa_copy_buffer(struct rwa_device *, struct rwa_buffer *src, size_t src_offset, struct rwa_buffer *dst,
+                    size_t dst_offset, size_t size, char *, size_t);
+int rwa_fill_buffer(struct rwa_device *, struct rwa_buffer *, size_t offset, size_t size, uint8_t value, char *, size_t);
+unsigned rwa_texture_levels(const struct rwa_texture *);
+unsigned rwa_texture_slices(const struct rwa_texture *);
 #ifdef __cplusplus
 }
 #endif

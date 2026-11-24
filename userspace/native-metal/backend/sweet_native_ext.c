@@ -276,3 +276,93 @@ int rwa_clear(struct rwa_device *d,struct rwa_texture *const *color,unsigned cou
    }
    return d->in_command?0:finish_or_say_why(d,true,"clear",why,n);
 }
+
+/*
+ * 26c: MTLBlitCommandEncoder over Gallium. QuartzCore copies the backdrop of a Liquid Glass / blur element out of
+ * the frame it is drawing with a blit, then downsamples and blurs that copy. The donor answered
+ * -blitCommandEncoder with nil, so every copy was a message to nil: the effects sampled a never-written texture
+ * (USER: dock and Control Centre blur missing, the glass grey).
+ */
+#include "util/u_box.h"
+static unsigned native_layers(const struct pipe_resource *r,unsigned level)
+{
+   return r->target==PIPE_TEXTURE_3D?u_minify(r->depth0,level):r->array_size;
+}
+unsigned rwa_texture_levels(const struct rwa_texture *t){return t&&t->res?t->res->last_level+1:0;}
+unsigned rwa_texture_slices(const struct rwa_texture *t){return t&&t->res?native_layers(t->res,0):0;}
+static unsigned native_blit_told;
+int rwa_copy_texture(struct rwa_device *d,struct rwa_texture *src,unsigned src_slice,unsigned src_level,
+                     const unsigned so[3],const unsigned size[3],struct rwa_texture *dst,unsigned dst_slice,
+                     unsigned dst_level,const unsigned dor[3],char *why,size_t n)
+{
+   if(!d || d->lost || !src || !dst || !src->res || !dst->res){say(why,n,"blit: invalid texture copy");return -1;}
+   struct pipe_resource *s=src->res,*t=dst->res;
+   if(src_level>s->last_level || dst_level>t->last_level){say(why,n,"blit: copy level outside the texture");return -1;}
+   if(!size[0] || !size[1] || !size[2])return 0;
+   const unsigned sw=u_minify(s->width0,src_level),sh=u_minify(s->height0,src_level);
+   const unsigned tw=u_minify(t->width0,dst_level),th=u_minify(t->height0,dst_level);
+   if(so[0]+size[0]>sw || so[1]+size[1]>sh || dor[0]+size[0]>tw || dor[1]+size[1]>th){
+      say(why,n,"blit: copy rectangle %ux%u at %u,%u -> %u,%u outside %ux%u / %ux%u",size[0],size[1],so[0],so[1],
+          dor[0],dor[1],sw,sh,tw,th);return -1;
+   }
+   /* 2D arrays and cubes: z is the slice; 3D: z is the depth origin and the slice is 0 */
+   const unsigned sz=s->target==PIPE_TEXTURE_3D?so[2]:src_slice,tz=t->target==PIPE_TEXTURE_3D?dor[2]:dst_slice;
+   struct pipe_box box;u_box_3d(so[0],so[1],sz,size[0],size[1],size[2],&box);
+   if(s->format==t->format || util_format_get_blocksize(s->format)==util_format_get_blocksize(t->format)) {
+      /* Metal requires copy-compatible formats: a plain byte copy, as Metal defines it */
+      d->pipe->resource_copy_region(d->pipe,t,dst_level,dor[0],dor[1],tz,s,src_level,&box);
+   } else {
+      struct pipe_blit_info b;memset(&b,0,sizeof b);
+      b.src.resource=s;b.src.level=src_level;b.src.format=s->format;b.src.box=box;
+      b.dst.resource=t;b.dst.level=dst_level;b.dst.format=t->format;u_box_3d(dor[0],dor[1],tz,size[0],size[1],size[2],&b.dst.box);
+      b.mask=util_format_get_mask(t->format);b.filter=PIPE_TEX_FILTER_NEAREST;
+      d->pipe->blit(d->pipe,&b);
+   }
+   if(native_blit_told++<12)
+      fprintf(stderr,"SweetNativeMetal: blit copy %ux%ux%u level %u slice %u (%s) -> level %u slice %u (%s)\n",
+              size[0],size[1],size[2],src_level,src_slice,util_format_short_name(s->format),dst_level,dst_slice,
+              util_format_short_name(t->format));
+   d->native_buffer_writes=true;
+   return d->in_command?0:finish_or_say_why(d,true,"blit copy",why,n);
+}
+int rwa_generate_mipmaps(struct rwa_device *d,struct rwa_texture *tex,char *why,size_t n)
+{
+   if(!d || d->lost || !tex || !tex->res){say(why,n,"blit: invalid mipmap texture");return -1;}
+   struct pipe_resource *r=tex->res;
+   for(unsigned l=1;l<=r->last_level;l++) {
+      struct pipe_blit_info b;memset(&b,0,sizeof b);
+      b.src.resource=r;b.src.level=l-1;b.src.format=r->format;
+      b.dst.resource=r;b.dst.level=l;b.dst.format=r->format;
+      u_box_3d(0,0,0,u_minify(r->width0,l-1),u_minify(r->height0,l-1),native_layers(r,l-1),&b.src.box);
+      u_box_3d(0,0,0,u_minify(r->width0,l),u_minify(r->height0,l),native_layers(r,l),&b.dst.box);
+      b.mask=util_format_get_mask(r->format);
+      b.filter=util_format_is_pure_integer(r->format)?PIPE_TEX_FILTER_NEAREST:PIPE_TEX_FILTER_LINEAR;
+      d->pipe->blit(d->pipe,&b);
+   }
+   static unsigned told;
+   if(told++<6)fprintf(stderr,"SweetNativeMetal: blit mipmaps %ux%u %s, %u levels\n",r->width0,r->height0,
+                       util_format_short_name(r->format),r->last_level+1);
+   return d->in_command?0:finish_or_say_why(d,true,"mipmaps",why,n);
+}
+int rwa_copy_buffer(struct rwa_device *d,struct rwa_buffer *src,size_t so,struct rwa_buffer *dst,size_t dof,
+                    size_t size,char *why,size_t n)
+{
+   if(!d || d->lost || !src || !dst){say(why,n,"blit: invalid buffer copy");return -1;}
+   if(!size)return 0;
+   if(so>src->size || size>src->size-so || dof>dst->size || size>dst->size-dof || size>UINT32_MAX){
+      say(why,n,"blit: buffer copy of %zu bytes outside its buffers",size);return -1;
+   }
+   struct pipe_box box;u_box_1d((int)so,(int)size,&box);
+   d->pipe->resource_copy_region(d->pipe,dst->res,0,(unsigned)dof,0,0,src->res,0,&box);
+   native_invalidate_constants(d);d->native_buffer_writes=true;
+   return d->in_command?0:finish_or_say_why(d,true,"buffer copy",why,n);
+}
+int rwa_fill_buffer(struct rwa_device *d,struct rwa_buffer *buf,size_t off,size_t size,uint8_t value,char *why,size_t n)
+{
+   if(!d || d->lost || !buf){say(why,n,"blit: invalid buffer fill");return -1;}
+   if(!size)return 0;
+   if(off>buf->size || size>buf->size-off || size>UINT32_MAX){say(why,n,"blit: fill outside its buffer");return -1;}
+   d->pipe->clear_buffer(d->pipe,buf->res,(unsigned)off,(unsigned)size,&value,1);
+   native_invalidate_constants(d);d->native_buffer_writes=true;
+   return d->in_command?0:finish_or_say_why(d,true,"buffer fill",why,n);
+}

@@ -1733,6 +1733,44 @@ ensure_function_encoder(void)
     # geometry record remains local. The AIR header itself is shared above.
     return p
 
+def adapt_blit(path):
+    # 26c: a real MTLBlitCommandEncoder (frontend/SweetNativeBlit.inc). The donor answered -blitCommandEncoder
+    # with nil, so QuartzCore's backdrop copies (Liquid Glass, Control Centre, dock blur) were messages to nil
+    # and the effects sampled never-written textures (USER: grey glass, no blur). Copies are recorded as work
+    # and run in order at commit through backend/sweet_native_ext.c (rwa_copy_texture, rwa_generate_mipmaps,
+    # rwa_copy_buffer, rwa_fill_buffer).
+    s=path.read_text()
+    s=replace(s,'    BOOL nativeClearOnly, nativeBarrier;\n',
+        '    BOOL nativeClearOnly, nativeBarrier;\n'
+        '    unsigned nativeBlit;   /* 1 texture copy, 2 mipmaps, 3 buffer copy, 4 buffer fill; color[0]/color[1] = src/dst */\n'
+        '    unsigned blitSrcSlice, blitSrcLevel, blitDstSlice, blitDstLevel, blitSrcOrigin[3], blitSize[3], blitDstOrigin[3];\n'
+        '    size_t blitSrcOffset, blitDstOffset, blitBytes;\n'
+        '    uint8_t blitValue;\n')
+    s=replace(s,'        if(work->nativeBarrier) {\n',
+        '        if(work->nativeBlit) {\n'
+        '            struct rwa_device *md=[[_queue device] mesaDevice];int brc=0;\n'
+        '            switch(work->nativeBlit){\n'
+        '            case 1: brc=rwa_copy_texture(md,[work->color[0] mesaTexture],work->blitSrcSlice,work->blitSrcLevel,work->blitSrcOrigin,\n'
+        '                                         work->blitSize,[work->color[1] mesaTexture],work->blitDstSlice,work->blitDstLevel,\n'
+        '                                         work->blitDstOrigin,why,sizeof why);break;\n'
+        '            case 2: brc=rwa_generate_mipmaps(md,[work->color[0] mesaTexture],why,sizeof why);break;\n'
+        '            case 3: brc=rwa_copy_buffer(md,[work->color[0] mesaBuffer],work->blitSrcOffset,[work->color[1] mesaBuffer],\n'
+        '                                        work->blitDstOffset,work->blitBytes,why,sizeof why);break;\n'
+        '            case 4: brc=rwa_fill_buffer(md,[work->color[0] mesaBuffer],work->blitDstOffset,work->blitBytes,work->blitValue,why,sizeof why);break;\n'
+        '            }\n'
+        '            if(brc){rw_print("the blit failed: %s\\n",why);[self failWith:why];goto done;}\n'
+        '            continue;\n'
+        '        }\n'
+        '        if(work->nativeBarrier) {\n')
+    s=replace(s,'- (id)blitCommandEncoder          { return nil; }',
+        '- (id)blitCommandEncoder          { return native_blit_encoder_new(self); }\n'
+        '- (id)blitCommandEncoderWithDescriptor:(id)descriptor { (void)descriptor; return native_blit_encoder_new(self); }')
+    s=replace(s,'@implementation SweetNativeMetalCommandBuffer {',
+        'static id native_blit_encoder_new(id commandBuffer);\n@implementation SweetNativeMetalCommandBuffer {')
+    s+='\n#include "SweetNativeBlit.inc"\n'
+    path.write_text(s)
+    shutil.copy2(NATIVE/'frontend/SweetNativeBlit.inc',path.parent/'SweetNativeBlit.inc')
+
 def serialize_methods(path):
     s=path.read_text()
     support='''
@@ -1865,6 +1903,7 @@ def main():
     adapt_backend(args.donor)
     adapt_ssbo_offsets(args.donor)
     frontend=adapt_frontend(args.donor)
+    adapt_blit(frontend)
     serialize_methods(frontend)
     print('Prepared native Sweet Metal sources:',args.donor)
 
