@@ -1,3 +1,18 @@
+## 2026-11-24 08:45 IST: glass uniforms captured; suspect inf/NaN in the translated glass shaders; 26bU scaler OK
+- USER (26bU + 26c): "slightly better. but the dock is still grey, sometimes it flickers. control centre is still
+  grey.. most the glass elements aren't proper even inside apps".
+- Glass shaders (QuartzCore iOS 26 metallib, research/ios26/metal/bc26: f0069 = glass_background_sdf_no_bleed_lpf,
+  f0171 = _lph; disassembler research/ios26/metal/airtest/dis): inputs = texture(3) source_texture, constant buffer(1)
+  GlassBackgroundUniforms(Sdf) 272 B, constant half edr_scale buffer(6), sampler. Also glass_background_lph (no SDF)
+  with tex 3 (256x192 BGRA backdrop) + tex 4 (832x704, format 115).
+- native-metal build 45312567197 (installed; previous 26c in research/ios26/metal/build-45312567197/backup-before):
+  draw-log detail ("N WxH" in /var/local/sweet-native-drawlog) now dumps glass uniforms (272 B as floats + halves),
+  slots up to 7, tiny buffers raw. A live glass_background_lph draw: uniforms plausible (0.92 colour-matrix halves,
+  radii) and contain several +inf floats. GUESS: inf in fast-math/half math on ir3 -> NaN -> dark output.
+- NEXT (Glass): run the captured draw offline (research/ios26/metal/airtest harness, AIR -> NIR -> softpipe/llvmpipe)
+  with these uniforms + a test backdrop: dark on the host too = translation bug, else GPU precision; then fix.
+- NEXT (60 fps): 26bV = zero-copy scanout (sweetfb_zc=1 sweetfb_zcforce=1), not booted yet.
+
 ## 2026-11-24 07:55 IST: 26bU BOOTED: QSEED3LITE hardware scaler works (hw=1): copy 10.7 ms -> 1.6 ms; Glass still dark
 - USER (26c on 26bS): "this fixed the app closing animation (icon used to disappear near the end)"; Glass "better, not
   right". Screenshots: Spotlight/app-switcher/CC BACKGROUND blur now correct; glass CONTROLS (home "Search" pill,
