@@ -1,3 +1,18 @@
+## 2026-11-24 22:20 IST: READ-ONLY fsck of the iOS root: small, confined damage (USER: "just do 2nd", no backup, no repair)
+- Method: `sweetreboot fastboot`, temporary OrangeFox (`fastboot boot recovery/recovery.img`), userdata (sda34) NOT mounted;
+  adb exec-out dd (reads only) of the HFS+ metadata (327 MiB: headers, extents, allocation, attributes, catalog) into a
+  sparse file on the laptop, then `fsck.hfsplus -n -f -d` on a 24 GiB (= volume size) copy. Nothing written to the phone.
+- Volume: HFSX, 4096 B blocks, 6291456 blocks = 24 GiB (partition 115 GB), non-journaled, not cleanly unmounted.
+- RESULT (exit 8, "found corrupt and needs to be repaired"): catalog/extents/attributes B-trees status 0x0000; one wrong block
+  count (knowledgeC.db-wal 497, should be 984); free count 849717 should be 850219; bitmap under-allocated.
+- Own pass over the same copy (274174 extents): 7 overlaps / 298 blocks, 6 files: DuetExpertCenter
+  _ATXInfoSuggestionStore.db-wal, CoreDuet knowledgeC.db-wal, biome Device.Power.EnergyMode/local/0, launchd.log.1,
+  diagnostics Special ...11b.tracev3 (pairwise shared). 107 blocks in use but marked free (2 of those files); 419 marked
+  used but unclaimed. No file outside /private/var overlaps or is at risk. File CONTENTS are not checked by fsck.
+- The ~3700 kernel lines = contextstored retrying one file (knowledgeC.db-wal fails the hfs_cnode.c:946 size/blocks check).
+- CORRECTION: battery was 66% by recovery's gauge (iOS said 14-16% / "curve 5%"): the iOS gauge reads low.
+- Phone is in recovery. Repair NOT done (writes userdata; needs the USER's OK).
+
 ## 2026-11-24 22:10 IST: *** iOS ROOT FILESYSTEM CORRUPTION (userdata HFS+) - STOP WRITING / REBOOTING UNTIL FSCK ***
 - OBSERVED: the kernel reports "hfs_mark_inconsistent: Runtime corruption detected on iOSRoot, fsck will be forced on next
   mount". First "BlockMarkFreeInternal() trying to free unallocated blocks" reports in boot-26bR (2026-11-23 22:23; 12
