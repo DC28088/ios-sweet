@@ -1,3 +1,26 @@
+## 2026-11-24 07:30 IST: USER: UI/Glass + stable 60 fps. Display = CPU scale-copy 10.7 ms/frame; QSEED3LITE fix xnu 2019
+- USER: "lets fix UI.. most the glass elements are not properly functioning... and make the GPU fully functional with
+  at least stable 60fps". Wi-Fi/cellular parked (state in the entries below).
+- OBSERVED (26bR/26bS stats): sweet_fb mode=copy hw=0 flip=1: CA canvas 828x1792 BGRA (5.96 MB surfaces), panel 1080x2400;
+  the kernel CPU-scales+copies each frame: copy_us 5.3-11.0 ms avg (max ~12 ms), swap_wait_us ~19 ms, 84 swap-wait
+  timeouts/window, vsync_s 44-60, swaps_s ~20-23 while animating. Metal frontend all on cpu7 (85 cmd bufs, 9k draws,
+  600 ms encode per 5.4 s). No "unimplemented" Metal messages logged.
+- Bergamota (fetched read-only to the session scratchpad, 37a7a7a9) has sweetfb_hw (QSEED3 scaler), sweetfb_zc
+  (zero-copy scanout of CA surfaces from a low pool below 4 GiB, default 0xb0400000 + 252 MiB, free on sweet too:
+  sweet carve-outs end 0xa1600000 + ramdump_fb 0xaf000000+16M; ours: WLAN pool 0xe0000000, rmtfs 0xe1000000, IPA
+  0xe4000000..0xe4700000), sweetfb_direct; xnu 2003 opened them on sweet with sweetfb_mdp=1.
+- 26bS (= 26bR cmdline - sweetdtlog + sweetfb_hw=1, sweetbuild=2682, shim-boot-26bS.img 786b510e): still hw=0.
+  Read via /dev/pmem (toybox dd bs=4 skip=PA/4): MDSS 0x0ae00000 = 0x50020000 (DPU 5.2), VIG0 0x0ae05000 SRC_SIZE
+  0x09600438, SRC0 0x0ae05014 = 0x9c000000 (splash), VIG0 scaler 0x0ae05a00 = 0x2004 = QSEED3LITE; Bergamota's
+  hwSetup takes only 0x1002/0x1003 -> CPU scaling. MDP SID on sweet = 0x800 (SMR5 -> CB3, SCTLR 0xe0 = M off),
+  Bergamota probes Poco's 0x880/0xc80 -> zc would decline every frame -> use sweetfb_zcforce=1.
+- xnu 2019 (xnu/patches-12377/2019-sweet-fb-qseed3lite.patch): accept 0x2004 (Linux programs QSEED3LITE like v1.3 for
+  bilinear without LUT/DE); sweetfb_qseedlite=0 refuses. Kernel CI 45307583851 (also contains 2016-2019 incl. 2018's
+  128 bridge clients; wland on the phone has 0010).
+- Images: 26bT (shim-boot-26bT.img 6dfd83da, 2017 kernel) = hw+zc+zcforce, -noprogress dropped (cmdline 600/607).
+  Next images need the 2019 kernel: 26bU = hw only, 26bV = hw + zc + zcforce.
+- sweetshot (/usr/local/bin) writes a 360x800 PNG of the panel (black when the display is off).
+
 ## 2026-11-24 07:15 IST: modem DIAG over QRTR gives NOTHING (0012 v2-v4); diag switched OFF; Wi-Fi still blocked
 - 0012 v2 (CI 45304714769, wland 0119404d): our 0x1001 servers (raw word = id) at 1:50-54 -> no packet in 30 s. The modem
   announces ONE 0x1001 server: instance word 0x1 at 0:1c.
