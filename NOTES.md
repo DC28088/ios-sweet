@@ -1,3 +1,13 @@
+## 2026-11-24 08:15 IST: 26bV zero-copy WORKS for BGRA surfaces; iOS 26 display surfaces are '&BGA' -> xnu 2020
+- 26bV booted 08:10 (logs/boot-26bV.txt, kernel 45307583851): low pool at 0xb0400000 ready; 4 BGRA 828x1792 surfaces
+  pooled (0xb0404000, 0xb09b4000, 0xb0f64000, 0xb1514000); stats mode=zc hw=1; 21 frames scanned in place
+  (QSEED3LITE programmed: STEP 0x188888/0x17e4b1, OP 0xa0034401), then 265 of 286 copied: "zero-copy declined:
+  surface is not in the low pool" for backboardd's swap surfaces 37/38 = fmt 0x26424741 '&BGA' planes 1 (plane0
+  offset 0 bpr 3328; 5980160 B = plane + 16 KiB metadata). Pool check takes only 'BGRA' planes 0.
+- xnu 2020 (xnu/patches-12377/2020-sweet-surface-pool-bga.patch, SweetSurface.cpp sweet_surface_try_pool): also take
+  '&BGA' with planeCount 1, planes[0].offset 0, planes[0].bytesPerRow == bytesPerRow; sweetfb_zcbga=0 off.
+  Kernel CI 45314298272 running. Next image 26bW = 26bV cmdline + sweetbuild=2686 on that kernel.
+
 ## 2026-11-24 08:45 IST: glass uniforms captured; suspect inf/NaN in the translated glass shaders; 26bU scaler OK
 - USER (26bU + 26c): "slightly better. but the dock is still grey, sometimes it flickers. control centre is still
   grey.. most the glass elements aren't proper even inside apps".
