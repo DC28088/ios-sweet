@@ -1,9 +1,9 @@
 diff --git a/phone/wifi/diag.c b/phone/wifi/diag.c
 new file mode 100644
-index 0000000..af19920
+index 0000000..6f1fcd4
 --- /dev/null
 +++ b/phone/wifi/diag.c
-@@ -0,0 +1,316 @@
+@@ -0,0 +1,327 @@
 +/*
 + * 0012: the modem's own debug (F3) messages over DIAG (Linux drivers/char/diag: diagfwd_cntl, diag_masks).
 + * Transport: QRTR (Linux diagfwd_socket): we serve DIAG_SVC_ID 0x1001 for the modem's instances (control 0, command 1,
@@ -246,6 +246,13 @@ index 0000000..af19920
 +	static const uint8_t all_rt[] = { 0x7d, 0x05, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff };
 +	/* DIAG_VERBNO_F (0x00): a harmless first command to see that answers come back */
 +	static const uint8_t verno[] = { 0x00 };
++	/* v4: if word 1 means version 1 / instance 0, that server is the control channel: our control packets, from 1:50 */
++	if (!cntl_known) {
++		cntl_node = srv_node;
++		cntl_port = srv_port;
++		cntl_known = 1;
++		send_masks();
++	}
 +	int a = send_cmd(srv_node, srv_port, verno, sizeof(verno));
 +	int b = send_cmd(srv_node, srv_port, all_rt, sizeof(all_rt));
 +	printf("[%6llu] diag: version request %d, all real-time F3 masks %d (to %u:%x from 1:%x)\n", (unsigned long long)link_ms(),
@@ -256,6 +263,8 @@ index 0000000..af19920
 +void diag_qrtr(const struct qrtr_hdr *h, const uint8_t *d, uint32_t n)
 +{
 +	unsigned i = h->dst_port - DIAG_PORT0;
++	if (i >= 8)
++		i -= 8;	/* v4: the version-1 announcement ports */
 +	if (i >= DIAG_PORTS)
 +		return;
 +	if (!per_port[i]++)
@@ -289,8 +298,10 @@ index 0000000..af19920
 +	for (unsigned i = 0; i < DIAG_PORTS; i++) {
 +		/* the raw QRTR instance word is the diag instance id (Linux diagfwd_socket): version byte = id, instance 0 */
 +		int r = qrtr_new_server(DIAG_SVC, diag_inst[i] & 0xff, diag_inst[i] >> 8, DIAG_PORT0 + i);
-+		printf("[%6llu] diag: serving %#x instance %u (%s) at 1:%x -> %d\n", (unsigned long long)link_ms(), DIAG_SVC,
-+		       diag_inst[i], diag_inst_name[i], DIAG_PORT0 + i, r);
++		int r2 = qrtr_new_server(DIAG_SVC, 1, diag_inst[i], DIAG_PORT0 + 8 + i);
++		printf("[%6llu] diag: serving %#x instance %u (%s) at 1:%x (word %#x) -> %d and 1:%x (word %#x) -> %d\n",
++		       (unsigned long long)link_ms(), DIAG_SVC, diag_inst[i], diag_inst_name[i], DIAG_PORT0 + i, diag_inst[i], r,
++		       DIAG_PORT0 + 8 + i, 1 | diag_inst[i] << 8, r2);
 +	}
 +}
 +
@@ -322,10 +333,10 @@ index 0000000..af19920
 +}
 diff --git a/phone/wifi/diag.h b/phone/wifi/diag.h
 new file mode 100644
-index 0000000..c47e5f3
+index 0000000..ea43c88
 --- /dev/null
 +++ b/phone/wifi/diag.h
-@@ -0,0 +1,12 @@
+@@ -0,0 +1,13 @@
 +#ifndef DIAG_H
 +#define DIAG_H
 +/* 0012: modem DIAG F3 messages (/var/local/diag.on) */
@@ -334,7 +345,8 @@ index 0000000..c47e5f3
 +#include "link.h"
 +#define DIAG_PORT0	0x50	/* our DIAG servers: 0x50 control .. 0x54 dci */
 +#define DIAG_PORTS	5
-+static inline int diag_port(uint32_t p) { return p >= DIAG_PORT0 && p < DIAG_PORT0 + DIAG_PORTS; }
++/* v4: 0x50-0x54 announced with the raw instance word = id, 0x58-0x5c with version 1 | id << 8 */
++static inline int diag_port(uint32_t p) { return (p >= DIAG_PORT0 && p < DIAG_PORT0 + DIAG_PORTS) || (p >= DIAG_PORT0 + 8 && p < DIAG_PORT0 + 8 + DIAG_PORTS); }
 +void diag_qrtr(const struct qrtr_hdr *h, const uint8_t *d, uint32_t n);
 +void diag_new_server(uint32_t service, uint32_t inst, uint32_t node, uint32_t port);	/* v3: the modem's DIAG server */
 +#endif

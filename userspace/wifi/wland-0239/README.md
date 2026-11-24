@@ -31,6 +31,8 @@ patch stack, not from `userspace/wifi/patches/`:
   are echoed to wland.log as "diag: ...". Workflow compiles diag.c when present.
   v3: the modem itself serves 0x1001 (instance word 1) and never wrote to ours -> wland is also its client: HDLC
   commands 0x00 (version) + 0x7d/5 (all real-time F3 masks) from port 0x51; answers/messages decoded there.
+  v4: also our control packets to that server (word 1 = version 1 / instance 0?), and our servers announced twice:
+  0x50-0x54 with the raw word = id, 0x58-0x5c with version 1 / instance id.
 
 Build: workflow `sweet-wifi-0239` (`.github/workflows/wifi-0239.yml`, manual dispatch). Tested 2026-11-09: Wi-Fi
 list instant after the radio warms up, SIM works (binary sha256 5eb59683...).
