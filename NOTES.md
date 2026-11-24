@@ -1,3 +1,17 @@
+## 2026-11-24 07:55 IST: 26bU BOOTED: QSEED3LITE hardware scaler works (hw=1): copy 10.7 ms -> 1.6 ms; Glass still dark
+- USER (26c on 26bS): "this fixed the app closing animation (icon used to disappear near the end)"; Glass "better, not
+  right". Screenshots: Spotlight/app-switcher/CC BACKGROUND blur now correct; glass CONTROLS (home "Search" pill,
+  Spotlight field, dock platter, CC module platters) are DARK opaque grey; 2 CC modules show no glyph.
+- Draw log (touch /var/local/sweet-native-drawlog with a count): each glass element = fixed pass 828x1792 -> 128x128
+  (or 192x128), fixed 128 -> 128, variable_blur_downsample 128 -> 128, then sdf_filter_vert|glass_background_sdf_no_bleed
+  x2 into the frame sampling the 128x128, then fixed. Timed mode (/var/local/sweet-native-drawtime: flush+wait per
+  draw) did NOT lighten the glass -> not a missing-flush/aliasing hazard. compute_average_luma / compute_sum_luma run
+  (aligned copies, copied back). OPEN: why the glass resolves to its dark variant (luma readback? shader inputs?).
+  Next tool idea: dump intermediate textures (the 128x128 backdrop) to files.
+- 26bU (kernel 45307583851 = 2016-2019, shim-boot-26bU.img 8abcdda5) booted 07:52 (logs/boot-26bU.txt): stats hw=1,
+  copy_us avg 1604 max 3102 (was 5.3-11 ms), vsync_s 57.5. sweetshot now gives a black 276x597 image (reads the
+  canvas-sized scan buffer? not checked). USER visual check pending. Next: 26bV (zero-copy).
+
 ## 2026-11-24 08:10 IST: native-metal 26c INSTALLED live: blit encoder used; CA generates the backdrop mip pyramid
 - CI sweet-native-metal 45309519515 (first try 45308658289 failed: no util/u_box.h on the air include path -> pipe_box
   filled by hand). research/ios26/metal/build-45309519515; installed with tools/sweet-install-metal2.sh (SweetMetal2
