@@ -280,3 +280,48 @@ native_drawlog_detail(unsigned seq, const void *render, id color0, unsigned star
 		}
 	}
 }
+
+/* 26c A/B test (USER: glass grey): /var/local/sweet-glass-noinf present -> before a draw whose fragment function is
+ * a glass shader, +-inf floats in fragment buffer 1's uniform block (GlassBackgroundUniforms, 272 B) become
+ * +-65504 (half max). Hypothesis: inf * 0 = NaN in the translated half math darkens the glass; 65504 * 0 = 0 and
+ * large values still saturate to 1. Checked once a second; counts are logged. */
+static bool
+native_glass_noinf_on(void)
+{
+	static time_t last;
+	static bool on;
+	const time_t now = time(NULL);
+	if (now != last) {
+		struct stat st;
+		last = now;
+		on = stat("/var/local/sweet-glass-noinf", &st) == 0;
+	}
+	return on;
+}
+static void
+native_glass_noinf(const void *render, id const *fbufs, const size_t *foffs, unsigned nfb)
+{
+	if (!native_glass_noinf_on() || nfb < 2 || fbufs[1] == nil)
+		return;
+	pthread_mutex_lock(&native_drawlog_lock);
+	struct native_drawlog_name *e = native_drawlog_slot(render, false);
+	const bool glass = e && strstr(e->ffn, "glass") != NULL;
+	pthread_mutex_unlock(&native_drawlog_lock);
+	if (!glass)
+		return;
+	uint8_t *base = (uint8_t *)[fbufs[1] contents];
+	const size_t len = (size_t)[fbufs[1] length];
+	if (!base || foffs[1] + 272 > len)
+		return;
+	float *f = (float *)(base + foffs[1]);
+	unsigned fixed = 0;
+	for (unsigned k = 0; k < 68; k++)
+		if (isinf(f[k])) {
+			f[k] = f[k] > 0 ? 65504.0f : -65504.0f;
+			fixed++;
+		}
+	static unsigned draws, total;
+	total += fixed;
+	if (++draws <= 4 || (draws & (draws - 1)) == 0)
+		fprintf(stderr, "SweetNativeMetal: glass-noinf %u draws, %u inf floats clamped (%s)\n", draws, total, e->ffn);
+}

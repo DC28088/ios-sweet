@@ -1683,6 +1683,7 @@ ensure_function_encoder(void)
         '\t\t\t    (unsigned)work->indexType, (size_t)work->indexBufferOffset, work->baseVertex,\n'
         '\t\t\t    work->vertexBuffers, work->vertexBufferOffsets, work->vertexBufferCount,\n'
         '\t\t\t    work->buffers, work->bufferOffsets, work->count);\n'
+        '\t\tnative_glass_noinf([work->render render], work->buffers, work->bufferOffsets, work->count);\n'
         '\t}\n'
         '\tif (mesa.render_draw([work->render render], &draw, why, size) != 0) {')
     # iOS 26 (26b6g): -setThreadgroupMemoryLength:atIndex: reaches the dispatch (air_metal.h rwa_bindings
