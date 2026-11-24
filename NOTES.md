@@ -1,3 +1,22 @@
+## 2026-11-24 19:50 IST: dock glass missing AT REST after a home-screen swipe = CoreAnimation partial redraws (analysis)
+- sweetshots over a swipe: page 1 = dock glass platter present; at rest on page 2 = platter GONE (icons fine, still
+  after 10 s). USER: comes back after an app open/close (= a full redraw).
+- Draw log through one swipe + settle (2885 draws; /var/local/sweet-native-drawlog): full frames contain the dock's
+  glass (2x variable_blur|glass_background_no_bleed + 3x sdf_filter|glass_background_sdf_no_bleed, tex4 832x256 shape
+  map, tex3 448x960 backdrop, all plausible per the dump). After the swipe every frame is PARTIAL: ~9 draws, only the
+  search pill/page dots (glass tex4 192x128). The last dock glass draw is draw 10694; afterwards only partial frames.
+  => The dock region is not redrawn at rest; the buffer that ends up on screen lacks the glass. HYPOTHESES (not tested):
+  (a) CA's buffer-age damage accounting (each of the 3 rotating drawable surfaces has its own last-drawn content; our
+  swap/present reuse order may differ from what CA assumes) -> dump each drawable's dock region per swap; (b) the
+  glass pass output in a full frame is lost between the dock glass draw and the present (later draws in the frame
+  overwrite or the resolve of that pass is skipped). (b) is easy to test: run the glass dump rt-after on the dock
+  glass draw (n-th of the frame) AND dump the presented surface.
+- Dump stuff: /var/local/sweet-glass-dump -> first 3 glass draws since the switch was armed (per backboardd
+  process): dump counter resets when the switch file is absent for a second. Not the same as "dock".
+- Other open items: App Library folder platters missing (same partial-redraw family?), backdrop blur under Control
+  Centre weaker than real iOS (texture view of the blur levels is implemented but no view request seen), widgets
+  "Waiting...", 2 CC modules without glyphs, zero-copy wake bug (26bW), backboardd exit hang, USB drops.
+
 ## 2026-11-24 19:05 IST: GLASS MOSTLY WORKS (native-metal): blur mip levels rendered right; dock glass lost while scrolling
 - Glass diagnosis tool: touch /var/local/sweet-glass-dump -> first 3 glass draws write tex3/tex4 (before) and colour
   attachment 0 (after) to /var/tmp/glass-N-*.raw (backboardd = mobile); scratchpad glass2png.py converts.
