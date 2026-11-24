@@ -1,3 +1,17 @@
+## 2026-11-24 07:15 IST: modem DIAG over QRTR gives NOTHING (0012 v2-v4); diag switched OFF; Wi-Fi still blocked
+- 0012 v2 (CI 45304714769, wland 0119404d): our 0x1001 servers (raw word = id) at 1:50-54 -> no packet in 30 s. The modem
+  announces ONE 0x1001 server: instance word 0x1 at 0:1c.
+- v3 (CI 45305212955, 50211bc5): HDLC diag commands (0x00 version, 0x7d/5 all RT masks; CRC checked against the known
+  "00 78 f0 7e") to 0:1c from 1:51 -> sends OK, no answer.
+- v4 (CI 45305732814, wland 80145540, installed): + control packets (feature/diagmode/F3 mask) to 0:1c from 1:50 and our
+  servers announced in both encodings (word id and 1|id<<8) -> still 0 packets on any port.
+  => either 0x1001 is not DIAG here or it needs a handshake not known from memory. STOPPED.
+- Phone now: /var/local/bin/wland = 0012 v4 with /var/local/diag.on REMOVED (diag off = 0011 + 0010 behaviour);
+  rollbacks wland.0011 (978b4b7c), wland.0009 (d24e9e7d).
+- Shell gotcha (twice today): `ps | grep [s]weet-usb-log` / pkill -f inside the tool shell match the tool shell's own
+  command line -> exit 144. Find the receiver with `ss -ulnpH 'sport = :5140'` instead.
+- Wi-Fi options left: (A) iOS 16 kernel 0240 against the iOS 26 root read-only (USER has the USB stick image), (B) park.
+
 ## 2026-11-24 07:00 IST: 0012 v1 (glink DIAG) got nothing -> 0012 v2 over QRTR (serve 0x1001); USB drop WITHOUT a Mav20 test
 - 23:06 boot (26bR + wland 0012 v1, logs/boot-26bRd.txt): the USB link died at 23:11 with NO D53gAP test run -> the
   USB drops are not caused by the Mav20 test (correcting the 22:30 guess). Phone found in fastboot at 06:49.
