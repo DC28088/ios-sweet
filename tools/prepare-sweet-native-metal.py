@@ -1809,6 +1809,20 @@ def adapt_attachment_levels(donor, frontend):
       unsigned tw = u_minify(t->shape.width, lv);
       unsigned th = u_minify(t->shape.height ? t->shape.height : 1, lv);
       if (i == 0) {''')
+    # Metal renders a pass with attachments of different sizes into the smallest common area (renderTargetWidth/
+    # Height = the minimum); QuartzCore's blur draws into level n of attachment 0 with attachment 1 at full size
+    # (26c: "colour attachment 1 is 256x192 and attachment 0 is 128x96" -> dropped passes -> flicker).
+    s=replace(s,'''      } else if (tw != w || th != h) {
+         say(why, why_size, "colour attachment %u is %ux%u and attachment 0 is %ux%u", i,
+             tw, th, w, h);
+         return -1;
+      }''','''      } else {
+         w = MIN2(w, tw);
+         h = MIN2(h, th);
+      }''')
+    s=replace(s,'''      } else if (tw != w || th != h) {
+         say(why, why_size, "the depth attachment is %ux%u and colour attachment 0 is %ux%u",''','''      } else if (tw < w || th < h) {
+         say(why, why_size, "the depth attachment is %ux%u, smaller than the colour area %ux%u",''')
     s=replace(s,'      surf[i] = native_render_surface(draw->color[i]);\n',
         '      surf[i] = (draw->native_color_level[i] || draw->native_color_layer[i])\n'
         '         ? native_render_surface_at(draw->color[i], draw->native_color_level[i], draw->native_color_layer[i])\n'
