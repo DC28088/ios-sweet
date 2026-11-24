@@ -138,3 +138,40 @@ static id native_blit_encoder_new(id commandBuffer)
 	if (told++ < 4) rw_print("blit encoder made (26c)\n");
 	return [e autorelease];
 }
+
+/* 26c glass dump writer (declared in SweetNativeDrawLog.inc) */
+static void
+native_glass_write(struct rwa_device *dev, id tex, unsigned n, const char *what)
+{
+	if (tex == nil || ![tex respondsToSelector:@selector(mesaTexture)])
+		return;
+	const unsigned fmt = (unsigned)[tex pixelFormat], w = (unsigned)[tex width], h = (unsigned)[tex height];
+	const unsigned bpp = (fmt == 80 || fmt == 81 || fmt == 70 || fmt == 71) ? 4 : fmt == 115 ? 8 : (fmt == 1 || fmt == 10) ? 1 : 0;
+	if (!bpp || !w || !h || (size_t)w * h * bpp > (64u << 20))
+		return;
+	char why[256] = {0};
+	if (mesa.finish(dev, why, sizeof why) != 0) {
+		fprintf(stderr, "SweetNativeMetal: glass-dump %u %s: finish failed: %s\n", n, what, why);
+		return;
+	}
+	void *px = malloc((size_t)w * h * bpp);
+	if (!px)
+		return;
+	const unsigned origin[3] = {0, 0, 0}, size[3] = {w, h, 1};
+	if (mesa.texture_read([tex mesaTexture], 0, 0, origin, size, px, (size_t)w * bpp, why, sizeof why) != 0) {
+		fprintf(stderr, "SweetNativeMetal: glass-dump %u %s: read failed: %s\n", n, what, why);
+		free(px);
+		return;
+	}
+	char path[96];
+	snprintf(path, sizeof path, "/var/tmp/glass-%u-%s.raw", n, what);
+	FILE *f = fopen(path, "wb");
+	if (f) {
+		const uint32_t hdr[5] = {0x44475753u, w, h, fmt, bpp};
+		fwrite(hdr, sizeof hdr, 1, f);
+		fwrite(px, (size_t)w * h * bpp, 1, f);
+		fclose(f);
+	}
+	fprintf(stderr, "SweetNativeMetal: glass-dump %u %s %ux%u fmt %u -> %s%s\n", n, what, w, h, fmt, path, f ? "" : " (open failed)");
+	free(px);
+}

@@ -1670,6 +1670,7 @@ ensure_function_encoder(void)
         '\treturn [[SweetNativeMetalRenderPipeline alloc] initWithRedwoodDevice:self\n')
     s=replace(s,'\tif (mesa.render_draw([work->render render], &draw, why, size) != 0) {',
         '\tconst unsigned dl = native_drawlog_next();\n'
+        '\tunsigned gdump = 0;\n'
         '\t{\n'
         '\t\tif (dl)\n'
         '\t\t\tnative_drawlog_draw(dl, [work->render render], (unsigned)work->primitive,\n'
@@ -1684,6 +1685,7 @@ ensure_function_encoder(void)
         '\t\t\t    work->vertexBuffers, work->vertexBufferOffsets, work->vertexBufferCount,\n'
         '\t\t\t    work->buffers, work->bufferOffsets, work->count);\n'
         '\t\tnative_glass_noinf([work->render render], work->buffers, work->bufferOffsets, work->count);\n'
+        '\t\tgdump = native_glass_dump_before([[_queue device] mesaDevice], [work->render render], work->textures, work->textureCount);\n'
         '\t}\n'
         '\tif (mesa.render_draw([work->render render], &draw, why, size) != 0) {')
     # iOS 26 (26b6g): -setThreadgroupMemoryLength:atIndex: reaches the dispatch (air_metal.h rwa_bindings
@@ -1715,6 +1717,7 @@ ensure_function_encoder(void)
     # DRAWTIME (frontend/SweetNativeDrawLog.inc, iOS 26 slow frames): a timed draw log flushes and waits per draw.
     s=replace(s,'\t\trw_print("the draw failed: %s\\n", why);\n\t\t[self failWith:why];\n\t\treturn NO;\n\t}\n\treturn YES;\n}\n',
         '\t\trw_print("the draw failed: %s\\n", why);\n\t\t[self failWith:why];\n\t\treturn NO;\n\t}\n'
+        '\tnative_glass_dump_after([[_queue device] mesaDevice], gdump, work->colorCount ? work->color[0] : nil);\n'
         '\tif (dl && native_drawlog_time_on) {\n'
         '\t\tstruct timespec t0, t1;\n'
         '\t\tchar fwhy[256] = {0};\n'

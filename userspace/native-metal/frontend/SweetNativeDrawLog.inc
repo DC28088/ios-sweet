@@ -325,3 +325,51 @@ native_glass_noinf(const void *render, id const *fbufs, const size_t *foffs, uns
 	if (++draws <= 4 || (draws & (draws - 1)) == 0)
 		fprintf(stderr, "SweetNativeMetal: glass-noinf %u draws, %u inf floats clamped (%s)\n", draws, total, e->ffn);
 }
+
+/* 26c Glass diagnosis: /var/local/sweet-glass-dump present -> the first three glass draws (fragment function name
+ * contains "glass") write their fragment textures 3 and 4 (before the draw) and colour attachment 0 (after it) to
+ * /var/tmp/glass-<n>-<what>.raw: "SWGD" u32 width, height, Metal pixel format, bytes per pixel, then the rows.
+ * Each dump waits for the GPU first (serialises that frame). backboardd runs as mobile: /var/tmp, not /var/local. */
+static unsigned native_glass_dumps;
+static bool
+native_glass_dump_on(void)
+{
+	static time_t last;
+	static bool on;
+	const time_t now = time(NULL);
+	if (now != last) {
+		struct stat st;
+		last = now;
+		on = stat("/var/local/sweet-glass-dump", &st) == 0;
+		if (!on)
+			native_glass_dumps = 0;
+	}
+	return on;
+}
+static bool
+native_glass_draw(const void *render)
+{
+	pthread_mutex_lock(&native_drawlog_lock);
+	struct native_drawlog_name *e = native_drawlog_slot(render, false);
+	const bool glass = e && strstr(e->ffn, "glass") != NULL;
+	pthread_mutex_unlock(&native_drawlog_lock);
+	return glass;
+}
+/* defined in SweetNativeBlit.inc (needs the mesa table, declared after this file) */
+static void native_glass_write(struct rwa_device *dev, id tex, unsigned n, const char *what);
+static unsigned
+native_glass_dump_before(struct rwa_device *dev, const void *render, id const *textures, unsigned ntex)
+{
+	if (!native_glass_dump_on() || native_glass_dumps >= 3 || !native_glass_draw(render))
+		return 0;
+	const unsigned n = ++native_glass_dumps;
+	if (ntex > 3) native_glass_write(dev, textures[3], n, "tex3");
+	if (ntex > 4) native_glass_write(dev, textures[4], n, "tex4");
+	return n;
+}
+static void
+native_glass_dump_after(struct rwa_device *dev, unsigned n, id color0)
+{
+	if (n)
+		native_glass_write(dev, color0, n, "rt-after");
+}
