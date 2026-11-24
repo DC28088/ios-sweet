@@ -255,13 +255,13 @@ int rwa_clear(struct rwa_device *d,struct rwa_texture *const *color,unsigned cou
       if(!(res->bind&PIPE_BIND_RENDER_TARGET) || util_format_is_pure_integer(res->format)) {
          say(why,n,"interface: clear requires a floating-point or normalized render target");return -1;
       }
-      const unsigned lv=levels?levels[i]:0,ly=layers?layers[i]:0;
-      if(lv>res->last_level){say(why,n,"clear attachment %u level %u is beyond its %u levels",i,lv,res->last_level+1);return -1;}
+      const unsigned lv=levels?levels[i]:0,ly=layers?layers[i]:0,alv=lv+color[i]->native_base_level;
+      if(alv>res->last_level){say(why,n,"clear attachment %u level %u is beyond its %u levels",i,alv,res->last_level+1);return -1;}
       struct pipe_surface *surface=(lv||ly)?native_render_surface_at(color[i],lv,ly):native_render_surface(color[i]);
       if(!surface){say(why,n,"failed to create clear surface");return -1;}
       union pipe_color_union value;
       memcpy(value.f,values[i],sizeof(value.f));
-      d->pipe->clear_render_target(d->pipe,surface,&value,0,0,u_minify(res->width0,lv),u_minify(res->height0,lv),false);
+      d->pipe->clear_render_target(d->pipe,surface,&value,0,0,u_minify(res->width0,alv),u_minify(res->height0,alv),false);
       pipe_surface_reference(&surface,NULL);
    }
    if(z || s) {
@@ -294,7 +294,7 @@ static unsigned native_layers(const struct pipe_resource *r,unsigned level)
 {
    return r->target==PIPE_TEXTURE_3D?u_minify(r->depth0,level):r->array_size;
 }
-unsigned rwa_texture_levels(const struct rwa_texture *t){return t&&t->res?t->res->last_level+1:0;}
+unsigned rwa_texture_levels(const struct rwa_texture *t){return t&&t->res?(t->native_levels?t->native_levels:t->res->last_level+1):0;}
 unsigned rwa_texture_slices(const struct rwa_texture *t){return t&&t->res?native_layers(t->res,0):0;}
 static unsigned native_blit_told;
 int rwa_copy_texture(struct rwa_device *d,struct rwa_texture *src,unsigned src_slice,unsigned src_level,
@@ -303,6 +303,8 @@ int rwa_copy_texture(struct rwa_device *d,struct rwa_texture *src,unsigned src_s
 {
    if(!d || d->lost || !src || !dst || !src->res || !dst->res){say(why,n,"blit: invalid texture copy");return -1;}
    struct pipe_resource *s=src->res,*t=dst->res;
+   src_level+=src->native_base_level;src_slice+=src->native_base_layer;   /* 26c views */
+   dst_level+=dst->native_base_level;dst_slice+=dst->native_base_layer;
    if(src_level>s->last_level || dst_level>t->last_level){say(why,n,"blit: copy level outside the texture");return -1;}
    if(!size[0] || !size[1] || !size[2])return 0;
    const unsigned sw=u_minify(s->width0,src_level),sh=u_minify(s->height0,src_level);
@@ -335,7 +337,8 @@ int rwa_generate_mipmaps(struct rwa_device *d,struct rwa_texture *tex,char *why,
 {
    if(!d || d->lost || !tex || !tex->res){say(why,n,"blit: invalid mipmap texture");return -1;}
    struct pipe_resource *r=tex->res;
-   for(unsigned l=1;l<=r->last_level;l++) {
+   const unsigned base=tex->native_base_level,last=tex->native_levels?base+tex->native_levels-1:r->last_level;
+   for(unsigned l=base+1;l<=last;l++) {
       struct pipe_blit_info b;memset(&b,0,sizeof b);
       b.src.resource=r;b.src.level=l-1;b.src.format=r->format;
       b.dst.resource=r;b.dst.level=l;b.dst.format=r->format;
@@ -371,4 +374,26 @@ int rwa_fill_buffer(struct rwa_device *d,struct rwa_buffer *buf,size_t off,size_
    d->pipe->clear_buffer(d->pipe,buf->res,(unsigned)off,(unsigned)size,&value,1);
    native_invalidate_constants(d);d->native_buffer_writes=true;
    return d->in_command?0:finish_or_say_why(d,true,"buffer fill",why,n);
+}
+
+struct rwa_texture *rwa_texture_view(struct rwa_texture *p,unsigned first_level,unsigned levels,unsigned first_layer,
+                                     unsigned layers,char *why,size_t n)
+{
+   if(!p || !p->res){say(why,n,"view of nothing");return NULL;}
+   const unsigned pl=p->native_levels?p->native_levels:p->res->last_level+1;
+   const unsigned pa=p->native_layers?p->native_layers:(p->layers?p->layers:1);
+   if(!levels || first_level+levels>pl){say(why,n,"view levels %u+%u outside the texture's %u",first_level,levels,pl);return NULL;}
+   if(!layers || first_layer+layers>pa){say(why,n,"view slices %u+%u outside the texture's %u",first_layer,layers,pa);return NULL;}
+   struct rwa_texture *v=malloc(sizeof *v);
+   if(!v){say(why,n,"out of memory for a texture view");return NULL;}
+   *v=*p;
+   v->view=NULL;v->native_surface=NULL;v->res=NULL;
+   pipe_resource_reference(&v->res,p->res);
+   v->native_base_level=p->native_base_level+first_level;v->native_levels=levels;
+   v->native_base_layer=p->native_base_layer+first_layer;v->native_layers=layers;
+   v->layers=layers;
+   v->shape.width=u_minify(p->res->width0,v->native_base_level);
+   v->shape.height=u_minify(p->res->height0,v->native_base_level);
+   v->shape.mip_levels=levels;v->shape.array_length=layers;
+   return v;
 }

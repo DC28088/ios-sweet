@@ -48,6 +48,10 @@ int rwa_generate_mipmaps(struct rwa_device *, struct rwa_texture *, char *, size
 int rwa_copy_buffer(struct rwa_device *, struct rwa_buffer *src, size_t src_offset, struct rwa_buffer *dst,
                     size_t dst_offset, size_t size, char *, size_t);
 int rwa_fill_buffer(struct rwa_device *, struct rwa_buffer *, size_t offset, size_t size, uint8_t value, char *, size_t);
+/* 26c: a view of levels [first_level, +levels) and layers [first_layer, +layers) of a texture, same format; it
+ * shares the parent's resource (a reference of its own). NULL and a sentence when the range is outside. */
+struct rwa_texture *rwa_texture_view(struct rwa_texture *parent, unsigned first_level, unsigned levels,
+                                     unsigned first_layer, unsigned layers, char *, size_t);
 unsigned rwa_texture_levels(const struct rwa_texture *);
 unsigned rwa_texture_slices(const struct rwa_texture *);
 #ifdef __cplusplus

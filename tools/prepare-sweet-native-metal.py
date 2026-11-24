@@ -1861,6 +1861,85 @@ def adapt_attachment_levels(donor, frontend):
         '                         work->nativeColorLevel,work->nativeColorLayer,why,sizeof why)')
     frontend.write_text(s)
 
+def adapt_level_views(donor, frontend):
+    # 26c: texture views of a level/layer range (QuartzCore's blur samples and renders single mip levels: "a texture
+    # view is not implemented; nil (format 80 type 2 levels 1+1 ...)" -> the deeper blur and the dock/App Library
+    # glass platters were drawn from nil). A view shares the parent's pipe_resource with a base level/layer that
+    # sampling, image, render-surface, read/write, copy and mipmap paths add (backend rwa_texture_view).
+    air=donor/'tools/mesa/air'
+    p=air/'air_metal.c';s=p.read_text()
+    s=replace(s,'   bool shader_read, shader_write;\n};',
+        '   bool shader_read, shader_write;\n'
+        '   unsigned native_base_level, native_levels, native_base_layer, native_layers;   /* 26c views (0 levels = whole) */\n};')
+    s=replace(s,'            u_sampler_view_default_template(&tmpl, t->res, t->res->format);\n',
+        '            u_sampler_view_default_template(&tmpl, t->res, t->res->format);\n'
+        '            if (t->native_levels) {\n'
+        '               tmpl.u.tex.first_level = t->native_base_level;\n'
+        '               tmpl.u.tex.last_level = t->native_base_level + t->native_levels - 1;\n'
+        '            }\n'
+        '            if (t->native_layers) {\n'
+        '               tmpl.u.tex.first_layer = t->native_base_layer;\n'
+        '               tmpl.u.tex.last_layer = t->native_base_layer + t->native_layers - 1;\n'
+        '            }\n')
+    s=replace(s,'            .u.tex.level = 0,','            .u.tex.level = t->native_base_level,')
+    s=replace(s,'         texture->res, &(struct pipe_surface){ .format = texture->res->format });',
+        '         texture->res, &(struct pipe_surface){ .format = texture->res->format,\n'
+        '            .u.tex.level = texture->native_base_level, .u.tex.first_layer = texture->native_base_layer,\n'
+        '            .u.tex.last_layer = texture->native_base_layer });')
+    s=replace(s,'   tmpl.u.tex.level = level;\n   tmpl.u.tex.first_layer = layer;\n   tmpl.u.tex.last_layer = layer;\n',
+        '   tmpl.u.tex.level = level + texture->native_base_level;\n'
+        '   tmpl.u.tex.first_layer = layer + texture->native_base_layer;\n'
+        '   tmpl.u.tex.last_layer = layer + texture->native_base_layer;\n')
+    s=replace(s,'      if (lv > t->res->last_level) {','      if (lv + t->native_base_level > t->res->last_level) {')
+    s=replace(s,'''                  size_t stride, char *why, size_t why_size)
+{
+   struct pipe_box box;
+   size_t row;
+''','''                  size_t stride, char *why, size_t why_size)
+{
+   struct pipe_box box;
+   size_t row;
+   level += texture->native_base_level;   /* 26c views */
+   layer += texture->native_base_layer;
+''')
+    s=replace(s,'''{
+   struct pipe_context *pipe = texture->device->pipe;
+   struct pipe_box box;
+   size_t row;
+''','''{
+   struct pipe_context *pipe = texture->device->pipe;
+   struct pipe_box box;
+   size_t row;
+   level += texture->native_base_level;   /* 26c views */
+   layer += texture->native_base_layer;
+''')
+    p.write_text(s)
+    s=frontend.read_text()
+    s=replace(s,'\tstatic unsigned refused;\n','''	/* 26c: a level/slice range in the same format (QuartzCore's blur reads and renders single mip levels) */
+	if (format == sf && !_nativeSurface && levels.length >= 1 && (type == _shape.type || (type == 2 && _shape.type == 3))) {
+		char vwhy[256] = { 0 };
+		const unsigned nsl = slices.length ? (unsigned)slices.length : 1;
+		struct rwa_texture *v = rwa_texture_view(_texture, (unsigned)levels.location, (unsigned)levels.length,
+		                                         (unsigned)slices.location, nsl, vwhy, sizeof vwhy);
+		if (v) {
+			struct rwa_texture_shape vs = _shape;
+			vs.width = _shape.width >> levels.location ? _shape.width >> levels.location : 1;
+			vs.height = _shape.height >> levels.location ? _shape.height >> levels.location : 1;
+			vs.mip_levels = (unsigned)levels.length;
+			vs.array_length = nsl;
+			vs.type = (unsigned)type;
+			static unsigned made;
+			if (made++ < 8)
+				rw_print("texture view made: levels %lu+%lu slices %lu+%u of %ux%u -> %ux%u\\n", (unsigned long)levels.location,
+				         (unsigned long)levels.length, (unsigned long)slices.location, nsl, _shape.width, _shape.height, vs.width, vs.height);
+			return [[SweetNativeMetalTexture alloc] initWithRedwoodDevice:_owner texture:v shape:&vs];
+		}
+		rw_print("texture view refused by the backend: %s\\n", vwhy);
+	}
+	static unsigned refused;
+''')
+    frontend.write_text(s)
+
 def serialize_methods(path):
     s=path.read_text()
     support='''
@@ -1995,6 +2074,7 @@ def main():
     frontend=adapt_frontend(args.donor)
     adapt_blit(frontend)
     adapt_attachment_levels(args.donor, frontend)
+    adapt_level_views(args.donor, frontend)
     serialize_methods(frontend)
     print('Prepared native Sweet Metal sources:',args.donor)
 
