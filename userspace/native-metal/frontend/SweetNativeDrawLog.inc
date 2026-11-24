@@ -373,3 +373,19 @@ native_glass_dump_after(struct rwa_device *dev, unsigned n, id color0)
 	if (n)
 		native_glass_write(dev, color0, n, "rt-after");
 }
+
+/* A/B diagnosis (dock glass present vs missing at rest): for every logged draw, which colour target object/IOSurface it
+ * goes to, the scissor, the clear mask and the attachment level; and one line per command-buffer commit. */
+static void
+native_drawlog_where(unsigned seq, const void *cb, id color0, unsigned flags, const unsigned *scissor,
+                     unsigned clear_mask, unsigned level)
+{
+	if (!seq)
+		return;
+	const void *surf = color0 != nil && [color0 respondsToSelector:@selector(iosurface)] ? (const void *)[color0 iosurface] : NULL;
+	char sc[64] = "full";
+	if (flags & 2)
+		snprintf(sc, sizeof(sc), "%u,%u,%ux%u", scissor[0], scissor[1], scissor[2], scissor[3]);
+	fprintf(stderr, "SweetNativeMetal: DRAWW %u cb %p rt %p surf %p sc %s clear %#x lv %u\n", seq, cb, (const void *)color0,
+	        surf, sc, clear_mask, level);
+}

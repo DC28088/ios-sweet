@@ -1684,6 +1684,8 @@ ensure_function_encoder(void)
         '\t\t\t    (unsigned)work->indexType, (size_t)work->indexBufferOffset, work->baseVertex,\n'
         '\t\t\t    work->vertexBuffers, work->vertexBufferOffsets, work->vertexBufferCount,\n'
         '\t\t\t    work->buffers, work->bufferOffsets, work->count);\n'
+        '\t\tnative_drawlog_where(dl, (const void *)self, work->colorCount ? work->color[0] : nil, work->nativeFlags,\n'
+        '\t\t    work->nativeScissor, work->nativeClearMask, work->colorCount ? work->nativeColorLevel[0] : 0);\n'
         '\t\tnative_glass_noinf([work->render render], work->buffers, work->bufferOffsets, work->count);\n'
         '\t\tgdump = native_glass_dump_before([[_queue device] mesaDevice], [work->render render], work->textures, work->textureCount);\n'
         '\t}\n'
