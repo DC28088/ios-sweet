@@ -1,3 +1,17 @@
+## 2026-11-24 07:45 IST: GLASS: the Metal backend had NO blit encoder (-blitCommandEncoder -> nil) -> native-metal 26c
+- USER: "dock and control centre blur is missing, glass looks grey". sweetshot of the home screen: no dock glass platter.
+- Donor redwoodmetal.m (HakiOS a79ff077, prepared in the session scratchpad nm/donor): "What is NOT here ... blit
+  encoders"; -blitCommandEncoder / newFence / one-arg newTextureViewWithPixelFormat: return nil. The iOS 26 fallback
+  sink (SweetMTLArchitecture.m) logs only UNKNOWN selectors, so these silent nils were never reported. GUESS (likely):
+  CA's backdrop copy is a blit -> message to nil -> blur/glass sample an empty texture (grey).
+- native-metal 26c (commit "native-metal: real MTLBlitCommandEncoder"): frontend/SweetNativeBlit.inc (encoder class,
+  copies recorded as SweetNativeMetalWork nativeBlit 1-4) + tools/prepare-sweet-native-metal.py adapt_blit (work fields,
+  commit-loop branch, -blitCommandEncoder(WithDescriptor:)) + backend rwa_copy_texture (resource_copy_region, or
+  nearest blit across formats), rwa_generate_mipmaps (linear blit per level), rwa_copy_buffer, rwa_fill_buffer
+  (clear_buffer). Buffer<->texture copies: logged "not implemented (dropped)". Logs: "blit encoder made (26c)",
+  "blit copy WxHxD ...", "blit mipmaps ...". CI sweet-native-metal 45308658289. Prepare step verified locally.
+- Install later with tools/sweet-install-metal2.sh (keep the current bundle as backup) + restart backboardd.
+
 ## 2026-11-24 07:30 IST: USER: UI/Glass + stable 60 fps. Display = CPU scale-copy 10.7 ms/frame; QSEED3LITE fix xnu 2019
 - USER: "lets fix UI.. most the glass elements are not properly functioning... and make the GPU fully functional with
   at least stable 60fps". Wi-Fi/cellular parked (state in the entries below).
