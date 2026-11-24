@@ -1,3 +1,23 @@
+## 2026-11-24 19:05 IST: GLASS MOSTLY WORKS (native-metal): blur mip levels rendered right; dock glass lost while scrolling
+- Glass diagnosis tool: touch /var/local/sweet-glass-dump -> first 3 glass draws write tex3/tex4 (before) and colour
+  attachment 0 (after) to /var/tmp/glass-N-*.raw (backboardd = mobile); scratchpad glass2png.py converts.
+  First dump: the glass backdrop (tex3 256x192/256x128 BGRA) was ALL ZERO; the frame itself fine.
+- ROOT CAUSE 1 (fixed, CI 45388425507): render passes ignored colour attachment level/slice -> every blur mip pass drew
+  into level 0. Now draws/clears target the attachment level/layer (tools/prepare-sweet-native-metal.py
+  adapt_attachment_levels; rwa_clear gets levels/layers).
+- ROOT CAUSE 2 (fixed, CI 45399676686): passes with attachment 0 at level n and attachment 1 full size were refused
+  ("colour attachment 1 is 256x192 and attachment 0 is 128x96") -> dropped passes -> flicker. Metal rule: render the
+  smallest common area. USER: "the flicker is mostly gone".
+- Level/slice texture views (CI 45401*, adapt_level_views + rwa_texture_view): views of a level range share the
+  resource with base level/layer (sampler/image/render/read/write/copy/mipmap paths). Installed; no view request seen yet.
+- USER screenshots (26bU): Control Centre tiles are real glass now (background blur weaker than real iOS); after an
+  app open/close the dock platter, Search pill, live Calendar/Clock icons render right; WHILE/AFTER SCROLLING the
+  home screen the dock glass vanishes (and Calendar/Clock icons go blank) until an app open/close. App Library folder
+  platters missing, background blur weak. Widgets show "Waiting..." (separate).
+- sweetshot works on 26bU (276x597 when hw scaling; black when the display is off).
+- NEXT: draw log WHILE scrolling vs after app close (echo N > /var/local/sweet-native-drawlog) to find the path that
+  loses the glass; then the deeper/weak blur.
+
 ## 2026-11-24 17:00 IST: zero-copy (26bW) goes DARK after a display off/on; 26bU lock/wake OK -> phone on 26bU
 - 26bW: USER asked for a SpringBoard restart (2nd time): backboardd stayed alive this time, but the screen stayed dark;
   power button: "SWEET KEYS" + "SWEET FB: display off/on" logged, zc_frames kept rising (1616 -> 1781), USER: still
