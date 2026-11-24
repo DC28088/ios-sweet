@@ -1,3 +1,17 @@
+## 2026-11-24 17:00 IST: zero-copy (26bW) goes DARK after a display off/on; 26bU lock/wake OK -> phone on 26bU
+- 26bW: USER asked for a SpringBoard restart (2nd time): backboardd stayed alive this time, but the screen stayed dark;
+  power button: "SWEET KEYS" + "SWEET FB: display off/on" logged, zc_frames kept rising (1616 -> 1781), USER: still
+  dark. /dev/pmem read in that state: VIG0 SRC0 0x9c000000 (splash), SRC_SIZE 0x09600438 (panel), YSTRIDE 0x10e0,
+  CTL0 flush 0, LM0 op/out 0 -> the MDP shows ABL's (black) buffer 1:1 although the driver counts zc frames.
+  Only VIG0 is active (VIG1/DMA0-2 SRC0 = 0).
+- Reconstructed the exact SweetFramebuffer.cpp/SweetSurface.* of the built kernel (Bergamota 37a7a7a9 + our 2001-2020,
+  only those files, `git apply --include`, 61 patches OK) in the session scratchpad fbsrc/. zcPresent always ends in
+  scanAddr(poolPA+offset, bpr, true), which writes SRC0 unconditionally; blackout() (display off) does scanTo(0) +
+  zcReleaseAll. So after the wake something re-ran scanTo(0)/blackout or zc frames stopped reaching zcPresent:
+  NOT resolved. Need a register read with the screen ON (normal) vs dark, or a kernel trace of scanTo(0) callers.
+- 26bU (no zc) booted 16:49 (logs/boot-26bUb.txt): USER "screen is on, lock and wake works". Phone stays on 26bU.
+- Earlier the same day: first SpringBoard restart on 26bW left backboardd stuck exiting (?Es) - may be a 2nd zc bug.
+
 ## 2026-11-24 16:45 IST: 26bW (xnu 2020): zero-copy on ~every frame; backboardd restart HANGS in exit under zc
 - Kernel CI 45314298272 (2016-2020) OK; gh artifact download kept resetting (83 MB zip, slow/flaky link): fetched the
   signed blob URL (curl -w '%{redirect_url}' with gh auth token; NOT `gh api -i`, which downloads the zip) in 8
