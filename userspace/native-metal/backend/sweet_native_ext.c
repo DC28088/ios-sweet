@@ -283,7 +283,11 @@ int rwa_clear(struct rwa_device *d,struct rwa_texture *const *color,unsigned cou
  * -blitCommandEncoder with nil, so every copy was a message to nil: the effects sampled a never-written texture
  * (USER: dock and Control Centre blur missing, the glass grey).
  */
-#include "util/u_box.h"
+/* pipe_box filled by hand (Mesa 25.0.7 has no util/u_box.h on this include path) */
+static void native_box(struct pipe_box *b,int x,int y,int z,int w,int h,int d)
+{
+   memset(b,0,sizeof *b);b->x=x;b->y=y;b->z=z;b->width=w;b->height=h;b->depth=d;
+}
 static unsigned native_layers(const struct pipe_resource *r,unsigned level)
 {
    return r->target==PIPE_TEXTURE_3D?u_minify(r->depth0,level):r->array_size;
@@ -307,14 +311,14 @@ int rwa_copy_texture(struct rwa_device *d,struct rwa_texture *src,unsigned src_s
    }
    /* 2D arrays and cubes: z is the slice; 3D: z is the depth origin and the slice is 0 */
    const unsigned sz=s->target==PIPE_TEXTURE_3D?so[2]:src_slice,tz=t->target==PIPE_TEXTURE_3D?dor[2]:dst_slice;
-   struct pipe_box box;u_box_3d(so[0],so[1],sz,size[0],size[1],size[2],&box);
+   struct pipe_box box;native_box(&box,so[0],so[1],sz,size[0],size[1],size[2]);
    if(s->format==t->format || util_format_get_blocksize(s->format)==util_format_get_blocksize(t->format)) {
       /* Metal requires copy-compatible formats: a plain byte copy, as Metal defines it */
       d->pipe->resource_copy_region(d->pipe,t,dst_level,dor[0],dor[1],tz,s,src_level,&box);
    } else {
       struct pipe_blit_info b;memset(&b,0,sizeof b);
       b.src.resource=s;b.src.level=src_level;b.src.format=s->format;b.src.box=box;
-      b.dst.resource=t;b.dst.level=dst_level;b.dst.format=t->format;u_box_3d(dor[0],dor[1],tz,size[0],size[1],size[2],&b.dst.box);
+      b.dst.resource=t;b.dst.level=dst_level;b.dst.format=t->format;native_box(&b.dst.box,dor[0],dor[1],tz,size[0],size[1],size[2]);
       b.mask=util_format_get_mask(t->format);b.filter=PIPE_TEX_FILTER_NEAREST;
       d->pipe->blit(d->pipe,&b);
    }
@@ -333,8 +337,8 @@ int rwa_generate_mipmaps(struct rwa_device *d,struct rwa_texture *tex,char *why,
       struct pipe_blit_info b;memset(&b,0,sizeof b);
       b.src.resource=r;b.src.level=l-1;b.src.format=r->format;
       b.dst.resource=r;b.dst.level=l;b.dst.format=r->format;
-      u_box_3d(0,0,0,u_minify(r->width0,l-1),u_minify(r->height0,l-1),native_layers(r,l-1),&b.src.box);
-      u_box_3d(0,0,0,u_minify(r->width0,l),u_minify(r->height0,l),native_layers(r,l),&b.dst.box);
+      native_box(&b.src.box,0,0,0,u_minify(r->width0,l-1),u_minify(r->height0,l-1),native_layers(r,l-1));
+      native_box(&b.dst.box,0,0,0,u_minify(r->width0,l),u_minify(r->height0,l),native_layers(r,l));
       b.mask=util_format_get_mask(r->format);
       b.filter=util_format_is_pure_integer(r->format)?PIPE_TEX_FILTER_NEAREST:PIPE_TEX_FILTER_LINEAR;
       d->pipe->blit(d->pipe,&b);
@@ -352,7 +356,7 @@ int rwa_copy_buffer(struct rwa_device *d,struct rwa_buffer *src,size_t so,struct
    if(so>src->size || size>src->size-so || dof>dst->size || size>dst->size-dof || size>UINT32_MAX){
       say(why,n,"blit: buffer copy of %zu bytes outside its buffers",size);return -1;
    }
-   struct pipe_box box;u_box_1d((int)so,(int)size,&box);
+   struct pipe_box box;native_box(&box,(int)so,0,0,(int)size,1,1);
    d->pipe->resource_copy_region(d->pipe,dst->res,0,(unsigned)dof,0,0,src->res,0,&box);
    native_invalidate_constants(d);d->native_buffer_writes=true;
    return d->in_command?0:finish_or_say_why(d,true,"buffer copy",why,n);
