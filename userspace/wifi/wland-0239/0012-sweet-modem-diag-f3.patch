@@ -1,9 +1,9 @@
 diff --git a/phone/wifi/diag.c b/phone/wifi/diag.c
 new file mode 100644
-index 0000000..94123db
+index 0000000..af19920
 --- /dev/null
 +++ b/phone/wifi/diag.c
-@@ -0,0 +1,248 @@
+@@ -0,0 +1,316 @@
 +/*
 + * 0012: the modem's own debug (F3) messages over DIAG (Linux drivers/char/diag: diagfwd_cntl, diag_masks).
 + * Transport: QRTR (Linux diagfwd_socket): we serve DIAG_SVC_ID 0x1001 for the modem's instances (control 0, command 1,
@@ -128,7 +128,7 @@ index 0000000..94123db
 +	else if (p[0] == 0x60)
 +		n_event++;
 +	else {
-+		if (n_other++ < 20) {
++		if (n_other++ < 40) {
 +			int w = snprintf(line, sizeof(line), "packet cmd %#x len %u:", p[0], n);
 +			for (uint32_t i = 0; i < n && i < 24; i++)
 +				w += snprintf(line + w, sizeof(line) - (size_t)w, " %02x", p[i]);
@@ -190,6 +190,68 @@ index 0000000..94123db
 +
 +static int started;
 +
++/* v3: the modem SERVES 0x1001 (26bRf: instance word 1 at 0:1c) and never wrote to our servers -> be its client: send
++ * HDLC-framed diag commands from DIAG_PORT0 + 1; answers and F3 messages come back there. */
++static uint16_t crc16(const uint8_t *p, uint32_t n)
++{
++	uint16_t c = 0xffff;
++	for (uint32_t i = 0; i < n; i++) {
++		c ^= p[i];
++		for (int b = 0; b < 8; b++)
++			c = (c & 1) ? (uint16_t)((c >> 1) ^ 0x8408) : (uint16_t)(c >> 1);
++	}
++	return (uint16_t)~c;
++}
++
++static int send_cmd(uint32_t node, uint32_t port, const uint8_t *cmd, uint32_t n)
++{
++	uint8_t raw[300], enc[620];
++	uint32_t m = 0;
++	if (n + 2 > sizeof(raw))
++		return -1;
++	memcpy(raw, cmd, n);
++	uint16_t c = crc16(cmd, n);
++	raw[n] = (uint8_t)c;
++	raw[n + 1] = (uint8_t)(c >> 8);
++	for (uint32_t i = 0; i < n + 2; i++) {
++		if (raw[i] == 0x7e || raw[i] == 0x7d) {
++			enc[m++] = 0x7d;
++			enc[m++] = raw[i] ^ 0x20;
++		} else
++			enc[m++] = raw[i];
++	}
++	enc[m++] = 0x7e;
++	return qrtr_send(QRTR_TYPE_DATA, DIAG_PORT0 + 1, node, port, enc, m);
++}
++
++static uint32_t srv_node, srv_port;
++static int srv_known, want_cmds;
++
++void diag_new_server(uint32_t service, uint32_t inst, uint32_t node, uint32_t port)
++{
++	if (!started || service != DIAG_SVC)
++		return;
++	printf("[%6llu] diag: the modem serves %#x instance word %#x at %u:%x\n", (unsigned long long)link_ms(), service, inst, node, port);
++	if (!srv_known) {
++		srv_known = 1;
++		srv_node = node;
++		srv_port = port;
++		want_cmds = 1;
++	}
++}
++
++static void send_cmds(void)
++{
++	/* DIAG_EXT_MSG_CONFIG_F (0x7d) subcommand 5 SET_ALL_RT_MASKS: reserved u16, mask u32 = everything */
++	static const uint8_t all_rt[] = { 0x7d, 0x05, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff };
++	/* DIAG_VERBNO_F (0x00): a harmless first command to see that answers come back */
++	static const uint8_t verno[] = { 0x00 };
++	int a = send_cmd(srv_node, srv_port, verno, sizeof(verno));
++	int b = send_cmd(srv_node, srv_port, all_rt, sizeof(all_rt));
++	printf("[%6llu] diag: version request %d, all real-time F3 masks %d (to %u:%x from 1:%x)\n", (unsigned long long)link_ms(),
++	       a, b, srv_node, srv_port, DIAG_PORT0 + 1);
++}
++
 +/* a QRTR packet to one of our DIAG ports */
 +void diag_qrtr(const struct qrtr_hdr *h, const uint8_t *d, uint32_t n)
 +{
@@ -208,8 +270,8 @@ index 0000000..94123db
 +				want_masks = 1;
 +		}
 +		rx(0, d, n);
-+	} else if (i == 2 || i == 4)
-+		rx(1, d, n);
++	} else if (i == 1 || i == 2 || i == 4)
++		rx(1, d, n);	/* v3: the command port is our client port: answers + messages, HDLC */
 +	else if (per_port[i] <= 5) {
 +		char line[96];
 +		snprintf(line, sizeof(line), "%s packet, %u bytes", diag_inst_name[i], n);
@@ -238,6 +300,12 @@ index 0000000..94123db
 +	static int busy;
 +	if (!started || busy)
 +		return;
++	if (want_cmds) {
++		want_cmds = 0;
++		busy = 1;
++		send_cmds();
++		busy = 0;
++	}
 +	if (want_masks) {
 +		want_masks = 0;
 +		busy = 1;	/* qrtr_send may poll the link, which calls us again */
@@ -254,10 +322,10 @@ index 0000000..94123db
 +}
 diff --git a/phone/wifi/diag.h b/phone/wifi/diag.h
 new file mode 100644
-index 0000000..ae543ec
+index 0000000..c47e5f3
 --- /dev/null
 +++ b/phone/wifi/diag.h
-@@ -0,0 +1,11 @@
+@@ -0,0 +1,12 @@
 +#ifndef DIAG_H
 +#define DIAG_H
 +/* 0012: modem DIAG F3 messages (/var/local/diag.on) */
@@ -268,9 +336,10 @@ index 0000000..ae543ec
 +#define DIAG_PORTS	5
 +static inline int diag_port(uint32_t p) { return p >= DIAG_PORT0 && p < DIAG_PORT0 + DIAG_PORTS; }
 +void diag_qrtr(const struct qrtr_hdr *h, const uint8_t *d, uint32_t n);
++void diag_new_server(uint32_t service, uint32_t inst, uint32_t node, uint32_t port);	/* v3: the modem's DIAG server */
 +#endif
 diff --git a/phone/wifi/wland.c b/phone/wifi/wland.c
-index 5a06c20..8e73ed0 100644
+index 5a06c20..8c44e8f 100644
 --- a/phone/wifi/wland.c
 +++ b/phone/wifi/wland.c
 @@ -32,6 +32,7 @@
@@ -292,7 +361,15 @@ index 5a06c20..8e73ed0 100644
  		if (h->dst_port == PDMAPPER_PORT) {
  			pdmapper_handle(h, d, n);
  			return;
-@@ -867,6 +872,7 @@ static void net_idle(void)
+@@ -770,6 +775,7 @@ static void net_cb(const struct qrtr_hdr *h, const uint8_t *d, uint32_t n)
+ 		cell_new_server(w[1], w[2], w[3], w[4]);
+ 		servreg_new_server(w[1], w[2], w[3], w[4]);
+ 		pdmapper_new_server(w[1]);
++		diag_new_server(w[1], w[2], w[3], w[4]);
+ 	} else if (w[0] == QRTR_TYPE_DEL_SERVER) {
+ 		cell_del_server(w[1], w[3], w[4]);
+ 	}
+@@ -867,6 +873,7 @@ static void net_idle(void)
  	cell_poll();
  	servreg_poll();
  	pdmapper_poll();
@@ -300,7 +377,7 @@ index 5a06c20..8e73ed0 100644
  }
  
  static int net(unsigned secs)
-@@ -879,6 +885,7 @@ static int net(unsigned secs)
+@@ -879,6 +886,7 @@ static int net(unsigned secs)
  	if (link_up(net_cb, 5000))
  		return -1;
  	cell_ipa_link_up();

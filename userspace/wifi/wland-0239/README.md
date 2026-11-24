@@ -29,6 +29,8 @@ patch stack, not from `userspace/wifi/patches/`:
   modem acked the opens but never opened its end.) Off unless `/var/local/diag.on` exists. Output `/var/local/diag.log`
   (32 MiB cap; ON THE PHONE ONLY: may hold identifiers, never copy it into git); elf loader / user PD / WLAN / RFS lines
   are echoed to wland.log as "diag: ...". Workflow compiles diag.c when present.
+  v3: the modem itself serves 0x1001 (instance word 1) and never wrote to ours -> wland is also its client: HDLC
+  commands 0x00 (version) + 0x7d/5 (all real-time F3 masks) from port 0x51; answers/messages decoded there.
 
 Build: workflow `sweet-wifi-0239` (`.github/workflows/wifi-0239.yml`, manual dispatch). Tested 2026-11-09: Wi-Fi
 list instant after the radio warms up, SIM works (binary sha256 5eb59683...).
