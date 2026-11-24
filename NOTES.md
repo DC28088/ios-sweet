@@ -1,3 +1,20 @@
+## 2026-11-24 16:45 IST: 26bW (xnu 2020): zero-copy on ~every frame; backboardd restart HANGS in exit under zc
+- Kernel CI 45314298272 (2016-2020) OK; gh artifact download kept resetting (83 MB zip, slow/flaky link): fetched the
+  signed blob URL (curl -w '%{redirect_url}' with gh auth token; NOT `gh api -i`, which downloads the zip) in 8
+  parallel ranges. research/ios26/boot/kernel-45314298272. Image 26bW = 26bV cmdline + sweetbuild=2686
+  (shim-boot-26bW.img b944e2aa). Booted 16:34 (logs/boot-26bW.txt).
+- OBSERVED: '&BGA' display surfaces now pooled; stats zc_frames=301 copy_frames=1 in a busy window, swaps_s 42.9
+  (zc_s 37.9). No CPU copy in the display path.
+- native-metal 45314483013 installed (glass-noinf A/B switch /var/local/sweet-glass-noinf; previous build in
+  research/ios26/metal/build-45314483013/backup-before). Switch turned on, then USER asked for a SpringBoard restart.
+- PROBLEM: after `kill -TERM` SpringBoard, backboardd (366) went to state "?Es" = EXITING and stayed there; new
+  SpringBoard up, no backboardd -> black screen. GUESS: exit waits on IOSurfaces the zc path still holds (fZcHeld)
+  or on the GPU. The earlier backboardd restart by sweet-install-metal2.sh on the same boot worked. Recovered by
+  sweetreboot fastboot + 26bW again (16:44, logs/boot-26bWb.txt; backboardd 66, SpringBoard 28). Glass A/B switch
+  removed before the reboot (glass test NOT done yet).
+- TODO: reproduce (restart backboardd/SpringBoard on 26bW) and find what the exiting backboardd waits on; until
+  then avoid SpringBoard restarts on zc images (fallback image 26bU = no zc).
+
 ## 2026-11-24 08:15 IST: 26bV zero-copy WORKS for BGRA surfaces; iOS 26 display surfaces are '&BGA' -> xnu 2020
 - 26bV booted 08:10 (logs/boot-26bV.txt, kernel 45307583851): low pool at 0xb0400000 ready; 4 BGRA 828x1792 surfaces
   pooled (0xb0404000, 0xb09b4000, 0xb0f64000, 0xb1514000); stats mode=zc hw=1; 21 frames scanned in place
