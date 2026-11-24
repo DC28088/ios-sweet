@@ -1,3 +1,12 @@
+## 2026-11-24 07:00 IST: 0012 v1 (glink DIAG) got nothing -> 0012 v2 over QRTR (serve 0x1001); USB drop WITHOUT a Mav20 test
+- 23:06 boot (26bR + wland 0012 v1, logs/boot-26bRd.txt): the USB link died at 23:11 with NO D53gAP test run -> the
+  USB drops are not caused by the Mav20 test (correcting the 22:30 guess). Phone found in fastboot at 06:49.
+- 06:50 boot (26bR, logs/boot-26bRe.txt): wland 0012 v1 sent glink OPEN "DIAG_CNTL"/"DIAG", modem OPEN_ACKed (lcid 2, 3;
+  it allocated rcids 4, 5) but never opened its end -> 0 diag frames in 30 s. The modem announces no DIAG (0x1001)
+  server either -> GUESS: on this firmware diag runs over QRTR with the AP side serving (Linux diagfwd_socket).
+- 0012 v2 (same file, rewritten): QRTR servers 0x1001 instances 0/1/4/5/8 at 1:50-54; control packets answered to the
+  sender; data instance 4 (and dci 8) decoded. No glink change (link.c back to 0011).
+
 ## 2026-11-23 23:15 IST: USER chose modem logging; wland 0012 (modem DIAG F3 reader) installed with /var/local/diag.on
 - wland 0012 (userspace/wifi/wland-0239/0012-sweet-modem-diag-f3.patch, CI sweet-wifi-0239 45229189544,
   research/wifi-45229189544, wland 34984a54): glink DIAG_CNTL (lcid 2) + DIAG (lcid 3) next to IPCRTR, feature mask +

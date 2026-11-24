@@ -22,11 +22,13 @@ patch stack, not from `userspace/wifi/patches/`:
 - 0011 (iOS 26 Wi-Fi test, 2026-11-23): pd-mapper holds its "kernel/elf_loader" answer until the modem announces QMI
   service 0x47 (iOS 16 order: 0x47, then the question, then the wlanmdsp.mbn read), 30 s cap; `WLAND_PDM_NOHOLD=1` off.
 
-- 0012 (2026-11-23): modem DIAG reader for the modem's own F3 debug messages: opens glink "DIAG_CNTL" + "DIAG" next to
-  IPCRTR (separate state), sends feature mask / real-time mode / all-F3-enabled mask, decodes HDLC + DIAG_EXT_MSG_F
-  (0x79; QShrink 0x92/0x99/0x9c logged as hashes for qdsp6m.qdb). Off unless `/var/local/diag.on` exists. Output
-  `/var/local/diag.log` (32 MiB cap; ON THE PHONE ONLY: may hold identifiers, never copy it into git); lines about the
-  elf loader / user PD / WLAN / RFS are echoed to wland.log as "diag: ...". Workflow compiles diag.c when present.
+- 0012 (2026-11-24, v2): modem DIAG reader for the modem's own F3 debug messages over QRTR (Linux diagfwd_socket):
+  wland serves DIAG service 0x1001 for the modem's instances (control 0, command 1, data 4, dci-command 5, dci 8) at
+  ports 0x50-0x54, answers the control client with feature mask / real-time mode / all-F3-enabled mask, decodes HDLC +
+  DIAG_EXT_MSG_F (0x79; QShrink 0x92/0x99/0x9c logged as hashes for qdsp6m.qdb). (v1 used glink DIAG/DIAG_CNTL: the
+  modem acked the opens but never opened its end.) Off unless `/var/local/diag.on` exists. Output `/var/local/diag.log`
+  (32 MiB cap; ON THE PHONE ONLY: may hold identifiers, never copy it into git); elf loader / user PD / WLAN / RFS lines
+  are echoed to wland.log as "diag: ...". Workflow compiles diag.c when present.
 
 Build: workflow `sweet-wifi-0239` (`.github/workflows/wifi-0239.yml`, manual dispatch). Tested 2026-11-09: Wi-Fi
 list instant after the radio warms up, SIM works (binary sha256 5eb59683...).
