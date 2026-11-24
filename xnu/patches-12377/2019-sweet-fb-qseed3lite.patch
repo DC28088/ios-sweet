@@ -1,0 +1,20 @@
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -655,7 +655,15 @@
+ 		IOLog("SWEET FB: hw scaler: boot pipe is not a VIG pipe; CPU scaling\n");
+ 		return false;
+ 	}
+-	if (fQseedVer != 0x1002 && fQseedVer != 0x1003) {
++	/*
++	 * Sweet 2019: SM7150 (DPU 5.2, MDSS 0x50020000) has QSEED3LITE, VIG0 scaler version 0x2004 (read on the phone
++	 * through /dev/pmem at 0x0ae05a00). Linux dpu_hw_setup_scaler3 programs it like v1.3 (PHASE_INIT_Y/UV H/V,
++	 * steps, preload, sizes, op mode, alpha filter at bit 29); only the LUT and detail-enhancer writes differ, and
++	 * this driver uses neither (bilinear, lut_flag 0). sweetfb_qseedlite=0 refuses it as before.
++	 */
++	int lite = 1;
++	PE_parse_boot_argn("sweetfb_qseedlite", &lite, sizeof(lite));
++	if (fQseedVer != 0x1002 && fQseedVer != 0x1003 && !(lite && fQseedVer == 0x2004)) {
+ 		IOLog("SWEET FB: hw scaler: QSEED3 version 0x%x not handled; CPU scaling\n", fQseedVer);
+ 		return false;
+ 	}
