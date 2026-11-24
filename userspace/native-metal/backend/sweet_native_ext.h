@@ -34,8 +34,10 @@ int rwa_command_end(struct rwa_device *, char *, size_t);
  * pending, -1 on failure or when give_up is set and it is still pending. */
 int rwa_command_submit(struct rwa_device *, uint64_t *, char *, size_t);
 int rwa_command_poll(struct rwa_device *, uint64_t, bool, char *, size_t);
+/* 26c: levels/layers (may be NULL = level 0, layer 0) are the colour attachments' MTLRenderPass level/slice */
 int rwa_clear(struct rwa_device *, struct rwa_texture *const *, unsigned, unsigned,
-              const float [8][4], struct rwa_texture *, const float *, const unsigned *, char *, size_t);
+              const float [8][4], struct rwa_texture *, const float *, const unsigned *,
+              const unsigned *levels, const unsigned *layers, char *, size_t);
 /* MTLBlitCommandEncoder primitives (26c: the donor had no blit encoder, so QuartzCore's copies were dropped).
  * Origins/sizes are {x, y, z}; slice is the array layer (or cube face). Inside a command transaction they are
  * recorded on the context; outside one they finish before returning. */

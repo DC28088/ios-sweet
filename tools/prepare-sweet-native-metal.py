@@ -1775,6 +1775,78 @@ def adapt_blit(path):
     path.write_text(s)
     shutil.copy2(NATIVE/'frontend/SweetNativeBlit.inc',path.parent/'SweetNativeBlit.inc')
 
+def adapt_attachment_levels(donor, frontend):
+    # 26c (USER: Liquid Glass grey): render passes ignored MTLRenderPassColorAttachmentDescriptor.level/.slice and
+    # always drew into mip level 0. QuartzCore's blur builds a mip chain (pass n renders level n, samples level
+    # n-1), so every pass overwrote level 0 with samples of never-written levels: the glass backdrop texture
+    # dumped as all zeros (/var/local/sweet-glass-dump). Draws and clears now target the attachment's level/layer.
+    air=donor/'tools/mesa/air'
+    p=air/'air_metal.h';s=p.read_text()
+    s=replace(s,'    unsigned native_flags; /* bit0 viewport, bit1 scissor, bit2 blend */',
+        '    unsigned native_flags; /* bit0 viewport, bit1 scissor, bit2 blend */\n'
+        '    unsigned native_color_level[8], native_color_layer[8]; /* 26c: attachment level/slice */')
+    p.write_text(s)
+    p=air/'air_metal.c';s=p.read_text()
+    s=replace(s,'static uint64_t native_now_ns(void);\nstatic void native_draw_checkpoint(',
+        'static struct pipe_surface *\n'
+        'native_render_surface_at(struct rwa_texture *texture, unsigned level, unsigned layer)\n'
+        '{\n'
+        '   struct pipe_surface tmpl = { .format = texture->res->format };\n'
+        '   tmpl.u.tex.level = level;\n'
+        '   tmpl.u.tex.first_layer = layer;\n'
+        '   tmpl.u.tex.last_layer = layer;\n'
+        '   return texture->device->pipe->create_surface(texture->device->pipe, texture->res, &tmpl);\n'
+        '}\n\n'
+        'static uint64_t native_now_ns(void);\nstatic void native_draw_checkpoint(')
+    s=replace(s,'''      unsigned tw = t->shape.width;
+      unsigned th = t->shape.height ? t->shape.height : 1;
+      if (i == 0) {''','''      const unsigned lv = draw->native_color_level[i];
+      if (lv > t->res->last_level) {
+         say(why, why_size, "colour attachment %u is level %u of a texture with %u levels", i, lv,
+             t->res->last_level + 1);
+         return -1;
+      }
+      unsigned tw = u_minify(t->shape.width, lv);
+      unsigned th = u_minify(t->shape.height ? t->shape.height : 1, lv);
+      if (i == 0) {''')
+    s=replace(s,'      surf[i] = native_render_surface(draw->color[i]);\n',
+        '      surf[i] = (draw->native_color_level[i] || draw->native_color_layer[i])\n'
+        '         ? native_render_surface_at(draw->color[i], draw->native_color_level[i], draw->native_color_layer[i])\n'
+        '         : native_render_surface(draw->color[i]);\n')
+    s=replace(s,'             device->batch_fb.cbufs[i]->texture == fb.cbufs[i]->texture;\n',
+        '             device->batch_fb.cbufs[i]->texture == fb.cbufs[i]->texture &&\n'
+        '             device->batch_fb.cbufs[i]->u.tex.level == fb.cbufs[i]->u.tex.level &&\n'
+        '             device->batch_fb.cbufs[i]->u.tex.first_layer == fb.cbufs[i]->u.tex.first_layer;\n')
+    p.write_text(s)
+    s=frontend.read_text()
+    s=replace(s,'    float nativeClearColors[8][4];\n',
+        '    float nativeClearColors[8][4];\n    unsigned nativeColorLevel[8], nativeColorLayer[8];   /* 26c */\n')
+    s=replace(s,'    float _nativeClearColors[8][4];\n',
+        '    float _nativeClearColors[8][4];\n    unsigned _nativeColorLevel[8], _nativeColorLayer[8];   /* 26c */\n')
+    s=replace(s,'\t\t_color[i] = texture;\n',
+        '\t\t_color[i] = texture;\n'
+        '\t\t_nativeColorLevel[i] = (unsigned)[attachment level];\n'
+        '\t\t_nativeColorLayer[i] = (unsigned)([texture textureType] == MTLTextureType3D ? [attachment depthPlane]\n'
+        '\t\t                                                                         : [attachment slice]);\n')
+    s=replace(s,'    memcpy(work->nativeClearColors,_nativeClearColors,sizeof _nativeClearColors);\n    _nativeClearMask=0;',
+        '    memcpy(work->nativeClearColors,_nativeClearColors,sizeof _nativeClearColors);\n'
+        '    memcpy(work->nativeColorLevel,_nativeColorLevel,sizeof _nativeColorLevel);\n'
+        '    memcpy(work->nativeColorLayer,_nativeColorLayer,sizeof _nativeColorLayer);\n    _nativeClearMask=0;')
+    s=replace(s,'work->nativeClearMask=_nativeClearMask;memcpy(work->nativeClearColors,_nativeClearColors,sizeof _nativeClearColors);',
+        'work->nativeClearMask=_nativeClearMask;memcpy(work->nativeClearColors,_nativeClearColors,sizeof _nativeClearColors);\n'
+        '        memcpy(work->nativeColorLevel,_nativeColorLevel,sizeof _nativeColorLevel);'
+        'memcpy(work->nativeColorLayer,_nativeColorLayer,sizeof _nativeColorLayer);')
+    s=replace(s,'        .native_flags=work->nativeFlags,\n',
+        '        .native_flags=work->nativeFlags,\n'
+        '        .native_color_level={work->nativeColorLevel[0],work->nativeColorLevel[1],work->nativeColorLevel[2],work->nativeColorLevel[3],\n'
+        '                             work->nativeColorLevel[4],work->nativeColorLevel[5],work->nativeColorLevel[6],work->nativeColorLevel[7]},\n'
+        '        .native_color_layer={work->nativeColorLayer[0],work->nativeColorLayer[1],work->nativeColorLayer[2],work->nativeColorLayer[3],\n'
+        '                             work->nativeColorLayer[4],work->nativeColorLayer[5],work->nativeColorLayer[6],work->nativeColorLayer[7]},\n')
+    s=replace(s,'work->clearsDepth?&work->clearDepth:NULL,work->clearsStencil?&work->clearStencil:NULL,\n                         why,sizeof why)',
+        'work->clearsDepth?&work->clearDepth:NULL,work->clearsStencil?&work->clearStencil:NULL,\n'
+        '                         work->nativeColorLevel,work->nativeColorLayer,why,sizeof why)')
+    frontend.write_text(s)
+
 def serialize_methods(path):
     s=path.read_text()
     support='''
@@ -1908,6 +1980,7 @@ def main():
     adapt_ssbo_offsets(args.donor)
     frontend=adapt_frontend(args.donor)
     adapt_blit(frontend)
+    adapt_attachment_levels(args.donor, frontend)
     serialize_methods(frontend)
     print('Prepared native Sweet Metal sources:',args.donor)
 

@@ -246,7 +246,7 @@ int rwa_command_poll(struct rwa_device *d,uint64_t fence,bool give_up,char *why,
 }
 int rwa_clear(struct rwa_device *d,struct rwa_texture *const *color,unsigned count,unsigned mask,
                const float values[8][4],struct rwa_texture *depth,const float *z,const unsigned *s,
-               char *why,size_t n)
+               const unsigned *levels,const unsigned *layers,char *why,size_t n)
 {
    if(!d || d->lost || count>8 || (mask>>count)){say(why,n,"invalid clear attachments");return -1;}
    for(unsigned i=0;i<count;i++)if(mask&(1u<<i)) {
@@ -255,11 +255,13 @@ int rwa_clear(struct rwa_device *d,struct rwa_texture *const *color,unsigned cou
       if(!(res->bind&PIPE_BIND_RENDER_TARGET) || util_format_is_pure_integer(res->format)) {
          say(why,n,"interface: clear requires a floating-point or normalized render target");return -1;
       }
-      struct pipe_surface *surface=native_render_surface(color[i]);
+      const unsigned lv=levels?levels[i]:0,ly=layers?layers[i]:0;
+      if(lv>res->last_level){say(why,n,"clear attachment %u level %u is beyond its %u levels",i,lv,res->last_level+1);return -1;}
+      struct pipe_surface *surface=(lv||ly)?native_render_surface_at(color[i],lv,ly):native_render_surface(color[i]);
       if(!surface){say(why,n,"failed to create clear surface");return -1;}
       union pipe_color_union value;
       memcpy(value.f,values[i],sizeof(value.f));
-      d->pipe->clear_render_target(d->pipe,surface,&value,0,0,res->width0,res->height0,false);
+      d->pipe->clear_render_target(d->pipe,surface,&value,0,0,u_minify(res->width0,lv),u_minify(res->height0,lv),false);
       pipe_surface_reference(&surface,NULL);
    }
    if(z || s) {
