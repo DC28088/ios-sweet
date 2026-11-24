@@ -1,3 +1,19 @@
+## 2026-11-24 22:10 IST: *** iOS ROOT FILESYSTEM CORRUPTION (userdata HFS+) - STOP WRITING / REBOOTING UNTIL FSCK ***
+- OBSERVED: the kernel reports "hfs_mark_inconsistent: Runtime corruption detected on iOSRoot, fsck will be forced on next
+  mount". First "BlockMarkFreeInternal() trying to free unallocated blocks" reports in boot-26bR (2026-11-23 22:23; 12
+  mark lines), then boot-26bRw 5, 26bS 1, 26bU 1, 26bUc 5; boot-26bIw (2026-11-19) 1. Tonight boot-26bUd: 3699 lines,
+  nearly all SWEET HFSINC hfs_cnode.c:946 (pid 63), from soon after boot. The root is non-journaled and is mounted
+  "dirty ... read-write" on every boot of these logs; no fsck ever runs.
+- Likely contributors (NOT proven): many unclean resets on 2026-11-23/24 (forced power+vol-down after USB drops, sweetreboot,
+  battery), each on a dirty non-journaled volume, plus bundle/wland installs into the root in that state.
+- USER must decide: no more installs/reboots/tests before (1) a backup of userdata if wanted, (2) offline fsck_hfs.
+  fsck WRITES to userdata = confirm with the USER first (AGENTS.md).
+- Glass state: dock map (832x256) VALID (R -52.75..16.6, A 0..1, 169344 nonzero), but the glass_background_no_bleed
+  draw changes 0 rows of the frame. Ruled out: empty map, 16-byte texmat clip (code read), texcoords of an earlier
+  no_bleed draw (plausible), inf uniforms, missing flush. Phone left on 26bU with native-metal 45435187486
+  (debug switches off; dumps in /var/tmp/glass-*.raw, ~56 MB).
+- The USER asked whether I scrolled the phone: yes (sweettouch); announce before driving the phone's UI.
+
 ## 2026-11-24 20:45 IST: DOCK GLASS A/B (USER's idea): working = analytic SDF shader, broken = cached-shape-map shader
 - CORRECTION of the 19:50 entry: partial redraws are NOT the cause. Scripted A/B on 26bU (sweettouch home/swipe +
   sweetopen com.apple.Preferences drive the phone over SSH; native-metal CI 45411061851 logs DRAWW = cb/target/
