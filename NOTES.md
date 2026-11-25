@@ -1,3 +1,20 @@
+## 2026-11-25 08:00 IST: filesystem repair PREPARED on a laptop copy; phone NOT written; waiting for the USER's yes
+- 2nd recovery boot worked (07:45 attempt never enumerated). userdata unmounted; metadata identical to last night's copy
+  (0 changed 1 MiB chunks). Data blocks of the five overlapping files copied too (2981 blocks). Reads only.
+- `fsck.hfsplus -y` (hfsplus-tools 540.1.linux3-35.fc43) on the copy: "repaired successfully", recheck OK. BUT OBSERVED:
+  it re-pointed 348 blocks (3 files with non-zero data + launchd.log.1's 2 zero blocks) to new free blocks and left
+  ALL the new blocks zero (0 of 346 non-zero source blocks copied; cause not investigated). DO NOT run this fsck -y on userdata directly.
+- Fixed in the copy (after2.img) by copying the 348 blocks myself: all five files' bytes identical to before; own check:
+  0 overlaps, 0 in-use-but-free, free 850214 = header; fsck -n exit 0 "appears to be OK". Destinations were all unclaimed.
+- Write list: 375 blocks / 1500 KiB in 24 runs (27 = header, alternate header, 7 allocation, 11 catalog, 2 extents, 5
+  new symlink blocks; 348 = copied file data). No block of any other file. Also adds /DamagedFiles with 5 symlinks.
+  research/ios26/fsrepair-20261125/ (git-ignored, private data): plan.json, new.bin, undo.bin (phone's current content
+  of those 375 blocks; hashes verified; metadata blocks equal the plan's start). Script: scratchpad fsck_plan.py.
+- Not fixable: which of two files owned a shared block is unknown, so some of those five may hold mixed data.
+- CORRECTION to the 22:20 entry: "untangling copies file contents" is what fsck should do; this build did not.
+- NEXT (after an explicit yes): check the phone's 375 blocks still equal undo.bin, write new.bin, read back + compare,
+  re-pull metadata, fsck -n, then boot 26bU. Undo = write undo.bin, valid only BEFORE iOS mounts the volume again.
+
 ## 2026-11-25 07:50 IST: repair PREPARATION started, nothing read or written: phone not on USB after the recovery boot
 - USER put the phone in fastboot and said continue. `fastboot boot recovery/recovery.img` finished 07:45, then "USB
   disconnect" and no enumeration since (no adb, fastboot or usbnet). Plan: re-read metadata + the data blocks of the five
