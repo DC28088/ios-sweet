@@ -1,3 +1,17 @@
+## 2026-11-25 17:30 IST: spindump WORKS on the phone (/usr/sbin/spindump); during the USER's scroll iconservicesagent renders icons in software
+- `spindump -noTarget 12 10 -noThrottle -o /tmp/sp2.txt` (USER scrolling home/widgets/App Library; 1135 steps at 10 ms; report ~30 s,
+  15 MB). Copies: research/ios26/spindump-20261125/{idle,scroll}.txt (git-ignored). Frames are unsymbolicated (image+offset).
+- CPU seconds in 12 s: spindump itself 14.5, iconservicesagent 11.07 (92 %), SpringBoard 10.22 (85 %), kernel_task 5.06, backboardd 4.81 (40 %),
+  WidgetRenderer_Default 2.24, wland 2.21 (18 %), wland-0225 1.26, runningboardd 0.78, logd 0.60. (spindump slows the system.)
+- iconservicesagent: RenderBox image-provider queue (650 samples; 608 RUNNING samples in RenderBox), CoreImage "CI::SWContextRenderQ" queues
+  (software CI) present, no Metal/AGX frames or image in its stacks. Queue "com.apple.iconservices.cleanup" 750 samples = IconServices drawing
+  a CGImage whose RenderBox provider it waits for (psynch wait). The Metal log lines of this boot come from backboardd and
+  SpringBoard only.
+- Reading (INFERENCE, not proven): the agent has no GPU device and RenderBox falls back to the CPU rasteriser for every icon.
+  Candidates: sandbox/user-client class check denies our Metal client to _iconservices, or the plug-in is not loaded there.
+- Not explained: why icons are rendered again on every scroll (cache has 291 files, ~1 new per scroll).
+- Open: SpringBoard's main thread (85 %) not analysed; symbols need the dyld cache (partial copy in research/ios26/dsc).
+
 ## 2026-11-25 17:24 IST: USER finger scroll #2 with the correct clock: iconservicesagent still 80-118 % -> clock not the (main) cause
 - Same scroll (home pages, widgets, App Library), 25 s. Display swaps 38.0/20.7/28.9 per s, GPU completions 26-32/s, lat avg 5.8-11.6 ms.
   ps: SpringBoard 34-99 % (one sample 11), iconservicesagent 19/89/101/118/2/78 %, backboardd 21-41, WidgetRenderer 18-35.
