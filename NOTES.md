@@ -1,3 +1,20 @@
+## 2026-11-25 19:25 IST: core layout + icon service: NO fast/slow awareness on iOS 26; icons "Failed to serialize finalized icon"
+- CPU topology (from sources, not measured on the phone): ADT sweet-n104-2x-wbgb.adt has cluster-type 0 for all 8 CPUs = one homogeneous
+  cluster; sweetamp=2 is the SPEAKER amp, not AMP. xnu 0167/0248 scheduler patches are deferred on 12377 (NOTES 1640;
+  Edge scheduler rewrite). Only sweet_bind_current_thread: GPU submit threads -> cpu7, framebuffer present -> cpu6
+  (0176). SpringBoard's main thread is unbound (may run on any A55/A76). Which core it actually uses: NOT measured.
+  iOS 16 reference: AMP topology + thresholds gave ~30 -> ~45 fps windows (NOTES 1655-1684, "slightly better").
+- Icon service: unified log (tracev3, pulled to research/ios26/oslog-20261125/, git-ignored, personal data) decoded with scratchpad
+  tracev3.py/oslog_icon.py/dscstr.py (format strings read from the phone's dyld cache). iconservicesagent pid 342, 5 min
+  including boot and the scroll: 54x "Resource provider %@ for %@ has no record identifiers", 33x "Failed to serialize
+  finalized icon for icon stack %@ with descriptor: %@" (arguments redacted; icon names not known). The agent binary also
+  contains "Rejected cached image", "Ignoring cache for dynamic icon request", "Generated image ... Validation token DB
+  UUID" messages: none of those appeared in the decoded chunks (the log may not hold them at default level).
+- READING (inference): finalized icons that cannot be serialized are not stored, so they would be drawn again. NOT proven:
+  the failing icons are not matched to the ones drawn during the scroll. Cause of the serialize failure unknown.
+- NEXT: (a) find the caller of the serialize message (IconServices +..., needs IconServices/IconRendering text from the
+  phone's dsc), (b) AMP/Edge or a bind for SpringBoard's main thread (new kernel work).
+
 ## 2026-11-25 19:16 IST: RESULT: allowing iconservicesagent the GPU changed nothing; it never asks for it
 - USER scroll (home, widgets, App Library) on 26bX, 25 s: display swaps 43.6/39.6/27.7 per s (before: 41.5/31.6; 38.0/20.7/28.9: not
   different), GPU completions 28-37/s, lat avg 6.4-9.6 ms. ps: iconservicesagent 102-143 % (5 of 6 samples), SpringBoard 39-78 %,
