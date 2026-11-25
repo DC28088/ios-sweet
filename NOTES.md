@@ -6,6 +6,10 @@
 - USER approved both runs ("yes run both"): still to do after the link is back: scratchpad steady.sh; trace = native-env
   with MESA_GPU_TRACES=print + MESA_GPU_TRACEFILE=/var/tmp/gputrace.txt; sysmem = FD_MESA_DEBUG=sysmem; then remove native-env.
 
+- 16:52 USER replugged: laptop port 1-1 logs "device descriptor read/64, error -71" and "not accepting address" (devices 119-122);
+  no enumeration at 16:54. The phone's USB answers electrically but fails the handshake (same class as NOTES 1666/2734: -71).
+  Both tests still NOT run.
+
 ## 2026-11-25 16:39 IST: per-draw timing during scroll (USER approved): ranking is distorted; frame = ~104 draws, ~2 main passes
 - 1500 draws timed (sweet-native-drawtime; switch now moved to .off, drawlog.off; no restart). Scroll by script. Each draw
   is flushed + waited for (floor ~251 us), so NOT real frame costs. Script: scratchpad drawrank.py/passes.py; log drawtime.log.
