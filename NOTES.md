@@ -1,3 +1,9 @@
+## 2026-11-25 22:32 IST: RELEASE kernel (image 26cA 6ed0424a, CI 45654283295) does NOT boot
+- 26cA = 26bZ cmdline (sweetbuild=2690) + kernel.release.sweet (6d8f2f7d). `sync` + `sweetreboot fastboot` first. fastboot boot accepted 22:25; no USB
+  network, no log bytes, no fastboot/adb/USB device by 22:31. What the screen shows: not known. The kernel has the same boot
+  settings and patches as 26bZ, so the difference is the RELEASE configuration (or a dev-only code path our patches need).
+- NEXT: USER power+vol-down -> fastboot; boot 26bZ (55b89644). Do NOT retry 26cA without a reason to expect it to boot.
+
 ## 2026-11-25 22:25 IST: MY BUG: a test loop opened/closed Settings for ~14 min (until the USER asked to stop)
 - The 21:5x profiling script's first loop had no counter increment (`while [ $i -lt 5 ]` forever). It kept running on the phone (sh pid
   1508) after the SSH call ended; killed 22:25, 0 scripted launches in the next 15 s. No settings changed.
