@@ -2067,6 +2067,18 @@ def adapt_ssbo_offsets(donor):
    }""")
     p.write_text(s)
 
+def adapt_glass_debug(donor):
+    # Diagnostic (off without /var/local/sweet-glass-dbg): bisects the glass_background_no_bleed fragment.
+    air=donor/'tools/mesa/air'
+    shutil.copy2(NATIVE/'backend/air_glass_debug.inc',air/'air_glass_debug.inc')
+    p=air/'air_metal.c';s=p.read_text()
+    s=replace(s,'#include "air_stage_link.inc"\n','#include "air_stage_link.inc"\n#include "air_glass_debug.inc"\n')
+    s=replace(s,"""   native_prune_direct_resources(fs, &render->finfo);
+""","""   native_prune_direct_resources(fs, &render->finfo);
+   native_glass_debug(fs, render->finfo.entry_point);
+""")
+    p.write_text(s)
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('donor',type=Path,help='disposable export of the pinned donor')
@@ -2077,6 +2089,7 @@ def main():
     adapt_blit(frontend)
     adapt_attachment_levels(args.donor, frontend)
     adapt_level_views(args.donor, frontend)
+    adapt_glass_debug(args.donor)
     serialize_methods(frontend)
     print('Prepared native Sweet Metal sources:',args.donor)
 
