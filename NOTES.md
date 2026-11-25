@@ -1,4 +1,11 @@
-## 2026-11-25 10:25 IST: USER: all glass good incl. CC / App Library / in-app ("all of it looks good ... in app glass ui is fixed")
+## 2026-11-25 16:10 IST: phone off USB since 08:53:39 (laptop suspended then); steady-scroll measurement NOT run
+- CORRECTION: the times of four headings below were my guesses (10:25/10:00/09:20/09:00); replaced by the commit times.
+- Journal: "USB disconnect" and the laptop's suspend both at 08:53:39; laptop awake by 16:06. At 16:09 no ping, no USB device,
+  no fastboot. Last log line 08:53:38, battery 12% (curve 7%), -203 mA. Phone state unknown (off, or the link needs a replug).
+- USER approved (3x "run it") the 30 s steady scroll: no restarts, no settings changes. Script: the last bench in the
+  scratchpad. Still to do.
+
+## 2026-11-25 08:52 IST: USER: all glass good incl. CC / App Library / in-app ("all of it looks good ... in app glass ui is fixed")
 - Then my scripted fps A/B (scratchpad bench.sh) switched IR3_SWEET_PREFETCH=1 back on for its 2nd step: USER saw
   "back to flickering and GLassless UI mess". Test stopped, switch removed, backboardd restarted, dock glass verified by
   screenshot after a scroll. Phone: CI 45537773111, prefetch off, no debug files active.
@@ -7,7 +14,7 @@
 - bench off1 (prefetch off, 24 scripted swipes with 0.6 s pauses): NOT an fps figure (idle pauses included); swaps/s
   18/15/13, async GPU completion 9-16 ms average, 22-40 ms max. The "on" run is void (stopped). Fps cost of prefetch: unmeasured.
 
-## 2026-11-25 10:00 IST: DOCK + SEARCH-PILL GLASS FIXED (FS texture prefetch off); control + USER confirm
+## 2026-11-25 08:48 IST: DOCK + SEARCH-PILL GLASS FIXED (FS texture prefetch off); control + USER confirm
 - CI 45537773111 (prefetch off) installed; backup research/ios26/metal/build-45537773111/backup-before. Phone: 26bU, no
   debug file, no active native-env (sweet-native-env.prefetchon/.last/.sysmem and sweet-glass-dbg.off are inert).
 - OBSERVED, scripted swipe to page 2 and back, sweetshot: glass on dock and Search pill before, during and after.
@@ -18,7 +25,7 @@
 - Filesystem: 0 HFSINC / hfs_mark_inconsistent lines since the repair boot (logs/boot-26bUe.txt).
 - NEXT: USER to look at App Library / CC / apps; then fps measurement and the zero-copy wake bug (26bV/26bW).
 
-## 2026-11-25 09:20 IST: dock glass: the FS PRE-DISPATCH (prefetch) sample of the shape map reads 0; normal sam reads right
+## 2026-11-25 08:37 IST: dock glass: the FS PRE-DISPATCH (prefetch) sample of the shape map reads 0; normal sam reads right
 - CI 45536169131 installed (modes 8-13; build dir research/ios26/metal/build-45536169131, backup-before inside).
 - OBSERVED at the dock (map 832x256, 1 level; view log shows res == view res, RGBA16F, level 0-0, layer 0-0): txf (8), txl
   (9), txl via sampler 0 (10), tex at coord+1/4096 (11) give the right SDF (alpha 1 inside, distance < 0 in the middle);
@@ -29,7 +36,7 @@
   (IR3_SWEET_PREFETCH=1 in /var/local/sweet-native-env turns it on). Build pending. Then: dock after scroll, Search
   pill, App Library, CC, and an fps comparison with and without prefetch.
 
-## 2026-11-25 09:00 IST: dock glass: the shape-map SAMPLE returns 0 in glass_background_no_bleed_lph (bisected on the phone)
+## 2026-11-25 08:23 IST: dock glass: the shape-map SAMPLE returns 0 in glass_background_no_bleed_lph (bisected on the phone)
 - Build CI 45534432933 (glass-dbg; installed, backup research/ios26/metal/build-45534432933/backup-before). Modes set by
   /var/local/sweet-glass-dbg + backboardd restart; scripted swipe + sweetshot (scratchpad runmode.sh). Phone currently
   has NO debug file and no native-env file (sweet-glass-dbg.off, sweet-native-env.last are inert leftovers).
