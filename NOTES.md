@@ -1,3 +1,17 @@
+## 2026-11-25 16:50 IST: filesystem clean after the forced reset; steady-scroll numbers: ~26 fps, GPU ~17 ms per frame
+- Reset by the USER (power+vol-down). Temporary recovery, metadata copy, `fsck.hfsplus -n`: exit 0 "appears to be OK" (dirty
+  flag set, 253211 files). 26bU booted 16:5x (logs/boot-26bUf.txt): mounted dirty (expected), 0 HFSINC/hfs_mark lines.
+- Scratch copies of the fsck images moved to research/ios26/scratch-moved-20261125/ (git-ignored; verified identical)
+  because the /tmp quota was full; only those four scratch folders were removed from /tmp.
+- Steady scroll (46 swipe pairs, 30 s, no settings changed; prefetch off; hardware scaler): display swaps 24.6/26.5/37.6 per s;
+  vsync 57-58/s; GPU async completion avg 11-17 ms (max 19-22) per frame; 128-174 frames completed per 5 s (26-35/s);
+  submits 4.2 per frame (33 IBs/frame), submit CPU ~0.8 ms each = ~8.5% of a CPU; swap wait 15-21 ms;
+  SpringBoard 68%, backboardd 67% of one CPU (ps), wland 20%. Display copy ~1.25 ms when busy.
+- So at full scroll the frame is ~38 ms: GPU ~17 ms, rest CPU/waiting; NOT a measured split. GPU busy counter is
+  not working (samples=0) and the GPU clock meter reads 0 (800 MHz fixed was the earlier finding).
+- NEXT (USER to choose): per-pass GPU times (Mesa MESA_GPU_TRACES=print in native-env: needs a backboardd restart, ASK),
+  zero-copy wake fix, or reduce glass/blur passes (33 IBs per frame).
+
 ## 2026-11-25 16:21 IST: USB link dead after the laptop's suspend; replug did not help; steady-scroll run still pending
 - USER: "everything is working, there are no visible visual bugs right now. only issue is performance". Two replugs (16:09,
   16:19): laptop enumerates "Sweet iOS (USB Ethernet)", RX packets 0, TX 90+ (ping/ssh no route, no log since 08:53:38).
