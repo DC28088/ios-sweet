@@ -1,4 +1,12 @@
-## 2026-11-25 17:00 IST: per-draw timing during scroll (USER approved): ranking is distorted; frame = ~104 draws, ~2 main passes
+## 2026-11-25 16:45 IST: phone off USB again (USB disconnect 16:39:58); GPU pass trace + sysmem run NOT started
+- The trace step failed at the first SSH (timed out). sweet-native-env was therefore NOT written; the phone's state is
+  as left at 16:39 (switches off, prefetch off). No ping, no USB device at 16:45; last log line 16:39:51 (SiriAUSP crash
+  line, UFS stats with 0 errors).
+- The headings of the two previous entries were guessed times; now the commit times.
+- USER approved both runs ("yes run both"): still to do after the link is back: scratchpad steady.sh; trace = native-env
+  with MESA_GPU_TRACES=print + MESA_GPU_TRACEFILE=/var/tmp/gputrace.txt; sysmem = FD_MESA_DEBUG=sysmem; then remove native-env.
+
+## 2026-11-25 16:39 IST: per-draw timing during scroll (USER approved): ranking is distorted; frame = ~104 draws, ~2 main passes
 - 1500 draws timed (sweet-native-drawtime; switch now moved to .off, drawlog.off; no restart). Scroll by script. Each draw
   is flushed + waited for (floor ~251 us), so NOT real frame costs. Script: scratchpad drawrank.py/passes.py; log drawtime.log.
 - Excess over the floor, per frame (13 frames, 111 draws/frame): fixed_frag TimgBvcmA2Xhf_Ialp (icon labels) 11.6 ms in ~24
@@ -13,7 +21,7 @@
   GMEM whole-frame comparison (needs env + restart, ASK). (3) look at why CA renders 2 attachments (BGRA8 + RGBA16F) in EDR-like
   pipelines (A2Xhf) and the luma_boost full-screen pass; unverified leads.
 
-## 2026-11-25 16:50 IST: filesystem clean after the forced reset; steady-scroll numbers: ~26 fps, GPU ~17 ms per frame
+## 2026-11-25 16:33 IST: filesystem clean after the forced reset; steady-scroll numbers: ~26 fps, GPU ~17 ms per frame
 - Reset by the USER (power+vol-down). Temporary recovery, metadata copy, `fsck.hfsplus -n`: exit 0 "appears to be OK" (dirty
   flag set, 253211 files). 26bU booted 16:5x (logs/boot-26bUf.txt): mounted dirty (expected), 0 HFSINC/hfs_mark lines.
 - Scratch copies of the fsck images moved to research/ios26/scratch-moved-20261125/ (git-ignored; verified identical)
