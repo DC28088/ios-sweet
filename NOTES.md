@@ -1,3 +1,11 @@
+## 2026-11-25 22:50 IST: back on 26bZ (26bZ2 log); touch thread is harmless; Control Center profiled (bounded)
+- Read-only fsck before booting (after 26cA): exit 0. 26bZ booted, log logs/boot-26bZ2.txt, 0 HFSINC/panic.
+- _touch_thread (1.5 s of 13 s) is bound to cpu5 (A55, boot-arg sweettouchcpu=5): it cannot disturb the A76s; not a smoothness target.
+- Control Center: bounded script (4 swipes open/close, timeout 14 s) + spindump 12 s: backboardd 5.7 s (primary render thread 3.73 s = 35 %), kernel_task 5.2 s,
+  SpringBoard 4.1 s (main 3.6 s), searchd 1.7 s. Neither main nor render thread saturated. Animation fps not measured well (the CC may not have opened
+  every time; 10 swaps/s windows between).
+- Scripted launches verified stopped afterwards.
+
 ## 2026-11-25 22:32 IST: RELEASE kernel (image 26cA 6ed0424a, CI 45654283295) does NOT boot
 - 26cA = 26bZ cmdline (sweetbuild=2690) + kernel.release.sweet (6d8f2f7d). `sync` + `sweetreboot fastboot` first. fastboot boot accepted 22:25; no USB
   network, no log bytes, no fastboot/adb/USB device by 22:31. What the screen shows: not known. The kernel has the same boot
