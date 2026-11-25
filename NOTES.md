@@ -1,3 +1,11 @@
+## 2026-11-25 08:10 IST: iOS ROOT REPAIRED (USER approved) and 26bU booted; back to glass + performance
+- Pre-check: phone's 375 blocks == undo.bin. Wrote new.bin (data first, headers last), read-back identical. Fresh metadata
+  pull: fsck -n exit 0 "appears to be OK", overlaps 0, in-use-but-free 0, header "unmounted-clean" set.
+- Booted 26bU (logs/boot-26bUe.txt): root mounted WITHOUT the "dirty" line. ~4 min / 8000 log lines: 0 HFSINC /
+  hfs_mark_inconsistent / BlockMarkFree lines. undo.bin is now void (volume written since). /DamagedFiles has 5 symlinks.
+- Volume still non-journaled: `sync` over SSH before every reboot/fastboot; no forced power-off when avoidable.
+- USER 08:10: go back to the glass UI and performance.
+
 ## 2026-11-25 08:00 IST: filesystem repair PREPARED on a laptop copy; phone NOT written; waiting for the USER's yes
 - 2nd recovery boot worked (07:45 attempt never enumerated). userdata unmounted; metadata identical to last night's copy
   (0 changed 1 MiB chunks). Data blocks of the five overlapping files copied too (2981 blocks). Reads only.
