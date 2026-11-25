@@ -1,3 +1,15 @@
+## 2026-11-25 22:20 IST: app open/close + CC still delayed (USER); hardware clocks maxed; memory/kernel facts; RELEASE kernel build started
+- USER on 26bZ: scrolling "40+" (not 50+), stutters + slight delay when opening/closing apps, same in Control Center.
+- Scripted Settings open/close (5x) sampled with spindump (open-close.txt): SpringBoard main thread 3.3 s of 13 s (running 27 % of samples),
+  Preferences 2.96 s main thread (~0.6 s CPU per open), backboardd render thread 3.2 s; none saturated.
+- Clocks read from the OSM registers (/dev/pmem): A55 row 9 = 1804.8 MHz, A76 row 13 = 2304 MHz, L3 row 10 = 1459.2 MHz: all at their maximum. DDR vote
+  is in the code by default (sweetddr), not re-verified.
+- kernel_task 5.3 s of 13 s: touch thread 1.52 s (poll loop, priority 81), VM_compressor 1.8 s, thread calls 0.6 s, pageout 0.65 s.
+  vm_stat: 317 MB free, ~1.5 GB inactive, 107 MB in the compressor, 114 k compressions since boot. RAM available to XNU: 3.95 GiB (high bank; NOTES 1788).
+- Kernel log traffic ~25 lines/s in app open, 73 lines/10 s idle: not a cause. Crash loops: ~1 restart per 25 s each (fairplayd.H2 109, wifip2pd 108,
+  SiriAUSP 51): small; disabled.plist exists (launchd's disable list); NOT edited.
+- EXPERIMENT: CI RELEASE config of the same source (default is DEVELOPMENT: assertions, lock debugging). Not yet booted.
+
 ## 2026-11-25 22:00 IST: USER on 26bZ: "actually it does feels slightly better"; icon serialize failure located in code
 - Idle sample (spindump 15 s, but the USER was using the phone: Spotlight, MobilePhone): SpringBoard 59 %, backboardd 53 %, Spotlight 45 %,
   kernel 34 %, wland 15 %, bluetoothd 14 % (throttled after SIGABRT), kbd 11 %, wland-0225 7 %. fairplayd.H2 and wifip2pd exit/restart every few s.
