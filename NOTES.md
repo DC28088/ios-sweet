@@ -1,3 +1,9 @@
+## 2026-11-25 07:50 IST: repair PREPARATION started, nothing read or written: phone not on USB after the recovery boot
+- USER put the phone in fastboot and said continue. `fastboot boot recovery/recovery.img` finished 07:45, then "USB
+  disconnect" and no enumeration since (no adb, fastboot or usbnet). Plan: re-read metadata + the data blocks of the five
+  overlapping files (fsck repairs overlaps by COPYING file blocks, so a metadata-only copy would write zeros), run fsck -y
+  on a laptop copy, diff by block, show the USER the list; write to userdata only after an explicit yes.
+
 ## 2026-11-24 22:20 IST: READ-ONLY fsck of the iOS root: small, confined damage (USER: "just do 2nd", no backup, no repair)
 - Method: `sweetreboot fastboot`, temporary OrangeFox (`fastboot boot recovery/recovery.img`), userdata (sda34) NOT mounted;
   adb exec-out dd (reads only) of the HFS+ metadata (327 MiB: headers, extents, allocation, attributes, catalog) into a
@@ -5,7 +11,7 @@
 - Volume: HFSX, 4096 B blocks, 6291456 blocks = 24 GiB (partition 115 GB), non-journaled, not cleanly unmounted.
 - RESULT (exit 8, "found corrupt and needs to be repaired"): catalog/extents/attributes B-trees status 0x0000; one wrong block
   count (knowledgeC.db-wal 497, should be 984); free count 849717 should be 850219; bitmap under-allocated.
-- Own pass over the same copy (274174 extents): 7 overlaps / 298 blocks, 6 files: DuetExpertCenter
+- Own pass over the same copy (274174 extents): 7 overlaps / 298 blocks, 5 files: DuetExpertCenter
   _ATXInfoSuggestionStore.db-wal, CoreDuet knowledgeC.db-wal, biome Device.Power.EnergyMode/local/0, launchd.log.1,
   diagnostics Special ...11b.tracev3 (pairwise shared). 107 blocks in use but marked free (2 of those files); 419 marked
   used but unclaimed. No file outside /private/var overlaps or is at risk. File CONTENTS are not checked by fsck.
