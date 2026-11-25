@@ -1,0 +1,39 @@
+diff --git a/iokit/Kernel/arm/SweetNativeAdrenoClient.cpp b/iokit/Kernel/arm/SweetNativeAdrenoClient.cpp
+index b1ab1e2..c388461 100644
+--- a/iokit/Kernel/arm/SweetNativeAdrenoClient.cpp
++++ b/iokit/Kernel/arm/SweetNativeAdrenoClient.cpp
+@@ -54,11 +54,18 @@ struct Backend {
+  * 0129 windows overlapped it and every extra BoMap was refused as Busy. */
+ enum : uint64_t {ExtraWindowStart=0x80000000,ExtraWindowBytes=0x10000000};
+ /* Processes that receive a Metal device besides backboardd. AegirPoster (the
+- * configured iOS 16 wallpaper) aborts without one; sweetm2extra=0 disables. */
++ * configured iOS 16 wallpaper) aborts without one; sweetm2extra=0 disables.
++ * Sweet 2021 (iOS 26): the other GPU users are picked by boot-arg sweetm2who, a bit mask (default 1 = iconservicesagent
++ * only: it draws every icon with RenderBox/Core Image software paths, ~90% of a core while scrolling, because this
++ * check refused it). proc_selfname() is p_comm, 16 (MAXCOMLEN) characters, so longer names compare on those. */
+ bool extra_client(const char *name)
+ {
+- static const char *const names[]={"AegirPoster"};
+- for(const char *n:names)if(!strcmp(name,n))return true;
++ static const char *const always[]={"AegirPoster"};
++ static const char *const picked[]={"iconservicesagent","SpringBoard","SBRendererService","LegacyPoster"};
++ for(const char *n:always)if(!strncmp(name,n,16))return true;
++ int who=1;PE_parse_boot_argn("sweetm2who",&who,sizeof(who));
++ for(unsigned i=0;i<sizeof(picked)/sizeof(picked[0]);++i)
++  if((who&(1<<i)) && !strncmp(name,picked[i],16))return true;
+  return false;
+ }
+ // Release/acquire publishes the completed backend to the framebuffer workloop.
+@@ -307,7 +314,11 @@ IOReturn AGXAccelerator::newUserClient(task_t task,void *securityID,UInt32 type,
+  if(type!=0x4147 || task!=current_task())return kIOReturnUnsupported;
+  char name[32]={};proc_selfname(name,sizeof name);
+  const bool compositor=!strcmp(name,"backboardd");
+- if(!compositor && !(backend.extra_slots && extra_client(name)))return kIOReturnNotPrivileged;
++ if(!compositor && !(backend.extra_slots && extra_client(name))) {
++  static unsigned refused_traces=0;
++  if(refused_traces<24) {++refused_traces;IOLog("SWEET RENDER: %s refused a GPU client (not in the list)\n",name);}
++  return kIOReturnNotPrivileged;
++ }
+  IOLockLock(backend.lock);
+  static unsigned open_traces=0;
+  if(open_traces<16) {++open_traces;IOLog("SWEET RENDER: %s open type=%#x\n",name,type); }
