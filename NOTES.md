@@ -1,3 +1,14 @@
+## 2026-11-25 23:10 IST: image 26cB (kernel 2024, sweetfb_ec=2) booted: 16.8 ms typical frame gap; possible TEARING in a screenshot
+- Kernel CI 45661942982 (0c61c850); image 26cB 6d8769c6 = 26bZ cmdline with sweetfb_ec=2 (sweetbuild=2691), payload byte-identical; clean restart (sync + sweetreboot),
+  root mounted without "dirty"; logs/boot-26cB.txt, 0 HFSINC/panic/GPU-lost.
+- frametrace.py during a bounded scripted scroll (12 s, 681 frames): gap p50 16.8 ms; 76 % of frames one refresh apart (26bZ: 23 %), SwapWait p50 0 ms
+  (26bZ 15.3), submit->scanned p50 8.8 ms (26bZ 16.1). The 100 ms gaps (19 %) are idle refreshes between swipes, so the plain mean
+  (29 fps) is not meaningful. A second, shorter trace taken during a screenshot burst: gap p50 23 ms, 57 % one refresh (sweetshot loads the system).
+- 10 screenshots during scroll: no black frames; shot 8 has a horizontal break at y~408 (top = newer frame, bottom = older). Cannot tell panel tearing
+  from sweetshot reading a surface while CA redraws it; 26bZ burst of 8 had none (too few). Risk note: 2024 lets CA start frame N+1 when
+  swap N-1 was copied; if CA reuses surface N the copy could be half new.
+- USER to watch for tearing lines while scrolling, App Library, lock/wake, app open/close. Fallback: 26bZ.
+
 ## 2026-11-25 23:00 IST: frame timing from kernel memory: CA waits for its own last frame; kernel 2024 (depth 2, sweetfb_ec=2)
 - scratchpad frametrace.py reads the static sweet_fb_trace (PA 0x10238c928 for kernel 45648470761; 128 records, 19.2 MHz ticks) over /dev/pmem: read-only,
   no UI driving. 6 s on 26bZ (USER using the phone or idle animation; not a controlled scroll): gap between frames p50 32.4 ms, 61 % of frames 2 refreshes apart,
