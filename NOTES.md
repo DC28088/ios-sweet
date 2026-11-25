@@ -1,3 +1,18 @@
+## 2026-11-25 17:00 IST: per-draw timing during scroll (USER approved): ranking is distorted; frame = ~104 draws, ~2 main passes
+- 1500 draws timed (sweet-native-drawtime; switch now moved to .off, drawlog.off; no restart). Scroll by script. Each draw
+  is flushed + waited for (floor ~251 us), so NOT real frame costs. Script: scratchpad drawrank.py/passes.py; log drawtime.log.
+- Excess over the floor, per frame (13 frames, 111 draws/frame): fixed_frag TimgBvcmA2Xhf_Ialp (icon labels) 11.6 ms in ~24
+  draws, plain A2Xhf fills 3.6 ms (6.8), luma_boost_lph full screen 3.3 ms (1), Timg..A2Xhfn_Isrc 1.5 ms (24), Ialp 1.2 ms (22),
+  Ixrg 1.3, TkfhBvcm 2.7 in 4, glass sdf 0.8, blur downsample 1.0.
+- CAUTION (code read, not measured): donor maps [[color(n)]] inputs (Bvcm etc.) to fbfetch_output_coherent and freedreno makes
+  FB_READ force the GMEM path; the test flushes after each draw, so each such draw would reload the whole 828x1792
+  (12 B/px) target. So the label number is probably inflated. Likely an artefact; do not optimise from it.
+- Frames (12 whole): draws 69/104/197 (min/median/max), target switches 0/3/16, main-target passes 1/2/6; the main target
+  (80 + 115 RGBA16F, 828x1792) is interrupted mostly by 448x896 blur. 33 IBs/frame in the transport stats.
+- NEXT candidates: (1) real GPU pass times: MESA_GPU_TRACES=print in native-env (backboardd restart, ASK). (2) sysmem vs
+  GMEM whole-frame comparison (needs env + restart, ASK). (3) look at why CA renders 2 attachments (BGRA8 + RGBA16F) in EDR-like
+  pipelines (A2Xhf) and the luma_boost full-screen pass; unverified leads.
+
 ## 2026-11-25 16:50 IST: filesystem clean after the forced reset; steady-scroll numbers: ~26 fps, GPU ~17 ms per frame
 - Reset by the USER (power+vol-down). Temporary recovery, metadata copy, `fsck.hfsplus -n`: exit 0 "appears to be OK" (dirty
   flag set, 253211 files). 26bU booted 16:5x (logs/boot-26bUf.txt): mounted dirty (expected), 0 HFSINC/hfs_mark lines.
