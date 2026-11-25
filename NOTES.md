@@ -1,3 +1,14 @@
+## 2026-11-25 09:20 IST: dock glass: the FS PRE-DISPATCH (prefetch) sample of the shape map reads 0; normal sam reads right
+- CI 45536169131 installed (modes 8-13; build dir research/ios26/metal/build-45536169131, backup-before inside).
+- OBSERVED at the dock (map 832x256, 1 level; view log shows res == view res, RGBA16F, level 0-0, layer 0-0): txf (8), txl
+  (9), txl via sampler 0 (10), tex at coord+1/4096 (11) give the right SDF (alpha 1 inside, distance < 0 in the middle);
+  txs/levels right (12); tex at the unmodified varying, 32-bit (13) and the original half one (3) give 0.
+- mode 11 is only non-prefetchable, 13 is prefetchable: so the pre-dispatch fetch is the fault. WHY is not known. REFUTED guess:
+  linear interpolation (the inputs are air.center/air.perspective).
+- FIX under test: tools/build-sweet-native-metal.py adapt_tex_prefetch: ir3_nir_lower_tex_prefetch off by default
+  (IR3_SWEET_PREFETCH=1 in /var/local/sweet-native-env turns it on). Build pending. Then: dock after scroll, Search
+  pill, App Library, CC, and an fps comparison with and without prefetch.
+
 ## 2026-11-25 09:00 IST: dock glass: the shape-map SAMPLE returns 0 in glass_background_no_bleed_lph (bisected on the phone)
 - Build CI 45534432933 (glass-dbg; installed, backup research/ios26/metal/build-45534432933/backup-before). Modes set by
   /var/local/sweet-glass-dbg + backboardd restart; scripted swipe + sweetshot (scratchpad runmode.sh). Phone currently

@@ -160,6 +160,23 @@ should_defer(struct fd_submit *submit)
    if (!use_fence_fd && should_defer(submit)) {''')
     p.write_text(s)
 
+def adapt_tex_prefetch(mesa):
+    # 26c: the FS pre-dispatch texture fetch reads 0 for glass_background_no_bleed's shape map (dock and Search-pill
+    # glass vanish after a home-screen scroll); the same read as an ordinary sam (nudged coordinates, explicit level or
+    # texel fetch) is right. Cause of the bad prefetch not known. Off by default; IR3_SWEET_PREFETCH=1 in
+    # /var/local/sweet-native-env turns it back on for comparison.
+    p=mesa/'src/freedreno/ir3/ir3_nir_lower_tex_prefetch.c';text=p.read_text()
+    needle="""   bool progress = false;
+
+   assert(shader->info.stage == MESA_SHADER_FRAGMENT);
+"""
+    if text.count(needle)!=1:raise SystemExit('tex prefetch pass changed')
+    text=text.replace(needle,needle+"""
+   if (!getenv("IR3_SWEET_PREFETCH"))
+      return false;
+""")
+    p.write_text('#include <stdlib.h>\n'+text)
+
 def prepare_mesa(donor,archive):
     if archive is None:
         archive=WORK/('mesa-'+INPUTS['mesa_version']+'.tar.xz')
@@ -176,6 +193,7 @@ def prepare_mesa(donor,archive):
         with (donor/'tools/mesa'/name).open('rb') as patch:
             run('patch','--batch','--forward','--fuzz=0','-p1',cwd=mesa,stdin=patch)
     adapt_submit_merging(mesa)
+    adapt_tex_prefetch(mesa)
     shutil.copytree(donor/'tools/mesa/air',mesa/'src/compiler/air')
     shutil.copytree(NATIVE/'transport',mesa/'src/redwood-drm')
     # Header reconstructed from the same tracked kernel patch series as Metal2.
