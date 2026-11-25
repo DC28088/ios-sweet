@@ -1,3 +1,13 @@
+## 2026-11-25 22:00 IST: USER on 26bZ: "actually it does feels slightly better"; icon serialize failure located in code
+- Idle sample (spindump 15 s, but the USER was using the phone: Spotlight, MobilePhone): SpringBoard 59 %, backboardd 53 %, Spotlight 45 %,
+  kernel 34 %, wland 15 %, bluetoothd 14 % (throttled after SIGABRT), kbd 11 %, wland-0225 7 %. fairplayd.H2 and wifip2pd exit/restart every few s.
+- IconServices text pulled from the phone's dyld cache (0x1a921c000, subcache .13). The message "Failed to serialize finalized icon for icon stack" is in
+  an outlined logger 0x1a9284138, called from 0x1a926a488: function 0x1a926a3bc = x = [obj _finalizedIconForCompositingDescriptor:];
+  if x: data = [x serializedDataWithError:&err]; if data nil or length 0: log (err is not printed), else return data. So the icon
+  IS finalized; only the serialization fails, with an NSError the code discards. The implementer class (IconRendering/IconFoundation/
+  RenderBox?) and the error are not known yet.
+- Tools: scratchpad pullrange.py, xref.py, callers.py, stubs.py, rdva2.py (selector names from the phone's cache).
+
 ## 2026-11-25 21:50 IST: image 26bZ (kernel 2023, sweetfb_ec=1): display ~30 -> ~45-57 fps in scripted scroll; swap-wait timeouts 25 % -> 1
 - First 2023 build (CI 45645267843) FAILED (undeclared SWEET_MDP_CTL0: flipLatched() above the defines); I first reported it as done (my watcher
   exited 0) and my script copied the stale shim-boot.img as 26bZ: renamed NOT-26bZ-stale-copy-of-26bY.img, never booted. Fixed
