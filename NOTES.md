@@ -1,3 +1,12 @@
+## 2026-11-25 20:45 IST: image 26bY (kernel 2022, sweetsteer=47) booted; steering on; scripted scroll NOT faster
+- USER: "free to do whatever it takes to make the whole UI smooth" (no need to ask). Still confirm destructive steps (AGENTS.md).
+- Kernel CI 45634552109 (0590cba7); image 26bY 923e9007 = 26bX cmdline + sweetsteer=47, sweetbuild=2688. Read-only fsck before: exit 0, overlaps 0
+  (a first run was invalid: my `| head -2` cut the copy short; redone). Boot log logs/boot-26bY.txt, 0 HFSINC / GPU loss / panic lines.
+- Steering verified in kernel memory (/dev/pmem read): sweet_amp_big_mask 0xc0, little 0x3f, pri 47. (Its boot line is too early for the USB log.)
+- 3 scripted 30 s scrolls (steady.sh, 46-47 swipe pairs): gpu completions/s means ~30 / ~34 / ~28 (26bU base run 2 h earlier: ~32); swaps/s
+  24-46, 18-38, 13-33. => NO measurable change; the scripted swipes may themselves limit the rate (not checked).
+- Background at boot: dasd 265 %, ReportCrash 95 %, bluetoothd 41 % (crash loops) for the first minutes.
+
 ## 2026-11-25 19:40 IST: kernel 2022: idle-core steering for arm64 (sweetsteer=N, default off); CI started
 - The kernel tree has Bergamota 0191 (idle-core steering) but its code sits in choose_processor_smt(), compiled only for x86
   (CONFIG_SCHED_SMT): dead on arm64, and sweet_amp_enable() was never called for our board. Stock choose_processor()
