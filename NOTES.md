@@ -1,3 +1,15 @@
+## 2026-11-25 17:08 IST: USER finger scroll: iconservicesagent + SpringBoard use the CPU; phone clock is 1970
+- USER scrolled by finger ~25 s ("go, scrolling now", no settings changed). Display swaps 41.5 then 31.6/s, GPU completions 29-34/s,
+  latency avg 8.5-10.2 ms (max 25). ps samples: SpringBoard 94-130 %, iconservicesagent 102-146 % (in 5 of 7 samples after the
+  first), backboardd 30-41 %, WidgetRenderer_Default 8-27 %, wland 16-18 %, iconservicesagent idle again afterwards (4.7 %).
+- In the scripted swipes earlier (two home pages) iconservicesagent was NOT in the top list; so it may only run for what the USER
+  scrolled (App Library, widgets?). What exactly was scrolled is not known.
+- Phone clock: `date` = Wed Dec 31 16:12 PST 1969 (epoch 718 s): no RTC; every boot starts at the epoch (NOTES 4420). Icon cache
+  (systemgroup.com.apple.lsd.iconscache, 290 .isdata files, ~30 MB) has file times up to 1970-01-01 01:09, i.e. LATER than the
+  current clock (earlier boots ran longer). Whether a wrong date makes icons rebuild is NOT tested (hypothesis).
+- NEXT (USER to choose): (a) set the clock to host UTC by SSH (temporary; a change on the phone, ask first), (b) ask
+  what the USER scrolled, (c) profile SpringBoard/iconservicesagent.
+
 ## 2026-11-25 17:05 IST: both GPU tests done: scrolling is NOT GPU-bound (GPU ~12-30% busy); phone back to normal settings
 - USER reset to fastboot; temporary recovery, read-only fsck: exit 0 "appears to be OK", overlaps 0. 26bU booted (logs/boot-26bUg.txt, 0 HFSINC).
 - Runs (30 s scripted swipes each, steady.sh): base swaps/s 24.0/37.7/31.4, completion latency avg 9.6/18.1/7.9/6.6/8.6/7.9 ms,
