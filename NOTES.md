@@ -1,3 +1,15 @@
+## 2026-11-25 21:10 IST: ~30 fps limit found in OUR display code (SwapWait + copy only at the vsync tick); kernel 2023 (sweetfb_ec=1)
+- Core steering A/B in one boot by poking sweet_amp_big_mask over /dev/pmem (read back each time): GPU completions/s means off 24 / on47 30 / on31 29 /
+  off 31: NO effect. (USER finger scroll on 26bY: swaps 17.9/33.5/25.9.) Steering stays at its boot value (on, pri 47).
+- sweet_fb stats (26bY, 36 min): swap_wait_us 16.1-16.4 ms average, swap_wait_timeouts 2489 of 9883 (25 %), gpu_holds 5688 of ~10762 swaps: more than
+  half the frames missed a vsync tick because their GPU work was not complete yet; then the copy waits for the NEXT tick, and
+  CoreAnimation's SwapWait (sweet 2011, after the copy) blocks meanwhile. That explains a ~30 fps plateau (inference from the
+  code and counters, not a timeline).
+- 2023 (xnu/patches-12377/2023-sweet-fb-early-copy.patch): boot-arg sweetfb_ec=1 (default 0): fSwapTimer (same work loop) copies a frame as soon as
+  its GPU fence has passed AND the previous flip has latched (never spins in waitLatch; one frame per panel refresh);
+  the vsync tick only takes a frame when the flip has latched. Copy mode + flipping only; zero-copy paths unchanged.
+- Next: CI, image 26bZ = 26bY cmdline + sweetfb_ec=1 (sweetbuild=2689), same scroll comparison; watch for tearing/black frames.
+
 ## 2026-11-25 20:45 IST: image 26bY (kernel 2022, sweetsteer=47) booted; steering on; scripted scroll NOT faster
 - USER: "free to do whatever it takes to make the whole UI smooth" (no need to ask). Still confirm destructive steps (AGENTS.md).
 - Kernel CI 45634552109 (0590cba7); image 26bY 923e9007 = 26bX cmdline + sweetsteer=47, sweetbuild=2688. Read-only fsck before: exit 0, overlaps 0

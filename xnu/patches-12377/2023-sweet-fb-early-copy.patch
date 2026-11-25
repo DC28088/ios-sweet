@@ -1,0 +1,124 @@
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index 40d0566..b665f06 100644
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -451,6 +451,9 @@ public:
+ 	 * fEarly: the early path is usable (zero-copy armed and the MDP SMMU verified bypass).
+ 	 */
+ 	bool          fDirect, fEarly;
++	bool          fEarlyCopy;       /* 2023 sweetfb_ec=1: copy mode copies a frame when its GPU work completes, not at the next tick */
++	bool          flipLatched(void);
++	void          copyFired(void);
+ 	IOTimerEventSource *fSwapTimer;
+ 	uint8_t       fEarlyRec[SWEET_FB_SWAP_REC_SIZE];
+ 	void          quietConsole(void);
+@@ -1015,11 +1018,17 @@ AppleCLCD::start(IOService *provider)
+ 		fFlushTicks = 1;
+ 	}
+ 	fVsync->setTimeoutUS(fVsyncUS);
+-	if (fEarly) {
++	{
++		int ec = 0;
++		PE_parse_boot_argn("sweetfb_ec", &ec, sizeof(ec));
++		fEarlyCopy = ec != 0 && !fEarly && fFlip;
++	}
++	if (fEarly || fEarlyCopy) {
+ 		fSwapTimer = IOTimerEventSource::timerEventSource(this, &AppleCLCD::swapFired);
+ 		if (fSwapTimer == NULL || fWorkLoop->addEventSource(fSwapTimer) != kIOReturnSuccess) {
+ 			OSSafeReleaseNULL(fSwapTimer);
+ 			fEarly = false;
++			fEarlyCopy = false;
+ 			IOLog("SWEET FB: no swap timer: direct frames wait for the vsync tick\n");
+ 		}
+ 	}
+@@ -1029,6 +1038,9 @@ AppleCLCD::start(IOService *provider)
+ 	setProperty("DisplayPipePlaneBaseAlignment", 64ULL, 32);
+ 	registerService();
+ 	__atomic_store_n(&sweet_fb_shot_fb, this, __ATOMIC_RELEASE);     /* kern.sweet_fb_shot (patch 0224) */
++	if (fEarlyCopy) {
++		IOLog("SWEET FB: early copy on (sweetfb_ec=1): frames are copied as soon as their GPU work completes\n");
++	}
+ 	IOLog("SWEET FB: AppleCLCD %ux%u stride %u at 0x%llx, default surface %u, presented as %ux%u, vsync %u us, copy every %u, scale %u (pad %d,%d), direct %d early %d\n",
+ 	    fWidth, fHeight, fRowBytes, fPhys, fSurface->id, fLogicalW, fLogicalH, fVsyncUS, fFlushTicks,
+ 	    fScale, fPadX, fPadY, fDirect ? 1 : 0, fEarly ? 1 : 0);
+@@ -1168,7 +1180,8 @@ AppleCLCD::vsyncFired(OSObject *owner, IOTimerEventSource *sender)
+ 		sender->setTimeoutUS(nextUS);
+ 		return;
+ 	}
+-	bool flush = fb->fDirty && (count % fb->fFlushTicks) == 0;
++	/* 2023: with the early copy the tick only takes a frame whose flip cannot make it spin in waitLatch() here */
++	bool flush = fb->fDirty && (count % fb->fFlushTicks) == 0 && (!fb->fEarlyCopy || fb->flipLatched());
+ 	uint8_t *rec = NULL;
+ 	SweetSurface *taken[4] = {}, *vdropped[4] = {};
+ 	if (flush) {
+@@ -1305,12 +1318,60 @@ AppleCLCD::putBack(const uint8_t *rec, SweetSurface **taken, SweetSurface **drop
+ 	}
+ }
+ 
++/*
++ * Sweet 2023 (sweetfb_ec=1, copy mode with flipping): CoreAnimation's SwapWait(N) is held until swap N was copied
++ * (2011), and the copy ran only at the vsync tick: a frame whose GPU work missed a tick waited one more. On iOS 26 that
++ * was 16 ms average per frame, a quarter of the waits timed out, and the rate sat near 30 fps with the GPU mostly
++ * idle. The frame is now taken when its GPU fence has passed and the previous flip has latched (so drawing into the
++ * other back buffer never spins), from this timer, armed by swap() and while a frame is pending. Same work loop as the
++ * vsync timer, so the two never run at once.
++ */
++bool
++AppleCLCD::flipLatched(void)
++{
++	return fLastFlush == 0 ||
++	    (*(volatile uint32_t *)(fMdp + SWEET_MDP_CTL0 + SWEET_MDP_CTL_FLUSH) & fLastFlush) == 0;
++}
++
++void
++AppleCLCD::copyFired(void)
++{
++	SweetSurface *taken[4] = {}, *dropped[4] = {};
++
++	if (fPowerOff) {
++		return;         /* the vsync tick redraws on power on */
++	}
++	IOLockLock(fLock);
++	if (!fDirty) {
++		IOLockUnlock(fLock);
++		return;
++	}
++	if (!flipLatched() || !takeFrame(fEarlyRec, taken, dropped, mach_absolute_time(), false)) {
++		IOLockUnlock(fLock);
++		fSwapTimer->setTimeoutUS(500);
++		return;
++	}
++	bool more = fDirty;
++	IOLockUnlock(fLock);
++	sweet_hold_release(dropped);
++	present(fEarlyRec);
++	__atomic_store_n(&fCopyDone, fCurSwapID, __ATOMIC_RELEASE);
++	sweet_hold_release(taken);      /* copied: CA may render into them again */
++	if (more) {
++		fSwapTimer->setTimeoutUS(500);
++	}
++}
++
+ void
+ AppleCLCD::swapFired(OSObject *owner, IOTimerEventSource *)
+ {
+ 	AppleCLCD *fb = (AppleCLCD *)owner;
+ 	SweetSurface *taken[4] = {};
+ 
++	if (fb->fEarlyCopy) {
++		fb->copyFired();
++		return;
++	}
+ 	if (fb->fPowerOff) {
+ 		return;         /* the vsync tick runs the backlight ramp and redraws on power on */
+ 	}
+@@ -1549,6 +1610,9 @@ AppleCLCD::swap(const uint8_t *rec)
+ 	memcpy(fPendHold, held, sizeof(held));
+ 	IOLockUnlock(fLock);
+ 	sweet_hold_release(dropped);
++	if (fEarlyCopy && !fPowerOff) {
++		fSwapTimer->setTimeoutUS(250);  /* 2023: copy it when the GPU work before it has completed */
++	}
+ 	if (fEarly && !fPowerOff) {
+ 		fSwapTimer->setTimeoutUS(1);    /* scan it now: the MDP latches at its next vsync */
+ 	}
