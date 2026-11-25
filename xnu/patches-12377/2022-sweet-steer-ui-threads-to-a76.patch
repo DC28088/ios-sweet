@@ -1,0 +1,75 @@
+diff --git a/iokit/Kernel/arm/SweetCPU.cpp b/iokit/Kernel/arm/SweetCPU.cpp
+index 631a45d..ee373b7 100644
+--- a/iokit/Kernel/arm/SweetCPU.cpp
++++ b/iokit/Kernel/arm/SweetCPU.cpp
+@@ -218,6 +218,8 @@ sweet_cpu_measure_khz(void)
+ 	return ns ? (iterations * 64 * 1000000ULL) / ns : 0;
+ }
+ 
++extern "C" void sweet_amp_enable(uint64_t big, uint64_t little, int pri);
++
+ static void
+ sweet_cpufreq_domain(const ml_topology_info_t *topology, unsigned domain,
+     uint64_t pa, unsigned first_cpu, int mode)
+@@ -295,6 +297,16 @@ sweet_cpufreq_start(const ml_topology_info_t *topology)
+ 	int l3 = 1;
+ 	PE_parse_boot_argn("sweetl3", &l3, sizeof(l3));
+ 	sweet_cpufreq_domain(topology, 2, 0x18321000ULL, 0, l3 ? mode : 0);
++	/*
++	 * 2022: sweetsteer=N (default 0 = off) turns on the idle-core steering of osfmk/kern/sched_prim.c (Bergamota 0191):
++	 * user threads with base priority >= N take an idle Cortex-A76 (cpu6-7) first, everything else an idle A55 first.
++	 * 47 = interactive UI threads (SpringBoard's main thread); it steers only where a thread wakes up.
++	 */
++	int steer = 0;
++	if (PE_parse_boot_argn("sweetsteer", &steer, sizeof(steer)) && steer > 0 && topology->num_cpus == 8) {
++		sweet_amp_enable(0xc0, 0x3f, steer);
++		IOLog("SWEET CPU: steering on: base_pri >= %d wakes on an idle cpu6-7 first, the rest on cpu0-5\n", steer);
++	}
+ }
+ 
+ /*
+diff --git a/osfmk/kern/sched_prim.c b/osfmk/kern/sched_prim.c
+index 47ccef6..bd185ae 100644
+--- a/osfmk/kern/sched_prim.c
++++ b/osfmk/kern/sched_prim.c
+@@ -5204,7 +5204,15 @@ choose_processor(
+ 					 * If the rotation bitmask to force a migration is set for this core and there's an idle core that
+ 					 * that needn't be avoided, don't continue running on the same core.
+ 					 */
+-					if (!(bit_test(processor->processor_set->perfcontrol_cpu_migration_bitmask, processor->cpu_id) && non_avoided_idle_map != 0)) {
++					bool keep_hint = true;
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++					/* Sweet 2022: wrong core class for this thread and an idle core of the right class exists. */
++					uint64_t amp_want = sweet_amp_wanted_map(thread);
++					if (amp_want != 0 && !bit_test(amp_want, processor->cpu_id) && (idle_map & amp_want) != 0) {
++						keep_hint = false;
++					}
++#endif /* ARM64_BOARD_CONFIG_SWEET */
++					if (keep_hint && !(bit_test(processor->processor_set->perfcontrol_cpu_migration_bitmask, processor->cpu_id) && non_avoided_idle_map != 0)) {
+ 						return processor;
+ 					}
+ 				}
+@@ -5277,6 +5285,23 @@ choose_processor(
+ 		/* there shouldn't be a pending AST if the processor is idle */
+ 		assert((idle_map & pset->pending_AST_URGENT_cpu_mask) == 0);
+ 
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++		/*
++		 * Sweet 2022: idle cores of the class this thread should use first (round robin). 0191 put this only in
++		 * choose_processor_smt(), which arm64 does not compile; here the stock fallback is lsb_first(idle_map),
++		 * i.e. always the lowest numbered idle core, a Cortex-A55 on SM7150. Off until sweet_amp_enable().
++		 */
++		uint64_t amp_want_idle = idle_map & sweet_amp_wanted_map(thread);
++		if (amp_want_idle != 0) {
++			int amp_cpu = lsb_next(amp_want_idle, pset->cpu_preferred_last_chosen);
++			if (amp_cpu < 0) {
++				amp_cpu = lsb_first(amp_want_idle);
++			}
++			pset->cpu_preferred_last_chosen = amp_cpu;
++			return processor_array[amp_cpu];
++		}
++#endif /* ARM64_BOARD_CONFIG_SWEET */
++
+ 		/*
+ 		 * Look at the preferred cores first.
+ 		 */

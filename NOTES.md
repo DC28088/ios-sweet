@@ -1,3 +1,13 @@
+## 2026-11-25 19:40 IST: kernel 2022: idle-core steering for arm64 (sweetsteer=N, default off); CI started
+- The kernel tree has Bergamota 0191 (idle-core steering) but its code sits in choose_processor_smt(), compiled only for x86
+  (CONFIG_SCHED_SMT): dead on arm64, and sweet_amp_enable() was never called for our board. Stock choose_processor()
+  falls back to lsb_first(idle_map) = always the lowest idle CPU = an A55 here (code read; not measured).
+- 2022 = same steering in choose_processor() + SweetCPU.cpp: boot-arg sweetsteer=N -> sweet_amp_enable(0xc0, 0x3f, N): user threads with
+  base_pri >= N wake on an idle cpu6-7 first, all others on an idle cpu0-5 first; running threads are not moved, no pinning.
+  N=47 = interactive UI threads (SpringBoard main thread: spindump "priority 0-47 (base 47)"). iconservicesagent threads (37)
+  then prefer A55s. GPU submitter (cpu7) and present (cpu6) stay bound (0176), so they share those cores.
+- Default 0: no behaviour change. Planned image 26bY = 26bX cmdline + sweetsteer=47 (sweetbuild=2688).
+
 ## 2026-11-25 19:25 IST: core layout + icon service: NO fast/slow awareness on iOS 26; icons "Failed to serialize finalized icon"
 - CPU topology (from sources, not measured on the phone): ADT sweet-n104-2x-wbgb.adt has cluster-type 0 for all 8 CPUs = one homogeneous
   cluster; sweetamp=2 is the SPEAKER amp, not AMP. xnu 0167/0248 scheduler patches are deferred on 12377 (NOTES 1640;
