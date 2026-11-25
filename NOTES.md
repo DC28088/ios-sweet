@@ -2,6 +2,8 @@
 - 26cA = 26bZ cmdline (sweetbuild=2690) + kernel.release.sweet (6d8f2f7d). `sync` + `sweetreboot fastboot` first. fastboot boot accepted 22:25; no USB
   network, no log bytes, no fastboot/adb/USB device by 22:31. What the screen shows: not known. The kernel has the same boot
   settings and patches as 26bZ, so the difference is the RELEASE configuration (or a dev-only code path our patches need).
+- USER (photo not taken): screen stuck in verbose boot, last lines "mbinit: done [64 MB total pool size, (32/21) split]" and "new aio workqueue
+  implementation selected" = early bsd_init, hung before storage/USB. Next step in bsd_init not identified.
 - NEXT: USER power+vol-down -> fastboot; boot 26bZ (55b89644). Do NOT retry 26cA without a reason to expect it to boot.
 
 ## 2026-11-25 22:25 IST: MY BUG: a test loop opened/closed Settings for ~14 min (until the USER asked to stop)
