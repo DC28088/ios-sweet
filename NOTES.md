@@ -2,6 +2,10 @@
 - USER: scrolled "home pages, widget view, app library". Clock: `date -u -s @EPOCH` (toybox) -> 11:46:04 UTC = laptop time.
 - Before (epoch 1970) CPU during scroll: see the previous entry. After: not measured yet; USER to scroll the same way.
 
+- Idle CPU after the clock change (1 min): PerfPowerServices 100 % in one sample (one-off?), wland 16.5 %. Log of this boot: 935 "CRASH" lines;
+  four speech plug-ins SiriAUSP/KonaSynthesizer/MauiAUSP/MacinTalkAUSP exec'd ~51x each (crash loop), bluetoothd 28 crash lines,
+  MessagesBlastDoor 40, SBRendererService 20; fairplayd.H2 124 and wifip2pd 123 execs. Cost of these loops not measured.
+
 ## 2026-11-25 17:08 IST: USER finger scroll: iconservicesagent + SpringBoard use the CPU; phone clock is 1970
 - USER scrolled by finger ~25 s ("go, scrolling now", no settings changed). Display swaps 41.5 then 31.6/s, GPU completions 29-34/s,
   latency avg 8.5-10.2 ms (max 25). ps samples: SpringBoard 94-130 %, iconservicesagent 102-146 % (in 5 of 7 samples after the
