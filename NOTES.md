@@ -1,3 +1,22 @@
+## 2026-11-25 17:45 IST: ONLY backboardd gets the GPU: the kernel refuses every other process (SpringBoard, LegacyPoster, SBRendererService -> error 5)
+- Build CI 45609579839 (opt-in process log; installed, backup in build-45609579839/backup-before; log switch now renamed .off).
+  /var/tmp/sweet-gpu-open.log after a backboardd restart: backboardd open -> 0; SpringBoard, LegacyPoster, SBRendererService load
+  plug-in + driver, "open AGXAccelerator -> 5" (EIO = any other IOReturn, e.g. NotPrivileged). iconservicesagent was
+  already running, so it has no entry; by the code it must be refused too.
+- Code: xnu/patches-12377/2001-sweet-ios16-drivers.patch (ex 0129): AGXAccelerator::newUserClient(type 0x4147): name != backboardd and
+  not in extra_client() list {"AegirPoster"} -> kIOReturnNotPrivileged; 3 extra slots (256 MiB windows), sweetm2extra=3
+  in this boot ("extra Metal slots=3"). So the extra path exists but matches no iOS 26 process.
+- Matches the profile: no Metal in iconservicesagent's stacks, RenderBox/CoreImage software paths. Not proven that a GPU makes
+  the icons fast (untested).
+- HISTORY (NOTES 4710-4780, iOS 16 + Turnip/Vulkan): with extra clients on, the GPU was lost (black UI, DeviceLost) around AegirPoster's
+  open; sweetm2extra=0 was used until hang recovery. Different driver stack (native Mesa) now; risk remains real.
+- 4440: on iOS 16, spindump showed vmd/ReportCrash/axassetsd crash loops eating CPU; removing those jobs helped. On iOS 26 the
+  equivalent loops (SiriAUSP, KonaSynthesizer, MauiAUSP, MacinTalkAUSP, fairplayd.H2, wifip2pd, bluetoothd...) are not removed.
+- SpringBoard main thread: 8.3 s of 12 s (69 %), no single hot image (libobjc 203, UIKitCore 121, CoreFoundation 87, QuartzCore 84
+  running samples).
+- PLAN (kernel 2021, NOT built): add "iconservicesagent" to extra_client first (alone), boot with sweetm2extra=1; watch for GPU loss;
+  only then SpringBoard etc. Needs a kernel CI build + fastboot boot = ask the USER.
+
 ## 2026-11-25 17:30 IST: spindump WORKS on the phone (/usr/sbin/spindump); during the USER's scroll iconservicesagent renders icons in software
 - `spindump -noTarget 12 10 -noThrottle -o /tmp/sp2.txt` (USER scrolling home/widgets/App Library; 1135 steps at 10 ms; report ~30 s,
   15 MB). Copies: research/ios26/spindump-20261125/{idle,scroll}.txt (git-ignored). Frames are unsymbolicated (image+offset).
