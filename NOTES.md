@@ -1,3 +1,15 @@
+## 2026-11-25 21:50 IST: image 26bZ (kernel 2023, sweetfb_ec=1): display ~30 -> ~45-57 fps in scripted scroll; swap-wait timeouts 25 % -> 1
+- First 2023 build (CI 45645267843) FAILED (undeclared SWEET_MDP_CTL0: flipLatched() above the defines); I first reported it as done (my watcher
+  exited 0) and my script copied the stale shim-boot.img as 26bZ: renamed NOT-26bZ-stale-copy-of-26bY.img, never booted. Fixed
+  d0f4d6b, CI 45648470761 (f444b1aa). 26bZ = 55b89644 (26bY cmdline + sweetfb_ec=1, sweetbuild=2689, payload byte-identical).
+- Restarted by `sync` + `sweetreboot fastboot`: root mounted WITHOUT "dirty". Boot log logs/boot-26bZ.txt, 0 HFSINC/panic/GPU-lost lines.
+- Scripted scroll x3 (steady.sh): displayed swaps/s 56.9/33.8/32.9, 55.8/31.8/52.6, 51.7/53.7/43.8; GPU completions/s 32-54 (26bY: 18-42);
+  swap_wait_us 6.5-9.9 ms (26bY 16.1), swap_wait_timeouts 1 (26bY 2489 in 36 min), gpu_holds now counts the 500 us retries (62940).
+- Screenshot burst during scroll (8): no black frames, dock glass present. sweetshot shows the copied frame, so it cannot show panel
+  tearing: USER eye needed. Calendar/Clock icons grey while moving (older issue). Icon order on page 1 differs from this morning's
+  screenshots (Calendar/Clock now at the end): cause unknown (my scripted swipes or SpringBoard).
+- Kernel 2022 steering (sweetsteer=47) is in this image too; no effect measured.
+
 ## 2026-11-25 21:10 IST: ~30 fps limit found in OUR display code (SwapWait + copy only at the vsync tick); kernel 2023 (sweetfb_ec=1)
 - Core steering A/B in one boot by poking sweet_amp_big_mask over /dev/pmem (read back each time): GPU completions/s means off 24 / on47 30 / on31 29 /
   off 31: NO effect. (USER finger scroll on 26bY: swaps 17.9/33.5/25.9.) Steering stays at its boot value (on, pri 47).
