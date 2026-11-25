@@ -1,3 +1,7 @@
+## 2026-11-25 17:16 IST: phone clock set to host UTC (USER asked); lasts until reboot
+- USER: scrolled "home pages, widget view, app library". Clock: `date -u -s @EPOCH` (toybox) -> 11:46:04 UTC = laptop time.
+- Before (epoch 1970) CPU during scroll: see the previous entry. After: not measured yet; USER to scroll the same way.
+
 ## 2026-11-25 17:08 IST: USER finger scroll: iconservicesagent + SpringBoard use the CPU; phone clock is 1970
 - USER scrolled by finger ~25 s ("go, scrolling now", no settings changed). Display swaps 41.5 then 31.6/s, GPU completions 29-34/s,
   latency avg 8.5-10.2 ms (max 25). ps samples: SpringBoard 94-130 %, iconservicesagent 102-146 % (in 5 of 7 samples after the
