@@ -163,3 +163,22 @@ static void sweet_install_fallbacks(void)
 	sweet_install_fallbacks();
 }
 @end
+
+/* Diagnostic (opt-in, /var/local/sweet-gpu-openlog): which processes load the Metal plug-in at all. */
+#include <sys/stat.h>
+#include <time.h>
+#include <unistd.h>
+#include <stdio.h>
+#include <stdlib.h>
+__attribute__((constructor)) static void
+sweet_note_plugin_load(void)
+{
+	if (access("/var/local/sweet-gpu-openlog", F_OK))
+		return;
+	FILE *f = fopen("/var/tmp/sweet-gpu-open.log", "a");
+	if (!f)
+		return;
+	chmod("/var/tmp/sweet-gpu-open.log", 0666);
+	fprintf(f, "%lld %s[%d] uid %d plug-in loaded -> 0\n", (long long)time(NULL), getprogname(), (int)getpid(), (int)getuid());
+	fclose(f);
+}

@@ -10,6 +10,7 @@
 #include <mach/mach.h>
 #include <pthread.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <sys/sysctl.h>
 #include <time.h>
 #include <unistd.h>
@@ -495,13 +496,25 @@ int allocate(uint64_t bytes,uint32_t flags,IOSurfaceRef s,uint32_t *handle) {
     *handle=index+1;
     return 0;
 }
+// Diagnostic (opt-in, /var/local/sweet-gpu-openlog): which processes load this driver and whether they get the GPU.
+// Daemon stderr is not captured, so it goes to a file every process can append to.
+void note_process(const char *what,int result) {
+    if(access("/var/local/sweet-gpu-openlog",F_OK))return;
+    FILE *f=fopen("/var/tmp/sweet-gpu-open.log","a");
+    if(!f)return;
+    chmod("/var/tmp/sweet-gpu-open.log",0666);
+    fprintf(f,"%lld %s[%d] uid %d %s -> %d\n",(long long)time(nullptr),getprogname(),(int)getpid(),(int)getuid(),what,result);
+    fclose(f);
+}
+__attribute__((constructor)) void note_load() { note_process("driver loaded",0); }
 int open_gpu() {
     if(state.lost)return EIO;
     if(state.connection)return 0;
     io_service_t service=IOServiceGetMatchingService(0,IOServiceMatching("AGXAccelerator"));
-    if(!service)return ENODEV;
+    if(!service){note_process("open: no AGXAccelerator service",ENODEV);return ENODEV;}
     int e=error(IOServiceOpen(service,mach_task_self(),0x4147,&state.connection));
     IOObjectRelease(service);
+    note_process("open AGXAccelerator",e);
     if(e){state.connection=0;return e;}
     e=call(NativeAdrenoMethodQuery,nullptr,0,&state.params,sizeof state.params);
     if(!e)e=call(NativeAdrenoMethodGetDeviceInfo,nullptr,0,&state.info,sizeof state.info);
