@@ -1,3 +1,16 @@
+## 2026-11-25 19:16 IST: RESULT: allowing iconservicesagent the GPU changed nothing; it never asks for it
+- USER scroll (home, widgets, App Library) on 26bX, 25 s: display swaps 43.6/39.6/27.7 per s (before: 41.5/31.6; 38.0/20.7/28.9: not
+  different), GPU completions 28-37/s, lat avg 6.4-9.6 ms. ps: iconservicesagent 102-143 % (5 of 6 samples), SpringBoard 39-78 %,
+  backboardd 27-37 %, WidgetRenderer 7-23 %, wland 17 %.
+- Kernel log: NO "iconservicesagent open" line and no refusal for it. Refused: SpringBoard, LegacyPoster, SBRendererService,
+  WidgetRenderer_Default. So the icon service does not try Metal at all -> HYPOTHESIS "GPU refusal makes icons software" REFUTED for
+  the icon service. (SpringBoard, WidgetRenderer are refused at every boot.)
+- Icon cache: 420 .isdata files (291 before the reboot; the additions carry 1970 dates, i.e. were written before the clock was set), 0 written
+  in the 5 min around the scroll: it renders during the scroll without writing files.
+- GPU: no loss, no filesystem lines. Phone stays on 26bX (sweetm2who=1 default); rollback = boot 26bU.
+- OPEN: why the icon service redraws (which icon requests? it renders via RenderBox ImageProvider); CPU placement (fast vs slow cores)
+  of SpringBoard's main thread: not checked; SpringBoard/WidgetRenderer GPU access not tested; daemon crash loops.
+
 ## 2026-11-25 19:12 IST: image 26bX (kernel 2021, CI 45621299351) booted; iconservicesagent has not opened the GPU yet
 - USER put the phone in fastboot for it; read-only fsck before (exit 0, overlaps 0); image 26bX ed6a4cb8 = 26bU cmdline with sweetbuild=2687 and
   kernel 2021 (recipe check: payload-26bW reproduced byte for byte). Boot log logs/boot-26bX.txt.
