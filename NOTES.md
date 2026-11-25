@@ -1,3 +1,9 @@
+## 2026-11-25 17:24 IST: USER finger scroll #2 with the correct clock: iconservicesagent still 80-118 % -> clock not the (main) cause
+- Same scroll (home pages, widgets, App Library), 25 s. Display swaps 38.0/20.7/28.9 per s, GPU completions 26-32/s, lat avg 5.8-11.6 ms.
+  ps: SpringBoard 34-99 % (one sample 11), iconservicesagent 19/89/101/118/2/78 %, backboardd 21-41, WidgetRenderer 18-35.
+- Icon cache: 291 .isdata files (290 before the scroll; 1 with a 2026 date), so the agent rebuilds without (many) new files. NOT known
+  which icons or why. Not a controlled A/B (scroll length/content differ).
+
 ## 2026-11-25 17:16 IST: phone clock set to host UTC (USER asked); lasts until reboot
 - USER: scrolled "home pages, widget view, app library". Clock: `date -u -s @EPOCH` (toybox) -> 11:46:04 UTC = laptop time.
 - Before (epoch 1970) CPU during scroll: see the previous entry. After: not measured yet; USER to scroll the same way.
