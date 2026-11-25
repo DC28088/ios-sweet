@@ -1,5 +1,5 @@
 diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
-index 40d0566..b665f06 100644
+index 40d0566..cd29f4f 100644
 --- a/iokit/Kernel/arm/SweetFramebuffer.cpp
 +++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
 @@ -451,6 +451,9 @@ public:
@@ -51,7 +51,7 @@ index 40d0566..b665f06 100644
  	uint8_t *rec = NULL;
  	SweetSurface *taken[4] = {}, *vdropped[4] = {};
  	if (flush) {
-@@ -1305,12 +1318,60 @@ AppleCLCD::putBack(const uint8_t *rec, SweetSurface **taken, SweetSurface **drop
+@@ -1305,12 +1318,53 @@ AppleCLCD::putBack(const uint8_t *rec, SweetSurface **taken, SweetSurface **drop
  	}
  }
  
@@ -63,13 +63,6 @@ index 40d0566..b665f06 100644
 + * other back buffer never spins), from this timer, armed by swap() and while a frame is pending. Same work loop as the
 + * vsync timer, so the two never run at once.
 + */
-+bool
-+AppleCLCD::flipLatched(void)
-+{
-+	return fLastFlush == 0 ||
-+	    (*(volatile uint32_t *)(fMdp + SWEET_MDP_CTL0 + SWEET_MDP_CTL_FLUSH) & fLastFlush) == 0;
-+}
-+
 +void
 +AppleCLCD::copyFired(void)
 +{
@@ -112,7 +105,7 @@ index 40d0566..b665f06 100644
  	if (fb->fPowerOff) {
  		return;         /* the vsync tick runs the backlight ramp and redraws on power on */
  	}
-@@ -1549,6 +1610,9 @@ AppleCLCD::swap(const uint8_t *rec)
+@@ -1549,6 +1603,9 @@ AppleCLCD::swap(const uint8_t *rec)
  	memcpy(fPendHold, held, sizeof(held));
  	IOLockUnlock(fLock);
  	sweet_hold_release(dropped);
@@ -122,3 +115,18 @@ index 40d0566..b665f06 100644
  	if (fEarly && !fPowerOff) {
  		fSwapTimer->setTimeoutUS(1);    /* scan it now: the MDP latches at its next vsync */
  	}
+@@ -1985,6 +2042,14 @@ AppleCLCD::flipSetup(void)
+  * panel frame apart (sweetfb_hz >= ~40, or sweetfb_vsync=1): torn frames.
+  * Wait (bounded, one vsync plus slack) for the latch before drawing.
+  */
++/* 2023: the last queued flip has reached the panel */
++bool
++AppleCLCD::flipLatched(void)
++{
++	return fLastFlush == 0 ||
++	    (*(volatile uint32_t *)(fMdp + SWEET_MDP_CTL0 + SWEET_MDP_CTL_FLUSH) & fLastFlush) == 0;
++}
++
+ void
+ AppleCLCD::waitLatch(void)
+ {
