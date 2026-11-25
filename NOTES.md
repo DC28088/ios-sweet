@@ -1,3 +1,12 @@
+## 2026-11-25 10:25 IST: USER: all glass good incl. CC / App Library / in-app ("all of it looks good ... in app glass ui is fixed")
+- Then my scripted fps A/B (scratchpad bench.sh) switched IR3_SWEET_PREFETCH=1 back on for its 2nd step: USER saw
+  "back to flickering and GLassless UI mess". Test stopped, switch removed, backboardd restarted, dock glass verified by
+  screenshot after a scroll. Phone: CI 45537773111, prefetch off, no debug files active.
+- So with prefetch on the flicker is back too (USER report, same time): it plausibly causes the flicker as well.
+- DO NOT toggle the prefetch on the USER's phone again without asking. IR3_SWEET_PREFETCH is only for a build the USER agreed to.
+- bench off1 (prefetch off, 24 scripted swipes with 0.6 s pauses): NOT an fps figure (idle pauses included); swaps/s
+  18/15/13, async GPU completion 9-16 ms average, 22-40 ms max. The "on" run is void (stopped). Fps cost of prefetch: unmeasured.
+
 ## 2026-11-25 10:00 IST: DOCK + SEARCH-PILL GLASS FIXED (FS texture prefetch off); control + USER confirm
 - CI 45537773111 (prefetch off) installed; backup research/ios26/metal/build-45537773111/backup-before. Phone: 26bU, no
   debug file, no active native-env (sweet-native-env.prefetchon/.last/.sysmem and sweet-glass-dbg.off are inert).
