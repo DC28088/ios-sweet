@@ -1,3 +1,10 @@
+## 2026-11-25 19:12 IST: image 26bX (kernel 2021, CI 45621299351) booted; iconservicesagent has not opened the GPU yet
+- USER put the phone in fastboot for it; read-only fsck before (exit 0, overlaps 0); image 26bX ed6a4cb8 = 26bU cmdline with sweetbuild=2687 and
+  kernel 2021 (recipe check: payload-26bW reproduced byte for byte). Boot log logs/boot-26bX.txt.
+- "extra Metal slots=3"; backboardd connected slot 0; refused + logged: SpringBoard, LegacyPoster, SBRendererService
+  (sweetm2who default 1 = iconservicesagent only). Clock set again to host UTC (USER's earlier request).
+- iconservicesagent running (pid 342) without a GPU client so far: it opens only when it first uses Metal (or not at all).
+
 ## 2026-11-25 17:45 IST: ONLY backboardd gets the GPU: the kernel refuses every other process (SpringBoard, LegacyPoster, SBRendererService -> error 5)
 - Build CI 45609579839 (opt-in process log; installed, backup in build-45609579839/backup-before; log switch now renamed .off).
   /var/tmp/sweet-gpu-open.log after a backboardd restart: backboardd open -> 0; SpringBoard, LegacyPoster, SBRendererService load
