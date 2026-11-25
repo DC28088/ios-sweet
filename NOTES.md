@@ -1,3 +1,22 @@
+## 2026-11-25 17:05 IST: both GPU tests done: scrolling is NOT GPU-bound (GPU ~12-30% busy); phone back to normal settings
+- USER reset to fastboot; temporary recovery, read-only fsck: exit 0 "appears to be OK", overlaps 0. 26bU booted (logs/boot-26bUg.txt, 0 HFSINC).
+- Runs (30 s scripted swipes each, steady.sh): base swaps/s 24.0/37.7/31.4, completion latency avg 9.6/18.1/7.9/6.6/8.6/7.9 ms,
+  max 17-27; trace on: 23.6/23.0/25.0 (tracing has a cost); FD_MESA_DEBUG=sysmem: 45.3/34.7/24.9 swaps/s, latency avg
+  5.3-11.2, max 12-15. swaps/s samples are few and noisy: base vs sysmem NOT shown different.
+- GPU trace (MESA_GPU_TRACES=print, 47 MB, sha d64db657cc4d2cfe, research/ios26/gputrace-20261125/, phone copy removed):
+  91.7 s span, 9530 render passes, GPU busy per second by render-pass time: seconds 65-69 (around the unlock) 57-61 % busy
+  with 124-134 full-screen passes/s (= the 60 fps range); seconds 72-91 (the scroll; trace ends mid-scroll) 12-32 % busy,
+  19-57 full-screen passes/s. Full-screen pass avg 3.15 ms (max 11.4), ~2 per frame. (Timestamps: 19.2 MHz ticks, deltas
+  are multiples of 52 ns.) Caveat: the traced process also includes SpringBoard; one trace file for both.
+- So in this scroll the GPU is idle most of the time while SpringBoard and backboardd each used ~67% of a core (ps,
+  earlier run): CPU-side or pacing limit is the working hypothesis (not a profile). The earlier "GPU ~17 ms per frame"
+  was submit-to-done latency incl. queueing and completion delay, NOT GPU work. Sysmem shortens the latency.
+- Zero-copy would save <= 1.25 ms/frame copy. DRAWTIME ranking: see the 16:39 entry (distorted).
+- Phone: sweet-native-env absent; inert leftovers sweet-native-env.{last,last2,prefetchon,sysmem}; drawlog/drawtime .off; display works,
+  dock glass verified by screenshot. CI 45537773111 graphics build.
+- NEXT: CPU profile of SpringBoard/backboardd per frame (what eats ~26 ms each per frame?), check touch-injection rate as a
+  cause of the low fps in the script (synthetic swipes may not feed 60 Hz).
+
 ## 2026-11-25 16:45 IST: phone off USB again (USB disconnect 16:39:58); GPU pass trace + sysmem run NOT started
 - The trace step failed at the first SSH (timed out). sweet-native-env was therefore NOT written; the phone's state is
   as left at 16:39 (switches off, prefetch off). No ping, no USB device at 16:45; last log line 16:39:51 (SiriAUSP crash
