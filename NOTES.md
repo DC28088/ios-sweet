@@ -1,3 +1,12 @@
+## 2026-11-25 23:00 IST: frame timing from kernel memory: CA waits for its own last frame; kernel 2024 (depth 2, sweetfb_ec=2)
+- scratchpad frametrace.py reads the static sweet_fb_trace (PA 0x10238c928 for kernel 45648470761; 128 records, 19.2 MHz ticks) over /dev/pmem: read-only,
+  no UI driving. 6 s on 26bZ (USER using the phone or idle animation; not a controlled scroll): gap between frames p50 32.4 ms, 61 % of frames 2 refreshes apart,
+  23 % one; mean 29.8 fps; submit -> scanned p50 16.1 ms; SwapWait starts 0.6 ms after submit, waits p50 15.3 ms.
+- So CoreAnimation waits for the swap it JUST submitted before it starts the next one: render and GPU+copy are serial (about 16 + 16 ms). Copy mode has
+  depth 1; the direct (zero-copy) mode has sweetfb_swapdepth=2. 2024 = sweetfb_ec=2: SwapWait(N) returns when swap N-1 was copied (surfaces stay
+  held in use). RISK: half-drawn/black frames if CA reuses a surface still being drawn (the 2011 reason for depth 1) -> watch.
+- Image 26cB = 26bZ cmdline with sweetfb_ec=2, kernel 2024, sweetbuild=2691. (RELEASE image 26cA: does not boot.)
+
 ## 2026-11-25 22:50 IST: back on 26bZ (26bZ2 log); touch thread is harmless; Control Center profiled (bounded)
 - Read-only fsck before booting (after 26cA): exit 0. 26bZ booted, log logs/boot-26bZ2.txt, 0 HFSINC/panic.
 - _touch_thread (1.5 s of 13 s) is bound to cpu5 (A55, boot-arg sweettouchcpu=5): it cannot disturb the A76s; not a smoothness target.

@@ -1,0 +1,46 @@
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index cd29f4f..e3fe5e4 100644
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -451,6 +451,7 @@ public:
+ 	 * fEarly: the early path is usable (zero-copy armed and the MDP SMMU verified bypass).
+ 	 */
+ 	bool          fDirect, fEarly;
++	uint32_t      fCopyDepth;       /* 2024 */
+ 	bool          fEarlyCopy;       /* 2023 sweetfb_ec=1: copy mode copies a frame when its GPU work completes, not at the next tick */
+ 	bool          flipLatched(void);
+ 	void          copyFired(void);
+@@ -1022,6 +1023,7 @@ AppleCLCD::start(IOService *provider)
+ 		int ec = 0;
+ 		PE_parse_boot_argn("sweetfb_ec", &ec, sizeof(ec));
+ 		fEarlyCopy = ec != 0 && !fEarly && fFlip;
++		fCopyDepth = ec >= 2 ? 2 : 1;   /* 2024: sweetfb_ec=2: SwapWait(N) returns when swap N-1 was copied */
+ 	}
+ 	if (fEarly || fEarlyCopy) {
+ 		fSwapTimer = IOTimerEventSource::timerEventSource(this, &AppleCLCD::swapFired);
+@@ -1039,7 +1041,8 @@ AppleCLCD::start(IOService *provider)
+ 	registerService();
+ 	__atomic_store_n(&sweet_fb_shot_fb, this, __ATOMIC_RELEASE);     /* kern.sweet_fb_shot (patch 0224) */
+ 	if (fEarlyCopy) {
+-		IOLog("SWEET FB: early copy on (sweetfb_ec=1): frames are copied as soon as their GPU work completes\n");
++		IOLog("SWEET FB: early copy on (sweetfb_ec=1): frames are copied as soon as their GPU work completes, swap wait depth %u\n",
++		    fCopyDepth);
+ 	}
+ 	IOLog("SWEET FB: AppleCLCD %ux%u stride %u at 0x%llx, default surface %u, presented as %ux%u, vsync %u us, copy every %u, scale %u (pad %d,%d), direct %d early %d\n",
+ 	    fWidth, fHeight, fRowBytes, fPhys, fSurface->id, fLogicalW, fLogicalH, fVsyncUS, fFlushTicks,
+@@ -2392,8 +2395,14 @@ AppleCLCD::swapWaitInner(uint32_t id)
+ 		}
+ 		uint64_t t0 = mach_absolute_time(), limit;
+ 		nanoseconds_to_absolutetime((uint64_t)fVsyncUS * 1500, &limit);
++		/*
++		 * 2024 (sweetfb_ec=2): CoreAnimation asks about the swap it just submitted and blocks on it, so its next frame
++		 * starts only after this one was drawn and copied (gap 32 ms). With depth 2 swap N-1 must be copied, N may still
++		 * be drawing: the surfaces are held in use meanwhile (sweet_hold), so N+1 uses a third one.
++		 */
++		const uint32_t need = fCopyDepth > 1 ? id - (fCopyDepth - 1) : id;
+ 		for (bool waited = false;; waited = true) {
+-			if ((int32_t)(__atomic_load_n(&fCopyDone, __ATOMIC_ACQUIRE) - id) >= 0) {
++			if ((int32_t)(__atomic_load_n(&fCopyDone, __ATOMIC_ACQUIRE) - need) >= 0) {
+ 				if (waited) {
+ 					fSt.swapWaits++;
+ 					fSt.swapWaitAbs += mach_absolute_time() - t0;
