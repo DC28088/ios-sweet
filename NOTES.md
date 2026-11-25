@@ -1,3 +1,9 @@
+## 2026-11-25 22:25 IST: MY BUG: a test loop opened/closed Settings for ~14 min (until the USER asked to stop)
+- The 21:5x profiling script's first loop had no counter increment (`while [ $i -lt 5 ]` forever). It kept running on the phone (sh pid
+  1508) after the SSH call ended; killed 22:25, 0 scripted launches in the next 15 s. No settings changed.
+- CONTAMINATED by it: the "idle 73 lines/10 s" and "295 lines" log counts, vm_stat, the second half of any idle figure after 21:55, and any load the USER
+  felt then. The open/close spindump itself (first 13 s) ran with the loop as intended. Rule: every phone-side loop must be bounded and run under `timeout`.
+
 ## 2026-11-25 22:20 IST: app open/close + CC still delayed (USER); hardware clocks maxed; memory/kernel facts; RELEASE kernel build started
 - USER on 26bZ: scrolling "40+" (not 50+), stutters + slight delay when opening/closing apps, same in Control Center.
 - Scripted Settings open/close (5x) sampled with spindump (open-close.txt): SpringBoard main thread 3.3 s of 13 s (running 27 % of samples),
