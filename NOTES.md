@@ -1,3 +1,11 @@
+## 2026-11-25 16:21 IST: USB link dead after the laptop's suspend; replug did not help; steady-scroll run still pending
+- USER: "everything is working, there are no visible visual bugs right now. only issue is performance". Two replugs (16:09,
+  16:19): laptop enumerates "Sweet iOS (USB Ethernet)", RX packets 0, TX 90+ (ping/ssh no route, no log since 08:53:38).
+  So the phone's USB network side sends nothing. Cause not known; it started at the laptop's suspend (08:53:39).
+- Filesystem lines in boot-26bUe.txt up to 08:53: 0 HFSINC / hfs_mark / BlockMarkFree.
+- NEXT: USER decides on a reset. If yes: phone locked and idle ~2 min first (no sync possible), power+vol-down -> fastboot,
+  temporary recovery, READ-ONLY fsck on a metadata copy (fsck_pull.py), then 26bU.
+
 ## 2026-11-25 16:10 IST: phone off USB since 08:53:39 (laptop suspended then); steady-scroll measurement NOT run
 - CORRECTION: the times of four headings below were my guesses (10:25/10:00/09:20/09:00); replaced by the commit times.
 - Journal: "USB disconnect" and the laptop's suspend both at 08:53:39; laptop awake by 16:06. At 16:09 no ping, no USB device,
