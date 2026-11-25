@@ -1,3 +1,14 @@
+## 2026-11-25 10:00 IST: DOCK + SEARCH-PILL GLASS FIXED (FS texture prefetch off); control + USER confirm
+- CI 45537773111 (prefetch off) installed; backup research/ios26/metal/build-45537773111/backup-before. Phone: 26bU, no
+  debug file, no active native-env (sweet-native-env.prefetchon/.last/.sysmem and sweet-glass-dbg.off are inert).
+- OBSERVED, scripted swipe to page 2 and back, sweetshot: glass on dock and Search pill before, during and after.
+  CONTROL, same build + same scroll: IR3_SWEET_PREFETCH=1 (log confirms it was set) -> dock and pill glass gone;
+  off again -> back. USER: "guess it is fixed now".
+- Still unknown: WHY the prefetch reads 0 (tex 4 / samp 1, plain perspective varying). Workaround, not a root cause.
+- NOT checked yet with this build: App Library, Control Center, in-app glass, fps cost of no prefetch.
+- Filesystem: 0 HFSINC / hfs_mark_inconsistent lines since the repair boot (logs/boot-26bUe.txt).
+- NEXT: USER to look at App Library / CC / apps; then fps measurement and the zero-copy wake bug (26bV/26bW).
+
 ## 2026-11-25 09:20 IST: dock glass: the FS PRE-DISPATCH (prefetch) sample of the shape map reads 0; normal sam reads right
 - CI 45536169131 installed (modes 8-13; build dir research/ios26/metal/build-45536169131, backup-before inside).
 - OBSERVED at the dock (map 832x256, 1 level; view log shows res == view res, RGBA16F, level 0-0, layer 0-0): txf (8), txl
