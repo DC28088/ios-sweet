@@ -2073,10 +2073,15 @@ def adapt_glass_debug(donor):
     shutil.copy2(NATIVE/'backend/air_glass_debug.inc',air/'air_glass_debug.inc')
     p=air/'air_metal.c';s=p.read_text()
     s=replace(s,'#include "air_stage_link.inc"\n','#include "air_stage_link.inc"\n#include "air_glass_debug.inc"\n')
-    s=replace(s,"""   native_prune_direct_resources(fs, &render->finfo);
-""","""   native_prune_direct_resources(fs, &render->finfo);
-   native_glass_debug(fs, render->finfo.entry_point);
+    s=replace(s,"""   slot_shapes(fs, render->frag_slots, render->frag_compare_sampler);
+""","""   slot_shapes(fs, render->frag_slots, render->frag_compare_sampler);
+   native_glass_debug(fs, render->finfo.entry_point);   /* after the shapes: its extra reads are not the module's */
 """)
+    s=replace(s,"""         views[r->index] = t->view;
+""","""         native_glass_view_log(stage, r->index, t->res, t->view, t);
+         views[r->index] = t->view;
+""")
+    s=replace(s,'#include <time.h>\n','#include <time.h>\n#include <unistd.h>\n')
     p.write_text(s)
 
 def main():

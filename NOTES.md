@@ -1,3 +1,16 @@
+## 2026-11-25 09:00 IST: dock glass: the shape-map SAMPLE returns 0 in glass_background_no_bleed_lph (bisected on the phone)
+- Build CI 45534432933 (glass-dbg; installed, backup research/ios26/metal/build-45534432933/backup-before). Modes set by
+  /var/local/sweet-glass-dbg + backboardd restart; scripted swipe + sweetshot (scratchpad runmode.sh). Phone currently
+  has NO debug file and no native-env file (sweet-glass-dbg.off, sweet-native-env.last are inert leftovers).
+- OBSERVED: mode 1 (red) = dock + Search pill solid red, so vertex stage/raster/blend are fine. Mode 2: texcoord1 runs
+  0..1 over the dock. Mode 3: map sample (tex 4, samp 1, half) r == 0 and a == 0 at all 10 probed pixels. Mode 4: coverage
+  0.5 x alpha 0. Mode 6: own colour 0. Discards are not the cause (removed in these modes).
+- Contrast: the 22:01 dump of that same MTLTexture (level 0) was valid. So the GPU's fetch or its binding is at fault.
+- Not UBWC and not GMEM: FD_MESA_DEBUG=noubwc / =sysmem (log confirms both were applied) still give 0.
+- Sampler state.1 decode: edge/linear/mip NEAREST/lod 0..65504 (state.6 is the same with mip LINEAR; it works).
+- USER 08:15 confirms: glass returns after opening/closing an app, disappears when scrolling. Not fixed yet.
+- NEXT: modes 8-13 (txf, txl, sampler 0, no pre-dispatch fetch, 32-bit, size/levels) + view log.
+
 ## 2026-11-25 08:10 IST: iOS ROOT REPAIRED (USER approved) and 26bU booted; back to glass + performance
 - Pre-check: phone's 375 blocks == undo.bin. Wrote new.bin (data first, headers last), read-back identical. Fresh metadata
   pull: fsck -n exit 0 "appears to be OK", overlaps 0, in-use-but-free 0, header "unmounted-clean" set.
