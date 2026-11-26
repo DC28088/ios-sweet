@@ -1,0 +1,96 @@
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+index 7589b50..bc8d713 100644
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -110,6 +110,8 @@
+ /* bsd/kern/sweet_amfi.c: boot-arg sweetsyserr */
+ void sweet_exec_env_trace(const char *name, int pid, const char *strings, const char *end);
+ void sweet_exec_delay(const char *leaf);
++/* osfmk/kern/sched_prim.c (2027): remembers SpringBoard's main thread (pointer only) */
++void sweet_exec_note(const char *name, thread_t thread);
+ #endif
+ #include <sys/reason.h>
+ #if SYSV_SHM
+@@ -8784,6 +8786,7 @@ process_signature(proc_t p, struct image_params *imgp)
+ #if defined(ARM64_BOARD_CONFIG_SWEET)
+ 			/* SWEET runs every iOS binary this way: one short line per exec. */
+ 			printf("exec %s\n", p->p_name);
++			sweet_exec_note(p->p_name, imgp->ip_new_thread);
+ #else
+ 			printf("Allowing spawn of iOS binary %s since it has "
+ 			    "com.apple.private.security.no-sandbox entitlement or unentitled_ios_sim_launch "
+diff --git a/osfmk/kern/sched_prim.c b/osfmk/kern/sched_prim.c
+index bd185ae..fa6da39 100644
+--- a/osfmk/kern/sched_prim.c
++++ b/osfmk/kern/sched_prim.c
+@@ -3455,6 +3455,28 @@ thread_dispatch(
+ 	assert(self == current_thread_volatile());
+ 	assert(thread != self);
+ 
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++	{
++		/* 2027: defined with sweet_amp_wanted_map() further down */
++		extern thread_t volatile sweet_sb_main;
++		extern uint64_t sweet_sb_runs[8], sweet_sb_abs[8], sweet_sb_start;
++		extern int sweet_sb_cpu;
++		thread_t sb = sweet_sb_main;
++		if (sb != THREAD_NULL) {
++			uint64_t now = processor->last_dispatch;
++			if (thread == sb && sweet_sb_cpu >= 0 && now > sweet_sb_start) {
++				sweet_sb_abs[sweet_sb_cpu] += now - sweet_sb_start;
++				sweet_sb_cpu = -1;
++			}
++			if (self == sb && processor->cpu_id >= 0 && processor->cpu_id < 8) {
++				sweet_sb_runs[processor->cpu_id]++;
++				sweet_sb_start = now;
++				sweet_sb_cpu = processor->cpu_id;
++			}
++		}
++	}
++#endif /* ARM64_BOARD_CONFIG_SWEET */
++
+ 	if (thread != THREAD_NULL) {
+ 		/*
+ 		 * Do the perfcontrol callout for context switch.
+@@ -4702,10 +4724,41 @@ sweet_amp_enable(uint64_t big, uint64_t little, int pri)
+ 	os_atomic_store(&sweet_amp_big_mask, big, release);
+ }
+ 
++/*
++ * Sweet 2027: SpringBoard's main thread, remembered at exec as a POINTER ONLY (2026 bound it there and hung the boot). Its dispatches and run time
++ * per CPU are counted in thread_dispatch() (sweet_sb_runs / sweet_sb_abs, read over /dev/pmem), and with sweet_sb_fast != 0 (boot-arg sweetsbfast,
++ * also writable at run time) it prefers an idle Cortex-A76 (cpu6-7) wherever it wakes. The pointer is only ever compared, never dereferenced.
++ */
++#include <string.h>
++thread_t volatile sweet_sb_main;
++int sweet_sb_fast;
++uint64_t sweet_sb_runs[8], sweet_sb_abs[8];
++uint64_t sweet_sb_start;
++int sweet_sb_cpu = -1;
++void sweet_exec_note(const char *name, thread_t thread);
++void
++sweet_exec_note(const char *name, thread_t thread)
++{
++	static bool parsed;
++	if (!parsed) {
++		parsed = true;
++		int v = 0;
++		PE_parse_boot_argn("sweetsbfast", &v, sizeof(v));
++		sweet_sb_fast = v;
++	}
++	if (name != NULL && thread != THREAD_NULL && strcmp(name, "SpringBoard") == 0) {
++		sweet_sb_main = thread;
++		printf("SWEET CPU: SpringBoard main thread noted (fast-core preference %s)\n", sweet_sb_fast ? "on" : "off");
++	}
++}
++
+ /* CPUs the thread should use first, 0 if the steering is off. */
+ static inline uint64_t
+ sweet_amp_wanted_map(thread_t thread)
+ {
++	if (thread == sweet_sb_main && os_atomic_load(&sweet_sb_fast, relaxed)) {
++		return 0xc0;    /* 2027: SpringBoard's main thread -> an idle A76 */
++	}
+ 	uint64_t big = os_atomic_load(&sweet_amp_big_mask, acquire);
+ 	if (big == 0) {
+ 		return 0;

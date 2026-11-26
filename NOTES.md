@@ -1,3 +1,8 @@
+## 2026-11-26 22:45 IST: USER chose SpringBoard; kernel 2027: measure where SpringBoard's main thread runs + optional fast-core preference (no binding)
+- 2026 removed from the series (it hung the boot). 2027: sweet_exec_note() stores SpringBoard's new main thread POINTER at exec (nothing else);
+  thread_dispatch() counts its dispatches and run time per CPU (sweet_sb_runs[8], sweet_sb_abs[8], mach ticks); sweet_amp_wanted_map() returns 0xc0 for it when
+  sweet_sb_fast != 0 (boot-arg sweetsbfast, default 0; flip at run time over /dev/pmem). Image 26cE = 26cC cmdline, kernel 2027, sweetbuild=2694.
+
 ## 2026-11-26 22:30 IST: filesystem damage after the 26cD forced reset; REPAIRED (USER approved) ; 26cC boots normally again
 - The read-only check before booting 26cC (after the 26cD hang + forced reset) reported exit 8 and MY SCRIPT BOOTED ANYWAY (no stop on failure).
   Damage: bitmap orphaned/under-allocated, file count off by 1, header; 3 in-use-but-free blocks in /private/var/keybags (usersession.kb, persona.kb,
