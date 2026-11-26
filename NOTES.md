@@ -1,3 +1,12 @@
+## 2026-11-26 18:50 IST: timeline spindump during swipes: skips = long busy stretches; renderer compiles SHADERS mid-animation; shader disk cache build
+- spindump -timeline 8 s, scripted swipes (research/ios26/spindump-20261125/timeline.txt): SpringBoard main thread running 33 % of samples, 12 stretches >= 60 ms (longest
+  440 ms); backboardd render thread (display.primary) 33 %, 6 stretches >= 60 ms (longest 100 ms) + 8 of 30 ms. Both together 11 %.
+- Render thread in stretches >= 30 ms (symbolicated with native-metal-symbols of build 45609579839 and the 2025 kernel): QuartzCore 22 % self, malloc 14 %, platform 7 %,
+  kernel 21 % (interrupt toggling, NativeAdrenoVm::reassertWriteCombined, NativeAdrenoMemory::allocate), our backend 28 %. Inclusive backend leaves include
+  shader compilation: cso_hash_take 7 %, ir3_yyparse 6 %, air_to_nir 3.5 %, SHA1, nir_opt_algebraic, lower_64bit_phi, util_cpu_detect_once.
+- tools/build-sweet-native-metal.py had -Dshader-cache=disabled -> every ir3 variant is compiled on first draw after each backboardd start, on the render thread.
+  Changed to -Dshader-cache=enabled. Runtime needs MESA_SHADER_CACHE_DIR (writable) in /var/local/sweet-native-env.
+
 ## 2026-11-26 18:30 IST: 26cC (kernel 2025, sweetfb_ec=3) booted: vsync 59.99/s steady; remaining stutter = iOS skips ~21 % of frames (CPU side)
 - Kernel CI 45816614748 (e69b034b), image 26cC cd71d584 (26cB cmdline with sweetfb_ec=3, sweetbuild=2692), payload byte-identical; clean restart; root clean;
   logs/boot-26cC.txt, 0 HFSINC/panic. sysmem env still active.
