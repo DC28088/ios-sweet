@@ -1,0 +1,100 @@
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index e3fe5e4..b267a31 100644
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -452,6 +452,10 @@ public:
+ 	 */
+ 	bool          fDirect, fEarly;
+ 	uint32_t      fCopyDepth;       /* 2024 */
++	bool          fVsyncLock;       /* 2025 sweetfb_ec=3: vsync timer locked to the panel's own frame counter */
++	uint64_t      fVlNext, fVlT0, fVlPeriod;
++	uint32_t      fVlF0;
++	void          armVsync(IOTimerEventSource *sender, uint32_t nextUS);
+ 	bool          fEarlyCopy;       /* 2023 sweetfb_ec=1: copy mode copies a frame when its GPU work completes, not at the next tick */
+ 	bool          flipLatched(void);
+ 	void          copyFired(void);
+@@ -1024,6 +1028,7 @@ AppleCLCD::start(IOService *provider)
+ 		PE_parse_boot_argn("sweetfb_ec", &ec, sizeof(ec));
+ 		fEarlyCopy = ec != 0 && !fEarly && fFlip;
+ 		fCopyDepth = ec >= 2 ? 2 : 1;   /* 2024: sweetfb_ec=2: SwapWait(N) returns when swap N-1 was copied */
++		fVsyncLock = fEarlyCopy && ec >= 3;     /* 2025 */
+ 	}
+ 	if (fEarly || fEarlyCopy) {
+ 		fSwapTimer = IOTimerEventSource::timerEventSource(this, &AppleCLCD::swapFired);
+@@ -1043,6 +1048,9 @@ AppleCLCD::start(IOService *provider)
+ 	if (fEarlyCopy) {
+ 		IOLog("SWEET FB: early copy on (sweetfb_ec=1): frames are copied as soon as their GPU work completes, swap wait depth %u\n",
+ 		    fCopyDepth);
++		if (fVsyncLock) {
++			IOLog("SWEET FB: vsync timer locked to the INTF1 frame counter (sweetfb_ec=3)\n");
++		}
+ 	}
+ 	IOLog("SWEET FB: AppleCLCD %ux%u stride %u at 0x%llx, default surface %u, presented as %ux%u, vsync %u us, copy every %u, scale %u (pad %d,%d), direct %d early %d\n",
+ 	    fWidth, fHeight, fRowBytes, fPhys, fSurface->id, fLogicalW, fLogicalH, fVsyncUS, fFlushTicks,
+@@ -1180,7 +1188,7 @@ AppleCLCD::vsyncFired(OSObject *owner, IOTimerEventSource *sender)
+ 			fb->fBlackDone = true;
+ 			fb->blackout();
+ 		}
+-		sender->setTimeoutUS(nextUS);
++		fb->armVsync(sender, nextUS);
+ 		return;
+ 	}
+ 	/* 2023: with the early copy the tick only takes a frame whose flip cannot make it spin in waitLatch() here */
+@@ -1231,9 +1239,10 @@ AppleCLCD::vsyncFired(OSObject *owner, IOTimerEventSource *sender)
+ 	sweet_hold_release(vdropped);
+ 	fb->statsTick(now);
+ 	fb->hudTick(now);
+-	sender->setTimeoutUS(nextUS);
++	fb->armVsync(sender, nextUS);
+ }
+ 
++
+ /*
+  * Early (direct) path: runs on the work loop right after a swap. Takes the pending
+  * frame like vsyncFired does, scans it in place when it can, and otherwise puts it
+@@ -2045,6 +2054,45 @@ AppleCLCD::flipSetup(void)
+  * panel frame apart (sweetfb_hz >= ~40, or sweetfb_vsync=1): torn frames.
+  * Wait (bounded, one vsync plus slack) for the latch before drawing.
+  */
++/*
++ * Sweet 2025 (sweetfb_ec=3): the panel refreshes at ~120 Hz (INTF1 frame counter: 2408 frames in 20 s) while the vsync timer re-armed
++ * itself after each tick's work (16.67 ms + the handler: 58.4-59.0 ticks/s). CoreAnimation is paced by this timer, so on the 120 Hz
++ * grid most frames stayed up 2 refreshes and one or two per second 3: a regular hitch. Now the timer runs on absolute deadlines whose
++ * period is a whole number of panel frames (the one closest to sweetfb_hz), measured from the INTF1 frame counter: no drift.
++ */
++void
++AppleCLCD::armVsync(IOTimerEventSource *sender, uint32_t nextUS)
++{
++	if (!fVsyncLock || fMdp == 0) {
++		sender->setTimeoutUS(nextUS);
++		return;
++	}
++	uint64_t now = mach_absolute_time(), nominal, second;
++	nanoseconds_to_absolutetime((uint64_t)fVsyncUS * 1000, &nominal);
++	nanoseconds_to_absolutetime(NSEC_PER_SEC, &second);
++	uint32_t f = mdp_rd(fMdp + SWEET_MDP_INTF1, 0xac);
++	if (fVlT0 == 0 || f < fVlF0 || now - fVlT0 > 600 * second) {
++		fVlT0 = now;
++		fVlF0 = f;
++	} else if (now - fVlT0 > second && f - fVlF0 > 30) {
++		uint64_t panel = (now - fVlT0) / (uint64_t)(f - fVlF0);
++		uint64_t k = panel ? (nominal + panel / 2) / panel : 1;
++		if (k < 1) {
++			k = 1;
++		}
++		uint64_t per = panel * k;
++		if (per > nominal / 2 && per < nominal * 2) {
++			fVlPeriod = per;
++		}
++	}
++	uint64_t per = fVlPeriod ? fVlPeriod : nominal;
++	fVlNext = fVlNext ? fVlNext + per : now + per;
++	if (fVlNext <= now + per / 8) {
++		fVlNext = now + per;    /* late (or the display was off): start a new phase */
++	}
++	sender->wakeAtTime((AbsoluteTime)fVlNext);
++}
++
+ /* 2023: the last queued flip has reached the panel */
+ bool
+ AppleCLCD::flipLatched(void)

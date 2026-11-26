@@ -1,3 +1,12 @@
+## 2026-11-26 18:10 IST: THE PANEL RUNS AT 120 Hz; our vsync timer at 58.4-59.0 Hz -> periodic 3-refresh frames; kernel 2025 (sweetfb_ec=3)
+- USER on 26cB + sysmem: "slightly better, but still under 45fps... and stutters are still there".
+- Screen-buffer update times (trace 'scan', 834 frames, scripted swipes): 74 % one refresh (16.7 ms) apart, 24 % two; vsync_s (our timer) 58.42-58.97/s.
+- INTF1 frame counter (MDP 0xae00000+0x6b800+0xac, /dev/pmem): 2408 frames in 20 s = ~120 Hz (second read 1206 in ~10 s). So the panel is 120 Hz.
+  Timer re-arms with setTimeoutUS after the handler = 16.67 ms + handler time. At 58.6 Hz on a 120 Hz grid most frames show for 2 refreshes and
+  ~1-2 per second for 3: a regular hitch (inference; matches "stutters").
+- 2025 (xnu/patches-12377/2025-sweet-fb-vsync-locked.patch): sweetfb_ec=3 = early copy + depth 2 + vsync timer on absolute deadlines (wakeAtTime) with a period of whole
+  panel frames (k nearest to sweetfb_hz, here 2 x 1/120 s) measured from the INTF1 counter. Phase not aligned to the panel (constant). Image 26cC planned.
+
 ## 2026-11-26 17:5x IST: FD_MESA_DEBUG=sysmem WINS in App Library (scripted A/B, both runs verified in App Library by screenshot); KEPT
 - Reset after the USB drop (USER power+vol-down), read-only fsck exit 0, 26cB booted again (logs/boot-26cB2.txt). The env file had already been removed by run gmem2.
 - alrun.sh, App Library scrolled by script 12 s: default (GMEM): gap p50 24.7 ms, 53 % one refresh, 41.2 fps, submit->screen p50 32.6 ms. sysmem: gap p50 19.1, 85 % one refresh,
