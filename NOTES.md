@@ -1,3 +1,15 @@
+## 2026-11-26 IST: USER on 26cB: "about same as earlier, no glitches"; finger traces: home ~50 fps, App Library ~42 fps and GPU-BOUND
+- USER: performance similar to 26bZ, no glitches (no tearing seen) -> the torn screenshot was most likely sweetshot; 26cB stays.
+- frametrace2.py while the USER scrolled the home screen (16 s, 671 frames): 79 % one refresh, mean 49.6 fps of frames < 55 ms; long bursts 52-65 fps,
+  short bursts (gesture starts) 31-35 fps; worst frames 37-54 ms; submit->scanned p50 17.5 ms.
+- App Library by the USER (16 s, 738 frames): 65 % one refresh, mean 42 fps, gap p50 23.9 ms, submit->scanned p50 31.4 ms, SwapWait p50 6 ms.
+- GPU trace by script in App Library (MESA_GPU_TRACES, 13 busy s; trace research/ios26/gputrace-20261125/applib.txt; env removed afterwards and backboardd
+  restarted): GPU busy 96 %. NOTE units: the trace values are nanoseconds (a first analysis treated them as 19.2 MHz ticks: 52x too large; discarded).
+  Share: 828x1792 MRT2 GMEM main pass 4.13 ms x 109/s = 47 %; 828x1792 MRT2 sysmem 1-draw passes 1.41 ms x 122/s = 18 %; 832x1856 GMEM 1.21 ms x 73/s 9 %;
+  blur chain (448x896, 224x480, 256x512, 112x240, 448x960) ~15 %. Almost every pass has 2 colour attachments: BGRA8 + RGBA16F (12 B/px).
+- LEADS (unverified): (1) what CA uses the RGBA16F second attachment for (EDR / wide colour / glass lighting?) and whether our display's capabilities
+  make CA render it; (2) the full-screen 1-draw sysmem passes (~3 per frame) are probably backdrop copies for the glass blur; (3) FS prefetch off costs some GPU time.
+
 ## 2026-11-25 23:10 IST: image 26cB (kernel 2024, sweetfb_ec=2) booted: 16.8 ms typical frame gap; possible TEARING in a screenshot
 - Kernel CI 45661942982 (0c61c850); image 26cB 6d8769c6 = 26bZ cmdline with sweetfb_ec=2 (sweetbuild=2691), payload byte-identical; clean restart (sync + sweetreboot),
   root mounted without "dirty"; logs/boot-26cB.txt, 0 HFSINC/panic/GPU-lost.
