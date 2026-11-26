@@ -1,3 +1,12 @@
+## 2026-11-26 20:2x IST: shader disk cache WORKS (CI 45821933606); render thread no longer the bottleneck; ~20-25 % frames still skipped (SpringBoard CPU)
+- First install attempt cut by a USB drop (18:09, -71); reset by USER, fsck exit 0, files on the phone were the previous build (complete). Reinstalled, verified hashes.
+- Cache: /var/local/mesa-cache 101 files / 1.7 MB after the first session. Home swipes cold: 2 refreshes 65 %, 4 refreshes 29 %; after a backboardd restart (warm) 72 % / 23 %, 73 % / 22 %.
+- Warm timeline (timeline2.txt): render thread running 16 % (was 33 %), 3 stretches >= 30 ms (longest 40 ms). SpringBoard main thread running 43 %, 63 stretches >= 20 ms,
+  longest 320 ms; inside stretches >= 50 ms: ~50 % gesture handling (Gestures + UIKit -> SpringBoardHome + 1634744 / + 240812 / + 304712), ~40 % QuartzCore (layout/commit).
+- Widget page is NOT the cause: page1<->2 swipes 73/68 % 60 fps, 19/25 % skipped; page2<->App Library 51/51 %, 24/24 % (App Library GPU-heavy).
+- Remaining limit on the home screen = SpringBoard main-thread CPU work (Apple code) on the A76. Next options: symbolicate SpringBoardHome hot methods from the dyld cache ObjC metadata;
+  verify that thread actually runs on cpu6/7.
+
 ## 2026-11-26 19:10 IST: shader cache build 45820369530 installed, but the cache stayed EMPTY: the donor disables the ir3 disk cache on Apple
 - Installed CI 45820369530 (shader-cache=enabled; backup in build-45820369530/backup-before); /var/local/sweet-native-env = FD_MESA_DEBUG=sysmem +
   MESA_SHADER_CACHE_DIR=/var/local/mesa-cache (dir 1777). Two scripted home sessions (session.sh cold1/cold2): 2 refreshes 63 / 68 %, 4 refreshes 15 / 25 %.
