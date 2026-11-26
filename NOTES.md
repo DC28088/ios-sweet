@@ -1,3 +1,12 @@
+## 2026-11-26 18:30 IST: 26cC (kernel 2025, sweetfb_ec=3) booted: vsync 59.99/s steady; remaining stutter = iOS skips ~21 % of frames (CPU side)
+- Kernel CI 45816614748 (e69b034b), image 26cC cd71d584 (26cB cmdline with sweetfb_ec=3, sweetbuild=2692), payload byte-identical; clean restart; root clean;
+  logs/boot-26cC.txt, 0 HFSINC/panic. sysmem env still active.
+- vsync_s 59.99 every second (26cB 58.4-59.0). Screen updates in 120 Hz refreshes, scripted swipes: before (starts2) 2: 71 %, 3: 3 %, 4: 23 %; after (starts3)
+  2: 73 %, 3: 2 %, 4: 21 %. So the 120 Hz beat explained only ~1-3 % (I first said it was THE stutter: overstated).
+- Skipped frames (33 ms gaps, 199 of 832): SwapWait 0 ms, previous frame submit->copy 1.6 ms (GPU idle), submit->next wait call 31.3 ms (normal 11.5).
+  => skips are iOS being late (render server / SpringBoard), NOT our display path or the GPU, on the home screen.
+- NEXT: per-frame CPU of backboardd render thread vs SpringBoard main thread at the skips (spindump -timeline or sampling with frame ids).
+
 ## 2026-11-26 18:10 IST: THE PANEL RUNS AT 120 Hz; our vsync timer at 58.4-59.0 Hz -> periodic 3-refresh frames; kernel 2025 (sweetfb_ec=3)
 - USER on 26cB + sysmem: "slightly better, but still under 45fps... and stutters are still there".
 - Screen-buffer update times (trace 'scan', 834 frames, scripted swipes): 74 % one refresh (16.7 ms) apart, 24 % two; vsync_s (our timer) 58.42-58.97/s.
