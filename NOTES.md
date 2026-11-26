@@ -1,3 +1,11 @@
+## 2026-11-26 17:05 IST: USER "fix the slow start and initial stutters ... stable 60"; first A/B; USB dropped (-71)
+- Swipe starts (scripted, 8 pairs with 1 s pauses, ftraw.py/ftan.py; only 128 frames captured): frames 1-10 gap 19-30 ms, submit->screen 14-31 ms;
+  frames 11-30 gap 17.3, submit->screen 13.0. Both CPU and GPU heavier at the start.
+- App Library scripted A/B (alrun.sh): run gmem and sysmem INVALID (59/56 moving frames: App Library not reached / no scroll); gmem2 valid:
+  gap p50 25.3 ms, 45 % one refresh, 40 fps, submit->screen 34 ms. sysmem2/gmem3 not run: USB dropped 17:00:44 (port 1-4, descriptor -71).
+- Phone state at the drop: /var/local/sweet-native-env = FD_MESA_DEBUG=sysmem, active in backboardd (log "env file sets"). Harmless but NOT the
+  default: remove it after the A/B.
+
 ## 2026-11-26 IST: USER on 26cB: "about same as earlier, no glitches"; finger traces: home ~50 fps, App Library ~42 fps and GPU-BOUND
 - USER: performance similar to 26bZ, no glitches (no tearing seen) -> the torn screenshot was most likely sweetshot; 26cB stays.
 - frametrace2.py while the USER scrolled the home screen (16 s, 671 frames): 79 % one refresh, mean 49.6 fps of frames < 55 ms; long bursts 52-65 fps,
