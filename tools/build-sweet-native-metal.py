@@ -160,6 +160,35 @@ should_defer(struct fd_submit *submit)
    if (!use_fence_fd && should_defer(submit)) {''')
     p.write_text(s)
 
+def adapt_disk_cache(mesa):
+    # 26c: the donor turns the ir3 disk cache off on Apple (no GNU build id in a Mach-O library), so every shader variant was compiled
+    # on backboardd's render thread at its first draw after each start (spindump timeline: ir3/NIR/SHA1 inside 30-100 ms render stretches).
+    # Key the cache on this build instead: a random id written into the source at build time, so a new build never reuses old shaders.
+    import uuid
+    p=mesa/'src/freedreno/ir3/ir3_disk_cache.c';text=p.read_text()
+    needle="""#ifdef __APPLE__
+   /* no build id in a Mach-O library to tell one build's shaders from another's: no cache */
+   return;
+#else"""
+    if text.count(needle)!=1:raise SystemExit('ir3 disk cache Apple stub changed')
+    text=text.replace(needle,"""#ifdef __APPLE__
+   {
+      /* Sweet: no GNU build id in Mach-O; key the cache on this library's own build */
+      static const char id[] = "sweet-native-%s";
+      const char *renderer = fd_dev_name(compiler->dev_id);
+      struct mesa_sha1 c;
+      uint8_t h[20];
+      char timestamp[41];
+      _mesa_sha1_init(&c);
+      _mesa_sha1_update(&c, id, sizeof(id) - 1);
+      _mesa_sha1_final(&c, h);
+      _mesa_sha1_format(timestamp, h);
+      compiler->disk_cache = disk_cache_create(renderer, timestamp, ir3_shader_debug_hash_key());
+      return;
+   }
+#else"""%uuid.uuid4().hex)
+    p.write_text(text)
+
 def adapt_tex_prefetch(mesa):
     # 26c: the FS pre-dispatch texture fetch reads 0 for glass_background_no_bleed's shape map (dock and Search-pill
     # glass vanish after a home-screen scroll); the same read as an ordinary sam (nudged coordinates, explicit level or
@@ -194,6 +223,7 @@ def prepare_mesa(donor,archive):
             run('patch','--batch','--forward','--fuzz=0','-p1',cwd=mesa,stdin=patch)
     adapt_submit_merging(mesa)
     adapt_tex_prefetch(mesa)
+    adapt_disk_cache(mesa)
     shutil.copytree(donor/'tools/mesa/air',mesa/'src/compiler/air')
     shutil.copytree(NATIVE/'transport',mesa/'src/redwood-drm')
     # Header reconstructed from the same tracked kernel patch series as Metal2.

@@ -1,3 +1,11 @@
+## 2026-11-26 19:10 IST: shader cache build 45820369530 installed, but the cache stayed EMPTY: the donor disables the ir3 disk cache on Apple
+- Installed CI 45820369530 (shader-cache=enabled; backup in build-45820369530/backup-before); /var/local/sweet-native-env = FD_MESA_DEBUG=sysmem +
+  MESA_SHADER_CACHE_DIR=/var/local/mesa-cache (dir 1777). Two scripted home sessions (session.sh cold1/cold2): 2 refreshes 63 / 68 %, 4 refreshes 15 / 25 %.
+  /var/local/mesa-cache: 0 files.
+- Cause (code): donor freedreno-darwin.patch: ir3_disk_cache_init() `#ifdef __APPLE__ return;` (no GNU build id in Mach-O). Mesa 25.0.7 keys the cache on the ELF build id.
+- Fix in tools/build-sweet-native-metal.py adapt_disk_cache(): on Apple key it on a random per-build id (uuid4 baked into the source) -> a new build never reuses old shaders.
+  Only the ir3 compile is cached; AIR->NIR translation at pipeline creation still runs once per process start.
+
 ## 2026-11-26 18:50 IST: timeline spindump during swipes: skips = long busy stretches; renderer compiles SHADERS mid-animation; shader disk cache build
 - spindump -timeline 8 s, scripted swipes (research/ios26/spindump-20261125/timeline.txt): SpringBoard main thread running 33 % of samples, 12 stretches >= 60 ms (longest
   440 ms); backboardd render thread (display.primary) 33 %, 6 stretches >= 60 ms (longest 100 ms) + 8 of 30 ms. Both together 11 %.
