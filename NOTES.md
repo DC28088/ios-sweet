@@ -1,3 +1,9 @@
+## 2026-11-26 17:5x IST: FD_MESA_DEBUG=sysmem WINS in App Library (scripted A/B, both runs verified in App Library by screenshot); KEPT
+- Reset after the USB drop (USER power+vol-down), read-only fsck exit 0, 26cB booted again (logs/boot-26cB2.txt). The env file had already been removed by run gmem2.
+- alrun.sh, App Library scrolled by script 12 s: default (GMEM): gap p50 24.7 ms, 53 % one refresh, 41.2 fps, submit->screen p50 32.6 ms. sysmem: gap p50 19.1, 85 % one refresh,
+  48.3 fps, submit->screen 24.3 ms. /var/local/sweet-native-env = FD_MESA_DEBUG=sysmem is now LEFT IN PLACE (persists across boots; read by backboardd and SpringBoard).
+- TODO: make it the build default (native-metal) once confirmed by the USER; check other screens.
+
 ## 2026-11-26 17:05 IST: USER "fix the slow start and initial stutters ... stable 60"; first A/B; USB dropped (-71)
 - Swipe starts (scripted, 8 pairs with 1 s pauses, ftraw.py/ftan.py; only 128 frames captured): frames 1-10 gap 19-30 ms, submit->screen 14-31 ms;
   frames 11-30 gap 17.3, submit->screen 13.0. Both CPU and GPU heavier at the start.
