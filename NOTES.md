@@ -1,3 +1,9 @@
+## 2026-11-26 20:4x IST: kernel 2026: boot-arg sweetsbcpu=N binds SpringBoard's main thread to cpu N at exec (default off)
+- Reading the thread's current core through /dev/pmem would need a page-table walk (zone memory is not in the kernel image mapping); a direct A/B is cheaper.
+  Offsets found on the way (kernel 45816614748): thread->thread_id +0x5e8, struct processor->active_thread presumably +0x10 (source order; not verified).
+- Hook: process_signature() right after `printf("exec %s")` -> sweet_exec_bind_hint(p_name, imgp->ip_new_thread) -> thread_bind_internal() if not on a run queue.
+- Image 26cD planned = 26cC cmdline with sweetsteer=47 REPLACED by sweetsbcpu=6 (cmdline limit 607; steering showed no effect), sweetbuild=2693.
+
 ## 2026-11-26 20:2x IST: shader disk cache WORKS (CI 45821933606); render thread no longer the bottleneck; ~20-25 % frames still skipped (SpringBoard CPU)
 - First install attempt cut by a USB drop (18:09, -71); reset by USER, fsck exit 0, files on the phone were the previous build (complete). Reinstalled, verified hashes.
 - Cache: /var/local/mesa-cache 101 files / 1.7 MB after the first session. Home swipes cold: 2 refreshes 65 %, 4 refreshes 29 %; after a backboardd restart (warm) 72 % / 23 %, 73 % / 22 %.
