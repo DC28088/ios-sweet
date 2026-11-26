@@ -1,3 +1,11 @@
+## 2026-11-26 22:30 IST: filesystem damage after the 26cD forced reset; REPAIRED (USER approved) ; 26cC boots normally again
+- The read-only check before booting 26cC (after the 26cD hang + forced reset) reported exit 8 and MY SCRIPT BOOTED ANYWAY (no stop on failure).
+  Damage: bitmap orphaned/under-allocated, file count off by 1, header; 3 in-use-but-free blocks in /private/var/keybags (usersession.kb, persona.kb,
+  persona.kb.writing). On that boot usermanagerd got EIO unlinking persona.kb.writing and launchd start-up stopped after dirs_cleaner (no SpringBoard/SSH).
+- USER reset; repair prepared on a laptop copy (research/ios26/fsrepair-20261126/: plan.json, undo.bin, new.bin): fsck -y changed 5 blocks only (header, alternate header,
+  allocation 137/142/152); no catalog/file data. USER "yes"; pre-check equal, written, read-back equal, fresh fsck -n exit 0. 26cC booted: SpringBoard up, 0 HFSINC.
+- RULE NOW: boot only through scratchpad checkboot.sh, which refuses to boot iOS when fsck -n is not 0.
+
 ## 2026-11-26 21:45 IST: image 26cD (kernel 2026, sweetsbcpu=6) HANGS at boot, right at SpringBoard's exec
 - Before: USB link dead since 20:41 (idle; "can't set config #1, error -71"); USER reset; read-only fsck exit 0.
 - 26cD 23dcc4ed (kernel CI 45846559189, 9e25195d): log stops at 21:35:58 after "exec xpcproxy" + a launchd KQ line, 8.5 KB; the good boot (26cC2) prints
