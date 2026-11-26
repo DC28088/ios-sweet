@@ -1,3 +1,10 @@
+## 2026-11-26 21:45 IST: image 26cD (kernel 2026, sweetsbcpu=6) HANGS at boot, right at SpringBoard's exec
+- Before: USB link dead since 20:41 (idle; "can't set config #1, error -71"); USER reset; read-only fsck exit 0.
+- 26cD 23dcc4ed (kernel CI 45846559189, 9e25195d): log stops at 21:35:58 after "exec xpcproxy" + a launchd KQ line, 8.5 KB; the good boot (26cC2) prints
+  "exec SpringBoard" right after the same xpcproxy lines. USER: stuck in verbose boot. => binding the new thread in process_signature() hangs
+  (cause not known: maybe binding a thread that is not set up yet, or a DEVELOPMENT assert). sweetsbcpu approach ABANDONED; do not boot 26cD.
+- Fallback: 26cC (cd71d584) + graphics build 45821933606 + /var/local/sweet-native-env (sysmem + MESA_SHADER_CACHE_DIR).
+
 ## 2026-11-26 20:4x IST: kernel 2026: boot-arg sweetsbcpu=N binds SpringBoard's main thread to cpu N at exec (default off)
 - Reading the thread's current core through /dev/pmem would need a page-table walk (zone memory is not in the kernel image mapping); a direct A/B is cheaper.
   Offsets found on the way (kernel 45816614748): thread->thread_id +0x5e8, struct processor->active_thread presumably +0x10 (source order; not verified).
