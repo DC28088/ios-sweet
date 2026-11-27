@@ -1,3 +1,14 @@
+## 2026-11-27 19:00 IST: 26cI result: MPS no longer aborts; next abort = RenderBox sampler state (bicubic); driver fix building
+- 26cI (= 26cH cmdline - sweetbuild + sweetsbmps=1, kernel CI 45999742305 with 2029; image research/ios26/boot/shim-boot-26cI.img).
+  SWEET SBMPS injection worked 3/3; sweet-mtlfail.log: MPSLibrary.mm:639 "unable to load function D8F18H/D8F18V/F11H"
+  logged and returned (no MPS abort). SpringBoard still SIGABRT 3x -> launchd reboot. Log logs/boot-26cI.txt.
+- Crash report (phone CrashReporter SpringBoard-...160201.0003.ips): thread com.apple.RenderBox.Encoder, RenderBox abort
+  "unable to allocate sampler state: %d". RenderBox's sampler table (unslid 0x196b8fbb8) has an entry with min/mag filter 2
+  (bicubic); our backend air_metal.c sampler_state_from_metal refused it ("filters 2 and 2: MTLSamplerMinMagFilter is nearest or linear").
+- Fix: tools/prepare-sweet-native-metal.py adapt_bicubic_sampler (sample filter 2 as linear). Commit c49411c, CI sweet-native-metal 46005531790.
+- Phone back on 26cF (log logs/boot-26cF5.txt). NEXT: install the new bundle with sweet-install-metal2.sh on 26cF (check glass still OK),
+  then boot 26cI again.
+
 ## 2026-11-27 18:20 IST: option (b) in progress: SpringBoard survives MPS failures (sweet-mtlfail.dylib + xnu 2029)
 - MTLReportFailure (Metal, iOS 26.6.2) loads a global block first; if set it calls block(type, function, line, message) and
   RETURNS (no __assert_rtn). MTLSetReportFailureBlock is exported and sets it. Observed in disassembly of the phone's cache.
