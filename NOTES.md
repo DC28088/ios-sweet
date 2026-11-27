@@ -1,3 +1,15 @@
+## 2026-11-27 17:10 IST: icon service CAN use the GPU (when Metal is asked early); frames unchanged; next = SpringBoard on the GPU (sweetm2who=3)
+- sweetmtlprobe (tools CI 45989602479) run as /var/local/probe/iconservicesagent (root, uid 501, uid 276=_iconservices): MTLCreateSystemDefaultDevice -> SweetMTL2Device
+  "Adreno 618 (Sweet Native Metal)", supportsFamily Apple1 only (feature profile 0). As "sweetmtlprobe": nil (kernel GPU list refuses the name).
+- IconRendering decision (disassembled from the phone's dyld cache): software forced if env FORCE_SOFTWARE_RENDER=1, or env RC_XBS set without ALLOW_GPU_DESPITE_XBS=1;
+  otherwise device = [RBDevice sharedLowPowerDevice] (== sharedDefaultDevice -> MTLCreateSystemDefaultDevice); nil -> "usingSoftwareRenderer". Neither env var is set anywhere.
+- In the real agent (pid 357) the plug-in never loaded (gpu-open log) -> device nil. With sweet-icr-log v2 (tools CI 45990255294) asking Metal + RBDevice in its
+  constructor: "MTLCreateSystemDefaultDevice -> SweetMTL2Device", RBDevice ok, kernel "iconservicesagent client connected slot=1", 0 serialize failures afterwards.
+  GUESS: RenderBox refuses the GPU later once the daemon counts as background (RBDevice isRunningInBackground / allowsRenderingInBackground); not verified.
+- Scroll with the GPU icon service: iconservicesagent no longer in the top CPU list (was 100-146 %), SpringBoard 37-75 %. Frames (session.sh): 60 fps 68 / 63 %,
+  skipped 24 / 30 % (before 72-73 / 22-23 %): NOT better. SpringBoard itself is refused the GPU ("SpringBoard refused a GPU client").
+- NEXT: image 26cG = 26cF cmdline + sweetm2who=3 (iconservicesagent + SpringBoard). RISK: GPU loss with extra clients (iOS 16 history). Fallback 26cF / 26cE.
+
 ## 2026-11-27 16:40 IST: ROOT CAUSE of the icon redraws: IconRendering TextureIOError.usingSoftwareRenderer
 - 26cF 7239c36f (kernel 2028 CI 45929044986, c691c06a; 26cE cmdline with sweetsteer=47 -> sweeticr=1, sweetbuild=2695) booted (after a clean sync + sweetreboot + fsck exit 0).
   Kernel: "SWEET ICR: iconservicesagent gets DYLD_INSERT_LIBRARIES=/var/local/lib/sweet-icr-log.dylib"; agent ran with BRA* emulation lines (PAC, normal).
