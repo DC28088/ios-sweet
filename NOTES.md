@@ -1,3 +1,16 @@
+## 2026-11-27 18:05 IST: SpringBoard on the GPU is blocked by MPS (two walls); phone back on 26cF
+- 26cG (= 26cF + sweetbuild=2696 sweetm2who=3, kernel CI 45929044986): SpringBoard gets the GPU (slot 1), then aborts in
+  MPSKernel.mm:60 "[MPSImageGaussianBlur initWithDevice:] Failed to get MPSDevice" (profile 0 = Apple1 only; MPS asks Apple8..Apple2).
+  3 aborts -> launchd "rebooting due to critical process crashes: SpringBoard" -> phone came back in Android. Log logs/boot-26cG.txt.
+- 26cH (= 26cG - sweeticr=1 - sweetgles=0 (default) + metal_profile=1, sweetbuild=2697): MPSDevice OK now, next abort
+  MPSLibrary.mm:639 "MTLComputePipelineStateCache unable to load function D8F18H": our AIR frontend air_to_nir.c refuses
+  "a store of a pointer into memory, which this frontend has no address to write" (block 0, instr 4, opcode 16). Same reboot loop
+  (user saw it reach the lock screen then crash). Log logs/boot-26cH.txt.
+- Back on 26cF (log logs/boot-26cF4.txt), fsck clean before each boot; SpringBoard up once, no crashes.
+- Options (not done): (a) teach air_to_nir pointer stores to memory (real work: pointers are symbolic there); (b) interpose MPS
+  blur creation in SpringBoard so the Siri-orb prewarm does not abort (GUESS: blur result may then be missing); (c) leave SpringBoard on CPU.
+- Earlier same day: icon service on the GPU did not improve frames (60 fps 63-68 %, skipped 24-30 %).
+
 ## 2026-11-27 17:10 IST: icon service CAN use the GPU (when Metal is asked early); frames unchanged; next = SpringBoard on the GPU (sweetm2who=3)
 - sweetmtlprobe (tools CI 45989602479) run as /var/local/probe/iconservicesagent (root, uid 501, uid 276=_iconservices): MTLCreateSystemDefaultDevice -> SweetMTL2Device
   "Adreno 618 (Sweet Native Metal)", supportsFamily Apple1 only (feature profile 0). As "sweetmtlprobe": nil (kernel GPU list refuses the name).
