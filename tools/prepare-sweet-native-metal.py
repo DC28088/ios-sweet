@@ -2084,6 +2084,25 @@ def adapt_glass_debug(donor):
     s=replace(s,'#include <time.h>\n','#include <time.h>\n#include <unistd.h>\n')
     p.write_text(s)
 
+def adapt_bicubic_sampler(donor):
+    # 26cI: with the GPU, SpringBoard's RenderBox builds sampler states with MTLSamplerMinMagFilter 2 (bicubic, which
+    # newer Metal has and A618 does not) and aborts "unable to allocate sampler state" when the device answers nil.
+    # Sample it as linear, the closest filter this GPU has (air_run does the same for filter::bicubic in a shader).
+    p=donor/'tools/mesa/air'/'air_metal.c';s=p.read_text()
+    s=replace(s,"""   if (st->min_filter > RWA_FILTER_LINEAR || st->mag_filter > RWA_FILTER_LINEAR) {
+""","""   /* sweet: MTLSamplerMinMagFilter 2 (bicubic) is sampled as linear; A618 has no bicubic filter */
+   const unsigned sweet_min_filter = st->min_filter == 2 ? RWA_FILTER_LINEAR : st->min_filter;
+   const unsigned sweet_mag_filter = st->mag_filter == 2 ? RWA_FILTER_LINEAR : st->mag_filter;
+   if (sweet_min_filter > RWA_FILTER_LINEAR || sweet_mag_filter > RWA_FILTER_LINEAR) {
+""")
+    s=replace(s,"""      .min_img_filter = st->min_filter == RWA_FILTER_LINEAR ? PIPE_TEX_FILTER_LINEAR
+""","""      .min_img_filter = sweet_min_filter == RWA_FILTER_LINEAR ? PIPE_TEX_FILTER_LINEAR
+""")
+    s=replace(s,"""      .mag_img_filter = st->mag_filter == RWA_FILTER_LINEAR ? PIPE_TEX_FILTER_LINEAR
+""","""      .mag_img_filter = sweet_mag_filter == RWA_FILTER_LINEAR ? PIPE_TEX_FILTER_LINEAR
+""")
+    p.write_text(s)
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('donor',type=Path,help='disposable export of the pinned donor')
@@ -2095,6 +2114,7 @@ def main():
     adapt_attachment_levels(args.donor, frontend)
     adapt_level_views(args.donor, frontend)
     adapt_glass_debug(args.donor)
+    adapt_bicubic_sampler(args.donor)
     serialize_methods(frontend)
     print('Prepared native Sweet Metal sources:',args.donor)
 
