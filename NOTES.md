@@ -1,3 +1,13 @@
+## 2026-11-27 19:40 IST: SpringBoard RUNS ON THE GPU (26cI + bicubic driver fix); stable; frames unchanged
+- Driver: sweet-native-metal CI 46005531790 (commit c49411c, bicubic->linear) installed on 26cF via sweet-install-metal2.sh
+  (backup research/ios26/metal/backup-before-46005531790); home screen and dock glass OK on 26cF.
+- Booted 26cI again (log logs/boot-26cI2.txt, fsck clean): SpringBoard GPU client slot 1, no CRASH lines, up 3:38+ min.
+  MPS kernels still fail to compile (D8F18H/V, F11H/V, U8P3F3H/V) and are only logged (sweet-mtlfail). Screenshot: home + dock glass OK.
+- Swipes (session.sh): sbgpu1 60 fps 70 %, skipped 23 %; sbgpu2 70 % / 22 % = same as 26cF (72-73 / 22).
+  CPU while swiping: backboardd 30-36 % (was ~57-76 %), SpringBoard 56-84 %, iconservicesagent 66-135 % (back on CPU: 26cI has no sweeticr).
+- Conclusion (observation): GPU was not what limits the swipes; the skipped frames stay SpringBoard main-thread work.
+- Unknown: Siri orb blur (MPS) presumably not drawn; bicubic sampled as linear.
+
 ## 2026-11-27 19:00 IST: 26cI result: MPS no longer aborts; next abort = RenderBox sampler state (bicubic); driver fix building
 - 26cI (= 26cH cmdline - sweetbuild + sweetsbmps=1, kernel CI 45999742305 with 2029; image research/ios26/boot/shim-boot-26cI.img).
   SWEET SBMPS injection worked 3/3; sweet-mtlfail.log: MPSLibrary.mm:639 "unable to load function D8F18H/D8F18V/F11H"
