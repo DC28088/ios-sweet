@@ -22,7 +22,7 @@ jobs:
           CC="$(xcrun --sdk iphoneos --find clang)"
           for src in userspace/tools/*.c; do
             b=$(basename "$src" .c)
-            "$CC" -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -O2 -Wall -Werror -o "out/$b" "$src"
+            "$CC" -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -O2 -Wall -Werror -o "out/$b" "$src" $(grep -q 'objc/runtime.h' "$src" && echo -lobjc)
           done
       - name: Sign
         run: |
