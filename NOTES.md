@@ -1,3 +1,11 @@
+## 2026-11-27 09:00 IST: diagnostic for the icon serialize error: sweet-icr-log.dylib + kernel 2028 (boot-arg sweeticr=1)
+- userspace/tools/sweet-icr-log.c (SWEET_DYLIB; tools.yml builds it as an arm64e dylib): swizzles -[ICRFinalizedIcon serializedDataWithError:], appends the NSError
+  debugDescription + the icon's debugDescription to /var/tmp/sweet-icr.log on failure (first 40). Install at /var/local/lib/sweet-icr-log.dylib.
+- xnu 2028: with sweeticr=1, kern_exec adds DYLD_INSERT_LIBRARIES=/var/local/lib/sweet-icr-log.dylib to iconservicesagent's environment (next to sweet_dtlog_exec_env).
+  dyld honours it because Bergamota 0131 answers AMFI op 0x5a with ALLOW_ALL for arm64e processes when sweetarm64e=1 (our cmdline has it).
+  RISK: if the dylib is missing, dyld aborts iconservicesagent -> install the dylib BEFORE booting with sweeticr=1.
+- Image 26cF planned = 26cE cmdline with sweetsteer=47 replaced by sweeticr=1 (cmdline room), sweetbuild=2695.
+
 ## 2026-11-27 08:25 IST: the icon serialize failure is a Swift error inside -[ICRFinalizedIcon serializedDataWithError:] (IconRendering)
 - sweetobjcmap on IconServices/IconRendering/IconFoundation/RenderBox (scratchpad iconmap.tsv, 3519 methods): -[ISICRCompositor _finalizedIconForCompositingDescriptor:]
   (IconServices +319520) returns an ICRFinalizedIcon; -[ICRFinalizedIcon serializedDataWithError:] is IconRendering +46804 (unslid 0x1b38646d4).

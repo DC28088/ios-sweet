@@ -1,0 +1,43 @@
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+index bc8d713..b381321 100644
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -532,6 +532,30 @@ sweet_dtlog_exec_env(struct image_params *imgp, int ptr_size)
+     if (logged++<8) printf("SWEET DTLOG: %s gets OS_ACTIVITY_DT_MODE (os_log -> console)\n", base);
+     return 0;
+ }
++
++/*
++ * 2028: boot-arg sweeticr=1: iconservicesagent gets DYLD_INSERT_LIBRARIES=/var/local/lib/sweet-icr-log.dylib, which logs why
++ * -[ICRFinalizedIcon serializedDataWithError:] fails (userspace/tools/sweet-icr-log.c). dyld honours it because sweet_amfi answers
++ * the dyld policy query with every ALLOW bit for arm64e processes (sweetarm64e=1). Diagnostic only; off by default.
++ */
++static int
++sweet_icr_exec_env(struct image_params *imgp, int ptr_size)
++{
++    int on=0;
++    if (!PE_parse_boot_argn("sweeticr",&on,sizeof(on)) || !on) return 0;
++    const char *path=imgp->ip_strings+strlen("executable_path="), *base=path;
++    for (const char *c=path; *c; ++c) if (*c=='/') base=c+1;
++    if (strcmp(base,"iconservicesagent")) return 0;
++    static const char env[]="DYLD_INSERT_LIBRARIES=/var/local/lib/sweet-icr-log.dylib";
++    if (imgp->ip_argspace<ptr_size) return E2BIG;
++    int error=exec_add_user_string(imgp,CAST_USER_ADDR_T(env),UIO_SYSSPACE,TRUE);
++    if (error) return error;
++    if (imgp->ip_argspace<ptr_size) return E2BIG;
++    imgp->ip_argspace-=ptr_size;
++    imgp->ip_envc++;
++    printf("SWEET ICR: %s gets %s\n", base, env);
++    return 0;
++}
+ #endif
+ 
+ /*
+@@ -6992,6 +7016,7 @@ exec_extract_strings(struct image_params *imgp)
+ #if defined(ARM64_BOARD_CONFIG_SWEET)
+     error=sweet_gles_exec_env(imgp,new_ptr_size);
+     if (!error) error=sweet_dtlog_exec_env(imgp,new_ptr_size);   /* 0205 */
++    if (!error) error=sweet_icr_exec_env(imgp,new_ptr_size);     /* 2028 */
+     if (error) goto bad;
+ #endif
+ 
