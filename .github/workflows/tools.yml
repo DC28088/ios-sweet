@@ -23,7 +23,7 @@ jobs:
           for src in userspace/tools/*.c; do
             b=$(basename "$src" .c)
             if grep -q 'SWEET_DYLIB' "$src"; then
-              "$CC" -arch arm64e -isysroot "$SDK" -miphoneos-version-min=16.0 -O2 -Wall -Werror -dynamiclib -o "out/$b.dylib" "$src" -lobjc -framework CoreFoundation
+              "$CC" -arch arm64e -isysroot "$SDK" -miphoneos-version-min=16.0 -O2 -Wall -Werror -dynamiclib -o "out/$b.dylib" "$src" -lobjc -framework CoreFoundation -framework Metal
               continue
             fi
             "$CC" -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -O2 -Wall -Werror -o "out/$b" "$src" $(grep -q 'objc/runtime.h' "$src" && echo -lobjc) $(grep -q 'MTLCreateSystemDefaultDevice' "$src" && echo -framework Metal)

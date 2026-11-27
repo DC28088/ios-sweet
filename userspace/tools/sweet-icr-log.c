@@ -8,6 +8,7 @@
 #include <objc/message.h>
 #include <objc/runtime.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 
 typedef id (*ser_fn)(id, SEL, id *);
@@ -49,6 +50,31 @@ hook(id self, SEL cmd, id *err)
 	return r;
 }
 
+extern id MTLCreateSystemDefaultDevice(void);
+
+/* 26c: why does RenderBox give this process no GPU device? Ask the same questions at load time and log the answers. */
+static void
+probe_devices(FILE *f)
+{
+	const char *keys[] = {"FORCE_SOFTWARE_RENDER", "RC_XBS", "ALLOW_GPU_DESPITE_XBS", "DYLD_INSERT_LIBRARIES", NULL};
+	for (int i = 0; keys[i]; i++) {
+		const char *v = getenv(keys[i]);
+		fprintf(f, "env %s=%s\n", keys[i], v ? v : "(unset)");
+	}
+	id dev = MTLCreateSystemDefaultDevice();
+	fprintf(f, "MTLCreateSystemDefaultDevice -> %s\n", dev ? object_getClassName(dev) : "nil");
+	dlopen("/System/Library/PrivateFrameworks/RenderBox.framework/RenderBox", RTLD_LAZY);
+	Class rb = objc_getClass("RBDevice");
+	if (rb) {
+		id d1 = ((id (*)(id, SEL))objc_msgSend)((id)rb, sel_registerName("sharedDefaultDevice"));
+		id d2 = ((id (*)(id, SEL))objc_msgSend)((id)rb, sel_registerName("sharedLowPowerDevice"));
+		fprintf(f, "RBDevice sharedDefaultDevice -> %s, sharedLowPowerDevice -> %s\n", d1 ? object_getClassName(d1) : "nil",
+		    d2 ? object_getClassName(d2) : "nil");
+	} else {
+		fprintf(f, "RBDevice class not found\n");
+	}
+}
+
 __attribute__((constructor)) static void
 install(void)
 {
@@ -61,6 +87,7 @@ install(void)
 	}
 	if (f) {
 		fprintf(f, "sweet-icr-log loaded in pid %d: %s\n", (int)getpid(), m ? "hooked" : "ICRFinalizedIcon not found");
+		probe_devices(f);
 		fclose(f);
 	}
 }
