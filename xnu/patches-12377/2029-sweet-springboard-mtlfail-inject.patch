@@ -1,0 +1,42 @@
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -555,6 +555,30 @@ sweet_icr_exec_env(struct image_params *imgp, int ptr_size)
+     printf("SWEET ICR: %s gets %s\n", base, env);
+     return 0;
+ }
++
++/*
++ * 2029: boot-arg sweetsbmps=1: SpringBoard gets DYLD_INSERT_LIBRARIES=/var/local/lib/sweet-mtlfail.dylib, which installs Metal's
++ * report-failure block so MTLReportFailure logs instead of aborting (userspace/tools/sweet-mtlfail.c). With the GPU, SpringBoard
++ * prewarms an MPS Gaussian blur that MPS cannot set up on this device and asserts; three such aborts make launchd reboot.
++ */
++static int
++sweet_sbmps_exec_env(struct image_params *imgp, int ptr_size)
++{
++    int on=0;
++    if (!PE_parse_boot_argn("sweetsbmps",&on,sizeof(on)) || !on) return 0;
++    const char *path=imgp->ip_strings+strlen("executable_path="), *base=path;
++    for (const char *c=path; *c; ++c) if (*c=='/') base=c+1;
++    if (strcmp(base,"SpringBoard")) return 0;
++    static const char env[]="DYLD_INSERT_LIBRARIES=/var/local/lib/sweet-mtlfail.dylib";
++    if (imgp->ip_argspace<ptr_size) return E2BIG;
++    int error=exec_add_user_string(imgp,CAST_USER_ADDR_T(env),UIO_SYSSPACE,TRUE);
++    if (error) return error;
++    if (imgp->ip_argspace<ptr_size) return E2BIG;
++    imgp->ip_argspace-=ptr_size;
++    imgp->ip_envc++;
++    printf("SWEET SBMPS: %s gets %s\n", base, env);
++    return 0;
++}
+ #endif
+ 
+ /*
+@@ -7017,6 +7041,7 @@ exec_extract_strings(struct image_params *imgp)
+     error=sweet_gles_exec_env(imgp,new_ptr_size);
+     if (!error) error=sweet_dtlog_exec_env(imgp,new_ptr_size);   /* 0205 */
+     if (!error) error=sweet_icr_exec_env(imgp,new_ptr_size);     /* 2028 */
++    if (!error) error=sweet_sbmps_exec_env(imgp,new_ptr_size);   /* 2029 */
+     if (error) goto bad;
+ #endif
+ 
