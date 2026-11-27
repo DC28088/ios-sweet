@@ -6,6 +6,8 @@
 #include <objc/message.h>
 #include <objc/runtime.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
 
 extern id MTLCreateSystemDefaultDevice(void);
 extern id MTLCopyAllDevices(void);
@@ -20,8 +22,17 @@ cstr(id s)
 }
 
 int
-main(void)
+main(int argc, char **argv)
 {
+	/* optional argument: run as that uid (and gid), like a daemon that is not root */
+	if (argc > 1) {
+		int uid = atoi(argv[1]);
+		if (setgid(uid) != 0 || setuid(uid) != 0) {
+			perror("setuid");
+			return 2;
+		}
+		printf("running as uid %d\n", (int)getuid());
+	}
 	id all = MTLCopyAllDevices();
 	unsigned long n = all ? ((unsigned long (*)(id, SEL))objc_msgSend)(all, sel_registerName("count")) : 0;
 	printf("MTLCopyAllDevices: %lu device(s)\n", n);
