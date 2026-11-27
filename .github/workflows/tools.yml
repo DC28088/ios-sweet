@@ -26,7 +26,7 @@ jobs:
               "$CC" -arch arm64e -isysroot "$SDK" -miphoneos-version-min=16.0 -O2 -Wall -Werror -dynamiclib -o "out/$b.dylib" "$src" -lobjc -framework CoreFoundation
               continue
             fi
-            "$CC" -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -O2 -Wall -Werror -o "out/$b" "$src" $(grep -q 'objc/runtime.h' "$src" && echo -lobjc)
+            "$CC" -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -O2 -Wall -Werror -o "out/$b" "$src" $(grep -q 'objc/runtime.h' "$src" && echo -lobjc) $(grep -q 'MTLCreateSystemDefaultDevice' "$src" && echo -framework Metal)
           done
       - name: Sign
         run: |
