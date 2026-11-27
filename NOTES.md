@@ -1,3 +1,11 @@
+## 2026-11-27 08:25 IST: the icon serialize failure is a Swift error inside -[ICRFinalizedIcon serializedDataWithError:] (IconRendering)
+- sweetobjcmap on IconServices/IconRendering/IconFoundation/RenderBox (scratchpad iconmap.tsv, 3519 methods): -[ISICRCompositor _finalizedIconForCompositingDescriptor:]
+  (IconServices +319520) returns an ICRFinalizedIcon; -[ICRFinalizedIcon serializedDataWithError:] is IconRendering +46804 (unslid 0x1b38646d4).
+- Disassembly: wrapper calls a Swift encoder (bl 0x1b387ff50) and checks the Swift error register x21; non-nil -> bridged NSError, nil returned. IconServices
+  (0x1a926a3bc) logs only "Failed to serialize finalized icon ..." and drops the error. The error text is not in any log.
+- NEXT options: (a) a dylib injected into iconservicesagent that swizzles serializedDataWithError: and writes the NSError to a file (needs an env/launchd
+  change + restart of the agent); (b) static reading of the Swift encoder (0x1b387ff50) for the throw sites.
+
 ## 2026-11-27 08:10 IST: 26cE: SpringBoard main thread mostly on cpu6 already; long stretches = icon views created per page swipe
 - Before 26cE: USER put the phone in fastboot from a running 26cC -> checkboot.sh found minor damage (1 block of geod PLReqCounters.enc in use but free, 3 orphans)
   and DID NOT boot (the guard worked). USER "write it": 4 blocks (headers + allocation 144/145), read-back equal, fsck exit 0. research/ios26/fsrepair-20261127/.
