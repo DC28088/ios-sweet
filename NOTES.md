@@ -1,3 +1,14 @@
+## 2026-11-27 16:40 IST: ROOT CAUSE of the icon redraws: IconRendering TextureIOError.usingSoftwareRenderer
+- 26cF 7239c36f (kernel 2028 CI 45929044986, c691c06a; 26cE cmdline with sweetsteer=47 -> sweeticr=1, sweetbuild=2695) booted (after a clean sync + sweetreboot + fsck exit 0).
+  Kernel: "SWEET ICR: iconservicesagent gets DYLD_INSERT_LIBRARIES=/var/local/lib/sweet-icr-log.dylib"; agent ran with BRA* emulation lines (PAC, normal).
+- USB died ~1 min after boot (08:33:52); USER reset; recovery then also dropped off USB (16:21); second reset; checkboot: fsck exit 8 -> NOT booted.
+- /var/tmp/sweet-icr.log read from the raw disk via the catalog (extent 5107752): "sweet-icr-log loaded in pid 346: hooked"; failures 1-3:
+  error: IconRendering.(unknown context).TextureIOError.usingSoftwareRenderer.
+- => IconRendering will not serialize icons rendered with the software renderer; the agent has no GPU device (it never opened AGXAccelerator although
+  2021 allows it). Fixing the agent's Metal device = the real fix for icon caching (and SpringBoard's per-swipe icon cost: inference).
+- Filesystem damage this time: bitmap orphaned/under-allocated, file count +3, free count; 1 in-use-but-free block (Spotlight tmp.spotlight.state). Repair plan in
+  research/ios26/fsrepair-20261127b/ (waiting for the USER's yes).
+
 ## 2026-11-27 09:00 IST: diagnostic for the icon serialize error: sweet-icr-log.dylib + kernel 2028 (boot-arg sweeticr=1)
 - userspace/tools/sweet-icr-log.c (SWEET_DYLIB; tools.yml builds it as an arm64e dylib): swizzles -[ICRFinalizedIcon serializedDataWithError:], appends the NSError
   debugDescription + the icon's debugDescription to /var/tmp/sweet-icr.log on failure (first 40). Install at /var/local/lib/sweet-icr-log.dylib.
