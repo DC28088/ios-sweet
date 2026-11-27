@@ -1,3 +1,11 @@
+## 2026-11-27 18:20 IST: option (b) in progress: SpringBoard survives MPS failures (sweet-mtlfail.dylib + xnu 2029)
+- MTLReportFailure (Metal, iOS 26.6.2) loads a global block first; if set it calls block(type, function, line, message) and
+  RETURNS (no __assert_rtn). MTLSetReportFailureBlock is exported and sets it. Observed in disassembly of the phone's cache.
+- userspace/tools/sweet-mtlfail.c (tools CI 45999736183) installs a logging block -> /var/tmp/sweet-mtlfail.log. Installed at
+  /var/local/lib/sweet-mtlfail.dylib; tested via DYLD_INSERT into /usr/bin/vm_stat: "Metal report-failure block installed".
+- xnu/patches-12377/2029: boot-arg sweetsbmps=1 injects it into SpringBoard (same mechanism as 2028). Commit da1a9e9, kernel CI 45999742305.
+- Plan 26cI = 26cH cmdline - sweetbuild (label only) + sweetsbmps=1 (sweetm2who=3, metal_profile=1). If it reboot-loops: back to 26cF.
+
 ## 2026-11-27 18:05 IST: SpringBoard on the GPU is blocked by MPS (two walls); phone back on 26cF
 - 26cG (= 26cF + sweetbuild=2696 sweetm2who=3, kernel CI 45929044986): SpringBoard gets the GPU (slot 1), then aborts in
   MPSKernel.mm:60 "[MPSImageGaussianBlur initWithDevice:] Failed to get MPSDevice" (profile 0 = Apple1 only; MPS asks Apple8..Apple2).
