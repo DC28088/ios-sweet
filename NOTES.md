@@ -1,3 +1,17 @@
+## 2026-11-27 08:10 IST: 26cE: SpringBoard main thread mostly on cpu6 already; long stretches = icon views created per page swipe
+- Before 26cE: USER put the phone in fastboot from a running 26cC -> checkboot.sh found minor damage (1 block of geod PLReqCounters.enc in use but free, 3 orphans)
+  and DID NOT boot (the guard worked). USER "write it": 4 blocks (headers + allocation 144/145), read-back equal, fsck exit 0. research/ios26/fsrepair-20261127/.
+- 26cE 6eeb8377 (kernel 2027 CI 45868861098, 375aa59d; 26cC cmdline, sweetbuild=2694): "SpringBoard main thread noted". Symbols: sweet_sb_fast PA 0x102423248,
+  sweet_sb_abs 0x1024231a8 (8 x u64 then sweet_sb_runs), trace 0x10238c928.
+- sbround.sh A/B (preference off/on/off/on, 16 s scripted swipes each): SpringBoard main thread ran 60-62 % on cpu6, 3-4 % on cpu7, ~35 % on cpu0-5 (64/59/64/63 % on big
+  cores); preference changes nothing; frames 60 fps 60/65/71/71 %, skipped 12/26/22/22 %. => core placement is NOT the main limit.
+- sweetobjcmap (userspace/tools/sweetobjcmap.c, tools CI 45928294907, /var/local/bin/sweetobjcmap fd865f4d): ObjC method offsets from the runtime, 144605 methods of
+  SpringBoardHome/UIKitCore/QuartzCore/Gestures/SpringBoardFoundation (scratchpad objcmap.tsv). Long stretches (timeline2): SBIconScrollView setContentOffset 56 % ->
+  SBFolderView scrollViewDidScroll -> updateIconListIndexAndVisibility 51 % -> SBIconListView setCellVisibility/_updateVisibleIconViews 51 % -> _addIconViewsForIcons 27 %,
+  configureIconView/iconViewForIcon 21 %, SBIconView setIcon 20 %, removeIconView 11 %. (C/Swift frames are attributed to the preceding ObjC method.)
+- LEAD: icon images not served from a cache (iconservices "Failed to serialize finalized icon") -> icon view setup is expensive on every page swipe. NEXT: call
+  _finalizedIconForCompositingDescriptor: / serializedDataWithError: in a test tool on the phone and print the NSError.
+
 ## 2026-11-26 22:45 IST: USER chose SpringBoard; kernel 2027: measure where SpringBoard's main thread runs + optional fast-core preference (no binding)
 - 2026 removed from the series (it hung the boot). 2027: sweet_exec_note() stores SpringBoard's new main thread POINTER at exec (nothing else);
   thread_dispatch() counts its dispatches and run time per CPU (sweet_sb_runs[8], sweet_sb_abs[8], mach ticks); sweet_amp_wanted_map() returns 0xc0 for it when
