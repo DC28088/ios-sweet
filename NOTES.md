@@ -1,3 +1,15 @@
+## 2026-11-27 20:30 IST: 26cJ: keep neighbouring home pages' icon views alive -> modest swipe gain; SpringBoard back on CPU
+- USER on 26cI: "still feels the same (slightly better earlier?)" and LOCK SCREEN CLOCK MISSING with SpringBoard on the GPU -> dropped (back to sweetm2who=1).
+- +[SBFolderView countOfAdditionalPagesToKeepVisibleInOneDirection] returns 0 (unslid 0x1c17e16c0; SBRootFolderView has no override); the
+  instance method asks the class. sweet-mtlfail.dylib (tools CI 46015089000) replaces it with N from /var/local/sweet-sb-keeppages (1..8).
+- 26cJ = kernel 45999742305 (2029) + 26cF cmdline - sweetbuild + sweetsbmps=1 (len 590); image research/ios26/boot/shim-boot-26cJ.img;
+  log logs/boot-26cJ.txt; /var/local/sweet-sb-keeppages = 1 (left ON). Driver = CI 46005531790.
+- spindump 9 s during scripted swipes, SpringBoard main thread (scratchpad sbmain.py + objcmap.tsv): keep 0 -> 1:
+  scrollViewDidScroll 171 -> 0, _updateVisibleIconViews 134 -> 34, configureIconView 80 -> 13, _addIconViewsForIcons 78 -> 33
+  (left over comes from SBHTodayViewController setVisibleRowRange), removeIconView 24 -> 1 samples.
+- Frames (session.sh): keep 1: 77/71/80/75/73 % at 60 fps, skipped 13/21/12/17/19 %, worst 53-60 ms; keep 0 (same boot): 72/72 %, skipped 20/22 %, worst 58-59 ms.
+- Left in the main thread: event/gesture handling (~95 samples of 748), Today view visibility, CA commits. Not yet split further.
+
 ## 2026-11-27 19:40 IST: SpringBoard RUNS ON THE GPU (26cI + bicubic driver fix); stable; frames unchanged
 - Driver: sweet-native-metal CI 46005531790 (commit c49411c, bicubic->linear) installed on 26cF via sweet-install-metal2.sh
   (backup research/ios26/metal/backup-before-46005531790); home screen and dock glass OK on 26cF.
